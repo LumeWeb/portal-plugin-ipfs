@@ -54,7 +54,7 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 	b.Cid = normalizeCid(b.Cid)
 	s.logger.Debug("pinning block", zap.Stringer("cid", b.Cid))
 
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		// Insert or update the parent block
 		parentBlock := pluginDb.IPFSBlock{
 			CID:              b.Cid.Bytes(),
@@ -62,13 +62,15 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 			LastAnnouncement: nil,
 			Ready:            true,
 		}
-		if err := db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-			return db.Clauses(clause.OnConflict{
+
+		if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+			return tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "cid"}},
 				DoUpdates: clause.AssignmentColumns([]string{"updated_at", "size", "ready"}),
 			}).Create(&parentBlock)
 		}); err != nil {
-			return fmt.Errorf("failed to insert/update block: %w", err)
+			_ = tx.AddError(fmt.Errorf("failed to insert/update block: %w", err))
+			return tx
 		}
 
 		for i, link := range b.Links {
@@ -76,10 +78,11 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 			var childBlock pluginDb.IPFSBlock
 			childBlock.CID = link.Bytes()
 			childBlock.Size = 0
-			if err := db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-				return db.FirstOrCreate(&childBlock)
+			if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+				return tx.FirstOrCreate(&childBlock)
 			}); err != nil {
-				return fmt.Errorf("failed to find or create child block: %w", err)
+				_ = tx.AddError(fmt.Errorf("failed to find or create child block: %w", err))
+				return tx
 			}
 
 			linkedBlock := pluginDb.IPFSLinkedBlock{
@@ -88,22 +91,24 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 				LinkIndex: i,
 			}
 
-			if err := db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-				return db.Clauses(clause.OnConflict{
+			if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+				return tx.Clauses(clause.OnConflict{
 					Columns:   []clause.Column{{Name: "parent_id"}, {Name: "child_id"}, {Name: "link_index"}},
 					DoNothing: true,
 				}).Create(&linkedBlock)
 			}); err != nil {
-				return fmt.Errorf("failed to link blocks: %w", err)
+				_ = tx.AddError(fmt.Errorf("failed to insert linked block: %w", err))
+				return tx
 			}
 
 			// Update any existing linked blocks with the correct parent ID
-			if err := db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
+			if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 				return tx.Model(&pluginDb.IPFSLinkedBlock{}).
 					Where("child_id = ? AND parent_id IS NULL", childBlock.ID).
 					Update("parent_id", parentBlock.ID)
 			}); err != nil {
-				return fmt.Errorf("failed to update linked block: %w", err)
+				_ = tx.AddError(fmt.Errorf("failed to update linked block: %w", err))
+				return tx
 			}
 		}
 
@@ -114,7 +119,7 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
 	c = normalizeCid(c)
 
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		// Find the block to be unpinned
 		var block pluginDb.IPFSBlock
 		if err := tx.Where("cid = ?", c.Bytes()).First(&block).Error; err != nil {
@@ -122,17 +127,20 @@ func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
 				// Block not found, consider it already unpinned
 				return nil
 			}
-			return fmt.Errorf("failed to find block: %w", err)
+			_ = tx.AddError(fmt.Errorf("failed to find block: %w", err))
+			return tx
 		}
 
 		// Hard delete related entries in IPFSLinkedBlock
 		if err := tx.Unscoped().Where("parent_id = ? OR child_id = ?", block.ID, block.ID).Delete(&pluginDb.IPFSLinkedBlock{}).Error; err != nil {
-			return fmt.Errorf("failed to delete linked blocks: %w", err)
+			_ = tx.AddError(fmt.Errorf("failed to delete linked blocks: %w", err))
+			return tx
 		}
 
 		// Hard delete the block itself
 		if err := tx.Unscoped().Delete(&block).Error; err != nil {
-			return fmt.Errorf("failed to delete block: %w", err)
+			_ = tx.AddError(fmt.Errorf("failed to delete block: %w", err))
+			return tx
 		}
 
 		s.logger.Debug("unpinned and hard deleted block", zap.Stringer("cid", c))
@@ -142,10 +150,9 @@ func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
 
 func (s *MetadataStoreDefault) BlockExists(c cid.Cid) error {
 	var block pluginDb.IPFSBlock
-	if err := s.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(s.db, func(db *gorm.DB) *gorm.DB {
-			return db.Where(&pluginDb.IPFSBlock{CID: c.Bytes()}).First(&block)
-		})
+
+	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return tx.Where(&pluginDb.IPFSBlock{CID: c.Bytes()}).First(&block)
 	}); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// If the block doesn't exist, return format.ErrNotFound
@@ -178,15 +185,13 @@ ORDER BY lb.link_index ASC
 LIMIT ?
 `
 	var rows *sql.Rows
-	if err = s.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(s.db, func(db *gorm.DB) *gorm.DB {
-			ret := tx.Raw(query, c.Bytes(), max)
-			if ret.Error == nil {
-				rows, _ = ret.Rows()
-			}
+	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		ret := tx.Raw(query, c.Bytes(), max)
+		if ret.Error == nil {
+			rows, _ = ret.Rows()
+		}
 
-			return ret
-		})
+		return ret
 	}); err != nil || rows == nil {
 		return nil, fmt.Errorf("failed to query children: %w", err)
 	}
@@ -238,14 +243,13 @@ FROM future_siblings AS fs
 INNER JOIN ipfs_blocks AS b ON (b.id = fs.child_id)
 `
 	var rows *sql.Rows
-	if err = s.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(s.db, func(db *gorm.DB) *gorm.DB {
-			ret := tx.Raw(query, c.Bytes(), max)
-			if ret.Error == nil {
-				rows, _ = ret.Rows()
-			}
-			return ret
-		})
+
+	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		ret := tx.Raw(query, c.Bytes(), max)
+		if ret.Error == nil {
+			rows, _ = ret.Rows()
+		}
+		return ret
 	}); err != nil || rows == nil {
 		return nil, fmt.Errorf("failed to query siblings: %w", err)
 	}
@@ -277,10 +281,8 @@ INNER JOIN ipfs_blocks AS b ON (b.id = fs.child_id)
 
 func (s *MetadataStoreDefault) ProvideCIDs(limit int) (cids []ipfs.PinnedCID, err error) {
 	var _blocks []pluginDb.IPFSBlock
-	if err = s.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(s.db, func(db *gorm.DB) *gorm.DB {
-			return db.Order("last_announcement ASC").Limit(limit).Find(&_blocks)
-		})
+	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return tx.Order("last_announcement ASC").Limit(limit).Find(&_blocks)
 	}); err != nil {
 		return nil, fmt.Errorf("failed to query: %w", err)
 	}
@@ -308,7 +310,7 @@ func (s *MetadataStoreDefault) ProvideCIDs(limit int) (cids []ipfs.PinnedCID, er
 }
 
 func (s *MetadataStoreDefault) SetLastAnnouncement(cids []cid.Cid, t time.Time) error {
-	return s.ctx.DB().Transaction(func(tx *gorm.DB) error {
+	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		for _, c := range cids {
 			block := &pluginDb.IPFSBlock{
 				CID: c.Bytes(),
@@ -327,10 +329,12 @@ func (s *MetadataStoreDefault) SetLastAnnouncement(cids []cid.Cid, t time.Time) 
 
 				return ret
 			}); err != nil {
-				return fmt.Errorf("failed to update last announcement for %q: %w", c, err)
+				_ = tx.AddError(fmt.Errorf("failed to update last announcement for %q: %w", c, err))
+				return tx
 			}
 			if rowsAffected == 0 {
-				return fmt.Errorf("no block found with CID %q", c)
+				_ = tx.AddError(fmt.Errorf("no block found with CID %q", c))
+				return tx
 			}
 		}
 		return nil

@@ -108,10 +108,8 @@ func (s *UploadService) CreateQueuedPin(ctx context.Context, c cid.Cid, userId u
 
 	var pinRecord pluginDb.IPFSPinView
 
-	if err = s.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(s.ctx.DB(), func(db *gorm.DB) *gorm.DB {
-			return db.WithContext(ctx).Model(&pluginDb.IPFSPinView{}).Where(&pluginDb.IPFSPinView{PinRequestID: reqId}).First(&pluginDb.IPFSPinView{})
-		})
+	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return tx.WithContext(ctx).Model(&pluginDb.IPFSPinView{}).Where(&pluginDb.IPFSPinView{PinRequestID: reqId}).First(&pluginDb.IPFSPinView{})
 	}); err != nil {
 		return nil, fmt.Errorf("error creating pin: %w", err)
 	}
@@ -145,7 +143,7 @@ func (s *UploadService) CreatePinnedPin(ctx context.Context, c cid.Cid, operatio
 		UserID:    userId,
 	})
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, existing, err
+		return nil, false, err
 	}
 
 	if request != nil {
@@ -240,8 +238,8 @@ func (s *UploadService) GetPinByIdentifier(ctx context.Context, identifier inter
 func (s *UploadService) getPinEntityByQuery(ctx context.Context, query pluginDb.IPFSPinView) (*pluginDb.IPFSPinView, error) {
 	var pin pluginDb.IPFSPinView
 
-	if err := db.RetryOnLock(s.ctx.DB(), func(db *gorm.DB) *gorm.DB {
-		return db.WithContext(ctx).
+	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return tx.WithContext(ctx).
 			Model(&pin).
 			Where(&query).
 			First(&pin)
@@ -344,10 +342,8 @@ func (s *UploadService) GetPins(ctx context.Context, req messages.GetPinsRequest
 	// Apply paging filters
 	query = query.Scopes(applyPagingPinFilters(filterOpts))
 
-	if err := s.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-			return query.Find(&pins)
-		})
+	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return query.Find(&pins)
 	}); err != nil {
 		return nil, fmt.Errorf("failed to fetch pins: %w", err)
 	}
@@ -389,13 +385,11 @@ func (s *UploadService) GetChildPins(ctx context.Context, parentID any) ([]*plug
 	}
 
 	var childPins []*pluginDb.IPFSPinView
-	if err := s.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(s.ctx.DB(), func(db *gorm.DB) *gorm.DB {
-			return db.WithContext(ctx).
-				Model(&query).
-				Where(&query).
-				Find(&childPins)
-		})
+	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return tx.WithContext(ctx).
+			Model(&query).
+			Where(&query).
+			Find(&childPins)
 	}); err != nil {
 		return nil, fmt.Errorf("failed to get child pins: %w", err)
 	}
@@ -664,8 +658,9 @@ func (s *UploadService) CompletePin(ctx context.Context, pin *pluginDb.IPFSPinVi
 }
 
 func (s *UploadService) UpdatePinParent(ctx context.Context, requestID uuid.UUID, parentRequestID uuid.UUID) error {
-	err := db.RetryOnLock(s.ctx.DB(), func(db *gorm.DB) *gorm.DB {
-		return db.WithContext(ctx).
+
+	err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return tx.WithContext(ctx).
 			Model(&pluginDb.IPFSPin{}).
 			Where("request_id = ?", types.BinaryUUID(requestID)).
 			Update("parent_request_id", types.BinaryUUID(parentRequestID))
@@ -757,8 +752,8 @@ func (s *UploadService) getExistingPinForUser(ctx context.Context, c cid.Cid, us
 
 	hash := internal.NewIPFSHash(c)
 
-	err := db.RetryOnLock(s.ctx.DB(), func(db *gorm.DB) *gorm.DB {
-		return db.WithContext(ctx).
+	err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return tx.WithContext(ctx).
 			Where(&pluginDb.IPFSPinView{Hash: hash.Multihash(), HashType: hash.Type(), UserID: userId}).
 			First(&pin)
 	})
