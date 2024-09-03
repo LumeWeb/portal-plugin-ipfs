@@ -344,31 +344,24 @@ func (s *MetadataStoreDefault) SetLastAnnouncement(cids []cid.Cid, t time.Time) 
 func (s *MetadataStoreDefault) Pinned(offset, limit int) (roots []cid.Cid, err error) {
 	var _blocks []pluginDb.IPFSBlock
 
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if err := db.RetryOnLock(s.db, func(db *gorm.DB) *gorm.DB {
-			return tx.Model(&pluginDb.IPFSBlock{}).
-				Select("cid").
-				Order("id ASC").
-				Offset(offset).
-				Limit(limit).
-				Find(&_blocks)
-		}); err != nil {
-			return fmt.Errorf("failed to query root cids: %w", err)
-		}
+	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return tx.Model(&pluginDb.IPFSBlock{}).
+			Select("cid").
+			Order("id ASC").
+			Offset(offset).
+			Limit(limit).
+			Find(&_blocks)
 
-		for _, block := range _blocks {
-			root, err := cid.Parse(block.CID)
-			if err != nil {
-				return fmt.Errorf("failed to parse root cid: %w", err)
-			}
-			roots = append(roots, root)
-		}
-
-		return nil
-	})
-
-	if err != nil {
+	}); err != nil {
 		s.logger.Error("failed to get pinned blocks", zap.Error(err))
+	}
+
+	for _, block := range _blocks {
+		root, err := cid.Parse(block.CID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse root cid: %w", err)
+		}
+		roots = append(roots, root)
 	}
 
 	return roots, err
@@ -378,13 +371,11 @@ func (s *MetadataStoreDefault) Size(c cid.Cid) (uint64, error) {
 	c = normalizeCid(c)
 
 	var size uint64
-	if err := s.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(s.db, func(db *gorm.DB) *gorm.DB {
-			return db.Model(&pluginDb.IPFSBlock{}).
-				Select("size").
-				Where("cid = ?", c.Bytes()).
-				First(&size)
-		})
+	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return tx.Model(&pluginDb.IPFSBlock{}).
+			Select("size").
+			Where("cid = ?", c.Bytes()).
+			First(&size)
 	}); err != nil {
 		return 0, fmt.Errorf("failed to query block size: %w", err)
 	}
