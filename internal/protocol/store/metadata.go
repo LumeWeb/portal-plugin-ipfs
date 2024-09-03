@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/ipfs/boxo/ipld/unixfs"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
@@ -39,6 +40,7 @@ type (
 		Cid   cid.Cid   `json:"cid"`
 		Links []cid.Cid `json:"links"`
 		Size  uint64    `json:"size"`
+		Node  format.Node
 	}
 
 	MetadataStoreDefault struct {
@@ -71,6 +73,25 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 		}); err != nil {
 			_ = tx.AddError(fmt.Errorf("failed to insert/update block: %w", err))
 			return tx
+		}
+
+		unixfsNode, err := extractUnixFSMetadata(b.Node)
+		if err == nil {
+			unixfsNode.BlockID = parentBlock.ID
+			if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+				return tx.Clauses(clause.OnConflict{
+					Columns: []clause.Column{{Name: "block_id"}},
+					DoUpdates: clause.Assignments(map[string]interface{}{
+						"type":       unixfsNode.Type,
+						"size":       unixfsNode.Size,
+						"block_size": unixfsNode.BlockSize,
+						"updated_at": time.Now(),
+					}),
+				}).Create(unixfsNode)
+			}); err != nil {
+				_ = tx.AddError(fmt.Errorf("failed to insert/update UnixFS node: %w", err))
+				return tx
+			}
 		}
 
 		for i, link := range b.Links {
@@ -128,6 +149,12 @@ func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
 				return nil
 			}
 			_ = tx.AddError(fmt.Errorf("failed to find block: %w", err))
+			return tx
+		}
+
+		//
+		if err := tx.Where("block_id = ?", block.ID).Delete(&pluginDb.UnixFSNode{}).Error; err != nil {
+			_ = tx.AddError(fmt.Errorf("failed to delete UnixFS node: %w", err))
 			return tx
 		}
 
@@ -385,7 +412,6 @@ func (s *MetadataStoreDefault) Size(c cid.Cid) (uint64, error) {
 
 // NewMetadataStore creates a new blockstore backed by a renterd node
 func NewMetadataStore(ctx core.Context) *MetadataStoreDefault {
-
 	return &MetadataStoreDefault{
 		ctx:             ctx,
 		metadataService: ctx.Service(core.METADATA_SERVICE).(core.MetadataService),
@@ -400,4 +426,32 @@ func normalizeCid(c cid.Cid) cid.Cid {
 		return c
 	}
 	return cid.NewCidV1(c.Type(), c.Hash())
+}
+
+func extractUnixFSMetadata(node format.Node) (*pluginDb.UnixFSNode, error) {
+	fsNode, err := unixfs.ExtractFSNode(node)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract FSNode: %w", err)
+	}
+
+	metadata := &pluginDb.UnixFSNode{
+		Size: fsNode.FileSize(),
+	}
+
+	switch fsNode.Type() {
+	case unixfs.TFile:
+		metadata.Type = 0
+	case unixfs.TDirectory:
+		metadata.Type = 1
+	case unixfs.TSymlink:
+		metadata.Type = 2
+	default:
+		return nil, fmt.Errorf("unsupported UnixFS type: %d", fsNode.Type())
+	}
+
+	if fsNode.Type() == unixfs.TFile {
+		metadata.BlockSize = int64(fsNode.BlockSize(0))
+	}
+
+	return metadata, nil
 }

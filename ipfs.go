@@ -124,6 +124,7 @@ func init() {
 			&db.IPFSBlock{},
 			&db.IPFSLinkedBlock{},
 			&db.IPFSRequest{},
+			&db.UnixFSNode{},
 		},
 		Migrations: []core.DBMigration{
 			func(db *gorm.DB) error {
