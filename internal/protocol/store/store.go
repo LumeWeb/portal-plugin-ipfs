@@ -122,9 +122,15 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 
 	log.Debug("object uploaded", zap.Duration("elapsed", time.Since(start)))
 
+	node, err := encoding.DecodeBlock(ctx, b)
+	if err != nil {
+		return fmt.Errorf("failed to decode block %q: %w", b.Cid(), err)
+	}
+
 	meta := PinnedBlock{
 		Cid:  b.Cid(),
 		Size: size,
+		Node: node,
 	}
 
 	for _, link := range blockLinks(ctx, b) {
