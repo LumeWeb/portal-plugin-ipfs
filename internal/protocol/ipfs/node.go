@@ -8,6 +8,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/multiformats/go-multiaddr"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal/core"
@@ -222,6 +223,27 @@ func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datasto
 			dht.Datastore(ds),
 		}...),
 	}
+
+	// Get the node's peer ID
+	peerID := node.ID()
+
+	// Get listen addresses
+	listenAddrs, err := node.Network().InterfaceListenAddresses()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get listen addresses: %w", err)
+	}
+
+	// Create and log full multiaddresses (listen address + peer ID)
+	var fullAddrs []string
+	for _, addr := range listenAddrs {
+		fullAddr := addr.Encapsulate(multiaddr.StringCast("/p2p/" + peerID.String()))
+		fullAddrs = append(fullAddrs, fullAddr.String())
+	}
+
+	ctx.Logger().Info("IPFS node addresses",
+		zap.Stringer("peerID", peerID),
+		zap.Strings("multiaddrs", fullAddrs),
+	)
 
 	frt, err := fullrt.NewFullRT(node, dht.DefaultPrefix, fullRTOpts...)
 	if err != nil {
