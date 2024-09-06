@@ -133,7 +133,7 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 			}
 		}
 
-		return nil
+		return tx
 	})
 }
 
@@ -146,7 +146,7 @@ func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
 		if err := tx.Where("cid = ?", c.Bytes()).First(&block).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				// Block not found, consider it already unpinned
-				return nil
+				return tx
 			}
 			_ = tx.AddError(fmt.Errorf("failed to find block: %w", err))
 			return tx
@@ -171,7 +171,7 @@ func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
 		}
 
 		s.logger.Debug("unpinned and hard deleted block", zap.Stringer("cid", c))
-		return nil
+		return tx
 	})
 }
 
@@ -364,7 +364,7 @@ func (s *MetadataStoreDefault) SetLastAnnouncement(cids []cid.Cid, t time.Time) 
 				return tx
 			}
 		}
-		return nil
+		return tx
 	})
 }
 
