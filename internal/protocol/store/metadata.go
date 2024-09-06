@@ -449,7 +449,7 @@ func extractUnixFSMetadata(node format.Node) (*pluginDb.UnixFSNode, error) {
 		return nil, fmt.Errorf("unsupported UnixFS type: %d", fsNode.Type())
 	}
 
-	if fsNode.Type() == unixfs.TFile {
+	if fsNode.Type() == unixfs.TFile && fsNode.BlockSizes() != nil && len(fsNode.BlockSizes()) > 0 {
 		metadata.BlockSize = int64(fsNode.BlockSize(0))
 	}
 
