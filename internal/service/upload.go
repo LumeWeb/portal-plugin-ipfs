@@ -797,6 +797,27 @@ func (s *UploadService) getExistingPinForUser(ctx context.Context, c cid.Cid, us
 	return &pin, nil
 }
 
+func (s *UploadService) GetBlockMeta(ctx context.Context, c cid.Cid) (*messages.BlockMetaResponse, error) {
+	var unixFSNode pluginDb.UnixFSNode
+	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return tx.WithContext(ctx).
+			Model(&pluginDb.UnixFSNode{}).
+			Preload("Block"). // This will automatically join with IPFSBlock
+			Joins("Block").   // This ensures the join condition is included in the main query
+			Where("Block.cid = ?", c.Bytes()).
+			First(&unixFSNode)
+	}); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, err
+		}
+		return nil, fmt.Errorf("failed to get block meta: %w", err)
+	}
+
+	return &messages.BlockMetaResponse{
+		Type:      unixFSNode.Type,
+		BlockSize: unixFSNode.BlockSize,
+	}, nil
+}
 func requestStatusToPinStatus(status models.RequestStatusType) pluginDb.PinningStatus {
 	switch status {
 	case models.RequestStatusPending:
