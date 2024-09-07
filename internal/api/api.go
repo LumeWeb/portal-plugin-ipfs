@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	blocks "github.com/ipfs/go-block-format"
@@ -15,6 +16,7 @@ import (
 	"go.lumeweb.com/portal/middleware"
 	"go.lumeweb.com/portal/service"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 	"io"
 	"net/http"
 	"strconv"
@@ -171,6 +173,7 @@ func (a API) Configure(router *mux.Router) error {
 	apiRouter.Use(authMw)
 	// Car Post Upload
 	apiRouter.HandleFunc("/api/upload", a.handleUpload).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/api/block/meta/{cid}", a.handleGetBlockMeta).Methods("GET", "OPTIONS")
 
 	// Configure TUS routes
 	a.tus.SetupRoute(router, authMw, TUS_HTTP_ROUTE)
@@ -466,6 +469,30 @@ func (a API) prepareFileUpload(r *http.Request) (file io.ReadSeekCloser, size ui
 	size = uint64(len(data))
 
 	return buffer, size, nil
+}
+
+func (a API) handleGetBlockMeta(w http.ResponseWriter, r *http.Request) {
+	ctx := httputil.Context(r, w)
+	_cid := mux.Vars(r)["cid"]
+
+	pCid, err := cid.Parse(_cid)
+	if err != nil {
+		_ = ctx.Error(fmt.Errorf("failed to parse CID: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	meta, err := a.upload.GetBlockMeta(ctx, pCid)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			_ = ctx.Error(fmt.Errorf("block not found: %w", err), http.StatusNotFound)
+			return
+		}
+
+		_ = ctx.Error(fmt.Errorf("failed to get block: %w", err), http.StatusInternalServerError)
+		return
+	}
+
+	ctx.Encode(meta)
 }
 
 func (a API) setTrustlessHeaders(w http.ResponseWriter, r *http.Request, id string) {

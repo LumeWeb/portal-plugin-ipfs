@@ -83,3 +83,8 @@ type ErrorResponse struct {
 
 type PostUploadResponse struct {
 }
+
+type BlockMetaResponse struct {
+	Type      uint8 `json:"type"`
+	BlockSize int64 `json:"block_size"`
+}
