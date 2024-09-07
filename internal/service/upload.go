@@ -819,6 +819,7 @@ func (s *UploadService) GetBlockMeta(ctx context.Context, c cid.Cid) (*messages.
 	return &messages.BlockMetaResponse{
 		Type:      unixFSNode.Type,
 		BlockSize: unixFSNode.BlockSize,
+		ChildCID:  unixFSNode.ChildCID,
 	}, nil
 }
 func requestStatusToPinStatus(status models.RequestStatusType) pluginDb.PinningStatus {

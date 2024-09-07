@@ -16,6 +16,7 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
 	"go.uber.org/zap"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"time"
@@ -76,7 +77,7 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 			return tx
 		}
 
-		unixfsNode, err := extractNodeMetadata(b.Node)
+		unixfsNode, err := extractNodeMetadata(b)
 		if err == nil {
 			unixfsNode.BlockID = parentBlock.ID
 			if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
@@ -85,6 +86,7 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 					DoUpdates: clause.Assignments(map[string]interface{}{
 						"type":       unixfsNode.Type,
 						"block_size": unixfsNode.BlockSize,
+						"child_cid":  unixfsNode.ChildCID,
 						"updated_at": time.Now(),
 					}),
 				}).Create(unixfsNode)
@@ -428,8 +430,8 @@ func normalizeCid(c cid.Cid) cid.Cid {
 	return cid.NewCidV1(c.Type(), c.Hash())
 }
 
-func extractNodeMetadata(node format.Node) (*pluginDb.UnixFSNode, error) {
-	analyzedNode, err := internal.AnalyzeNode(context.Background(), node)
+func extractNodeMetadata(block PinnedBlock) (*pluginDb.UnixFSNode, error) {
+	analyzedNode, err := internal.AnalyzeNode(context.Background(), block.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -456,6 +458,8 @@ func extractNodeMetadata(node format.Node) (*pluginDb.UnixFSNode, error) {
 	if analyzedNode.UnixFSType == unixfs.TFile && analyzedNode.UnixFSBlockSizes != nil && len(analyzedNode.UnixFSBlockSizes) > 0 {
 		metadata.BlockSize = int64(analyzedNode.UnixFSBlockSizes[0])
 	}
+
+	metadata.ChildCID = datatypes.NewJSONSlice(block.Links)
 
 	return metadata, nil
 }
