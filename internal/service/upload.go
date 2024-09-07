@@ -11,6 +11,7 @@ import (
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/ipld/go-car/v2"
+	"github.com/samber/lo"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/messages"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
@@ -319,11 +320,13 @@ func (s *UploadService) GetPins(ctx context.Context, req messages.GetPinsRequest
 	var pins []pluginDb.IPFSPinView
 
 	filterOpts := pinFilterOptions{
-		UserID:      userId,
-		CIDs:        req.CID,
-		Name:        req.Name,
-		Match:       req.Match,
-		Status:      req.Status,
+		UserID: userId,
+		CIDs:   req.CID,
+		Name:   req.Name,
+		Match:  req.Match,
+		Status: lo.Uniq(lo.Map(req.Status, func(status string, _ int) string {
+			return string(internal.PinStatusToRequestStatus(pluginDb.PinningStatus(status)))
+		})),
 		Before:      req.Before,
 		After:       req.After,
 		BeforeCount: req.BeforeCount,
