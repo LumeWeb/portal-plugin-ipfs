@@ -442,11 +442,13 @@ func extractNodeMetadata(node format.Node) (*pluginDb.UnixFSNode, error) {
 
 	switch analyzedNode.UnixFSType {
 	case unixfs.TFile:
-		metadata.Type = 0
+		metadata.Type = 2
 	case unixfs.TDirectory:
 		metadata.Type = 1
 	case unixfs.TSymlink:
-		metadata.Type = 2
+		metadata.Type = 4
+	case unixfs.THAMTShard:
+		metadata.Type = 5
 	default:
 		return nil, fmt.Errorf("unsupported UnixFS type: %d", analyzedNode.UnixFSType)
 	}
