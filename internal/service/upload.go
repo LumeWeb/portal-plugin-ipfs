@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/gookit/event"
+	"github.com/icza/gox/gox"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
@@ -328,8 +329,7 @@ func (s *UploadService) GetPins(ctx context.Context, req messages.GetPinsRequest
 		BeforeCount: req.BeforeCount,
 		AfterCount:  req.AfterCount,
 		Limit:       req.Limit,
-		Internal:    true,
-		Partial:     false,
+		Partial:     gox.NewBool(false),
 	}
 
 	// Apply general filters
@@ -859,8 +859,8 @@ type pinFilterOptions struct {
 	BeforeCount *int64
 	AfterCount  *int64
 	Limit       int
-	Internal    bool
-	Partial     bool
+	Internal    *bool
+	Partial     *bool
 }
 
 func applyGeneralPinFilters(opts pinFilterOptions) func(db *gorm.DB) *gorm.DB {
@@ -890,8 +890,13 @@ func applyGeneralPinFilters(opts pinFilterOptions) func(db *gorm.DB) *gorm.DB {
 			db = db.Where("status IN ?", opts.Status)
 		}
 
-		db = db.Where("internal = ?", opts.Internal)
-		db = db.Where("partial = ?", opts.Partial)
+		if opts.Internal != nil {
+			db = db.Where("internal = ?", opts.Internal)
+		}
+
+		if opts.Partial != nil {
+			db = db.Where("partial = ?", opts.Partial)
+		}
 
 		return db
 	}
