@@ -1103,6 +1103,10 @@ go.etcd.io/etcd/client/v3 v3.5.15 h1:23M0eY4Fd/inNv1ZfU3AxrbbOdW79r9V9Rl62Nm6ip4
 go.etcd.io/etcd/client/v3 v3.5.15/go.mod h1:CLSJxrYjvLtHsrPKsy7LmZEE+DK2ktfd2bN4RhBMwlU=
 go.lumeweb.com/httputil v0.0.0-20240907084008-33d7fa57eebf h1:/RR20RXjnc34e9K6isfHZnRbriWz59W6o45yFVmy1qA=
 go.lumeweb.com/httputil v0.0.0-20240907084008-33d7fa57eebf/go.mod h1:3aHem0Fj7dH1Kj+WgluoF0WlSyXyUCrJk4bvmdq/Fgs=
+go.lumeweb.com/httputil v0.0.0-20240907104839-358c4fc05cfc h1:cOFAr0kdaPIK5uMLTFF3Qu6+IzsfqLcQepGpSvfyyBw=
+go.lumeweb.com/httputil v0.0.0-20240907104839-358c4fc05cfc/go.mod h1:3aHem0Fj7dH1Kj+WgluoF0WlSyXyUCrJk4bvmdq/Fgs=
+go.lumeweb.com/httputil v0.0.0-20240907105629-dbffb601f2ab h1:8FHJm1D00GJNV+5PkaJv+Wyvh5FR+s97rTubAdvi9mA=
+go.lumeweb.com/httputil v0.0.0-20240907105629-dbffb601f2ab/go.mod h1:3aHem0Fj7dH1Kj+WgluoF0WlSyXyUCrJk4bvmdq/Fgs=
 go.lumeweb.com/portal v0.1.2-0.20240902135333-6a601eae074f h1:AfkcwoiSCyhQQtNqg9lHZYUb1luKl0kzpH1sgzNrrh8=
 go.lumeweb.com/portal v0.1.2-0.20240902135333-6a601eae074f/go.mod h1:XgMTgtKiYbmxxcvKxyvCAyX09TmQEEYpuWjQk4SrA9c=
 go.opencensus.io v0.18.0/go.mod h1:vKdFvxhtzZ9onBp9VKHK8z/sRpBMnKAsufL7wlDrCOA=
