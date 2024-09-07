@@ -62,7 +62,8 @@ func createView(db *gorm.DB) error {
             p.user_id AS pin_user_id,
             u.hash AS u_hash,
             u.hash_type AS u_hash_type,
-            u.uploader_ip
+            u.uploader_ip,
+			ip.partial AS partial
         `).
 		Joins("JOIN portal.pins p ON ip.id = p.id").
 		Joins("JOIN portal.uploads u ON p.upload_id = u.id").
@@ -81,6 +82,7 @@ func createView(db *gorm.DB) error {
             COALESCE(pud.pin_user_id, ird.r_user_id) AS user_id,
             COALESCE(ird.source_ip, pud.uploader_ip) AS uploader_ip,
             ird.internal,
+			pud.partial,
             ird.pin_request_id,
             ird.parent_pin_request_id,
             pud.pin_id,

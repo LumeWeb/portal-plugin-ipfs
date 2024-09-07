@@ -9,6 +9,7 @@ import (
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
+	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store/downloader"
@@ -75,7 +76,7 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 			return tx
 		}
 
-		unixfsNode, err := extractUnixFSMetadata(b.Node)
+		unixfsNode, err := extractNodeMetadata(b.Node)
 		if err == nil {
 			unixfsNode.BlockID = parentBlock.ID
 			if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
@@ -83,7 +84,6 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 					Columns: []clause.Column{{Name: "block_id"}},
 					DoUpdates: clause.Assignments(map[string]interface{}{
 						"type":       unixfsNode.Type,
-						"size":       unixfsNode.Size,
 						"block_size": unixfsNode.BlockSize,
 						"updated_at": time.Now(),
 					}),
@@ -428,17 +428,19 @@ func normalizeCid(c cid.Cid) cid.Cid {
 	return cid.NewCidV1(c.Type(), c.Hash())
 }
 
-func extractUnixFSMetadata(node format.Node) (*pluginDb.UnixFSNode, error) {
-	fsNode, err := unixfs.ExtractFSNode(node)
+func extractNodeMetadata(node format.Node) (*pluginDb.UnixFSNode, error) {
+	analyzedNode, err := internal.AnalyzeNode(context.Background(), node)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract FSNode: %w", err)
+		return nil, err
 	}
 
-	metadata := &pluginDb.UnixFSNode{
-		Size: fsNode.FileSize(),
+	if !analyzedNode.IsUnixFS {
+		return nil, fmt.Errorf("node is not a UnixFS node")
 	}
 
-	switch fsNode.Type() {
+	metadata := &pluginDb.UnixFSNode{}
+
+	switch analyzedNode.UnixFSType {
 	case unixfs.TFile:
 		metadata.Type = 0
 	case unixfs.TDirectory:
@@ -446,11 +448,11 @@ func extractUnixFSMetadata(node format.Node) (*pluginDb.UnixFSNode, error) {
 	case unixfs.TSymlink:
 		metadata.Type = 2
 	default:
-		return nil, fmt.Errorf("unsupported UnixFS type: %d", fsNode.Type())
+		return nil, fmt.Errorf("unsupported UnixFS type: %d", analyzedNode.UnixFSType)
 	}
 
-	if fsNode.Type() == unixfs.TFile && fsNode.BlockSizes() != nil && len(fsNode.BlockSizes()) > 0 {
-		metadata.BlockSize = int64(fsNode.BlockSize(0))
+	if analyzedNode.UnixFSType == unixfs.TFile && analyzedNode.UnixFSBlockSizes != nil && len(analyzedNode.UnixFSBlockSizes) > 0 {
+		metadata.BlockSize = int64(analyzedNode.UnixFSBlockSizes[0])
 	}
 
 	return metadata, nil

@@ -81,6 +81,12 @@ func CronTaskPin(args *define.CronTaskPinArgs, ctx core.Context) error {
 		}
 	}
 
+	// Detect and update partial status
+	if err = uploadService.DetectUpdatePartialStatus(ctx, node); err != nil {
+		logger.Error("Failed to detect and/or update partial status", zap.Error(err))
+		return err
+	}
+
 	// Update status to Pinned for this node
 	if err = uploadService.PinRequestStatusPinned(ctx, args.RequestID); err != nil {
 		logger.Error("Failed to update import status to Pinned", zap.Error(err))
