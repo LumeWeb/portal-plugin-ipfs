@@ -11,6 +11,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gookit/event v1.1.2
 	github.com/gorilla/mux v1.8.1
+	github.com/icza/gox v0.0.0-20240829094117-5982a7a6cca1
 	github.com/ipfs/boxo v0.21.0
 	github.com/ipfs/go-block-format v0.2.0
 	github.com/ipfs/go-cid v0.4.1
@@ -24,6 +25,7 @@ require (
 	github.com/ipld/go-ipld-prime v0.21.0
 	github.com/libp2p/go-libp2p v0.35.2
 	github.com/libp2p/go-libp2p-kad-dht v0.25.2
+	github.com/multiformats/go-multiaddr v0.12.4
 	github.com/multiformats/go-multicodec v0.9.0
 	github.com/multiformats/go-multihash v0.2.3
 	github.com/rs/cors v1.11.0
@@ -160,7 +162,6 @@ require (
 	github.com/mr-tron/base58 v1.2.0 // indirect
 	github.com/multiformats/go-base32 v0.1.0 // indirect
 	github.com/multiformats/go-base36 v0.2.0 // indirect
-	github.com/multiformats/go-multiaddr v0.12.4 // indirect
 	github.com/multiformats/go-multiaddr-dns v0.3.1 // indirect
 	github.com/multiformats/go-multiaddr-fmt v0.1.0 // indirect
 	github.com/multiformats/go-multibase v0.2.0 // indirect
