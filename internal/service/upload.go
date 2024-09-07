@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/gookit/event"
+	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/ipld/go-car/v2"
@@ -327,7 +328,8 @@ func (s *UploadService) GetPins(ctx context.Context, req messages.GetPinsRequest
 		BeforeCount: req.BeforeCount,
 		AfterCount:  req.AfterCount,
 		Limit:       req.Limit,
-		Internal:    false,
+		Internal:    true,
+		Partial:     false,
 	}
 
 	// Apply general filters
@@ -682,6 +684,33 @@ func (s *UploadService) SetTusUploadRequestID(ctx context.Context, requestId uin
 	return nil
 }
 
+func (s *UploadService) DetectUpdatePartialStatus(ctx context.Context, block blocks.Block) error {
+	hash := internal.NewIPFSHash(block.Cid())
+
+	pin, err := s.pin.QueryProtocolPin(ctx, internal.ProtocolName, nil, core.PinFilter{Protocol: internal.ProtocolName, Hash: hash})
+	if err != nil {
+		return err
+	}
+
+	if pin == nil {
+		return errors.New("pin not found")
+	}
+
+	pinData := pin.(*pluginDb.IPFSPin)
+
+	partial, err := internal.DetectPartialFile(ctx, block)
+	if err != nil {
+		return err
+	}
+
+	err = s.pin.UpdateProtocolPin(ctx, pinData.PinID, &pluginDb.IPFSPin{Partial: partial})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (s *UploadService) createUploadRequest(ctx context.Context, uploadCid, c cid.Cid, userId uint, uploaderIP string, uploadId string) error {
 	uploadHash := internal.NewIPFSHash(c)
 	hash := internal.NewIPFSHash(c)
@@ -810,6 +839,7 @@ type pinFilterOptions struct {
 	AfterCount  *int64
 	Limit       int
 	Internal    bool
+	Partial     bool
 }
 
 func applyGeneralPinFilters(opts pinFilterOptions) func(db *gorm.DB) *gorm.DB {
@@ -840,6 +870,7 @@ func applyGeneralPinFilters(opts pinFilterOptions) func(db *gorm.DB) *gorm.DB {
 		}
 
 		db = db.Where("internal = ?", opts.Internal)
+		db = db.Where("partial = ?", opts.Partial)
 
 		return db
 	}

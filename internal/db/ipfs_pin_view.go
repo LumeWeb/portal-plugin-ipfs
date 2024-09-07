@@ -17,6 +17,7 @@ type IPFSPinView struct {
 	UserID             uint                     `gorm:"column:user_id"`
 	UploaderIP         string                   `gorm:"column:uploader_ip"`
 	Internal           bool                     `gorm:"column:internal"`
+	Partial            bool                     `gorm:"column:partial"`
 	PinID              uint                     `gorm:"column:pin_id"`
 	Pin                *models.Pin              `gorm:"foreignKey:PinID;references:ID"`
 	PinRequestID       types.BinaryUUID         `gorm:"column:pin_request_id"`

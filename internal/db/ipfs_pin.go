@@ -30,6 +30,7 @@ type IPFSPin struct {
 	RequestID       types.BinaryUUID  `gorm:"type:binary(16);uniqueIndex:idx_ipfs_pin_hash_request_id_deleted_at"`
 	ParentRequestID *types.BinaryUUID `gorm:"type:binary(16);uniqueIndex:idx_ipfs_pin_hash_request_id_deleted_at"`
 	Internal        bool              `gorm:"default:false"`
+	Partial         bool              `gorm:"default:false"`
 }
 
 func (I IPFSPin) TableName() string {

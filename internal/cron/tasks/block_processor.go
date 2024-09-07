@@ -179,6 +179,10 @@ func (bp *blockProcessor) processBlock(ctx context.Context, msg queueCore.Queued
 		return bp.handleError(fmt.Errorf("failed to pin block: %w", err))
 	}
 
+	if err = bp.uploadService.DetectUpdatePartialStatus(ctx, job.Block); err != nil {
+		return bp.handleError(fmt.Errorf("failed to detect and/or update partial status: %w", err))
+	}
+
 	cidBytes := job.Block.Cid().Bytes()
 
 	bp.mu.Lock()

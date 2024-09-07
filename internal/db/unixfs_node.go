@@ -12,7 +12,6 @@ type UnixFSNode struct {
 	BlockID   uint
 	Block     IPFSBlock `gorm:"foreignKey:BlockID"`
 	Type      uint8
-	Size      uint64
 	BlockSize int64
 }
 
