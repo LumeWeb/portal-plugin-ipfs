@@ -902,6 +902,8 @@ func applyGeneralPinFilters(opts pinFilterOptions) func(db *gorm.DB) *gorm.DB {
 			db = db.Where("partial = ?", opts.Partial)
 		}
 
+		db = db.Order("created_at DESC")
+
 		return db
 	}
 }
