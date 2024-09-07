@@ -29,7 +29,7 @@ require (
 	github.com/rs/cors v1.11.0
 	github.com/samber/lo v1.47.0
 	github.com/tus/tusd/v2 v2.4.0
-	go.lumeweb.com/httputil v0.0.0-20240616192644-3d270a528d86
+	go.lumeweb.com/httputil v0.0.0-20240907084008-33d7fa57eebf
 	go.lumeweb.com/portal v0.1.2-0.20240902135333-6a601eae074f
 	go.sia.tech/renterd v1.0.8
 	go.uber.org/zap v1.27.0
