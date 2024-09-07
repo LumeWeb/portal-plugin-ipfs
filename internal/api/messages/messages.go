@@ -1,7 +1,6 @@
 package messages
 
 import (
-	"github.com/ipfs/go-cid"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"time"
 )
@@ -86,7 +85,7 @@ type PostUploadResponse struct {
 }
 
 type BlockMetaResponse struct {
-	Type      uint8     `json:"type"`
-	BlockSize int64     `json:"block_size"`
-	ChildCID  []cid.Cid `json:"child_cid"`
+	Type      uint8    `json:"type"`
+	BlockSize int64    `json:"block_size"`
+	ChildCID  []string `json:"child_cid"`
 }
