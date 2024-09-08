@@ -37,6 +37,8 @@ require (
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.26.0
 	gopkg.in/yaml.v3 v3.0.1
+	gorm.io/datatypes v1.2.1
+	gorm.io/driver/mysql v1.5.7
 	gorm.io/gorm v1.25.11
 )
 
@@ -46,6 +48,7 @@ require (
 	github.com/LumeWeb/siacentral-api v0.0.0-20240311114304-4ff40c07bce5 // indirect
 	github.com/adjust/rmq/v5 v5.2.0 // indirect
 	github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da // indirect
+	github.com/alecthomas/units v0.0.0-20231202071711-9a357b53e9c9 // indirect
 	github.com/alicebob/gopher-json v0.0.0-20230218143504-906a9b012302 // indirect
 	github.com/alicebob/miniredis/v2 v2.30.4 // indirect
 	github.com/aws/aws-sdk-go v1.54.6 // indirect
@@ -76,6 +79,7 @@ require (
 	github.com/containerd/cgroups v1.1.0 // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.5.0 // indirect
+	github.com/crackcomm/go-gitignore v0.0.0-20231225121904-e25f5bc08668 // indirect
 	github.com/cskr/pubsub v1.0.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
@@ -114,6 +118,7 @@ require (
 	github.com/hbollon/go-edlib v1.6.0 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/ipfs/bbloom v0.0.4 // indirect
+	github.com/ipfs/go-bitfield v1.1.0 // indirect
 	github.com/ipfs/go-cidutil v0.1.0 // indirect
 	github.com/ipfs/go-ipfs-delay v0.0.1 // indirect
 	github.com/ipfs/go-ipfs-pq v0.0.3 // indirect
@@ -257,8 +262,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240617180043-68d350f18fd4 // indirect
 	google.golang.org/grpc v1.64.1 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
-	gorm.io/datatypes v1.2.1 // indirect
-	gorm.io/driver/mysql v1.5.7 // indirect
 	gorm.io/driver/sqlite v1.5.6 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
 	lukechampine.com/frand v1.4.2 // indirect

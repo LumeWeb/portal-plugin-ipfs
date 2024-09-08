@@ -13,6 +13,7 @@ type UnixFSNode struct {
 	gorm.Model
 	BlockID   uint
 	Block     IPFSBlock                    `gorm:"foreignKey:BlockID"`
+	Name      string                       `gorm:"column:name"`
 	Type      uint8                        `gorm:"column:type"`
 	BlockSize int64                        `gorm:"column:block_size"`
 	ChildCID  datatypes.JSONSlice[cid.Cid] `gorm:"column:child_cid"`

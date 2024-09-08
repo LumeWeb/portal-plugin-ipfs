@@ -85,6 +85,7 @@ type PostUploadResponse struct {
 }
 
 type BlockMetaResponse struct {
+	Name      string   `json:"name"`
 	Type      uint8    `json:"type"`
 	BlockSize int64    `json:"block_size"`
 	ChildCID  []string `json:"child_cid"`

@@ -2,10 +2,13 @@ package internal
 
 import (
 	"context"
+	"github.com/ipfs/boxo/files"
 	"github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/boxo/ipld/unixfs"
+	unixfile "github.com/ipfs/boxo/ipld/unixfs/file"
 	pb "github.com/ipfs/boxo/ipld/unixfs/pb"
 	blocks "github.com/ipfs/go-block-format"
+	"github.com/ipfs/go-cid"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 )
 
@@ -21,6 +24,8 @@ const (
 )
 
 type NodeInfo struct {
+	Name             string
+	CID              cid.Cid
 	Type             NodeInfoType
 	UnixFSType       pb.Data_DataType
 	Size             uint64
@@ -29,15 +34,17 @@ type NodeInfo struct {
 	IsFileRoot       bool
 	DataSize         uint64
 	UnixFSBlockSizes []uint64
+	Children         []*NodeInfo
 }
 
-func AnalyzeNode(ctx context.Context, block blocks.Block) (*NodeInfo, error) {
+func AnalyzeNode(ctx context.Context, block blocks.Block, depth int) (*NodeInfo, error) {
 	node, err := encoding.DecodeBlock(ctx, block)
 	if err != nil {
 		return nil, err
 	}
 
 	info := &NodeInfo{
+		CID:   block.Cid(),
 		Links: len(node.Links()),
 	}
 
@@ -56,6 +63,22 @@ func AnalyzeNode(ctx context.Context, block blocks.Block) (*NodeInfo, error) {
 			info.DataSize = uint64(len(fsNode.Data()))
 			info.IsFileRoot = fsNode.Type() == unixfs.TFile && info.Links > 0
 			info.UnixFSBlockSizes = fsNode.BlockSizes()
+			file, err := unixfile.NewUnixfsFile(ctx, nil, node)
+			if err != nil {
+				return nil, err
+			}
+
+			if depth > 0 {
+				iter := file.(files.Directory).Entries()
+				for iter.Next() {
+					child := iter.Node()
+					childInfo, err := AnalyzeNode(ctx, child.(blocks.Block), depth-1)
+					if err != nil {
+						return nil, err
+					}
+					info.Children = append(info.Children, childInfo)
+				}
+			}
 		} else {
 			// Handle non-UnixFS ProtoNodes
 			info.Size = uint64(len(n.Data()))
@@ -89,7 +112,7 @@ func isPartialFile(info *NodeInfo) bool {
 }
 
 func DetectPartialFile(ctx context.Context, block blocks.Block) (bool, error) {
-	info, err := AnalyzeNode(ctx, block)
+	info, err := AnalyzeNode(ctx, block, 0)
 	if err != nil {
 		return false, err
 	}
