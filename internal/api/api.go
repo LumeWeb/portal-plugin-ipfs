@@ -12,6 +12,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/messages"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	pluginService "go.lumeweb.com/portal-plugin-ipfs/internal/service"
 	"go.lumeweb.com/portal/middleware"
 	"go.lumeweb.com/portal/service"
@@ -174,6 +175,7 @@ func (a API) Configure(router *mux.Router) error {
 	// Car Post Upload
 	apiRouter.HandleFunc("/api/upload", a.handleUpload).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/api/block/meta/{cid}", a.handleGetBlockMeta).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/api/block/meta/batch", a.handleGetBlockMetaBatch).Methods("POST", "OPTIONS")
 
 	// Configure TUS routes
 	a.tus.SetupRoute(router, authMw, TUS_HTTP_ROUTE)
@@ -514,6 +516,34 @@ func (a API) getTrustlessContentType(r *http.Request) string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+func (a API) handleGetBlockMetaBatch(w http.ResponseWriter, r *http.Request) {
+	ctx := httputil.Context(r, w)
+	var req messages.GetBlockMetaBatchRequest
+	if err := ctx.Decode(&req); err != nil {
+		return
+	}
+
+	metas := make(map[string]*messages.BlockMetaResponse, len(req.CID))
+
+	for _, _cid := range req.CID {
+		parsedCid, err := cid.Decode(_cid)
+		if err != nil {
+			_ = ctx.Error(fmt.Errorf("invalid CID: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		meta, err := a.upload.GetBlockMeta(ctx, parsedCid)
+		if err != nil {
+			_ = ctx.Error(err, http.StatusInternalServerError)
+			return
+		}
+
+		metas[encoding.ToV1(parsedCid).String()] = meta
+
+	}
+	ctx.Encode(metas)
 }
 
 func validateCar(r io.Reader) (blocks.Block, error) {

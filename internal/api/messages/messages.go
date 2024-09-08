@@ -89,3 +89,8 @@ type BlockMetaResponse struct {
 	BlockSize int64    `json:"block_size"`
 	ChildCID  []string `json:"child_cid"`
 }
+type GetBlockMetaBatchRequest struct {
+	CID []string `json:"cid"`
+}
+
+type GetBlockMetaBatchResponse = map[string]*BlockMetaResponse
