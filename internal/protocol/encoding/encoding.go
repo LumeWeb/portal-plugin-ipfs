@@ -23,3 +23,17 @@ func init() {
 func DecodeBlock(ctx context.Context, block blocks.Block) (format.Node, error) {
 	return encoderRegistry.DecodeNode(ctx, block)
 }
+
+func ToV1(c cid.Cid) cid.Cid {
+	switch c.Version() {
+	case 0:
+		dagPbCode := uint64(cid.DagProtobuf)
+		newCid := cid.NewCidV1(dagPbCode, c.Hash())
+		return newCid
+	case 1:
+		// If it's already version 1, return it as is
+		return c
+	default:
+		return cid.Undef
+	}
+}

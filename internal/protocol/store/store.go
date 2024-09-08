@@ -38,7 +38,7 @@ type (
 )
 
 func cidKey(c cid.Cid) string {
-	return cid.NewCidV1(c.Type(), c.Hash()).String()
+	return encoding.ToV1(c).String()
 }
 
 // DeleteBlock removes a given block from the blockstore.
