@@ -99,7 +99,7 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 			}
 		}
 
-		nodeInfo, err := internal.AnalyzeNode(context.Background(), b.Node, 1)
+		nodeInfo, err := internal.AnalyzeNode(context.Background(), b.Node)
 		if err != nil {
 			return nil
 		}
@@ -142,13 +142,13 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 				return tx
 			}
 
-			found := lo.Filter(nodeInfo.Children, func(n *internal.NodeInfo, _ int) bool {
-				return n.CID.Equals(link)
+			found := lo.Filter(nodeInfo.Links, func(n *format.Link, _ int) bool {
+				return n.Cid.Equals(link)
 			})
 
 			if len(found) > 0 {
 				err := core.GetService[core.CronService](s.ctx, core.CRON_SERVICE).CreateJobIfNotExists(define.CronTaskUnixFSUpdateMetadataName, define.CronTaskUnixFSUpdateMetadataArgs{
-					CID:  found[0].CID.String(),
+					CID:  found[0].Cid.String(),
 					Name: found[0].Name,
 				})
 				if err != nil {
@@ -466,7 +466,7 @@ func NewMetadataStore(ctx core.Context) *MetadataStoreDefault {
 }
 
 func extractNodeMetadata(block PinnedBlock) (*pluginDb.UnixFSNode, error) {
-	analyzedNode, err := internal.AnalyzeNode(context.Background(), block.Node, 1)
+	analyzedNode, err := internal.AnalyzeNode(context.Background(), block.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -494,13 +494,9 @@ func extractNodeMetadata(block PinnedBlock) (*pluginDb.UnixFSNode, error) {
 		metadata.BlockSize = int64(analyzedNode.UnixFSBlockSizes[0])
 	}
 
-	links := make([]cid.Cid, len(block.Links))
-
-	for i, link := range block.Links {
-		links[i] = encoding.NormalizeCid(link)
-	}
-
-	metadata.ChildCID = datatypes.NewJSONSlice(links)
+	metadata.ChildCID = datatypes.NewJSONSlice(lo.Map(block.Links, func(c cid.Cid, _ int) cid.Cid {
+		return encoding.NormalizeCid(c)
+	}))
 
 	return metadata, nil
 }
