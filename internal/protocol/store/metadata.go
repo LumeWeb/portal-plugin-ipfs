@@ -56,13 +56,13 @@ type (
 
 // Pin adds a block to the store.
 func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
-	b.Cid = normalizeCid(b.Cid)
+	b.Cid = encoding.NormalizeCid(b.Cid)
 	s.logger.Debug("pinning block", zap.Stringer("cid", b.Cid))
 
 	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		// Insert or update the parent block
 		parentBlock := pluginDb.IPFSBlock{
-			CID:              encoding.ToV1(b.Cid).Bytes(),
+			CID:              b.Cid.Bytes(),
 			Size:             b.Size,
 			LastAnnouncement: nil,
 			Ready:            true,
@@ -98,7 +98,7 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 		}
 
 		for i, link := range b.Links {
-			link = normalizeCid(link)
+			link = encoding.NormalizeCid(link)
 			var childBlock pluginDb.IPFSBlock
 			childBlock.CID = link.Bytes()
 			childBlock.Size = 0
@@ -141,7 +141,7 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 }
 
 func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
-	c = normalizeCid(c)
+	c = encoding.NormalizeCid(c)
 
 	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		// Find the block to be unpinned
@@ -200,7 +200,7 @@ func (s *MetadataStoreDefault) BlockExists(c cid.Cid) error {
 	return nil
 }
 func (s *MetadataStoreDefault) BlockChildren(c cid.Cid, max int) (children []cid.Cid, err error) {
-	c = normalizeCid(c)
+	c = encoding.NormalizeCid(c)
 	const query = `
 WITH parent_block AS (
     SELECT id 
@@ -252,7 +252,7 @@ LIMIT ?
 }
 
 func (s *MetadataStoreDefault) BlockSiblings(c cid.Cid, max int) (siblings []cid.Cid, err error) {
-	c = normalizeCid(c)
+	c = encoding.NormalizeCid(c)
 	const query = `
 WITH child_blocks AS (
     SELECT lb.parent_id, lb.link_index
@@ -398,7 +398,7 @@ func (s *MetadataStoreDefault) Pinned(offset, limit int) (roots []cid.Cid, err e
 }
 
 func (s *MetadataStoreDefault) Size(c cid.Cid) (uint64, error) {
-	c = normalizeCid(c)
+	c = encoding.NormalizeCid(c)
 
 	var size uint64
 	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
@@ -421,14 +421,6 @@ func NewMetadataStore(ctx core.Context) *MetadataStoreDefault {
 		db:              ctx.DB(),
 		logger:          ctx.Logger(),
 	}
-}
-
-// Helper function to normalize CID
-func normalizeCid(c cid.Cid) cid.Cid {
-	if c.Version() == 1 {
-		return c
-	}
-	return cid.NewCidV1(c.Type(), c.Hash())
 }
 
 func extractNodeMetadata(block PinnedBlock) (*pluginDb.UnixFSNode, error) {
@@ -460,7 +452,13 @@ func extractNodeMetadata(block PinnedBlock) (*pluginDb.UnixFSNode, error) {
 		metadata.BlockSize = int64(analyzedNode.UnixFSBlockSizes[0])
 	}
 
-	metadata.ChildCID = datatypes.NewJSONSlice(block.Links)
+	links := make([]cid.Cid, len(block.Links))
+
+	for i, link := range block.Links {
+		links[i] = encoding.NormalizeCid(link)
+	}
+
+	metadata.ChildCID = datatypes.NewJSONSlice(links)
 
 	return metadata, nil
 }
