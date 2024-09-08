@@ -455,6 +455,21 @@ func (s *MetadataStoreDefault) UpdateUnixFSMetadata(c cid.Cid, metadata *pluginD
 	})
 }
 
+func (s *MetadataStoreDefault) GetUnixFSMetadata(c cid.Cid) (*pluginDb.UnixFSNode, error) {
+	c = encoding.NormalizeCid(c)
+
+	var metadata pluginDb.UnixFSNode
+	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return tx.Joins("JOIN ipfs_blocks ON unixfs_nodes.block_id = ipfs_blocks.id").
+			Where("ipfs_blocks.cid = ?", c.Bytes()).
+			First(&metadata)
+	}); err != nil {
+		return nil, fmt.Errorf("failed to query UnixFS metadata: %w", err)
+	}
+
+	return &metadata, nil
+}
+
 // NewMetadataStore creates a new blockstore backed by a renterd node
 func NewMetadataStore(ctx core.Context) *MetadataStoreDefault {
 	return &MetadataStoreDefault{
