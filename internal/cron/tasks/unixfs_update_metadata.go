@@ -13,6 +13,9 @@ import (
 	"time"
 )
 
+const retryInterval = 5 * time.Second
+const maxRetries = 10
+
 func CronTaskUnixFSUpdateMetadata(args *define.CronTaskUnixFSUpdateMetadataArgs, ctx core.Context) error {
 	proto := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol)
 
@@ -39,9 +42,8 @@ func CronTaskUnixFSUpdateMetadata(args *define.CronTaskUnixFSUpdateMetadataArgs,
 func waitForRecord(c cid.Cid, ctx core.Context) error {
 	proto := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol)
 	c = encoding.NormalizeCid(c)
-	const retryInterval = 5 * time.Second
 
-	for {
+	for i := 0; i < maxRetries; i++ {
 		node, err := proto.GetMetadataStore().GetUnixFSMetadata(c)
 
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -59,4 +61,6 @@ func waitForRecord(c cid.Cid, ctx core.Context) error {
 			return ctx.Err()
 		}
 	}
+
+	return errors.New("max retries exceeded")
 }
