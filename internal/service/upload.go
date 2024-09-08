@@ -17,6 +17,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
 	"go.lumeweb.com/portal/db/models"
@@ -820,7 +821,7 @@ func (s *UploadService) GetBlockMeta(ctx context.Context, c cid.Cid) (*messages.
 		Type:      unixFSNode.Type,
 		BlockSize: unixFSNode.BlockSize,
 		ChildCID: lo.Map(unixFSNode.ChildCID, func(c cid.Cid, _ int) string {
-			return toV1(c).String()
+			return encoding.ToV1(c).String()
 		}),
 	}, nil
 }
@@ -938,19 +939,5 @@ func applyPagingPinFilters(opts pinFilterOptions) func(db *gorm.DB) *gorm.DB {
 		}
 
 		return db
-	}
-}
-
-func toV1(c cid.Cid) cid.Cid {
-	switch c.Version() {
-	case 0:
-		dagPbCode := uint64(cid.DagProtobuf)
-		newCid := cid.NewCidV1(dagPbCode, c.Hash())
-		return newCid
-	case 1:
-		// If it's already version 1, return it as is
-		return c
-	default:
-		return cid.Undef
 	}
 }

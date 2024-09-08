@@ -11,6 +11,7 @@ import (
 	format "github.com/ipfs/go-ipld-format"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store/downloader"
 	"go.lumeweb.com/portal/core"
@@ -61,7 +62,7 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		// Insert or update the parent block
 		parentBlock := pluginDb.IPFSBlock{
-			CID:              b.Cid.Bytes(),
+			CID:              encoding.ToV1(b.Cid).Bytes(),
 			Size:             b.Size,
 			LastAnnouncement: nil,
 			Ready:            true,
