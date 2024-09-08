@@ -37,3 +37,8 @@ func ToV1(c cid.Cid) cid.Cid {
 		return cid.Undef
 	}
 }
+
+// Helper function to normalize CID
+func NormalizeCid(c cid.Cid) cid.Cid {
+	return ToV1(c)
+}
