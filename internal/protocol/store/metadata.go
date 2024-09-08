@@ -147,12 +147,14 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 			})
 
 			if len(found) > 0 {
-				err := core.GetService[core.CronService](s.ctx, core.CRON_SERVICE).CreateJobIfNotExists(define.CronTaskUnixFSUpdateMetadataName, define.CronTaskUnixFSUpdateMetadataArgs{
-					CID:  found[0].Cid.String(),
-					Name: found[0].Name,
-				})
-				if err != nil {
-					return nil
+				if len(found[0].Name) > 0 {
+					err := core.GetService[core.CronService](s.ctx, core.CRON_SERVICE).CreateJobIfNotExists(define.CronTaskUnixFSUpdateMetadataName, define.CronTaskUnixFSUpdateMetadataArgs{
+						CID:  found[0].Cid.String(),
+						Name: found[0].Name,
+					})
+					if err != nil {
+						return nil
+					}
 				}
 			}
 		}
