@@ -17,6 +17,7 @@ func (c Cron) RegisterTasks(crn core.CronService) error {
 	crn.RegisterTask(define.CronTaskPostUploadName, core.CronTaskFuncHandler[*define.CronTaskPostUploadArgs](tasks.CronTaskPostUpload), core.CronTaskDefinitionOneTimeJob, define.CronTaskPostUploadArgsFactory, false)
 	crn.RegisterTask(define.CronTaskPostUploadCleanupName, core.CronTaskFuncHandler[*define.CronTaskPostUploadCleanupArgs](tasks.CronTaskPostUploadCleanup), core.CronTaskDefinitionOneTimeJob, define.CronTaskPostUploadCleanupArgsFactory, false)
 	crn.RegisterTask(define.CronTaskTusUploadCleanupName, core.CronTaskFuncHandler[*define.CronTaskTusUploadCleanupArgs](tasks.CronTaskTusUploadCleanup), core.CronTaskDefinitionOneTimeJob, define.CronTaskTusUploadCleanupArgsFactory, false)
+	crn.RegisterTask(define.CronTaskUnixFSUpdateMetadataName, core.CronTaskFuncHandler[*define.CronTaskUnixFSUpdateMetadataArgs](tasks.CronTaskUnixFSUpdateMetadata), core.CronTaskDefinitionOneTimeJob, define.CronTaskUnixFSUpdateMetadataArgsFactory, false)
 	return nil
 }
 

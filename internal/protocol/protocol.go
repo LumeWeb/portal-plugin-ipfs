@@ -31,8 +31,9 @@ var _ core.ProtocolRequestDataHandler = (*Protocol)(nil)
 var _ core.ProtocolPinHandler = (*Protocol)(nil)
 
 type Protocol struct {
-	db   *gorm.DB
-	node *ipfs.Node
+	db            *gorm.DB
+	node          *ipfs.Node
+	metadataStore *store.MetadataStoreDefault
 }
 
 func (p Protocol) CompleteProtocolData(_ context.Context, _ uint) error {
@@ -229,6 +230,10 @@ func (p Protocol) GetProtocolDataModel() any {
 	return &pluginDb.IPFSRequest{}
 }
 
+func (p Protocol) GetMetadataStore() *store.MetadataStoreDefault {
+	return p.metadataStore
+}
+
 func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 	proto := &Protocol{}
 
@@ -238,6 +243,7 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 			proto.db = ctx.DB()
 
 			ms := store.NewMetadataStore(ctx)
+			proto.metadataStore = ms
 
 			bd, err := downloader.NewBlockDownloader(ctx, ms, cfg.BlockStore.MaxConcurrentFetches)
 			if err != nil {

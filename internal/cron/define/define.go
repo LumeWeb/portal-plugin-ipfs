@@ -53,3 +53,14 @@ type CronTaskTusUploadCleanupArgs struct {
 func CronTaskTusUploadCleanupArgsFactory() any {
 	return &CronTaskTusUploadCleanupArgs{}
 }
+
+const CronTaskUnixFSUpdateMetadataName = "IPFSUnixFSUpdateMetadata"
+
+type CronTaskUnixFSUpdateMetadataArgs struct {
+	CID  string
+	Name string
+}
+
+func CronTaskUnixFSUpdateMetadataArgsFactory() any {
+	return &CronTaskUnixFSUpdateMetadataArgs{}
+}

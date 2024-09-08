@@ -818,6 +818,7 @@ func (s *UploadService) GetBlockMeta(ctx context.Context, c cid.Cid) (*messages.
 	}
 
 	return &messages.BlockMetaResponse{
+		Name:      unixFSNode.Name,
 		Type:      unixFSNode.Type,
 		BlockSize: unixFSNode.BlockSize,
 		ChildCID: lo.Map(unixFSNode.ChildCID, func(c cid.Cid, _ int) string {

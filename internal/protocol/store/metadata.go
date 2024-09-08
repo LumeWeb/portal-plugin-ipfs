@@ -9,7 +9,9 @@ import (
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
+	"github.com/samber/lo"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
@@ -97,6 +99,11 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 			}
 		}
 
+		nodeInfo, err := internal.AnalyzeNode(context.Background(), b.Node, 1)
+		if err != nil {
+			return nil
+		}
+
 		for i, link := range b.Links {
 			link = encoding.NormalizeCid(link)
 			var childBlock pluginDb.IPFSBlock
@@ -133,6 +140,20 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 			}); err != nil {
 				_ = tx.AddError(fmt.Errorf("failed to update linked block: %w", err))
 				return tx
+			}
+
+			found := lo.Filter(nodeInfo.Children, func(n *internal.NodeInfo, _ int) bool {
+				return n.CID.Equals(link)
+			})
+
+			if len(found) > 0 {
+				err := core.GetService[core.CronService](s.ctx, core.CRON_SERVICE).CreateJobIfNotExists(define.CronTaskUnixFSUpdateMetadataName, define.CronTaskUnixFSUpdateMetadataArgs{
+					CID:  found[0].CID.String(),
+					Name: found[0].Name,
+				})
+				if err != nil {
+					return nil
+				}
 			}
 		}
 
@@ -413,6 +434,27 @@ func (s *MetadataStoreDefault) Size(c cid.Cid) (uint64, error) {
 	return size, nil
 }
 
+func (s *MetadataStoreDefault) UpdateUnixFSMetadata(c cid.Cid, metadata *pluginDb.UnixFSNode) error {
+	c = encoding.NormalizeCid(c)
+
+	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		var block pluginDb.IPFSBlock
+		if err := tx.Where("cid = ?", c.Bytes()).First(&block).Error; err != nil {
+			_ = tx.AddError(fmt.Errorf("failed to find block: %w", err))
+			return tx
+		}
+
+		if err := tx.Model(&pluginDb.UnixFSNode{}).
+			Where("block_id = ?", block.ID).
+			Updates(metadata).Error; err != nil {
+			_ = tx.AddError(fmt.Errorf("failed to update UnixFS metadata: %w", err))
+			return tx
+		}
+
+		return tx
+	})
+}
+
 // NewMetadataStore creates a new blockstore backed by a renterd node
 func NewMetadataStore(ctx core.Context) *MetadataStoreDefault {
 	return &MetadataStoreDefault{
@@ -424,7 +466,7 @@ func NewMetadataStore(ctx core.Context) *MetadataStoreDefault {
 }
 
 func extractNodeMetadata(block PinnedBlock) (*pluginDb.UnixFSNode, error) {
-	analyzedNode, err := internal.AnalyzeNode(context.Background(), block.Node)
+	analyzedNode, err := internal.AnalyzeNode(context.Background(), block.Node, 1)
 	if err != nil {
 		return nil, err
 	}
