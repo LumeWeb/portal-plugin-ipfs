@@ -204,6 +204,8 @@ func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
 func (s *MetadataStoreDefault) BlockExists(c cid.Cid) error {
 	var block pluginDb.IPFSBlock
 
+	c = encoding.NormalizeCid(c)
+
 	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		return tx.Where(&pluginDb.IPFSBlock{CID: c.Bytes()}).First(&block)
 	}); err != nil {
@@ -365,6 +367,9 @@ func (s *MetadataStoreDefault) ProvideCIDs(limit int) (cids []ipfs.PinnedCID, er
 func (s *MetadataStoreDefault) SetLastAnnouncement(cids []cid.Cid, t time.Time) error {
 	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		for _, c := range cids {
+
+			c = encoding.NormalizeCid(c)
+
 			block := &pluginDb.IPFSBlock{
 				CID: c.Bytes(),
 			}
@@ -414,6 +419,7 @@ func (s *MetadataStoreDefault) Pinned(offset, limit int) (roots []cid.Cid, err e
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse root cid: %w", err)
 		}
+		root = encoding.NormalizeCid(root)
 		roots = append(roots, root)
 	}
 
