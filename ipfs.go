@@ -82,7 +82,7 @@ func createView(db *gorm.DB) error {
             COALESCE(pud.pin_user_id, ird.r_user_id) AS user_id,
             COALESCE(ird.source_ip, pud.uploader_ip) AS uploader_ip,
             ird.internal,
-			pud.partial,
+			COALESCE(pud.partial, false) AS partial,
             ird.pin_request_id,
             ird.parent_pin_request_id,
             pud.pin_id,
