@@ -113,7 +113,7 @@ func (s *UploadService) CreateQueuedPin(ctx context.Context, c cid.Cid, userId u
 	var pinRecord pluginDb.IPFSPinView
 
 	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
-		return tx.WithContext(ctx).Model(&pluginDb.IPFSPinView{}).Where(&pluginDb.IPFSPinView{PinRequestID: reqId}).First(&pluginDb.IPFSPinView{})
+		return tx.WithContext(ctx).Model(&pluginDb.IPFSPinView{}).Where(&pluginDb.IPFSPinView{PinRequestID: reqId}).First(&pinRecord)
 	}); err != nil {
 		return nil, fmt.Errorf("error creating pin: %w", err)
 	}
