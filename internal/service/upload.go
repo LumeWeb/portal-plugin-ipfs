@@ -209,7 +209,7 @@ func (s *UploadService) CreatePinnedPin(ctx context.Context, c cid.Cid, operatio
 		return nil, existing, err
 	}
 
-	pin, err := s.GetPinByIdentifier(ctx, hash)
+	pin, err := s.GetPinByIdentifier(ctx, hash, userId)
 	if err != nil {
 		return nil, existing, err
 	}
@@ -223,7 +223,7 @@ func (s *UploadService) CreatePinnedPin(ctx context.Context, c cid.Cid, operatio
 	return pin, existing, nil
 }
 
-func (s *UploadService) GetPinByIdentifier(ctx context.Context, identifier interface{}) (*pluginDb.IPFSPinView, error) {
+func (s *UploadService) GetPinByIdentifier(ctx context.Context, identifier interface{}, userID uint) (*pluginDb.IPFSPinView, error) {
 	var pinQuery pluginDb.IPFSPinView
 
 	switch v := identifier.(type) {
@@ -234,6 +234,10 @@ func (s *UploadService) GetPinByIdentifier(ctx context.Context, identifier inter
 		pinQuery.HashType = v.Type()
 	default:
 		return nil, fmt.Errorf("unsupported identifier type")
+	}
+
+	if userID != 0 {
+		pinQuery.UserID = userID
 	}
 
 	return s.getPinEntityByQuery(ctx, pinQuery)
@@ -257,8 +261,8 @@ func (s *UploadService) getPinEntityByQuery(ctx context.Context, query pluginDb.
 	return &pin, nil
 }
 
-func (s *UploadService) DeletePin(ctx context.Context, id uuid.UUID) error {
-	pin, err := s.GetPinByIdentifier(ctx, id)
+func (s *UploadService) DeletePin(ctx context.Context, id uuid.UUID, userID uint) error {
+	pin, err := s.GetPinByIdentifier(ctx, id, userID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch pin: %w", err)
 	}
@@ -367,8 +371,8 @@ func (s *UploadService) GetPins(ctx context.Context, req messages.GetPinsRequest
 	return results, nil
 }
 
-func (s *UploadService) GetPinStatus(ctx context.Context, id uuid.UUID) (*messages.PinStatus, error) {
-	pin, err := s.GetPinByIdentifier(ctx, id)
+func (s *UploadService) GetPinStatus(ctx context.Context, id uuid.UUID, userID uint) (*messages.PinStatus, error) {
+	pin, err := s.GetPinByIdentifier(ctx, id, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch pin: %w", err)
 	}
@@ -416,10 +420,10 @@ func (s *UploadService) AddQueuedPin(ctx context.Context, pin messages.Pin, user
 	return s.convertToPinStatus(ipfsPin), nil
 }
 
-func (s *UploadService) ReplacePin(ctx context.Context, id uuid.UUID, newPin messages.Pin) (*messages.PinStatus, error) {
+func (s *UploadService) ReplacePin(ctx context.Context, id uuid.UUID, newPin messages.Pin, userID uint) (*messages.PinStatus, error) {
 	var newStatus *messages.PinStatus
 
-	oldPin, err := s.GetPinByIdentifier(ctx, id)
+	oldPin, err := s.GetPinByIdentifier(ctx, id, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch old pin: %w", err)
 	}
@@ -430,7 +434,7 @@ func (s *UploadService) ReplacePin(ctx context.Context, id uuid.UUID, newPin mes
 	if requestStatusToPinStatus(oldPin.Status) != pluginDb.PinningStatusPinned {
 		return nil, fmt.Errorf("can only replace pinned content")
 	}
-	if err = s.DeletePin(ctx, id); err != nil {
+	if err = s.DeletePin(ctx, id, userID); err != nil {
 		return nil, fmt.Errorf("failed to delete old pin: %w", err)
 	}
 
