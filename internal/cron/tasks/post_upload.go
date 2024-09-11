@@ -5,6 +5,8 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal/event"
+	"go.uber.org/zap"
 )
 
 func CronTaskPostUpload(args *define.CronTaskPostUploadArgs, ctx core.Context) error {
@@ -12,6 +14,8 @@ func CronTaskPostUpload(args *define.CronTaskPostUploadArgs, ctx core.Context) e
 	proto := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol)
 	requestService := core.GetService[core.RequestService](ctx, core.REQUEST_SERVICE)
 	cronService := core.GetService[core.CronService](ctx, core.CRON_SERVICE)
+	metadataService := core.GetService[core.MetadataService](ctx, core.METADATA_SERVICE)
+	logger := ctx.Logger()
 
 	req, err := requestService.GetRequest(ctx, args.RequestID)
 	if err != nil {
@@ -25,9 +29,21 @@ func CronTaskPostUpload(args *define.CronTaskPostUploadArgs, ctx core.Context) e
 	}
 
 	// Process the car
-	err = processCar(ctx, upload, req)
+	cids, err := processCar(ctx, upload, req)
 	if err != nil {
 		return err
+	}
+
+	for _, cid := range cids {
+		upload, err := metadataService.GetUpload(ctx, internal.NewIPFSHash(cid))
+		if err != nil {
+			return err
+		}
+
+		err = event.FireStorageObjectUploadedEvent(ctx, &upload)
+		if err != nil {
+			logger.Error("Failed to fire storage object uploaded event", zap.Error(err))
+		}
 	}
 
 	// Schedule the cleanup task
