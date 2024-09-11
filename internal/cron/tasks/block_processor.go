@@ -318,21 +318,23 @@ func (bp *blockProcessor) release() {
 	bp.queue.Release()
 }
 
-func processCar(ctx core.Context, r io.Reader, request *models.Request) error {
+func processCar(ctx core.Context, r io.Reader, request *models.Request) ([]cid.Cid, error) {
 	pinService := core.GetService[*pluginService.UploadService](ctx, pluginService.UPLOAD_SERVICE)
 	proto := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol)
 	logger := ctx.Logger()
 
+	processedCIDs := make([]cid.Cid, 0)
+
 	cr, err := car.NewBlockReader(r)
 	if err != nil {
 		logger.Error("Failed to create block reader", zap.Error(err))
-		return fmt.Errorf("failed to create block reader: %w", err)
+		return nil, fmt.Errorf("failed to create block reader: %w", err)
 	}
 
 	rootCIDs := cr.Roots
 	bp := newBlockProcessor(ctx, pinService, proto, request, logger)
 	if bp == nil {
-		return fmt.Errorf("failed to create block processor")
+		return nil, fmt.Errorf("failed to create block processor")
 	}
 
 	bp.start()
@@ -340,7 +342,7 @@ func processCar(ctx core.Context, r io.Reader, request *models.Request) error {
 
 	err = pinService.PinRequestStatusPinning(ctx, request.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Read all blocks
@@ -350,7 +352,7 @@ func processCar(ctx core.Context, r io.Reader, request *models.Request) error {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("failed to read block: %w", err)
+			return nil, fmt.Errorf("failed to read block: %w", err)
 		}
 
 		isRoot := lo.Contains(rootCIDs, block.Cid())
@@ -362,24 +364,26 @@ func processCar(ctx core.Context, r io.Reader, request *models.Request) error {
 
 		if err := bp.queueBlock(job); err != nil {
 			if !isContextCanceled(err) {
-				return fmt.Errorf("failed to queue block: %w", err)
+				return nil, fmt.Errorf("failed to queue block: %w", err)
 			}
 			go bp.handleError(err)
 			break
 		}
+
+		processedCIDs = append(processedCIDs, block.Cid())
 	}
 
 	// Wait for all blocks to be processed
 	if err := bp.wait(); err != nil {
-		return fmt.Errorf("block processing failed: %w", err)
+		return nil, fmt.Errorf("block processing failed: %w", err)
 	}
 
 	// Link pins
 	if err := bp.linkPins(); err != nil {
-		return fmt.Errorf("failed to link pins: %w", err)
+		return nil, fmt.Errorf("failed to link pins: %w", err)
 	}
 
-	return nil
+	return processedCIDs, nil
 }
 func isContextCanceled(err error) bool {
 	return err == context.Canceled || err == context.DeadlineExceeded
