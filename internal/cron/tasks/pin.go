@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/ipfs/boxo/ipld/merkledag"
+	"github.com/ipfs/go-cid"
+	billingPluginService "go.lumeweb.com/portal-plugin-billing/service"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	pluginService "go.lumeweb.com/portal-plugin-ipfs/internal/service"
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
@@ -30,6 +34,31 @@ func CronTaskPin(args *define.CronTaskPinArgs, ctx core.Context) error {
 			err = fmt.Errorf("pin not found")
 		}
 		return err
+	}
+
+	if core.ServiceExists(ctx, billingPluginService.QUOTA_SERVICE) {
+		// Check if this is a root pin (no parent)
+		if pin.ParentPinRequestID == nil {
+			// Calculate total file size
+			totalSize, err := calculateTotalFileSize(ctx, ipfs, pin.Hash)
+			if err != nil {
+				logger.Error("Failed to calculate total file size", zap.Error(err))
+				return err
+			}
+
+			quotaService := core.GetService[billingPluginService.QuotaService](ctx, billingPluginService.QUOTA_SERVICE)
+			allowed, err := quotaService.CheckDownloadQuota(pin.UserID, totalSize)
+			if err != nil {
+				return err
+			}
+
+			if !allowed {
+				err := uploadService.PinRequestStatusFailed(ctx, args.RequestID)
+				if err != nil {
+					return err
+				}
+			}
+		}
 	}
 
 	// Update status to Pinning
@@ -67,6 +96,7 @@ func CronTaskPin(args *define.CronTaskPinArgs, ctx core.Context) error {
 		logger.Error("Failed to complete pin", zap.Error(err))
 		return err
 	}
+
 	// If this is a ProtoNode, create child imports for its children
 	if protoNode, ok := node.(*merkledag.ProtoNode); ok {
 		for _, link := range protoNode.Links() {
@@ -100,6 +130,58 @@ func CronTaskPin(args *define.CronTaskPinArgs, ctx core.Context) error {
 	}
 
 	logger.Info("Pin import task completed successfully")
+
+	return nil
+}
+
+func calculateTotalFileSize(ctx core.Context, ipfs *protocol.Protocol, hash []byte) (uint64, error) {
+	c, err := internal.CIDFromHash(hash)
+	if err != nil {
+		return 0, fmt.Errorf("failed to cast hash to CID: %w", err)
+	}
+
+	var totalSize uint64
+	visited := make(map[string]bool)
+
+	err = traverseDAG(ctx, ipfs, c, visited, &totalSize)
+	if err != nil {
+		return 0, fmt.Errorf("failed to traverse DAG: %w", err)
+	}
+
+	return totalSize, nil
+}
+
+func traverseDAG(ctx core.Context, ipfs *protocol.Protocol, c cid.Cid, visited map[string]bool, totalSize *uint64) error {
+	if visited[c.String()] {
+		return nil
+	}
+	visited[c.String()] = true
+
+	virtualCtx := store.VirtualReadOption(ctx, true)
+	getCtx, cancel := context.WithTimeout(virtualCtx, ctx.Config().GetProtocol(internal.ProtocolName).(*pluginConfig.Config).BlockStore.Timeout)
+	block, err := ipfs.GetNode().GetBlock(getCtx, c)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("failed to get block: %w", err)
+	}
+
+	size := uint64(len(block.RawData()))
+	*totalSize += size
+
+	// Check if it's a ProtoNode and traverse its links
+	node, err := encoding.DecodeBlock(ctx, block)
+	if err != nil {
+		return fmt.Errorf("failed to decode block: %w", err)
+	}
+
+	if protoNode, ok := node.(*merkledag.ProtoNode); ok {
+		for _, link := range protoNode.Links() {
+			err = traverseDAG(ctx, ipfs, link.Cid, visited, totalSize)
+			if err != nil {
+				return err
+			}
+		}
+	}
 
 	return nil
 }

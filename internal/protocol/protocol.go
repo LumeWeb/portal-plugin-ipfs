@@ -249,7 +249,7 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 			if err != nil {
 				return fmt.Errorf("failed to create block downloader: %w", err)
 			}
-			bs, err := store.NewBlockStore(ctx, bd, ms)
+			directBS, err := store.NewBlockStore(ctx, bd, ms)
 			if err != nil {
 				return fmt.Errorf("failed to create blockstore: %w", err)
 			}
@@ -257,9 +257,9 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 			cacheBsOpts := blockstore.DefaultCacheOpts()
 			cacheBsOpts.HasTwoQueueCacheSize = cfg.BlockStore.CacheSize
 
-			cachedBS, err := blockstore.CachedBlockstore(ctx, bs, cacheBsOpts)
+			virtualBS, err := store.NewVirtualBlockStore(ctx, directBS, cacheBsOpts)
 			if err != nil {
-				return fmt.Errorf("failed to create cached blockstore: %w", err)
+				return fmt.Errorf("failed to create virtual blockstore: %w", err)
 			}
 
 			ds, err := levelds.NewDatastore(filepath.Join(ctx.Config().ConfigDir(), internal.ProtocolName, "p2p.ldb"), nil)
@@ -274,7 +274,7 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 
 			ipfsLog.SetAllLoggers(level)
 
-			proto.node, err = ipfs.NewNode(ctx, cfg, ms, ds, cachedBS)
+			proto.node, err = ipfs.NewNode(ctx, cfg, ms, ds, virtualBS)
 			if err != nil {
 				return fmt.Errorf("failed to create ipfs node: %w", err)
 			}
