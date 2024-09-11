@@ -15,6 +15,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	pluginService "go.lumeweb.com/portal-plugin-ipfs/internal/service"
+	"go.lumeweb.com/portal/event"
 	"go.lumeweb.com/portal/middleware"
 	"go.lumeweb.com/portal/service"
 	"go.uber.org/zap"
@@ -426,12 +427,13 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid string, w h
 		return
 	}
 
+	upload, err := a.metadataService.GetUpload(ctx, internal.NewIPFSHash(pCid))
+	if err != nil {
+		_ = ctx.Error(err, http.StatusInternalServerError)
+		return
+	}
+
 	if core.ServiceExists(a.ctx, billingPluginService.QUOTA_SERVICE) {
-		upload, err := a.metadataService.GetUpload(ctx, internal.NewIPFSHash(pCid))
-		if err != nil {
-			_ = ctx.Error(err, http.StatusInternalServerError)
-			return
-		}
 		quotaService := core.GetService[billingPluginService.QuotaService](a.ctx, billingPluginService.QUOTA_SERVICE)
 		allowed, err := quotaService.CheckDownloadQuota(user, upload.Size)
 		if err != nil {
@@ -449,6 +451,11 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid string, w h
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get block: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	err = event.FireDownloadCompletedEventAsync(a.ctx, upload.ID, upload.Size, r.RemoteAddr)
+	if err != nil {
+		a.logger.Error("Failed to fire storage object uploaded event", zap.Error(err))
 	}
 
 	a.setTrustlessHeaders(w, r, _cid)
