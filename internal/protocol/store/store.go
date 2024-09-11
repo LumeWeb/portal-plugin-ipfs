@@ -35,7 +35,26 @@ type (
 		storage    core.StorageService
 		proto      core.StorageProtocol
 	}
+
+	// ContextKey is a type for context keys
+	ContextKey string
 )
+
+const (
+	// VirtualReadKey is the context key for the virtual read option
+	VirtualReadKey ContextKey = "virtualRead"
+)
+
+// VirtualReadOption sets the virtual read option in the context
+func VirtualReadOption(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, VirtualReadKey, enabled)
+}
+
+// isVirtualReadEnabled checks if virtual read is enabled in the context
+func isVirtualReadEnabled(ctx context.Context) bool {
+	value, ok := ctx.Value(VirtualReadKey).(bool)
+	return ok && value
+}
 
 func cidKey(c cid.Cid) string {
 	return encoding.ToV1(c).String()
@@ -45,6 +64,11 @@ func cidKey(c cid.Cid) string {
 func (bs *BlockStore) DeleteBlock(ctx context.Context, c cid.Cid) error {
 	key := cidKey(c)
 	log := bs.log.Named("DeleteBlock").With(zap.Stack("stack"), zap.Stringer("cid", c), zap.String("key", key))
+
+	if isVirtualReadEnabled(ctx) {
+		log.Debug("virtual read enabled, skipping delete")
+		return nil
+	}
 
 	if err := bs.metadata.Unpin(c); err != nil {
 		return fmt.Errorf("failed to unpin block: %w", err)
@@ -59,8 +83,13 @@ func (bs *BlockStore) DeleteBlock(ctx context.Context, c cid.Cid) error {
 }
 
 // Has returns whether or not a given block is in the blockstore.
-func (bs *BlockStore) Has(_ context.Context, c cid.Cid) (bool, error) {
+func (bs *BlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
 	log := bs.log.Named("Has").With(zap.Stringer("cid", c))
+
+	if isVirtualReadEnabled(ctx) {
+		log.Debug("virtual read enabled, assuming block does not exist")
+		return false, nil
+	}
 
 	start := time.Now()
 
@@ -77,14 +106,26 @@ func (bs *BlockStore) Has(_ context.Context, c cid.Cid) (bool, error) {
 
 // Get returns a block by CID
 func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
-	block, err := bs.downloader.Get(ctx, c)
-	return block, err
+	if isVirtualReadEnabled(ctx) {
+		bs.log.Debug("virtual read enabled, fetching block without storing")
+		return bs.downloader.Get(ctx, c)
+	}
+	return bs.downloader.Get(ctx, c)
 }
 
 // GetSize returns the CIDs mapped BlockSize
-func (bs *BlockStore) GetSize(_ context.Context, c cid.Cid) (int, error) {
+func (bs *BlockStore) GetSize(ctx context.Context, c cid.Cid) (int, error) {
 	key := cidKey(c)
 	log := bs.log.Named("GetSize").With(zap.Stringer("cid", c), zap.String("key", key))
+
+	if isVirtualReadEnabled(ctx) {
+		log.Debug("virtual read enabled, fetching block size without storing")
+		block, err := bs.Get(ctx, c)
+		if err != nil {
+			return 0, err
+		}
+		return len(block.RawData()), nil
+	}
 
 	err := bs.metadata.BlockExists(c)
 	if err != nil {
@@ -104,6 +145,11 @@ func (bs *BlockStore) GetSize(_ context.Context, c cid.Cid) (int, error) {
 func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 	key := cidKey(b.Cid())
 	log := bs.log.Named("Put").With(zap.Stringer("cid", b.Cid()), zap.String("key", key), zap.Int("size", len(b.RawData())))
+
+	if isVirtualReadEnabled(ctx) {
+		log.Debug("virtual read enabled, skipping actual storage")
+		return nil
+	}
 
 	start := time.Now()
 
@@ -163,18 +209,16 @@ func (bs *BlockStore) PutMany(ctx context.Context, blocks []blocks.Block) error 
 // AllKeysChan returns a channel from which
 // the CIDs in the Blockstore can be read. It should respect
 // the given context, closing the channel if it becomes Done.
-//
-// AllKeysChan treats the underlying blockstore as a set, and returns that
-// set in full. The only guarantee is that the consumer of AKC will
-// encounter every CID in the underlying set, at least once. If the
-// underlying blockstore supports duplicate CIDs it is up to the
-// implementation to elect to return such duplicates or not. Similarly no
-// guarantees are made regarding CID ordering.
-//
-// When underlying blockstore is operating on Multihash and codec information
-// is not preserved, returned CIDs will use Raw (0x55) codec.
 func (bs *BlockStore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, error) {
 	log := bs.log.Named("AllKeysChan")
+
+	if isVirtualReadEnabled(ctx) {
+		log.Debug("virtual read enabled, returning empty channel")
+		ch := make(chan cid.Cid)
+		close(ch)
+		return ch, nil
+	}
+
 	ch := make(chan cid.Cid)
 	go func() {
 		for i := 0; ; i += 1000 {
