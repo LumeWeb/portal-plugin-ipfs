@@ -224,9 +224,9 @@ func (s *MetadataStoreDefault) BlockExists(c cid.Cid) error {
 
 	return nil
 }
-func (s *MetadataStoreDefault) BlockChildren(c cid.Cid, max int) (children []cid.Cid, err error) {
+func (s *MetadataStoreDefault) BlockChildren(c cid.Cid, max *int) (children []cid.Cid, err error) {
 	c = encoding.NormalizeCid(c)
-	const query = `
+	query := `
 WITH parent_block AS (
     SELECT id 
     FROM ipfs_blocks 
@@ -237,11 +237,17 @@ FROM ipfs_linked_blocks AS lb
 INNER JOIN ipfs_blocks AS b ON (lb.child_id = b.id)
 WHERE lb.parent_id = (SELECT id FROM parent_block)
 ORDER BY lb.link_index ASC
-LIMIT ?
 `
+	args := []interface{}{c.Bytes()}
+
+	if max != nil {
+		query += "LIMIT ?"
+		args = append(args, *max)
+	}
+
 	var rows *sql.Rows
 	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
-		ret := tx.Raw(query, c.Bytes(), max)
+		ret := tx.Raw(query, args...)
 		if ret.Error == nil {
 			rows, _ = ret.Rows()
 		}
@@ -273,7 +279,7 @@ LIMIT ?
 		children = append(children, child)
 	}
 
-	return nil, rows.Err()
+	return children, rows.Err()
 }
 
 func (s *MetadataStoreDefault) BlockSiblings(c cid.Cid, max int) (siblings []cid.Cid, err error) {
