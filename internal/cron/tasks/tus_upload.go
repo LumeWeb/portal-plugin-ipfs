@@ -7,6 +7,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal/event"
 	"go.lumeweb.com/portal/service"
 	"go.uber.org/zap"
 	"io"
@@ -16,6 +17,8 @@ func CronTaskTusUpload(args *define.CronTaskTusUploadArgs, ctx core.Context) err
 	logger := ctx.Logger()
 	tusService := core.GetService[core.TUSService](ctx, core.TUS_SERVICE)
 	tusHandler := core.GetAPI(internal.ProtocolName).(*api.API).TusHandler()
+	cronService := core.GetService[core.CronService](ctx, core.CRON_SERVICE)
+	metadataService := core.GetService[core.MetadataService](ctx, core.METADATA_SERVICE)
 
 	// Get the request
 	found, request := tusService.UploadExists(ctx, args.UploadID)
@@ -66,7 +69,26 @@ func CronTaskTusUpload(args *define.CronTaskTusUploadArgs, ctx core.Context) err
 	}(reader)
 
 	// Process the car
-	err = processCar(ctx, reader, &request.Request)
+	cids, err := processCar(ctx, reader, &request.Request)
+	if err != nil {
+		return err
+	}
+
+	for _, cid := range cids {
+		upload, err := metadataService.GetUpload(ctx, internal.NewIPFSHash(cid))
+		if err != nil {
+			return err
+		}
+
+		err = event.FireStorageObjectUploadedEvent(ctx, &upload)
+		if err != nil {
+			logger.Error("Failed to fire storage object uploaded event", zap.Error(err))
+		}
+	}
+
+	err = cronService.CreateJobIfNotExists(define.CronTaskTusUploadCleanupName, define.CronTaskTusUploadCleanupArgs{
+		UploadID: args.UploadID,
+	})
 	if err != nil {
 		return err
 	}
