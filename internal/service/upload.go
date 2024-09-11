@@ -12,6 +12,7 @@ import (
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/ipld/go-car/v2"
 	"github.com/samber/lo"
+	billingPluginService "go.lumeweb.com/portal-plugin-billing/service"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/messages"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
@@ -557,6 +558,27 @@ func (s *UploadService) HandlePostUpload(ctx context.Context, reader io.ReadSeek
 	_, err = reader.Seek(0, io.SeekStart)
 	if err != nil {
 		return fmt.Errorf("failed to reset reader: %w", err)
+	}
+
+	if core.ServiceExists(s.ctx, billingPluginService.QUOTA_SERVICE) {
+		quotaService := core.GetService[billingPluginService.QuotaService](s.ctx, billingPluginService.QUOTA_SERVICE)
+		allowed, err := quotaService.CheckUploadQuota(userId, uint64(size))
+		if err != nil {
+			return err
+		}
+
+		if !allowed {
+			return errors.New("upload quota exceeded")
+		}
+
+		allowed, err = quotaService.CheckStorageQuota(userId, uint64(size))
+		if err != nil {
+			return err
+		}
+
+		if !allowed {
+			return errors.New("storage quota exceeded")
+		}
 	}
 
 	// Create a new SHAReader
