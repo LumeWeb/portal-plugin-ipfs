@@ -232,6 +232,10 @@ func (s *UploadService) GetPinByIdentifier(ctx context.Context, identifier inter
 	case core.StorageHash:
 		pinQuery.Hash = v.Multihash()
 		pinQuery.HashType = v.Type()
+	case cid.Cid:
+		hash := internal.NewIPFSHash(v)
+		pinQuery.Hash = hash.Multihash()
+		pinQuery.HashType = hash.Type()
 	default:
 		return nil, fmt.Errorf("unsupported identifier type")
 	}
