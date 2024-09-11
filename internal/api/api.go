@@ -275,7 +275,13 @@ func (a API) handleGetPinByRequestId(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, err := a.upload.GetPinStatus(ctx, id)
+	user, err := middleware.GetUserFromContext(r.Context())
+	if err != nil {
+		_ = ctx.Error(core.NewAccountError(core.ErrKeyLoginFailed, nil), http.StatusBadRequest)
+		return
+	}
+
+	status, err := a.upload.GetPinStatus(ctx, id, user)
 	if err != nil {
 		_ = ctx.Error(err, http.StatusInternalServerError)
 		return
@@ -294,12 +300,18 @@ func (a API) handleReplacePinByRequestId(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	user, err := middleware.GetUserFromContext(r.Context())
+	if err != nil {
+		_ = ctx.Error(core.NewAccountError(core.ErrKeyLoginFailed, nil), http.StatusBadRequest)
+		return
+	}
+
 	var req messages.ReplacePinRequest
 	if err := ctx.Decode(&req); err != nil {
 		return
 	}
 
-	status, err := a.upload.ReplacePin(ctx, id, req.Pin)
+	status, err := a.upload.ReplacePin(ctx, id, req.Pin, user)
 	if err != nil {
 		_ = ctx.Error(err, http.StatusInternalServerError)
 		return
@@ -319,7 +331,13 @@ func (a API) handleDeletePinByRequestId(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	err = a.upload.DeletePin(ctx, id)
+	user, err := middleware.GetUserFromContext(r.Context())
+	if err != nil {
+		_ = ctx.Error(core.NewAccountError(core.ErrKeyLoginFailed, nil), http.StatusBadRequest)
+		return
+	}
+
+	err = a.upload.DeletePin(ctx, id, user)
 	if err != nil {
 		_ = ctx.Error(err, http.StatusInternalServerError)
 		return

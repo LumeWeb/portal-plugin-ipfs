@@ -23,7 +23,7 @@ func CronTaskPin(args *define.CronTaskPinArgs, ctx core.Context) error {
 	ipfs := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol)
 	uploadService := ctx.Service(pluginService.UPLOAD_SERVICE).(*pluginService.UploadService)
 
-	pin, err := uploadService.GetPinByIdentifier(ctx, args.RequestID)
+	pin, err := uploadService.GetPinByIdentifier(ctx, args.RequestID, 0)
 	if err != nil || pin == nil {
 		logger.Error("Failed to get pin", zap.Error(err))
 		if pin == nil {
@@ -106,7 +106,7 @@ func CronTaskPin(args *define.CronTaskPinArgs, ctx core.Context) error {
 
 func updateAncestorProgress(ctx context.Context, uploadService *pluginService.UploadService, requestID uuid.UUID) error {
 	for {
-		pin, err := uploadService.GetPinByIdentifier(ctx, requestID)
+		pin, err := uploadService.GetPinByIdentifier(ctx, requestID, 0)
 		if err != nil || pin == nil {
 			if pin == nil {
 				err = fmt.Errorf("pin not found")
