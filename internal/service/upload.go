@@ -274,6 +274,32 @@ func (s *UploadService) DeletePin(ctx context.Context, id uuid.UUID, userID uint
 		return fmt.Errorf("pin not found")
 	}
 
+	_cid, err := internal.CIDFromHash(pin.Hash)
+	if err != nil {
+		return err
+	}
+
+	children, err := s.ipfs.GetMetadataStore().BlockChildren(_cid, nil)
+	if err != nil {
+		return err
+	}
+
+	for _, child := range children {
+		pin, err := s.GetPinByIdentifier(ctx, child, userID)
+		if err != nil {
+			return err
+		}
+
+		if pin == nil {
+			continue
+		}
+
+		err = s.DeletePin(ctx, uuid.UUID(pin.PinRequestID), userID)
+		if err != nil {
+			return err
+		}
+	}
+
 	if internal.RequestStatusToPinStatus(pin.Status) == pluginDb.PinningStatusPinned {
 		err = s.pin.DeletePin(ctx, pin.PinID)
 		if err != nil {
