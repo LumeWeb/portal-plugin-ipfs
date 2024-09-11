@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"fmt"
+	billingPluginService "go.lumeweb.com/portal-plugin-billing/service"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
@@ -21,6 +22,35 @@ func CronTaskTusUpload(args *define.CronTaskTusUploadArgs, ctx core.Context) err
 	if !found {
 		logger.Error("Failed to get request")
 		return fmt.Errorf("request not found")
+	}
+
+	size, err := tusHandler.UploadSize(ctx, service.NewStorageHashFromMultihashBytes(request.Request.UploadHash, nil))
+	if err != nil {
+		return err
+	}
+
+	if core.ServiceExists(ctx, billingPluginService.QUOTA_SERVICE) {
+		quotaService := core.GetService[billingPluginService.QuotaService](ctx, billingPluginService.QUOTA_SERVICE)
+		uploadAllowed, err := quotaService.CheckUploadQuota(request.Request.UserID, size)
+		if err != nil {
+			return err
+		}
+
+		storageAllowed, err := quotaService.CheckStorageQuota(request.Request.UserID, size)
+		if err != nil {
+			return err
+		}
+
+		if !uploadAllowed || !storageAllowed {
+			err := cronService.CreateJobIfNotExists(define.CronTaskTusUploadCleanupName, define.CronTaskTusUploadCleanupArgs{
+				UploadID: args.UploadID,
+			})
+			if err != nil {
+				return err
+			}
+
+			return nil
+		}
 	}
 
 	reader, err := tusHandler.UploadReader(ctx, args.UploadID, 0)
