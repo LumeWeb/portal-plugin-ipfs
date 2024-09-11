@@ -9,6 +9,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
 	"github.com/tus/tusd/v2/pkg/handler"
+	billingPluginService "go.lumeweb.com/portal-plugin-billing/service"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/messages"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
@@ -36,13 +37,14 @@ var _ core.API = (*API)(nil)
 const TUS_HTTP_ROUTE = "/api/upload/tus"
 
 type API struct {
-	ctx    core.Context
-	config config.Manager
-	logger *core.Logger
-	ipfs   *protocol.Protocol
-	upload *pluginService.UploadService
-	cron   core.CronService
-	tus    *service.TusHandler
+	ctx             core.Context
+	config          config.Manager
+	logger          *core.Logger
+	ipfs            *protocol.Protocol
+	upload          *pluginService.UploadService
+	cron            core.CronService
+	tus             *service.TusHandler
+	metadataService core.MetadataService
 }
 
 func NewAPI() (core.API, []core.ContextBuilderOption, error) {
@@ -55,6 +57,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 			api.ipfs = core.GetProtocol(internal.ProtocolName).(*protocol.Protocol)
 			api.upload = core.GetService[*pluginService.UploadService](ctx, pluginService.UPLOAD_SERVICE)
 			api.cron = core.GetService[core.CronService](ctx, core.CRON_SERVICE)
+			api.metadataService = core.GetService[core.MetadataService](ctx, core.METADATA_SERVICE)
 			tus, err := service.CreateTusHandler(ctx, service.TusHandlerConfig{
 				BasePath: TUS_HTTP_ROUTE,
 				CreatedUploadHandler: service.TUSDefaultUploadCreatedHandler(ctx, func(hook handler.HookEvent, uploaderId uint) (core.StorageHash, error) {
@@ -405,6 +408,12 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid string, w h
 		return
 	}
 
+	user, err := middleware.GetUserFromContext(r.Context())
+	if err != nil {
+		_ = ctx.Error(core.NewAccountError(core.ErrKeyLoginFailed, nil), http.StatusBadRequest)
+		return
+	}
+
 	// Check if the block exists before trying to fetch it
 	exists, err := a.ipfs.GetNode().HasBlock(ctx, pCid)
 	if err != nil {
@@ -415,6 +424,25 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid string, w h
 	if !exists {
 		http.Error(w, fmt.Sprintf("Block not found: %s", pCid.String()), http.StatusNotFound)
 		return
+	}
+
+	if core.ServiceExists(a.ctx, billingPluginService.QUOTA_SERVICE) {
+		upload, err := a.metadataService.GetUpload(ctx, internal.NewIPFSHash(pCid))
+		if err != nil {
+			_ = ctx.Error(err, http.StatusInternalServerError)
+			return
+		}
+		quotaService := core.GetService[billingPluginService.QuotaService](a.ctx, billingPluginService.QUOTA_SERVICE)
+		allowed, err := quotaService.CheckDownloadQuota(user, upload.Size)
+		if err != nil {
+			_ = ctx.Error(err, http.StatusInternalServerError)
+			return
+		}
+
+		if !allowed {
+			_ = ctx.Error(err, http.StatusInsufficientStorage)
+			return
+		}
 	}
 
 	block, err := a.ipfs.GetNode().GetBlock(ctx, pCid)
