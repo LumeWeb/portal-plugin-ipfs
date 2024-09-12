@@ -14,7 +14,7 @@ func CronTaskPostUpload(args *define.CronTaskPostUploadArgs, ctx core.Context) e
 	proto := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol)
 	requestService := core.GetService[core.RequestService](ctx, core.REQUEST_SERVICE)
 	cronService := core.GetService[core.CronService](ctx, core.CRON_SERVICE)
-	metadataService := core.GetService[core.MetadataService](ctx, core.METADATA_SERVICE)
+	pinService := core.GetService[core.PinService](ctx, core.PIN_SERVICE)
 	logger := ctx.Logger()
 
 	req, err := requestService.GetRequest(ctx, args.RequestID)
@@ -35,12 +35,16 @@ func CronTaskPostUpload(args *define.CronTaskPostUploadArgs, ctx core.Context) e
 	}
 
 	for _, cid := range cids {
-		upload, err := metadataService.GetUpload(ctx, internal.NewIPFSHash(cid))
+		pin, err := pinService.QueryPin(ctx, nil, core.PinFilter{
+			UserID:   req.UserID,
+			Hash:     internal.NewIPFSHash(cid),
+			Protocol: internal.ProtocolName,
+		})
 		if err != nil {
 			return err
 		}
 
-		err = event.FireStorageObjectUploadedEvent(ctx, &upload)
+		err = event.FireStorageObjectUploadedEvent(ctx, pin, req.SourceIP)
 		if err != nil {
 			logger.Error("Failed to fire storage object uploaded event", zap.Error(err))
 		}
