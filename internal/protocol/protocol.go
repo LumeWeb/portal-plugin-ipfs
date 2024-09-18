@@ -18,6 +18,9 @@ import (
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
+	"go.lumeweb.com/portal/db/models"
+	"go.lumeweb.com/portal/event"
+	"go.lumeweb.com/portal/service"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"io"
@@ -34,6 +37,7 @@ type Protocol struct {
 	db            *gorm.DB
 	node          *ipfs.Node
 	metadataStore *store.MetadataStoreDefault
+	pin           core.PinService
 }
 
 func (p Protocol) CompleteProtocolData(_ context.Context, _ uint) error {
@@ -241,6 +245,7 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
 			cfg := ctx.Config().GetProtocol(internal.ProtocolName).(*pluginConfig.Config)
 			proto.db = ctx.DB()
+			proto.pin = core.GetService[core.PinService](ctx, core.PIN_SERVICE)
 
 			ms := store.NewMetadataStore(ctx)
 			proto.metadataStore = ms
@@ -281,6 +286,16 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 
 			return nil
 		}),
+		core.ContextWithStartupFunc(func(ctx core.Context) error {
+			event.Listen[*event.StorageObjectPinnedEvent](ctx, event.EVENT_STORAGE_OBJECT_UNPINNED, func(evt *event.StorageObjectPinnedEvent) error {
+				return handlePinningChanged(proto, evt.Pin())
+			})
+			event.Listen[*event.StorageObjectUnpinnedEvent](ctx, event.EVENT_STORAGE_OBJECT_UNPINNED, func(evt *event.StorageObjectUnpinnedEvent) error {
+				return handlePinningChanged(proto, evt.Pin())
+			})
+
+			return nil
+		}),
 		core.ContextWithExitFunc(func(ctx core.Context) error {
 			if proto.node != nil {
 				return proto.node.Close()
@@ -303,4 +318,20 @@ func mapLogLevel(level string) ipfsLog.LogLevel {
 	default:
 		return ipfsLog.LevelError
 	}
+}
+
+func handlePinningChanged(proto *Protocol, pin *models.Pin) error {
+	hash := service.NewStorageHashFromMultihashBytes(pin.Upload.Hash, nil)
+
+	pinned, err := proto.pin.UploadPinnedGlobal(hash)
+	if err != nil {
+		return err
+	}
+
+	cid, err := internal.CIDFromHash(pin.Upload.Hash)
+	if err != nil {
+		return err
+	}
+
+	return proto.metadataStore.MarkBlockReady(cid, pinned)
 }
