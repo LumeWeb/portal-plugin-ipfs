@@ -204,10 +204,13 @@ func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
 func (s *MetadataStoreDefault) BlockExists(c cid.Cid) error {
 	var block pluginDb.IPFSBlock
 
+	block.CID = c.Bytes()
+	block.Ready = true
+
 	c = encoding.NormalizeCid(c)
 
 	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
-		return tx.Where(&pluginDb.IPFSBlock{CID: c.Bytes()}).First(&block)
+		return tx.Where(&block).First(&block)
 	}); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// If the block doesn't exist, return format.ErrNotFound
@@ -236,6 +239,7 @@ SELECT b.cid
 FROM ipfs_linked_blocks AS lb
 INNER JOIN ipfs_blocks AS b ON (lb.child_id = b.id)
 WHERE lb.parent_id = (SELECT id FROM parent_block)
+  AND b.ready = true
 ORDER BY lb.link_index ASC
 `
 	args := []interface{}{c.Bytes()}
@@ -302,6 +306,7 @@ future_siblings AS (
 SELECT b.cid
 FROM future_siblings AS fs
 INNER JOIN ipfs_blocks AS b ON (b.id = fs.child_id)
+WHERE b.ready = true
 `
 	var rows *sql.Rows
 
@@ -343,7 +348,7 @@ INNER JOIN ipfs_blocks AS b ON (b.id = fs.child_id)
 func (s *MetadataStoreDefault) ProvideCIDs(limit int) (cids []ipfs.PinnedCID, err error) {
 	var _blocks []pluginDb.IPFSBlock
 	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
-		return tx.Order("last_announcement ASC").Limit(limit).Find(&_blocks)
+		return tx.Where("ready = ?", true).Order("last_announcement ASC").Limit(limit).Find(&_blocks)
 	}); err != nil {
 		return nil, fmt.Errorf("failed to query: %w", err)
 	}
@@ -377,7 +382,8 @@ func (s *MetadataStoreDefault) SetLastAnnouncement(cids []cid.Cid, t time.Time) 
 			c = encoding.NormalizeCid(c)
 
 			block := &pluginDb.IPFSBlock{
-				CID: c.Bytes(),
+				CID:   c.Bytes(),
+				Ready: true,
 			}
 
 			var rowsAffected int64
@@ -411,6 +417,7 @@ func (s *MetadataStoreDefault) Pinned(offset, limit int) (roots []cid.Cid, err e
 	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		return tx.Model(&pluginDb.IPFSBlock{}).
 			Select("cid").
+			Where("ready = ?", true).
 			Order("id ASC").
 			Offset(offset).
 			Limit(limit).
@@ -482,6 +489,25 @@ func (s *MetadataStoreDefault) GetUnixFSMetadata(c cid.Cid) (*pluginDb.UnixFSNod
 	}
 
 	return &metadata, nil
+}
+
+func (s *MetadataStoreDefault) MarkBlockReady(c cid.Cid, ready bool) error {
+	c = encoding.NormalizeCid(c)
+
+	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		var block pluginDb.IPFSBlock
+		if err := tx.Where("cid = ?", c.Bytes()).First(&block).Error; err != nil {
+			_ = tx.AddError(fmt.Errorf("failed to find block: %w", err))
+			return tx
+		}
+
+		if err := tx.Model(&block).Update("ready", ready).Error; err != nil {
+			_ = tx.AddError(fmt.Errorf("failed to mark readyness: %w", err))
+			return tx
+		}
+
+		return tx
+	})
 }
 
 // NewMetadataStore creates a new blockstore backed by a renterd node

@@ -1189,6 +1189,8 @@ go.lumeweb.com/portal v0.1.2-0.20240918130502-00dee63a36a9 h1:TrlRx8vZv4X3wQqakw
 go.lumeweb.com/portal v0.1.2-0.20240918130502-00dee63a36a9/go.mod h1:TgXnmeVa2azQ2NXjetMmzWVyTBe8DQO28QRszcRDd0M=
 go.lumeweb.com/portal v0.1.2-0.20240918133453-ab98860167a3 h1:BajIcYo6X87vZF0EHSiQbhztkhS+3s/V8sCLMK5aFws=
 go.lumeweb.com/portal v0.1.2-0.20240918133453-ab98860167a3/go.mod h1:TgXnmeVa2azQ2NXjetMmzWVyTBe8DQO28QRszcRDd0M=
+go.lumeweb.com/portal v0.1.2-0.20240918145753-5e2f8904a87f h1:ngCgOx3s29kBFB7thD7F+ljRRqsveQEyOyvnF4iOGDo=
+go.lumeweb.com/portal v0.1.2-0.20240918145753-5e2f8904a87f/go.mod h1:TgXnmeVa2azQ2NXjetMmzWVyTBe8DQO28QRszcRDd0M=
 go.lumeweb.com/portal-plugin-billing v0.0.0-20240911174503-98ebc40bb342 h1:V6dpTiZZqqVl0i+gGoGdxxWLJw1jipVZgIWJm4UnhkY=
 go.lumeweb.com/portal-plugin-billing v0.0.0-20240911174503-98ebc40bb342/go.mod h1:enB+BhN+7CDP2Euacux4j3OuNpfFzWpdngcjyCzoklM=
 go.lumeweb.com/portal-plugin-billing v0.0.0-20240911204417-b0c2851d13e0 h1:rNUteCBNIUZsFFIp9gfkqrrOx7kFLF4X2yon8U1GCJ4=
