@@ -149,6 +149,8 @@ func (a API) Configure(router *mux.Router) error {
 
 	authMw := middleware.AuthMiddleware(authMiddlewareOpts)
 
+	verifyMw := middleware.AccountVerifiedMiddleware(a.ctx)
+
 	defaultCors := cors.New(cors.Options{
 		AllowOriginFunc: func(origin string) bool {
 			return true
@@ -165,21 +167,21 @@ func (a API) Configure(router *mux.Router) error {
 
 	// Configure Pinning Service routes
 	pinRouter.HandleFunc("/pins", a.handleGetPins).Methods("GET", "OPTIONS")
-	pinRouter.HandleFunc("/pins", a.handleAddPin).Methods("POST", "OPTIONS")
+	pinRouter.HandleFunc("/pins", a.handleAddPin).Methods("POST", "OPTIONS").Use(verifyMw)
 	pinRouter.HandleFunc("/pins/{requestid}", a.handleGetPinByRequestId).Methods("GET", "OPTIONS")
-	pinRouter.HandleFunc("/pins/{requestid}", a.handleReplacePinByRequestId).Methods("POST", "OPTIONS")
-	pinRouter.HandleFunc("/pins/{requestid}", a.handleDeletePinByRequestId).Methods("DELETE", "OPTIONS")
+	pinRouter.HandleFunc("/pins/{requestid}", a.handleReplacePinByRequestId).Methods("POST", "OPTIONS").Use(verifyMw)
+	pinRouter.HandleFunc("/pins/{requestid}", a.handleDeletePinByRequestId).Methods("DELETE", "OPTIONS").Use(verifyMw)
 
 	// Configure Trustless Gateway routes
-	pinRouter.HandleFunc("/ipfs/{cid}", a.handleIPFSGet).Methods("GET", "HEAD", "OPTIONS")
+	pinRouter.HandleFunc("/ipfs/{cid}", a.handleIPFSGet).Methods("GET", "HEAD", "OPTIONS").Use(verifyMw)
 
 	apiRouter := router.PathPrefix("").Subrouter()
 	apiRouter.Use(defaultCors.Handler)
 	apiRouter.Use(authMw)
 	// Car Post Upload
-	apiRouter.HandleFunc("/api/upload", a.handleUpload).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/api/block/meta/{cid}", a.handleGetBlockMeta).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/api/block/meta/batch", a.handleGetBlockMetaBatch).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/api/upload", a.handleUpload).Methods("POST", "OPTIONS").Use(verifyMw)
+	apiRouter.HandleFunc("/api/block/meta/{cid}", a.handleGetBlockMeta).Methods("GET", "OPTIONS").Use(verifyMw)
+	apiRouter.HandleFunc("/api/block/meta/batch", a.handleGetBlockMetaBatch).Methods("POST", "OPTIONS").Use(verifyMw)
 
 	// Configure TUS routes
 	a.tus.SetupRoute(router, authMw, TUS_HTTP_ROUTE)
