@@ -10,12 +10,14 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
+	"github.com/samber/lo"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/hkdf"
 	"io"
+	"net"
 	"time"
 
 	"github.com/ipfs/boxo/bitswap"
@@ -309,5 +311,28 @@ func announcementAddresses() ([]multiaddr.Multiaddr, error) {
 		return nil, fmt.Errorf("failed to resolve announcement addresses: %w", err)
 	}
 
+	announcementAddrs = lo.Filter(announcementAddrs, func(addr multiaddr.Multiaddr, i int) bool {
+		return !manet.IsIPLoopback(addr) && !manet.IsIPUnspecified(addr) && !isIPv4PrivateRange(addr)
+	})
+
 	return announcementAddrs, nil
+}
+
+func isIPv4PrivateRange(addr multiaddr.Multiaddr) bool {
+	ip4, err := addr.ValueForProtocol(multiaddr.P_IP4)
+	if err != nil {
+		return false
+	}
+
+	ip := net.ParseIP(ip4)
+	if ip == nil {
+		return false
+	}
+
+	// Check for private IPv4 ranges
+	private10 := net.IPNet{IP: net.ParseIP("10.0.0.0"), Mask: net.CIDRMask(8, 32)}
+	private172 := net.IPNet{IP: net.ParseIP("172.16.0.0"), Mask: net.CIDRMask(12, 32)}
+	private192 := net.IPNet{IP: net.ParseIP("192.168.0.0"), Mask: net.CIDRMask(16, 32)}
+
+	return private10.Contains(ip) || private172.Contains(ip) || private192.Contains(ip)
 }
