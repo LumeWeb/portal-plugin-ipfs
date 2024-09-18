@@ -9,6 +9,7 @@ import (
 	"github.com/ipfs/go-datastore"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/multiformats/go-multiaddr"
+	manet "github.com/multiformats/go-multiaddr/net"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal/core"
@@ -199,6 +200,11 @@ func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datasto
 		return nil, fmt.Errorf("failed to create connection manager: %w", err)
 	}
 
+	announceAddresses, err := announcementAddresses()
+	if err != nil {
+		return nil, err
+	}
+
 	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(cfg.ListenAddresses...),
 		libp2p.ConnectionManager(cmgr),
@@ -207,6 +213,9 @@ func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datasto
 		libp2p.ResourceManager(rm),
 		libp2p.DefaultPeerstore,
 		libp2p.DefaultTransports,
+		libp2p.AddrsFactory(func([]multiaddr.Multiaddr) []multiaddr.Multiaddr {
+			return announceAddresses
+		}),
 	}
 
 	node, err := libp2p.New(opts...)
@@ -287,4 +296,18 @@ func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datasto
 }
 func (n *Node) TriggerReprovider() {
 	n.reprovider.Trigger()
+}
+
+func announcementAddresses() ([]multiaddr.Multiaddr, error) {
+	unspecAddrs := []multiaddr.Multiaddr{
+		multiaddr.StringCast("/ip4/0.0.0.0/tcp/4001"),
+		multiaddr.StringCast("/ip6/::/tcp/4001"),
+	}
+
+	announcementAddrs, err := manet.ResolveUnspecifiedAddresses(unspecAddrs, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve announcement addresses: %w", err)
+	}
+
+	return announcementAddrs, nil
 }
