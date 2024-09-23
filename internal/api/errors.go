@@ -18,7 +18,7 @@ const (
 
 // Default error messages for S5-specific errors
 var defaultErrorMessages = map[string]string{
-	ErrKeyFileUploadFailed:     "File upload failed due to an internal error.",
+	ErrKeyFileUploadFailed:     "File ipfsUpload failed due to an internal error.",
 	ErrKeyFileDownloadFailed:   "File download failed.",
 	ErrKeyMetadataFetchFailed:  "Failed to fetch metadata for the resource.",
 	ErrKeyInvalidFileFormat:    "Invalid file format provided.",

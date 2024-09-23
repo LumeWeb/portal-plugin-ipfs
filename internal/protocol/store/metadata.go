@@ -49,10 +49,10 @@ type (
 	}
 
 	MetadataStoreDefault struct {
-		ctx             core.Context
-		metadataService core.MetadataService
-		logger          *core.Logger
-		db              *gorm.DB
+		ctx    core.Context
+		upload core.UploadService
+		logger *core.Logger
+		db     *gorm.DB
 	}
 )
 
@@ -513,10 +513,10 @@ func (s *MetadataStoreDefault) MarkBlockReady(c cid.Cid, ready bool) error {
 // NewMetadataStore creates a new blockstore backed by a renterd node
 func NewMetadataStore(ctx core.Context) *MetadataStoreDefault {
 	return &MetadataStoreDefault{
-		ctx:             ctx,
-		metadataService: ctx.Service(core.METADATA_SERVICE).(core.MetadataService),
-		db:              ctx.DB(),
-		logger:          ctx.Logger(),
+		ctx:    ctx,
+		upload: ctx.Service(core.UPLOAD_SERVICE).(core.UploadService),
+		db:     ctx.DB(),
+		logger: ctx.Logger(),
 	}
 }
 

@@ -13,6 +13,7 @@ type IPFSPinView struct {
 	Status             models.RequestStatusType `gorm:"column:status"`
 	Hash               mh.Multihash             `gorm:"column:hash;type:binary(64);"`
 	HashType           uint64                   `gorm:"column:hash_type"`
+	CIDType            uint64                   `gorm:"column:cid_type"`
 	Name               string                   `gorm:"column:name"`
 	UserID             uint                     `gorm:"column:user_id"`
 	UploaderIP         string                   `gorm:"column:uploader_ip"`

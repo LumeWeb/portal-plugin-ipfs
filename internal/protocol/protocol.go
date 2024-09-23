@@ -321,14 +321,14 @@ func mapLogLevel(level string) ipfsLog.LogLevel {
 }
 
 func handlePinningChanged(proto *Protocol, pin *models.Pin) error {
-	hash := service.NewStorageHashFromMultihashBytes(pin.Upload.Hash, nil)
+	hash := service.NewStorageHashFromMultihashBytes(pin.Upload.Hash, pin.Upload.CIDType, nil)
 
 	pinned, err := proto.pin.UploadPinnedGlobal(hash)
 	if err != nil {
 		return err
 	}
 
-	cid, err := internal.CIDFromHash(pin.Upload.Hash)
+	cid, err := internal.CIDFromHash(pin.Upload.Hash, pin.Upload.CIDType)
 	if err != nil {
 		return err
 	}

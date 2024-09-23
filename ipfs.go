@@ -44,6 +44,7 @@ func createView(db *gorm.DB) error {
             r.status,
             r.hash AS r_hash,
             r.hash_type AS r_hash_type,
+            r.cid_type AS r_cid_type,
             r.metadata,
             r.user_id AS r_user_id,
             r.source_ip,
@@ -62,6 +63,7 @@ func createView(db *gorm.DB) error {
             p.user_id AS pin_user_id,
             u.hash AS u_hash,
             u.hash_type AS u_hash_type,
+            u.cid_type AS u_cid_type,
             u.uploader_ip,
 			ip.partial AS partial
         `).
@@ -77,6 +79,7 @@ func createView(db *gorm.DB) error {
             ird.status,
             COALESCE(pud.u_hash, ird.r_hash) AS hash,
             COALESCE(pud.u_hash_type, ird.r_hash_type) AS hash_type,
+			COALESCE(pud.u_cid_type, ird.r_cid_type) AS cid_type,
             COALESCE(pud.ip_name, ird.ir_name) AS name,
             ird.metadata AS meta,
             COALESCE(pud.pin_user_id, ird.r_user_id) AS user_id,
