@@ -36,15 +36,15 @@ const UPLOAD_SERVICE = "ipfs_upload_service"
 var _ core.Service = (*UploadService)(nil)
 
 type UploadService struct {
-	ctx             core.Context
-	db              *gorm.DB
-	cron            core.CronService
-	metadataService core.MetadataService
-	storageService  core.StorageService
-	ipfs            *protocol.Protocol
-	pin             core.PinService
-	requests        core.RequestService
-	logger          *core.Logger
+	ctx      core.Context
+	db       *gorm.DB
+	cron     core.CronService
+	upload   core.UploadService
+	storage  core.StorageService
+	ipfs     *protocol.Protocol
+	pin      core.PinService
+	requests core.RequestService
+	logger   *core.Logger
 }
 
 func NewUploadService() (core.Service, []core.ContextBuilderOption, error) {
@@ -54,8 +54,8 @@ func NewUploadService() (core.Service, []core.ContextBuilderOption, error) {
 			_service.ctx = ctx
 			_service.db = ctx.DB()
 			_service.cron = core.GetService[core.CronService](ctx, core.CRON_SERVICE)
-			_service.metadataService = core.GetService[core.MetadataService](ctx, core.METADATA_SERVICE)
-			_service.storageService = core.GetService[core.StorageService](ctx, core.STORAGE_SERVICE)
+			_service.upload = core.GetService[core.UploadService](ctx, core.UPLOAD_SERVICE)
+			_service.storage = core.GetService[core.StorageService](ctx, core.STORAGE_SERVICE)
 			_service.pin = core.GetService[core.PinService](ctx, core.PIN_SERVICE)
 			_service.requests = core.GetService[core.RequestService](ctx, core.REQUEST_SERVICE)
 
@@ -185,7 +185,7 @@ func (s *UploadService) CreatePinnedPin(ctx context.Context, c cid.Cid, operatio
 		}
 	}
 
-	err = s.metadataService.SaveUpload(ctx, core.UploadMetadata{
+	err = s.upload.SaveUpload(ctx, &models.Upload{
 		UserID:     userId,
 		Hash:       hash.Multihash(),
 		HashType:   hash.Type(),
@@ -275,7 +275,7 @@ func (s *UploadService) DeletePin(ctx context.Context, id uuid.UUID, userID uint
 		return fmt.Errorf("pin not found")
 	}
 
-	_cid, err := internal.CIDFromHash(pin.Hash)
+	_cid, err := internal.CIDFromHash(pin.Hash, pin.CIDType)
 	if err != nil {
 		return err
 	}
@@ -584,7 +584,7 @@ func (s *UploadService) HandlePostUpload(ctx context.Context, reader io.ReadSeek
 	// Create a new SHAReader
 	hashReader := NewSHAReader(reader)
 
-	upload, err := s.storageService.S3TemporaryUpload(ctx, hashReader, uint64(size), s.ipfs)
+	upload, err := s.storage.S3TemporaryUpload(ctx, hashReader, uint64(size), s.ipfs)
 	if err != nil {
 		return err
 	}
@@ -697,7 +697,7 @@ func (s *UploadService) UpdatePinRequestStatus(ctx context.Context, id any, stat
 
 func (s *UploadService) CompletePin(ctx context.Context, pin *pluginDb.IPFSPinView, node format.Node) error {
 	hash := internal.NewIPFSHash(node.Cid())
-	err := s.metadataService.SaveUpload(ctx, core.UploadMetadata{
+	err := s.upload.SaveUpload(ctx, &models.Upload{
 		UserID:     pin.UserID,
 		Hash:       pin.Hash,
 		HashType:   pin.HashType,
@@ -797,7 +797,7 @@ func (s *UploadService) createUploadRequest(ctx context.Context, uploadCid, c ci
 func (s *UploadService) convertToPinStatus(imp *pluginDb.IPFSPinView) *messages.PinStatus {
 	var c cid.Cid
 	if len(imp.Hash) > 0 {
-		c, _ = internal.CIDFromHash(imp.Hash)
+		c, _ = internal.CIDFromHash(imp.Hash, imp.CIDType)
 	} else {
 		c = cid.Undef
 	}

@@ -27,7 +27,7 @@ func CronTaskTusUpload(args *define.CronTaskTusUploadArgs, ctx core.Context) err
 		return fmt.Errorf("request not found")
 	}
 
-	size, err := tusHandler.UploadSize(ctx, service.NewStorageHashFromMultihashBytes(request.Request.UploadHash, nil))
+	size, err := tusHandler.UploadSize(ctx, service.NewStorageHashFromMultihashBytes(request.Request.UploadHash, request.Request.UploadHashCIDType, nil))
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func CronTaskTusUploadCleanup(args *define.CronTaskTusUploadCleanupArgs, ctx cor
 		return fmt.Errorf("request not found")
 	}
 
-	err := _api.TusHandler().CompleteUpload(ctx, service.NewStorageHashFromMultihash(request.Request.UploadHash, nil))
+	err := _api.TusHandler().CompleteUpload(ctx, service.NewStorageHashFromMultihash(request.Request.UploadHash, request.Request.UploadHashCIDType, nil))
 	if err != nil {
 		return err
 	}

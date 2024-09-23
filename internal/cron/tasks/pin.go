@@ -40,7 +40,7 @@ func CronTaskPin(args *define.CronTaskPinArgs, ctx core.Context) error {
 		// Check if this is a root pin (no parent)
 		if pin.ParentPinRequestID == nil {
 			// Calculate total file size
-			totalSize, err := calculateTotalFileSize(ctx, ipfs, pin.Hash)
+			totalSize, err := calculateTotalFileSize(ctx, ipfs, pin.Hash, pin.CIDType)
 			if err != nil {
 				logger.Error("Failed to calculate total file size", zap.Error(err))
 				return err
@@ -68,7 +68,7 @@ func CronTaskPin(args *define.CronTaskPinArgs, ctx core.Context) error {
 	}
 
 	// Get the node
-	c, err := internal.CIDFromHash(pin.Hash)
+	c, err := internal.CIDFromHash(pin.Hash, pin.CIDType)
 	if err != nil {
 		logger.Error("Failed to cast hash to CID", zap.Error(err))
 		return err
@@ -134,8 +134,8 @@ func CronTaskPin(args *define.CronTaskPinArgs, ctx core.Context) error {
 	return nil
 }
 
-func calculateTotalFileSize(ctx core.Context, ipfs *protocol.Protocol, hash []byte) (uint64, error) {
-	c, err := internal.CIDFromHash(hash)
+func calculateTotalFileSize(ctx core.Context, ipfs *protocol.Protocol, hash []byte, cidType uint64) (uint64, error) {
+	c, err := internal.CIDFromHash(hash, cidType)
 	if err != nil {
 		return 0, fmt.Errorf("failed to cast hash to CID: %w", err)
 	}

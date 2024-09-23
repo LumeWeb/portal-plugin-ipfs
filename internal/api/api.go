@@ -35,17 +35,17 @@ import (
 
 var _ core.API = (*API)(nil)
 
-const TUS_HTTP_ROUTE = "/api/upload/tus"
+const TUS_HTTP_ROUTE = "/api/ipfsUpload/tus"
 
 type API struct {
-	ctx             core.Context
-	config          config.Manager
-	logger          *core.Logger
-	ipfs            *protocol.Protocol
-	upload          *pluginService.UploadService
-	cron            core.CronService
-	tus             *service.TusHandler
-	metadataService core.MetadataService
+	ctx        core.Context
+	config     config.Manager
+	logger     *core.Logger
+	ipfs       *protocol.Protocol
+	ipfsUpload *pluginService.UploadService
+	cron       core.CronService
+	tus        *service.TusHandler
+	upload     core.UploadService
 }
 
 func NewAPI() (core.API, []core.ContextBuilderOption, error) {
@@ -56,15 +56,15 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 			api.config = ctx.Config()
 			api.logger = ctx.APILogger(api)
 			api.ipfs = core.GetProtocol(internal.ProtocolName).(*protocol.Protocol)
-			api.upload = core.GetService[*pluginService.UploadService](ctx, pluginService.UPLOAD_SERVICE)
+			api.ipfsUpload = core.GetService[*pluginService.UploadService](ctx, pluginService.UPLOAD_SERVICE)
 			api.cron = core.GetService[core.CronService](ctx, core.CRON_SERVICE)
-			api.metadataService = core.GetService[core.MetadataService](ctx, core.METADATA_SERVICE)
+			api.upload = core.GetService[core.UploadService](ctx, core.UPLOAD_SERVICE)
 			tus, err := service.CreateTusHandler(ctx, service.TusHandlerConfig{
 				BasePath: TUS_HTTP_ROUTE,
 				CreatedUploadHandler: service.TUSDefaultUploadCreatedHandler(ctx, func(hook handler.HookEvent, uploaderId uint) (core.StorageHash, error) {
 					return nil, nil
 				}, func(requestId uint) error {
-					err := api.upload.SetTusUploadRequestID(ctx, requestId)
+					err := api.ipfsUpload.SetTusUploadRequestID(ctx, requestId)
 					if err != nil {
 						return err
 					}
@@ -94,21 +94,21 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 						api.logger.Error("Failed to validate car", zap.Error(err))
 						err = api.tus.FailUploadById(ctx, hook.Upload.ID)
 						if err != nil {
-							api.logger.Error("Failed to fail upload", zap.Error(err))
+							api.logger.Error("Failed to fail ipfsUpload", zap.Error(err))
 						}
 						return
 					}
 
 					err = api.tus.SetHashById(ctx, hook.Upload.ID, internal.NewIPFSHash(root.Cid()))
 					if err != nil {
-						api.logger.Error("Failed to set upload hash", zap.Error(err))
+						api.logger.Error("Failed to set ipfsUpload hash", zap.Error(err))
 						return
 					}
 					err = api.cron.CreateJobIfNotExists(define.CronTaskTusUploadName, define.CronTaskTusUploadArgs{
 						UploadID: hook.Upload.ID,
 					})
 					if err != nil {
-						api.logger.Error("Failed to create upload cron job", zap.Error(err))
+						api.logger.Error("Failed to create ipfsUpload cron job", zap.Error(err))
 					}
 				}),
 			})
@@ -179,7 +179,7 @@ func (a API) Configure(router *mux.Router) error {
 	apiRouter.Use(defaultCors.Handler)
 	apiRouter.Use(authMw)
 	// Car Post Upload
-	apiRouter.HandleFunc("/api/upload", a.handleUpload).Methods("POST", "OPTIONS").Use(verifyMw)
+	apiRouter.HandleFunc("/api/ipfsUpload", a.handleUpload).Methods("POST", "OPTIONS").Use(verifyMw)
 	apiRouter.HandleFunc("/api/block/meta/{cid}", a.handleGetBlockMeta).Methods("GET", "OPTIONS").Use(verifyMw)
 	apiRouter.HandleFunc("/api/block/meta/batch", a.handleGetBlockMetaBatch).Methods("POST", "OPTIONS").Use(verifyMw)
 
@@ -239,7 +239,7 @@ func (a API) handleGetPins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := a.upload.GetPins(ctx, req, user)
+	results, err := a.ipfsUpload.GetPins(ctx, req, user)
 	if err != nil {
 		_ = ctx.Error(err, http.StatusInternalServerError)
 		return
@@ -262,7 +262,7 @@ func (a API) handleAddPin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, err := a.upload.AddQueuedPin(ctx, req.Pin, user, r.RemoteAddr)
+	status, err := a.ipfsUpload.AddQueuedPin(ctx, req.Pin, user, r.RemoteAddr)
 	if err != nil {
 		_ = ctx.Error(err, http.StatusInternalServerError)
 		return
@@ -287,7 +287,7 @@ func (a API) handleGetPinByRequestId(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, err := a.upload.GetPinStatus(ctx, id, user)
+	status, err := a.ipfsUpload.GetPinStatus(ctx, id, user)
 	if err != nil {
 		_ = ctx.Error(err, http.StatusInternalServerError)
 		return
@@ -317,7 +317,7 @@ func (a API) handleReplacePinByRequestId(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	status, err := a.upload.ReplacePin(ctx, id, req.Pin, user)
+	status, err := a.ipfsUpload.ReplacePin(ctx, id, req.Pin, user)
 	if err != nil {
 		_ = ctx.Error(err, http.StatusInternalServerError)
 		return
@@ -343,7 +343,7 @@ func (a API) handleDeletePinByRequestId(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	err = a.upload.DeletePin(ctx, id, user)
+	err = a.ipfsUpload.DeletePin(ctx, id, user)
 	if err != nil {
 		_ = ctx.Error(err, http.StatusInternalServerError)
 		return
@@ -429,7 +429,7 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid string, w h
 		return
 	}
 
-	upload, err := a.metadataService.GetUpload(ctx, internal.NewIPFSHash(pCid))
+	upload, err := a.upload.GetUpload(ctx, internal.NewIPFSHash(pCid))
 	if err != nil {
 		_ = ctx.Error(err, http.StatusInternalServerError)
 		return
@@ -487,7 +487,7 @@ func (a API) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 	}(file)
 
-	err = a.upload.HandlePostUpload(ctx, file, user, r.RemoteAddr)
+	err = a.ipfsUpload.HandlePostUpload(ctx, file, user, r.RemoteAddr)
 	if err != nil {
 		_ = ctx.Error(NewError(ErrKeyFileUploadFailed, err), http.StatusBadRequest)
 		return
@@ -538,7 +538,7 @@ func (a API) handleGetBlockMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	meta, err := a.upload.GetBlockMeta(ctx, pCid)
+	meta, err := a.ipfsUpload.GetBlockMeta(ctx, pCid)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			_ = ctx.Error(fmt.Errorf("block not found: %w", err), http.StatusNotFound)
@@ -589,7 +589,7 @@ func (a API) handleGetBlockMetaBatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		meta, err := a.upload.GetBlockMeta(ctx, parsedCid)
+		meta, err := a.ipfsUpload.GetBlockMeta(ctx, parsedCid)
 		if err != nil {
 			_ = ctx.Error(err, http.StatusInternalServerError)
 			return
