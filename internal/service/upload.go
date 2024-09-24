@@ -35,6 +35,12 @@ const UPLOAD_SERVICE = "ipfs_upload_service"
 
 var _ core.Service = (*UploadService)(nil)
 
+var (
+	ErrStorageQuotaExceeded  = errors.New("storage quota exceeded")
+	ErrUploadQuotaExceeded   = errors.New("upload quota exceeded")
+	ErrDownloadQuotaExceeded = errors.New("download quota exceeded")
+)
+
 type UploadService struct {
 	ctx      core.Context
 	db       *gorm.DB
@@ -568,7 +574,7 @@ func (s *UploadService) HandlePostUpload(ctx context.Context, reader io.ReadSeek
 		}
 
 		if !allowed {
-			return errors.New("upload quota exceeded")
+			return ErrUploadQuotaExceeded
 		}
 
 		allowed, err = quotaService.CheckStorageQuota(userId, uint64(size))
@@ -577,7 +583,7 @@ func (s *UploadService) HandlePostUpload(ctx context.Context, reader io.ReadSeek
 		}
 
 		if !allowed {
-			return errors.New("storage quota exceeded")
+			return ErrStorageQuotaExceeded
 		}
 	}
 

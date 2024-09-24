@@ -489,7 +489,16 @@ func (a API) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	err = a.ipfsUpload.HandlePostUpload(ctx, file, user, r.RemoteAddr)
 	if err != nil {
-		_ = ctx.Error(NewError(ErrKeyFileUploadFailed, err), http.StatusBadRequest)
+		sysError := NewError(ErrKeyFileUploadFailed, err)
+		errorCode := sysError.HttpStatus()
+
+		if errors.Is(err, pluginService.ErrStorageQuotaExceeded) ||
+			errors.Is(err, pluginService.ErrDownloadQuotaExceeded) ||
+			errors.Is(err, pluginService.ErrUploadQuotaExceeded) {
+			errorCode = http.StatusInsufficientStorage
+		}
+
+		_ = ctx.Error(sysError, errorCode)
 		return
 	}
 
