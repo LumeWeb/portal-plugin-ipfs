@@ -35,7 +35,7 @@ import (
 
 var _ core.API = (*API)(nil)
 
-const TUS_HTTP_ROUTE = "/api/ipfsUpload/tus"
+const TUS_HTTP_ROUTE = "/api/upload/tus"
 
 type API struct {
 	ctx        core.Context
