@@ -179,7 +179,7 @@ func (a API) Configure(router *mux.Router) error {
 	apiRouter.Use(defaultCors.Handler)
 	apiRouter.Use(authMw)
 	// Car Post Upload
-	apiRouter.HandleFunc("/api/ipfsUpload", a.handleUpload).Methods("POST", "OPTIONS").Use(verifyMw)
+	apiRouter.HandleFunc("/api/upload", a.handleUpload).Methods("POST", "OPTIONS").Use(verifyMw)
 	apiRouter.HandleFunc("/api/block/meta/{cid}", a.handleGetBlockMeta).Methods("GET", "OPTIONS").Use(verifyMw)
 	apiRouter.HandleFunc("/api/block/meta/batch", a.handleGetBlockMetaBatch).Methods("POST", "OPTIONS").Use(verifyMw)
 
