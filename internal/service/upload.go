@@ -194,6 +194,7 @@ func (s *UploadService) CreatePinnedPin(ctx context.Context, c cid.Cid, operatio
 	err = s.upload.SaveUpload(ctx, &models.Upload{
 		UserID:     userId,
 		Hash:       hash.Multihash(),
+		CIDType:    hash.CIDType(),
 		HashType:   hash.Type(),
 		Protocol:   internal.ProtocolName,
 		UploaderIP: uploaderIP,
@@ -707,6 +708,7 @@ func (s *UploadService) CompletePin(ctx context.Context, pin *pluginDb.IPFSPinVi
 		UserID:     pin.UserID,
 		Hash:       pin.Hash,
 		HashType:   pin.HashType,
+		CIDType:    hash.CIDType(),
 		Protocol:   internal.ProtocolName,
 		UploaderIP: pin.UploaderIP,
 		Size:       uint64(len(node.RawData())),
