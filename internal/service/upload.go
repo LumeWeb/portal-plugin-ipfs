@@ -900,6 +900,8 @@ func requestStatusToPinStatus(status models.RequestStatusType) pluginDb.PinningS
 		return pluginDb.PinningStatusPinned
 	case models.RequestStatusFailed:
 		return pluginDb.PinningStatusFailed
+	case models.RequestStatusDuplicate:
+		return pluginDb.PinningStatusPinned
 	default:
 		return pluginDb.PinningStatusQueued
 	}
