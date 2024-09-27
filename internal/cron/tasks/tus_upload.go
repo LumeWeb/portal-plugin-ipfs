@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"errors"
 	"fmt"
 	billingPluginService "go.lumeweb.com/portal-plugin-billing/service"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
@@ -71,6 +72,10 @@ func CronTaskTusUpload(args *define.CronTaskTusUploadArgs, ctx core.Context) err
 	// Process the car
 	cids, err := processCar(ctx, reader, &request.Request)
 	if err != nil {
+		if errors.Is(err, core.ErrDuplicateRequest) {
+			return createTusCleanupTask(ctx, args.UploadID)
+		}
+
 		return err
 	}
 
@@ -89,14 +94,7 @@ func CronTaskTusUpload(args *define.CronTaskTusUploadArgs, ctx core.Context) err
 		}
 	}
 
-	err = cronService.CreateJobIfNotExists(define.CronTaskTusUploadCleanupName, define.CronTaskTusUploadCleanupArgs{
-		UploadID: args.UploadID,
-	})
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return createTusCleanupTask(ctx, args.UploadID)
 }
 
 func CronTaskTusUploadCleanup(args *define.CronTaskTusUploadCleanupArgs, ctx core.Context) error {
@@ -118,4 +116,11 @@ func CronTaskTusUploadCleanup(args *define.CronTaskTusUploadCleanupArgs, ctx cor
 	}
 
 	return nil
+}
+
+func createTusCleanupTask(ctx core.Context, uploadID string) error {
+	cronService := core.GetService[core.CronService](ctx, core.CRON_SERVICE)
+	return cronService.CreateJobIfNotExists(define.CronTaskTusUploadCleanupName, define.CronTaskTusUploadCleanupArgs{
+		UploadID: uploadID,
+	})
 }
