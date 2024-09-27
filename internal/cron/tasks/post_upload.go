@@ -6,6 +6,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/event"
 	"go.uber.org/zap"
 )
@@ -64,9 +65,16 @@ func CronTaskPostUploadCleanup(args *define.CronTaskPostUploadCleanupArgs, ctx c
 	proto := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol)
 	requestService := core.GetService[core.RequestService](ctx, core.REQUEST_SERVICE)
 
-	err := requestService.CompleteRequest(ctx, args.RequestID)
+	request, err := requestService.GetRequest(ctx, args.RequestID)
 	if err != nil {
 		return err
+	}
+
+	if request.Status != models.RequestStatusDuplicate {
+		err = requestService.CompleteRequest(ctx, args.RequestID)
+		if err != nil {
+			return err
+		}
 	}
 
 	err = requestService.DeleteRequest(ctx, args.RequestID)
