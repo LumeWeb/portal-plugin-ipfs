@@ -1235,6 +1235,12 @@ go.lumeweb.com/portal v0.1.2-0.20240923222839-6d4dc6084ee2 h1:0rZye+v34NLKtEBB4L
 go.lumeweb.com/portal v0.1.2-0.20240923222839-6d4dc6084ee2/go.mod h1:TgXnmeVa2azQ2NXjetMmzWVyTBe8DQO28QRszcRDd0M=
 go.lumeweb.com/portal v0.1.2-0.20240923223939-90f2d522ebd4 h1:8q0fLZVP/+tv8tqguPZoNQHw/YNijWkrxwb378ZPgWc=
 go.lumeweb.com/portal v0.1.2-0.20240923223939-90f2d522ebd4/go.mod h1:0mVYy3oMXEwQCJph62Dra3BpZX/WthBBzNYHPkyICd8=
+go.lumeweb.com/portal v0.1.2-0.20240927022136-582dbfc34e4e h1:LQeoIeUlTHGZUa1aIeDPqFop6E1fUE/yjNcbt19m684=
+go.lumeweb.com/portal v0.1.2-0.20240927022136-582dbfc34e4e/go.mod h1:0mVYy3oMXEwQCJph62Dra3BpZX/WthBBzNYHPkyICd8=
+go.lumeweb.com/portal v0.1.2-0.20240927023550-e37246195ec0 h1:kU7Jlhl9/Ad3Bk1gYMLmXFTyL5S6jFIyYV3Cr5kjRv0=
+go.lumeweb.com/portal v0.1.2-0.20240927023550-e37246195ec0/go.mod h1:0mVYy3oMXEwQCJph62Dra3BpZX/WthBBzNYHPkyICd8=
+go.lumeweb.com/portal v0.1.2-0.20240927025227-ff4cd754a1e8 h1:xQdVAGcxYi0wF3rHI99eK1cPYLmQ4DIlVs+rge9peHQ=
+go.lumeweb.com/portal v0.1.2-0.20240927025227-ff4cd754a1e8/go.mod h1:0mVYy3oMXEwQCJph62Dra3BpZX/WthBBzNYHPkyICd8=
 go.lumeweb.com/portal-plugin-billing v0.0.0-20240911174503-98ebc40bb342 h1:V6dpTiZZqqVl0i+gGoGdxxWLJw1jipVZgIWJm4UnhkY=
 go.lumeweb.com/portal-plugin-billing v0.0.0-20240911174503-98ebc40bb342/go.mod h1:enB+BhN+7CDP2Euacux4j3OuNpfFzWpdngcjyCzoklM=
 go.lumeweb.com/portal-plugin-billing v0.0.0-20240911204417-b0c2851d13e0 h1:rNUteCBNIUZsFFIp9gfkqrrOx7kFLF4X2yon8U1GCJ4=

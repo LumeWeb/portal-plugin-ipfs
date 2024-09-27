@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"errors"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
@@ -13,7 +14,6 @@ func CronTaskPostUpload(args *define.CronTaskPostUploadArgs, ctx core.Context) e
 	storageService := core.GetService[core.StorageService](ctx, core.STORAGE_SERVICE)
 	proto := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol)
 	requestService := core.GetService[core.RequestService](ctx, core.REQUEST_SERVICE)
-	cronService := core.GetService[core.CronService](ctx, core.CRON_SERVICE)
 	pinService := core.GetService[core.PinService](ctx, core.PIN_SERVICE)
 	logger := ctx.Logger()
 
@@ -31,6 +31,10 @@ func CronTaskPostUpload(args *define.CronTaskPostUploadArgs, ctx core.Context) e
 	// Process the car
 	cids, err := processCar(ctx, upload, req)
 	if err != nil {
+		if errors.Is(err, core.ErrDuplicateRequest) {
+			return createPostCleanupTask(ctx, req.ID, args.UploadID)
+		}
+
 		return err
 	}
 
@@ -51,16 +55,8 @@ func CronTaskPostUpload(args *define.CronTaskPostUploadArgs, ctx core.Context) e
 	}
 
 	// Schedule the cleanup task
-	err = cronService.CreateJobIfNotExists(define.CronTaskPostUploadCleanupName, define.CronTaskPostUploadCleanupArgs{
-		RequestID: req.ID,
-		UploadID:  args.UploadID,
-	})
 
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return createPostCleanupTask(ctx, req.ID, args.UploadID)
 }
 
 func CronTaskPostUploadCleanup(args *define.CronTaskPostUploadCleanupArgs, ctx core.Context) error {
@@ -79,6 +75,21 @@ func CronTaskPostUploadCleanup(args *define.CronTaskPostUploadCleanupArgs, ctx c
 	}
 
 	err = storageService.S3DeleteTemporaryUpload(ctx, proto, args.UploadID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func createPostCleanupTask(ctx core.Context, reqID uint, uploadId string) error {
+	cronService := core.GetService[core.CronService](ctx, core.CRON_SERVICE)
+
+	err := cronService.CreateJobIfNotExists(define.CronTaskPostUploadCleanupName, define.CronTaskPostUploadCleanupArgs{
+		RequestID: reqID,
+		UploadID:  uploadId,
+	})
+
 	if err != nil {
 		return err
 	}

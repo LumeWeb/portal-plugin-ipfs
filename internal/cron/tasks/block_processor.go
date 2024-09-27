@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
+	"gorm.io/gorm"
 	"io"
 	"sync"
 	"time"
@@ -320,6 +322,7 @@ func (bp *blockProcessor) release() {
 
 func processCar(ctx core.Context, r io.Reader, request *models.Request) ([]cid.Cid, error) {
 	pinService := core.GetService[*pluginService.UploadService](ctx, pluginService.UPLOAD_SERVICE)
+	requestService := core.GetService[core.RequestService](ctx, core.REQUEST_SERVICE)
 	proto := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol)
 	logger := ctx.Logger()
 
@@ -332,6 +335,36 @@ func processCar(ctx core.Context, r io.Reader, request *models.Request) ([]cid.C
 	}
 
 	rootCIDs := cr.Roots
+
+	duplicates := false
+
+	for _, rootCid := range rootCIDs {
+		hash := internal.NewIPFSHash(rootCid)
+		req, err := requestService.QueryRequest(ctx, &models.Request{Hash: hash.Multihash(), HashType: hash.Type()}, core.RequestFilter{
+			Protocol:  internal.ProtocolName,
+			Operation: models.RequestOperationUpload,
+			UserID:    request.UserID,
+		})
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+
+			return nil, fmt.Errorf("failed to query request: %w", err)
+		}
+
+		err = requestService.UpdateRequestStatus(ctx, req.ID, models.RequestStatusDuplicate)
+		if err != nil {
+			return nil, err
+		}
+
+		duplicates = true
+	}
+
+	if duplicates {
+		return nil, core.ErrDuplicateRequest
+	}
+
 	bp := newBlockProcessor(ctx, pinService, proto, request, logger)
 	if bp == nil {
 		return nil, fmt.Errorf("failed to create block processor")
