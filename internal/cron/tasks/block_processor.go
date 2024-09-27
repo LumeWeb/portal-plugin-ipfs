@@ -340,7 +340,10 @@ func processCar(ctx core.Context, r io.Reader, request *models.Request) ([]cid.C
 
 	for _, rootCid := range rootCIDs {
 		hash := internal.NewIPFSHash(rootCid)
-		req, err := requestService.QueryRequest(ctx, &models.Request{Hash: hash.Multihash(), HashType: hash.Type()}, core.RequestFilter{
+		req, err := requestService.QueryRequest(ctx, &models.Request{
+			Hash: hash.Multihash(), HashType: hash.Type(),
+			Status: models.RequestStatusCompleted,
+		}, core.RequestFilter{
 			Protocol:  internal.ProtocolName,
 			Operation: models.RequestOperationUpload,
 			UserID:    request.UserID,
