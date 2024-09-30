@@ -9,7 +9,6 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/event"
-	"go.lumeweb.com/portal/service"
 	"go.uber.org/zap"
 	"io"
 )
@@ -104,13 +103,13 @@ func CronTaskTusUploadCleanup(args *define.CronTaskTusUploadCleanupArgs, ctx cor
 	tusService := core.GetService[core.TUSService](ctx, core.TUS_SERVICE)
 
 	// Get the request
-	found, request := tusService.UploadExists(ctx, args.UploadID)
+	found, _ := tusService.UploadExists(ctx, args.UploadID)
 	if !found {
 		logger.Error("Failed to get request")
 		return fmt.Errorf("request not found")
 	}
 
-	err := _api.TusHandler().CompleteUpload(ctx, service.NewStorageHashFromMultihash(request.Request.UploadHash, request.Request.UploadHashCIDType, nil))
+	err := _api.TusHandler().CompleteUpload(ctx, args.UploadID)
 	if err != nil {
 		return err
 	}
