@@ -32,7 +32,7 @@ require (
 	github.com/samber/lo v1.47.0
 	github.com/tus/tusd/v2 v2.4.0
 	go.lumeweb.com/httputil v0.0.0-20240907105629-dbffb601f2ab
-	go.lumeweb.com/portal v0.1.2-0.20240927025227-ff4cd754a1e8
+	go.lumeweb.com/portal v0.1.2-0.20240930084359-ce346d2e59b1
 	go.lumeweb.com/portal-plugin-billing v0.0.0-20240911204417-b0c2851d13e0
 	go.sia.tech/renterd v1.0.8
 	go.uber.org/zap v1.27.0

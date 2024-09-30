@@ -26,7 +26,6 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
-	"github.com/rs/cors"
 	"go.lumeweb.com/httputil"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/config"
@@ -151,18 +150,10 @@ func (a API) Configure(router *mux.Router) error {
 
 	verifyMw := middleware.AccountVerifiedMiddleware(a.ctx)
 
-	defaultCors := cors.New(cors.Options{
-		AllowOriginFunc: func(origin string) bool {
-			return true
-		},
-		AllowedMethods:   []string{"POST", "GET", "DELETE", "HEAD"},
-		AllowedHeaders:   []string{"*"},
-		ExposedHeaders:   []string{"Content-Type", "X-Total-Count"},
-		AllowCredentials: true,
-	})
+	corsHandler := middleware.CorsMiddleware(nil)
 
 	pinRouter := router.PathPrefix("").Subrouter()
-	pinRouter.Use(defaultCors.Handler)
+	pinRouter.Use(corsHandler)
 	pinRouter.Use(authMw)
 
 	// Configure Pinning Service routes
@@ -176,7 +167,7 @@ func (a API) Configure(router *mux.Router) error {
 	pinRouter.HandleFunc("/ipfs/{cid}", a.handleIPFSGet).Methods("GET", "HEAD", "OPTIONS").Use(verifyMw)
 
 	apiRouter := router.PathPrefix("").Subrouter()
-	apiRouter.Use(defaultCors.Handler)
+	apiRouter.Use(corsHandler)
 	apiRouter.Use(authMw)
 	// Car Post Upload
 	apiRouter.HandleFunc("/api/upload", a.handleUpload).Methods("POST", "OPTIONS").Use(verifyMw)
