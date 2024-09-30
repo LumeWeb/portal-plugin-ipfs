@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/samber/lo"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"gorm.io/gorm"
 	"io"
@@ -18,7 +19,6 @@ import (
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
-	"github.com/samber/lo"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
@@ -30,7 +30,6 @@ import (
 
 type blockJob struct {
 	Block     blocks.Block
-	IsRoot    bool
 	ParentCID cid.Cid
 }
 
@@ -46,7 +45,6 @@ func (j *blockJob) Bytes() []byte {
 type blockJobJSON struct {
 	BlockData []byte `json:"block_data"`
 	BlockCid  string `json:"block_cid"`
-	IsRoot    bool   `json:"is_root"`
 	ParentCID string `json:"parent_cid"`
 }
 
@@ -60,7 +58,6 @@ func (j *blockJob) MarshalJSON() ([]byte, error) {
 	return json.Marshal(blockJobJSON{
 		BlockData: j.Block.RawData(),
 		BlockCid:  j.Block.Cid().String(),
-		IsRoot:    j.IsRoot,
 		ParentCID: parentCID,
 	})
 }
@@ -91,18 +88,20 @@ func (j *blockJob) UnmarshalJSON(data []byte) error {
 	}
 
 	j.Block = block
-	j.IsRoot = bjson.IsRoot
 	j.ParentCID = parentCid
 
 	return nil
 }
 
 type blockProcessor struct {
+	rootCIDs           map[string]bool
 	processedPins      map[string]uuid.UUID
 	pinExisted         map[string]bool
 	pinLinks           map[string]string
+	processedNodes     map[string]*internal.NodeInfo
 	uploadService      *pluginService.UploadService
 	requestService     core.RequestService
+	pinService         core.PinService
 	proto              *protocol.Protocol
 	request            *models.Request
 	logger             *core.Logger
@@ -115,14 +114,17 @@ type blockProcessor struct {
 	done               chan struct{}
 }
 
-func newBlockProcessor(coreCtx core.Context, pinService *pluginService.UploadService, proto *protocol.Protocol, request *models.Request, logger *core.Logger) *blockProcessor {
+func newBlockProcessor(coreCtx core.Context, pinService *pluginService.UploadService, proto *protocol.Protocol, request *models.Request, logger *core.Logger, rootCIDs []cid.Cid) *blockProcessor {
 	ctx, cancel := context.WithCancel(coreCtx.GetContext())
 	bp := &blockProcessor{
+		rootCIDs:           lo.SliceToMap(rootCIDs, func(cid cid.Cid) (string, bool) { return string(cid.Bytes()), true }),
 		processedPins:      make(map[string]uuid.UUID),
 		pinExisted:         make(map[string]bool),
 		pinLinks:           make(map[string]string),
+		processedNodes:     make(map[string]*internal.NodeInfo),
 		uploadService:      pinService,
 		requestService:     core.GetService[core.RequestService](coreCtx, core.REQUEST_SERVICE),
+		pinService:         core.GetService[core.PinService](coreCtx, core.PIN_SERVICE),
 		proto:              proto,
 		request:            request,
 		logger:             logger,
@@ -159,15 +161,28 @@ func (bp *blockProcessor) processBlock(ctx context.Context, msg queueCore.Queued
 
 	bp.logger.Debug("Processing block", zap.String("CID", job.Block.Cid().String()))
 
+	cidStr := string(job.Block.Cid().Bytes())
+
 	// Import the block
 	err := bp.proto.GetNode().AddBlock(bp.ctx, job.Block)
 	if err != nil {
 		return bp.handleError(fmt.Errorf("failed to add block: %w", err))
 	}
 
+	// Analyze the node
+	nodeInfo, err := internal.AnalyzeNode(bp.ctx, job.Block)
+	if err != nil {
+		return bp.handleError(fmt.Errorf("failed to analyze node: %w", err))
+	}
+
+	bp.processedNodes[cidStr] = nodeInfo
+
+	// Check if this is a root block
+	_, isRoot := bp.rootCIDs[cidStr]
+
 	// Create pin
 	var requestID *uuid.UUID
-	if job.IsRoot {
+	if isRoot {
 		data, err := bp.requestService.GetProtocolData(bp.ctx, bp.request.ID)
 		if err != nil {
 			return bp.handleError(err)
@@ -176,13 +191,9 @@ func (bp *blockProcessor) processBlock(ctx context.Context, msg queueCore.Queued
 		requestID = (*uuid.UUID)(&ipfsData.PinRequestID)
 	}
 
-	pin, existing, err := bp.uploadService.CreatePinnedPin(bp.ctx, job.Block.Cid(), bp.request.Operation, uint64(len(job.Block.RawData())), bp.request.UserID, bp.request.SourceIP, "", !job.IsRoot, job.IsRoot, requestID, nil)
+	pin, existing, err := bp.uploadService.CreatePinnedPin(bp.ctx, job.Block.Cid(), bp.request.Operation, nodeInfo.Size, bp.request.UserID, bp.request.SourceIP, "", !isRoot, isRoot, requestID, nil)
 	if err != nil {
 		return bp.handleError(fmt.Errorf("failed to pin block: %w", err))
-	}
-
-	if err = bp.uploadService.DetectUpdatePartialStatus(ctx, job.Block); err != nil {
-		return bp.handleError(fmt.Errorf("failed to detect and/or update partial status: %w", err))
 	}
 
 	cidBytes := job.Block.Cid().Bytes()
@@ -200,7 +211,7 @@ func (bp *blockProcessor) processBlock(ctx context.Context, msg queueCore.Queued
 		bp.pinLinks[string(link.Cid.Bytes())] = string(cidBytes)
 	}
 
-	if job.IsRoot {
+	if isRoot {
 		bp.pinLinks[string(job.Block.Cid().Bytes())] = string(cid.Undef.Bytes())
 	}
 
@@ -320,6 +331,75 @@ func (bp *blockProcessor) release() {
 	bp.queue.Release()
 }
 
+func (bp *blockProcessor) detectPartialBlocks() error {
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
+
+	for cidStr, _ := range bp.rootCIDs {
+		if _, ok := bp.processedNodes[cidStr]; !ok {
+			bp.logger.Error("Root node not found", zap.String("CID", cidStr))
+			continue
+		}
+
+		nodeInfo := bp.processedNodes[cidStr]
+
+		if internal.IsPartialFile(nodeInfo) {
+			continue
+		}
+
+		hash := internal.NewIPFSHash(nodeInfo.CID)
+
+		pin, err := bp.pinService.QueryProtocolPin(bp.ctx, internal.ProtocolName, nil, core.PinFilter{Protocol: internal.ProtocolName, Hash: hash})
+		if err != nil {
+			return err
+		}
+
+		if pin == nil {
+			bp.logger.Error("Pin not found", zap.String("CID", cidStr))
+		}
+
+		pinData := pin.(*pluginDb.IPFSPin)
+
+		if err = bp.uploadService.UpdatePartialStatus(bp.ctx, pinData.PinID, false); err != nil {
+			return err
+		}
+
+		bp.logger.Debug("Updated root node to complete", zap.String("CID", cidStr))
+	}
+
+	for cidStr, nodeInfo := range bp.processedNodes {
+		if _, isRoot := bp.rootCIDs[cidStr]; !isRoot {
+			hash := internal.NewIPFSHash(nodeInfo.CID)
+
+			pin, err := bp.pinService.QueryProtocolPin(bp.ctx, internal.ProtocolName, nil, core.PinFilter{Protocol: internal.ProtocolName, Hash: hash})
+			if err != nil {
+				return err
+			}
+
+			if pin == nil {
+				return errors.New("pin not found")
+			}
+
+			pinData := pin.(*pluginDb.IPFSPin)
+
+			// Determine if it's a partial file
+			isPartial := internal.IsPartialFile(nodeInfo)
+
+			if nodeInfo.Type == internal.NodeTypeRaw && bp.pinLinks[cidStr] != "" {
+				isPartial = true
+			}
+
+			if err = bp.uploadService.UpdatePartialStatus(bp.ctx, pinData.PinID, isPartial); err != nil {
+				return err
+			}
+
+			bp.logger.Debug("Updated root node to complete", zap.String("CID", cidStr))
+		}
+	}
+
+	return nil
+}
+
 func processCar(ctx core.Context, r io.Reader, request *models.Request) ([]cid.Cid, error) {
 	pinService := core.GetService[*pluginService.UploadService](ctx, pluginService.UPLOAD_SERVICE)
 	requestService := core.GetService[core.RequestService](ctx, core.REQUEST_SERVICE)
@@ -368,7 +448,7 @@ func processCar(ctx core.Context, r io.Reader, request *models.Request) ([]cid.C
 		return nil, core.ErrDuplicateRequest
 	}
 
-	bp := newBlockProcessor(ctx, pinService, proto, request, logger)
+	bp := newBlockProcessor(ctx, pinService, proto, request, logger, rootCIDs)
 	if bp == nil {
 		return nil, fmt.Errorf("failed to create block processor")
 	}
@@ -391,11 +471,8 @@ func processCar(ctx core.Context, r io.Reader, request *models.Request) ([]cid.C
 			return nil, fmt.Errorf("failed to read block: %w", err)
 		}
 
-		isRoot := lo.Contains(rootCIDs, block.Cid())
-
 		job := &blockJob{
-			Block:  block,
-			IsRoot: isRoot,
+			Block: block,
 		}
 
 		if err := bp.queueBlock(job); err != nil {
@@ -417,6 +494,11 @@ func processCar(ctx core.Context, r io.Reader, request *models.Request) ([]cid.C
 	// Link pins
 	if err := bp.linkPins(); err != nil {
 		return nil, fmt.Errorf("failed to link pins: %w", err)
+	}
+
+	// Finalize processing
+	if err := bp.detectPartialBlocks(); err != nil {
+		return nil, fmt.Errorf("failed to detect partial blocks: %w", err)
 	}
 
 	return processedCIDs, nil
