@@ -88,7 +88,7 @@ func isLikelyChunk(size uint64) bool {
 
 func IsPartialFile(info *NodeInfo) bool {
 	if info.IsUnixFS {
-		if info.Type != "File" {
+		if info.UnixFSType != pb.Data_File {
 			return false // Only consider File type
 		}
 		if info.IsFileRoot {
