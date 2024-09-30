@@ -752,31 +752,39 @@ func (s *UploadService) SetTusUploadRequestID(ctx context.Context, requestId uin
 	return nil
 }
 
-func (s *UploadService) DetectUpdatePartialStatus(ctx context.Context, block blocks.Block) error {
+func (s *UploadService) DetectPartialStatus(ctx context.Context, block blocks.Block) (bool, *pluginDb.IPFSPin, error) {
 	hash := internal.NewIPFSHash(block.Cid())
 
 	pin, err := s.pin.QueryProtocolPin(ctx, internal.ProtocolName, nil, core.PinFilter{Protocol: internal.ProtocolName, Hash: hash})
 	if err != nil {
-		return err
+		return false, nil, err
 	}
 
 	if pin == nil {
-		return errors.New("pin not found")
+		return false, nil, errors.New("pin not found")
+	}
+
+	partial, err := internal.DetectPartialFile(ctx, block)
+	if err != nil {
+		return false, nil, err
 	}
 
 	pinData := pin.(*pluginDb.IPFSPin)
 
-	partial, err := internal.DetectPartialFile(ctx, block)
+	return partial, pinData, nil
+}
+
+func (s *UploadService) DetectUpdatePartialStatus(ctx context.Context, block blocks.Block) error {
+	partial, pinData, err := s.DetectPartialStatus(ctx, block)
 	if err != nil {
 		return err
 	}
 
-	err = s.pin.UpdateProtocolPin(ctx, pinData.PinID, &pluginDb.IPFSPin{Partial: partial})
-	if err != nil {
-		return err
-	}
+	return s.UpdatePartialStatus(ctx, pinData.PinID, partial)
+}
 
-	return nil
+func (s *UploadService) UpdatePartialStatus(ctx context.Context, id uint, partial bool) error {
+	return s.pin.UpdateProtocolPin(ctx, id, &pluginDb.IPFSPin{Partial: partial})
 }
 
 func (s *UploadService) createUploadRequest(ctx context.Context, uploadCid, c cid.Cid, userId uint, uploaderIP string, uploadId string) error {

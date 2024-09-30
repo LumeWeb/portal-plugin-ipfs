@@ -1,8 +1,8 @@
 module go.lumeweb.com/portal-plugin-ipfs
 
-go 1.22.1
+go 1.23.0
 
-toolchain go1.22.3
+toolchain go1.23.1
 
 require (
 	dario.cat/mergo v1.0.0
@@ -32,7 +32,7 @@ require (
 	github.com/samber/lo v1.47.0
 	github.com/tus/tusd/v2 v2.4.0
 	go.lumeweb.com/httputil v0.0.0-20240907105629-dbffb601f2ab
-	go.lumeweb.com/portal v0.1.2-0.20240930190637-144e25116b63
+	go.lumeweb.com/portal v0.1.2-0.20240930222002-86c53e09b60c
 	go.lumeweb.com/portal-plugin-billing v0.0.0-20240911204417-b0c2851d13e0
 	go.sia.tech/renterd v1.0.8
 	go.uber.org/zap v1.27.0
@@ -55,8 +55,8 @@ require (
 	github.com/aws/aws-sdk-go v1.54.6 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.31.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.5 // indirect
-	github.com/aws/aws-sdk-go-v2/config v1.27.37 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.17.35 // indirect
+	github.com/aws/aws-sdk-go-v2/config v1.27.39 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.17.37 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.14 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.18 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.18 // indirect
@@ -66,10 +66,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.3.20 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.11.20 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.17.18 // indirect
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.63.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.23.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.27.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.31.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.63.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.23.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.27.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.31.3 // indirect
 	github.com/aws/smithy-go v1.21.0 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -254,11 +254,11 @@ require (
 	go.opentelemetry.io/otel v1.28.0 // indirect
 	go.opentelemetry.io/otel/metric v1.28.0 // indirect
 	go.opentelemetry.io/otel/trace v1.28.0 // indirect
-	go.sia.tech/core v0.4.6 // indirect
+	go.sia.tech/core v0.4.7 // indirect
 	go.sia.tech/coreutils v0.3.2 // indirect
 	go.sia.tech/gofakes3 v0.0.4 // indirect
 	go.sia.tech/jape v0.11.2-0.20240306154058-9832414a5385 // indirect
-	go.sia.tech/mux v1.2.0 // indirect
+	go.sia.tech/mux v1.3.0 // indirect
 	go.sia.tech/siad v1.5.10-0.20230228235644-3059c0b930ca // indirect
 	go.uber.org/dig v1.17.1 // indirect
 	go.uber.org/fx v1.22.1 // indirect

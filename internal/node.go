@@ -86,7 +86,7 @@ func isLikelyChunk(size uint64) bool {
 	return size >= sizeThreshold && size <= typicalChunkSize
 }
 
-func isPartialFile(info *NodeInfo) bool {
+func IsPartialFile(info *NodeInfo) bool {
 	if info.IsUnixFS {
 		if info.Type != "File" {
 			return false // Only consider File type
@@ -108,5 +108,5 @@ func DetectPartialFile(ctx context.Context, block blocks.Block) (bool, error) {
 		return false, err
 	}
 
-	return isPartialFile(info), nil
+	return IsPartialFile(info), nil
 }
