@@ -95,3 +95,9 @@ type GetBlockMetaBatchRequest struct {
 }
 
 type GetBlockMetaBatchResponse = map[string]*BlockMetaResponse
+
+type InfoResponse struct {
+	PeerID                string   `json:"peer_id"`
+	AnnouncementAddresses []string `json:"announcement_addresses"`
+	ConnectionAddresses   []string `json:"connection_addresses"`
+}

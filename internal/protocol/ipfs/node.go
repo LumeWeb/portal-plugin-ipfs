@@ -38,6 +38,8 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 )
 
+var cachedAnnouncementAddresses []multiaddr.Multiaddr
+
 // A Node is a minimal IPFS node
 type Node struct {
 	log          *core.Logger
@@ -91,6 +93,22 @@ func (n *Node) AddBlock(ctx context.Context, block blocks.Block) error {
 // PeerID returns the peer ID of the node
 func (n *Node) PeerID() peer.ID {
 	return n.frt.Host().ID()
+}
+
+func (n *Node) ConnectionAddresses() ([]multiaddr.Multiaddr, error) {
+	annAddrs, err := AnnouncementAddresses()
+	if err != nil {
+		return nil, err
+	}
+
+	connAddrs := make([]multiaddr.Multiaddr, 0, len(annAddrs))
+
+	for _, addr := range annAddrs {
+		fullAddr := addr.Encapsulate(multiaddr.StringCast("/p2p/" + n.PeerID().String()))
+		connAddrs = append(connAddrs, fullAddr)
+	}
+
+	return connAddrs, nil
 }
 
 // Peers returns the list of peers in the routing table
@@ -185,7 +203,7 @@ func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datasto
 		return nil, fmt.Errorf("failed to create connection manager: %w", err)
 	}
 
-	announceAddresses, err := announcementAddresses()
+	announceAddresses, err := AnnouncementAddresses()
 	if err != nil {
 		return nil, err
 	}
@@ -218,27 +236,6 @@ func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datasto
 			dht.Datastore(ds),
 		}...),
 	}
-
-	// Get the node's peer ID
-	peerID := node.ID()
-
-	// Get listen addresses
-	listenAddrs, err := node.Network().InterfaceListenAddresses()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get listen addresses: %w", err)
-	}
-
-	// Create and log full multiaddresses (listen address + peer ID)
-	var fullAddrs []string
-	for _, addr := range listenAddrs {
-		fullAddr := addr.Encapsulate(multiaddr.StringCast("/p2p/" + peerID.String()))
-		fullAddrs = append(fullAddrs, fullAddr.String())
-	}
-
-	ctx.Logger().Info("IPFS node addresses",
-		zap.Stringer("peerID", peerID),
-		zap.Strings("multiaddrs", fullAddrs),
-	)
 
 	frt, err := fullrt.NewFullRT(node, dht.DefaultPrefix, fullRTOpts...)
 	if err != nil {
@@ -284,7 +281,11 @@ func (n *Node) TriggerReprovider() {
 	n.reprovider.Trigger()
 }
 
-func announcementAddresses() ([]multiaddr.Multiaddr, error) {
+func AnnouncementAddresses() ([]multiaddr.Multiaddr, error) {
+	if len(cachedAnnouncementAddresses) > 0 {
+		return cachedAnnouncementAddresses, nil
+	}
+
 	unspecAddrs := []multiaddr.Multiaddr{
 		multiaddr.StringCast("/ip4/0.0.0.0/tcp/4001"),
 		multiaddr.StringCast("/ip6/::/tcp/4001"),
@@ -298,6 +299,8 @@ func announcementAddresses() ([]multiaddr.Multiaddr, error) {
 	announcementAddrs = lo.Filter(announcementAddrs, func(addr multiaddr.Multiaddr, i int) bool {
 		return !manet.IsIPLoopback(addr) && !manet.IsIPUnspecified(addr) && !isIPv4PrivateRange(addr)
 	})
+
+	cachedAnnouncementAddresses = announcementAddrs
 
 	return announcementAddrs, nil
 }
