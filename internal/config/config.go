@@ -30,12 +30,13 @@ var bootstrapPeers = []IPFSPeer{
 }
 
 type Config struct {
-	ListenAddresses []string     `mapstructure:"listen_addresses"`
-	Peers           []IPFSPeer   `mapstructure:"peers"`
-	BootstrapPeers  []IPFSPeer   `mapstructure:"bootstrap_peers"`
-	Provider        IPFSProvider `mapstructure:"provider"`
-	BlockStore      BlockStore   `mapstructure:"blockstore"`
-	LogLevel        string       `mapstructure:"log_level"`
+	ListenAddresses         []string     `mapstructure:"listen_addresses"`
+	Peers                   []IPFSPeer   `mapstructure:"peers"`
+	BootstrapPeers          []IPFSPeer   `mapstructure:"bootstrap_peers"`
+	Provider                IPFSProvider `mapstructure:"provider"`
+	BlockStore              BlockStore   `mapstructure:"blockstore"`
+	LogLevel                string       `mapstructure:"log_level"`
+	AutoScaleResourceLimits bool         `mapstructure:"auto_scale_resource_limits"`
 }
 
 func (c Config) Defaults() map[string]any {
