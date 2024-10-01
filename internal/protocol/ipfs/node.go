@@ -191,8 +191,13 @@ func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datasto
 	scalingLimits := rcmgr.DefaultLimits
 	libp2p.SetDefaultServiceLimits(&scalingLimits)
 
-	scaledLimits := scalingLimits.AutoScale()
-	limiter := rcmgr.NewFixedLimiter(scaledLimits)
+	limits := rcmgr.InfiniteLimits
+
+	if cfg.AutoScaleResourceLimits {
+		limits = scalingLimits.AutoScale()
+	}
+
+	limiter := rcmgr.NewFixedLimiter(limits)
 	rm, err := rcmgr.NewResourceManager(limiter, rcmgr.WithMetricsDisabled())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource manager: %w", err)
