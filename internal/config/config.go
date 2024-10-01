@@ -17,7 +17,7 @@ func mustParsePeer(s string) IPFSPeer {
 	if err != nil {
 		panic(err)
 	}
-	return IPFSPeer{*info}
+	return NewIPFSPeer(*info)
 }
 
 var bootstrapPeers = []IPFSPeer{
