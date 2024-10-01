@@ -8,12 +8,15 @@ import (
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
+	"github.com/multiformats/go-multiaddr"
+	"github.com/samber/lo"
 	"github.com/tus/tusd/v2/pkg/handler"
 	billingPluginService "go.lumeweb.com/portal-plugin-billing/service"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/messages"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	pluginService "go.lumeweb.com/portal-plugin-ipfs/internal/service"
 	"go.lumeweb.com/portal/event"
 	"go.lumeweb.com/portal/middleware"
@@ -173,6 +176,11 @@ func (a API) Configure(router *mux.Router) error {
 	apiRouter.HandleFunc("/api/upload", a.handleUpload).Methods("POST", "OPTIONS").Use(verifyMw)
 	apiRouter.HandleFunc("/api/block/meta/{cid}", a.handleGetBlockMeta).Methods("GET", "OPTIONS").Use(verifyMw)
 	apiRouter.HandleFunc("/api/block/meta/batch", a.handleGetBlockMetaBatch).Methods("POST", "OPTIONS").Use(verifyMw)
+
+	// Info API route
+	infoRouter := router.PathPrefix("").Subrouter()
+	infoRouter.Use(corsHandler)
+	infoRouter.HandleFunc("/api/info", a.handleGetInfo).Methods("GET", "OPTIONS")
 
 	// Configure TUS routes
 	a.tus.SetupRoute(router, authMw, TUS_HTTP_ROUTE)
@@ -599,6 +607,32 @@ func (a API) handleGetBlockMetaBatch(w http.ResponseWriter, r *http.Request) {
 
 	}
 	ctx.Encode(metas)
+}
+
+func (a API) handleGetInfo(w http.ResponseWriter, r *http.Request) {
+	ctx := httputil.Context(r, w)
+
+	addrs, err := ipfs.AnnouncementAddresses()
+	if err != nil {
+		_ = ctx.Error(err, http.StatusInternalServerError)
+		return
+	}
+
+	connAddrs, err := a.ipfs.GetNode().ConnectionAddresses()
+	if err != nil {
+		_ = ctx.Error(err, http.StatusInternalServerError)
+		return
+	}
+
+	ctx.Encode(&messages.InfoResponse{
+		PeerID: a.ipfs.GetNode().PeerID().String(),
+		AnnouncementAddresses: lo.Map(addrs, func(addr multiaddr.Multiaddr, _ int) string {
+			return addr.String()
+		}),
+		ConnectionAddresses: lo.Map(connAddrs, func(addr multiaddr.Multiaddr, _ int) string {
+			return addr.String()
+		}),
+	})
 }
 
 func validateCar(r io.Reader) (blocks.Block, error) {
