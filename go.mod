@@ -32,7 +32,7 @@ require (
 	github.com/samber/lo v1.47.0
 	github.com/tus/tusd/v2 v2.4.0
 	go.lumeweb.com/httputil v0.0.0-20240907105629-dbffb601f2ab
-	go.lumeweb.com/portal v0.1.2-0.20240930222002-86c53e09b60c
+	go.lumeweb.com/portal v0.1.2-0.20241001222649-e86476e6296f
 	go.lumeweb.com/portal-plugin-billing v0.0.0-20240911204417-b0c2851d13e0
 	go.sia.tech/renterd v1.0.8
 	go.uber.org/zap v1.27.0
@@ -255,7 +255,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.28.0 // indirect
 	go.opentelemetry.io/otel/trace v1.28.0 // indirect
 	go.sia.tech/core v0.4.7 // indirect
-	go.sia.tech/coreutils v0.3.2 // indirect
+	go.sia.tech/coreutils v0.3.3-0.20240927170025-f45eedc64d6f // indirect
 	go.sia.tech/gofakes3 v0.0.4 // indirect
 	go.sia.tech/jape v0.11.2-0.20240306154058-9832414a5385 // indirect
 	go.sia.tech/mux v1.3.0 // indirect

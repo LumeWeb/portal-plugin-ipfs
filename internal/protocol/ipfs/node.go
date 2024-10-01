@@ -38,15 +38,6 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 )
 
-var bootstrapPeers = []peer.AddrInfo{
-	mustParsePeer("/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN"),
-	mustParsePeer("/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa"),
-	mustParsePeer("/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb"),
-	mustParsePeer("/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt"),
-	mustParsePeer("/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ"),
-	mustParsePeer("/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ"),
-}
-
 // A Node is a minimal IPFS node
 type Node struct {
 	log          *core.Logger
@@ -163,14 +154,6 @@ func (n *Node) Pin(ctx context.Context, root cid.Cid, recursive bool) error {
 	return nil
 }
 
-func mustParsePeer(s string) peer.AddrInfo {
-	info, err := peer.AddrInfoFromString(s)
-	if err != nil {
-		panic(err)
-	}
-	return *info
-}
-
 // NewNode creates a new IPFS node
 func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datastore.Batching, bs blockstore.Blockstore) (*Node, error) {
 	hasher := hkdf.New(sha256.New, ctx.Config().Config().Core.Identity.PrivateKey(), ctx.Config().Config().Core.NodeID.Bytes(), []byte(internal.ProtocolName))
@@ -224,11 +207,12 @@ func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datasto
 	if err != nil {
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
-
 	fullRTOpts := []fullrt.Option{
 		fullrt.DHTOption([]dht.Option{
 			dht.Mode(dht.ModeServer),
-			dht.BootstrapPeers(bootstrapPeers...),
+			dht.BootstrapPeers(lo.Map(cfg.BootstrapPeers, func(p config.IPFSPeer, _ int) peer.AddrInfo {
+				return lo.FromPtr(p.ToAddrInfo())
+			})...),
 			dht.BucketSize(20), // this cannot be changed
 			dht.Concurrency(30),
 			dht.Datastore(ds),
@@ -275,12 +259,12 @@ func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datasto
 	dagService := merkledag.NewDAGService(blockServ)
 
 	for _, p := range cfg.Peers {
-		addrs, err := peer.AddrInfoToP2pAddrs(&p.AddrInfo)
+		addrs, err := peer.AddrInfoToP2pAddrs(p.ToAddrInfo())
 		if err != nil {
 			return nil, err
 		}
 
-		node.Peerstore().AddAddrs(p.ID, addrs, peerstore.PermanentAddrTTL)
+		node.Peerstore().AddAddrs(p.ToAddrInfo().ID, addrs, peerstore.PermanentAddrTTL)
 	}
 
 	rp := NewReprovider(frt, rs, ctx.Logger().Named("reprovider"))
