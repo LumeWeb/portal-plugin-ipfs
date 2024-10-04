@@ -599,6 +599,9 @@ func (a API) handleGetBlockMetaBatch(w http.ResponseWriter, r *http.Request) {
 
 		meta, err := a.ipfsUpload.GetBlockMeta(ctx, parsedCid)
 		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
 			_ = ctx.Error(err, http.StatusInternalServerError)
 			return
 		}
