@@ -64,10 +64,9 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		// Insert or update the parent block
 		parentBlock := pluginDb.IPFSBlock{
-			CID:              b.Cid.Bytes(),
-			Size:             b.Size,
-			LastAnnouncement: nil,
-			Ready:            true,
+			CID:   b.Cid.Bytes(),
+			Size:  b.Size,
+			Ready: true,
 		}
 
 		if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
@@ -172,32 +171,37 @@ func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
 		if err := tx.Where("cid = ?", c.Bytes()).First(&block).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				// Block not found, consider it already unpinned
-				return tx
+				return nil
 			}
 			_ = tx.AddError(fmt.Errorf("failed to find block: %w", err))
+		}
+
+		// Delete all announcements for this block
+		if err := tx.Where("block_id = ?", block.ID).Delete(&pluginDb.IPFSBlockAnnouncement{}).Error; err != nil {
+			_ = tx.AddError(fmt.Errorf("failed to delete announcements: %w", err))
 			return tx
 		}
 
-		//
+		// Delete UnixFS node
 		if err := tx.Where("block_id = ?", block.ID).Delete(&pluginDb.UnixFSNode{}).Error; err != nil {
 			_ = tx.AddError(fmt.Errorf("failed to delete UnixFS node: %w", err))
 			return tx
 		}
 
-		// Hard delete related entries in IPFSLinkedBlock
-		if err := tx.Unscoped().Where("parent_id = ? OR child_id = ?", block.ID, block.ID).Delete(&pluginDb.IPFSLinkedBlock{}).Error; err != nil {
+		// Delete related entries in IPFSLinkedBlock
+		if err := tx.Where("parent_id = ? OR child_id = ?", block.ID, block.ID).Delete(&pluginDb.IPFSLinkedBlock{}).Error; err != nil {
 			_ = tx.AddError(fmt.Errorf("failed to delete linked blocks: %w", err))
 			return tx
 		}
 
-		// Hard delete the block itself
-		if err := tx.Unscoped().Delete(&block).Error; err != nil {
+		// Delete the block itself
+		if err := tx.Delete(&block).Error; err != nil {
 			_ = tx.AddError(fmt.Errorf("failed to delete block: %w", err))
 			return tx
 		}
 
-		s.logger.Debug("unpinned and hard deleted block", zap.Stringer("cid", c))
-		return tx
+		s.logger.Debug("unpinned and deleted block", zap.Stringer("cid", c))
+		return nil
 	})
 }
 
@@ -346,26 +350,33 @@ WHERE b.ready = true
 }
 
 func (s *MetadataStoreDefault) ProvideCIDs(limit int) (cids []ipfs.PinnedCID, err error) {
-	var _blocks []pluginDb.IPFSBlock
+	var announcements []struct {
+		pluginDb.IPFSBlockAnnouncement
+		CID []byte
+	}
+
 	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
-		return tx.Where("ready = ?", true).Order("last_announcement ASC").Limit(limit).Find(&_blocks)
+		return tx.Model(&pluginDb.IPFSBlockAnnouncement{}).
+			Select("ipfs_block_announcements.*, ipfs_blocks.cid").
+			Joins("JOIN ipfs_blocks ON ipfs_block_announcements.block_id = ipfs_blocks.id").
+			Where(&pluginDb.IPFSBlockAnnouncement{NodeID: datatypes.BinUUID(s.ctx.Config().Config().Core.NodeID)}).
+			Where("ipfs_blocks.ready = ?", true).
+			Order("ipfs_block_announcements.last_announcement ASC").
+			Limit(limit).Find(&announcements)
 	}); err != nil {
 		return nil, fmt.Errorf("failed to query: %w", err)
 	}
 
-	for _, block := range _blocks {
-		c, err := cid.Parse(block.CID)
+	for _, announcement := range announcements {
+		c, err := cid.Parse(announcement.CID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse CID: %w", err)
 		}
 
 		lastAnnouncement := time.Unix(0, 0)
-
-		if block.LastAnnouncement != nil {
-			lastAnnouncement = *block.LastAnnouncement
+		if announcement.LastAnnouncement != nil {
+			lastAnnouncement = *announcement.LastAnnouncement
 		}
-
-		time.Unix(0, 0)
 
 		cids = append(cids, ipfs.PinnedCID{
 			CID:              c,
@@ -378,35 +389,30 @@ func (s *MetadataStoreDefault) ProvideCIDs(limit int) (cids []ipfs.PinnedCID, er
 func (s *MetadataStoreDefault) SetLastAnnouncement(cids []cid.Cid, t time.Time) error {
 	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		for _, c := range cids {
-
 			c = encoding.NormalizeCid(c)
 
-			block := &pluginDb.IPFSBlock{
-				CID:   c.Bytes(),
-				Ready: true,
-			}
-
-			var rowsAffected int64
-
-			if err := db.RetryOnLock(s.db, func(db *gorm.DB) *gorm.DB {
-				ret := tx.Model(&block).
-					Where(&block).
-					Update("last_announcement", t)
-
-				if ret.Error == nil {
-					rowsAffected = ret.RowsAffected
-				}
-
-				return ret
-			}); err != nil {
-				_ = tx.AddError(fmt.Errorf("failed to update last announcement for %q: %w", c, err))
+			var block pluginDb.IPFSBlock
+			if err := tx.Where(&pluginDb.IPFSBlock{CID: c.Bytes()}).First(&block).Error; err != nil {
+				_ = tx.AddError(fmt.Errorf("failed to find block: %w", err))
 				return tx
 			}
-			if rowsAffected == 0 {
-				_ = tx.AddError(fmt.Errorf("no block found with CID %q", c))
+
+			announcement := pluginDb.IPFSBlockAnnouncement{
+				BlockID:          block.ID,
+				NodeID:           datatypes.BinUUID(s.ctx.Config().Config().Core.NodeID),
+				LastAnnouncement: &t,
+			}
+
+			// Use Upsert operation
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "block_id"}, {Name: "node_id"}},
+				DoUpdates: clause.AssignmentColumns([]string{"last_announcement"}),
+			}).Create(&announcement).Error; err != nil {
+				_ = tx.AddError(fmt.Errorf("failed to insert/update announcement: %w", err))
 				return tx
 			}
 		}
+
 		return tx
 	})
 }

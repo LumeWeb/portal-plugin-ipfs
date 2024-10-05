@@ -127,6 +127,7 @@ func init() {
 		Models: []any{
 			&db.IPFSPin{},
 			&db.IPFSBlock{},
+			&db.IPFSBlockAnnouncement{},
 			&db.IPFSLinkedBlock{},
 			&db.IPFSRequest{},
 			&db.UnixFSNode{},
