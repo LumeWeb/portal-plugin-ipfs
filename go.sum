@@ -20,6 +20,8 @@ github.com/AfterShip/email-verifier v1.4.1/go.mod h1:AcFyA5b7X6L4l5dBuemWBSh8mq7
 github.com/AndreasBriese/bbloom v0.0.0-20190306092124-e2d15f34fcf9/go.mod h1:bOvUY6CB00SOBii9/FifXqc0awNKxLFCL/+pkDPuyl8=
 github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 h1:UQHMgLO+TxOElx5B5HZ4hJQsoJ/PvUvKRhJHDQXO8P8=
 github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
+github.com/Boostport/address v0.11.2 h1:A575XwuT+iTL2AVYT2ZbRLKult76E8encxqnHF9hmbk=
+github.com/Boostport/address v0.11.2/go.mod h1:8KISquC9gqfmnOrq2nmJ5di2YiaDWwFoxyDPz8FHhqE=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/LumeWeb/golang-queue v0.0.0-20240730091134-94422693c326 h1:mc+zi1Aai/6yjyWJgW1lUkqRjNQ4jfE5vQZ2/QQ/ReA=
 github.com/LumeWeb/golang-queue v0.0.0-20240730091134-94422693c326/go.mod h1:5nEkJTzw9Boc8ZCylQlrJK5f/Vd8Uo58yAssRli5ckg=
@@ -1267,6 +1269,8 @@ go.lumeweb.com/portal-plugin-billing v0.0.0-20240911174503-98ebc40bb342 h1:V6dpT
 go.lumeweb.com/portal-plugin-billing v0.0.0-20240911174503-98ebc40bb342/go.mod h1:enB+BhN+7CDP2Euacux4j3OuNpfFzWpdngcjyCzoklM=
 go.lumeweb.com/portal-plugin-billing v0.0.0-20240911204417-b0c2851d13e0 h1:rNUteCBNIUZsFFIp9gfkqrrOx7kFLF4X2yon8U1GCJ4=
 go.lumeweb.com/portal-plugin-billing v0.0.0-20240911204417-b0c2851d13e0/go.mod h1:rKPgwQaemM1kanS/Kg23LdvVRrHlEDyjFk+SDUcqzdE=
+go.lumeweb.com/portal-plugin-billing v0.0.0-20241004130924-c3a63bbe39bc h1:camjtYf8aP6GWkbd8BRBoAfj7yLaRL/qLDMZVJkEa3U=
+go.lumeweb.com/portal-plugin-billing v0.0.0-20241004130924-c3a63bbe39bc/go.mod h1:u0YMzSFG8E+SJVjZu8Xq47M1X5N1BcAyTl9QIDZwYME=
 go.mongodb.org/mongo-driver v1.16.1 h1:rIVLL3q0IHM39dvE+z2ulZLp9ENZKThVfuvN/IiN4l8=
 go.mongodb.org/mongo-driver v1.16.1/go.mod h1:oB6AhJQvFQL4LEHyXi6aJzQJtBiTQHiAd83l0GdFaiw=
 go.opencensus.io v0.18.0/go.mod h1:vKdFvxhtzZ9onBp9VKHK8z/sRpBMnKAsufL7wlDrCOA=
