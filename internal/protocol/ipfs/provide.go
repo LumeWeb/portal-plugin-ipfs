@@ -62,10 +62,13 @@ func (r *Reprovider) Run(ctx context.Context, interval, timeout time.Duration, b
 
 	for {
 		r.log.Debug("sleeping until next reprovide time", zap.Duration("duration", reprovideSleep))
+
+		triggered := false
 		select {
 		case <-ctx.Done():
 			return
 		case <-r.triggerProvide:
+			triggered = true
 			r.log.Debug("reprovide triggered")
 		case <-time.After(reprovideSleep):
 			r.log.Debug("reprovide sleep expired")
@@ -92,7 +95,7 @@ func (r *Reprovider) Run(ctx context.Context, interval, timeout time.Duration, b
 			}
 
 			rem := time.Until(cids[0].LastAnnouncement.Add(interval))
-			if rem > 0 {
+			if rem > 0 && !triggered {
 				reprovideSleep = rem
 				r.log.Debug("reprovide complete")
 				break
