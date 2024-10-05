@@ -20,5 +20,5 @@ type UnixFSNode struct {
 }
 
 func (U UnixFSNode) TableName() string {
-	return "unixfs_nodes"
+	return "ipfs_unixfs_nodes"
 }
