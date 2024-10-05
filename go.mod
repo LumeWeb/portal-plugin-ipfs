@@ -33,7 +33,7 @@ require (
 	github.com/tus/tusd/v2 v2.4.0
 	go.lumeweb.com/httputil v0.0.0-20240907105629-dbffb601f2ab
 	go.lumeweb.com/portal v0.1.2-0.20241001222649-e86476e6296f
-	go.lumeweb.com/portal-plugin-billing v0.0.0-20240911204417-b0c2851d13e0
+	go.lumeweb.com/portal-plugin-billing v0.0.0-20241004130924-c3a63bbe39bc
 	go.sia.tech/renterd v1.0.8
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.27.0
@@ -46,6 +46,7 @@ require (
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/AfterShip/email-verifier v1.4.1 // indirect
+	github.com/Boostport/address v0.11.2 // indirect
 	github.com/LumeWeb/siacentral-api v0.0.0-20240311114304-4ff40c07bce5 // indirect
 	github.com/adjust/rmq/v5 v5.2.0 // indirect
 	github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da // indirect
