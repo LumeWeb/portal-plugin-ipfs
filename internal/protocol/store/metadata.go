@@ -481,7 +481,7 @@ func (s *MetadataStoreDefault) GetUnixFSMetadata(c cid.Cid) (*pluginDb.UnixFSNod
 
 	var metadata pluginDb.UnixFSNode
 	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
-		return tx.Joins("JOIN ipfs_blocks ON unixfs_nodes.block_id = ipfs_blocks.id").
+		return tx.Joins("JOIN ipfs_blocks ON ipfs_unixfs_nodes.block_id = ipfs_blocks.id").
 			Where("ipfs_blocks.cid = ?", c.Bytes()).
 			First(&metadata)
 	}); err != nil {
