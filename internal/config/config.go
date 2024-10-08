@@ -30,13 +30,13 @@ var bootstrapPeers = []IPFSPeer{
 }
 
 type Config struct {
-	ListenAddresses         []string     `mapstructure:"listen_addresses"`
-	Peers                   []IPFSPeer   `mapstructure:"peers"`
-	BootstrapPeers          []IPFSPeer   `mapstructure:"bootstrap_peers"`
-	Provider                IPFSProvider `mapstructure:"provider"`
-	BlockStore              BlockStore   `mapstructure:"blockstore"`
-	LogLevel                string       `mapstructure:"log_level"`
-	AutoScaleResourceLimits bool         `mapstructure:"auto_scale_resource_limits"`
+	ListenAddresses         []string     `config:"listen_addresses"`
+	Peers                   []IPFSPeer   `config:"peers"`
+	BootstrapPeers          []IPFSPeer   `config:"bootstrap_peers"`
+	Provider                IPFSProvider `config:"provider"`
+	BlockStore              BlockStore   `config:"blockstore"`
+	LogLevel                string       `config:"log_level"`
+	AutoScaleResourceLimits bool         `config:"auto_scale_resource_limits"`
 }
 
 func (c Config) Defaults() map[string]any {
@@ -70,18 +70,18 @@ type (
 	// BlockStore configures the blockstore.
 	BlockStore struct {
 		// MaxConcurrent is the maximum number of concurrent block fetches.
-		MaxConcurrentFetches  int `mapstructure:"max_concurrent_fetches"`
-		MaxConcurrentRequests int `mapstructure:"max_concurrent_requests"`
+		MaxConcurrentFetches  int `config:"max_concurrent_fetches"`
+		MaxConcurrentRequests int `config:"max_concurrent_requests"`
 		// CacheSize is the maximum number of blocks to cache in memory.
-		CacheSize int           `mapstructure:"cache_size"`
-		Timeout   time.Duration `mapstructure:"timeout"`
+		CacheSize int           `config:"cache_size"`
+		Timeout   time.Duration `config:"timeout"`
 	}
 
 	// IPFSProvider contains the configuration for the IPFS provider
 	IPFSProvider struct {
-		BatchSize int           `mapstructure:"batch_size"`
-		Interval  time.Duration `mapstructure:"interval"`
-		Timeout   time.Duration `mapstructure:"timeout"`
+		BatchSize int           `config:"batch_size"`
+		Interval  time.Duration `config:"interval"`
+		Timeout   time.Duration `config:"timeout"`
 	}
 )
 
