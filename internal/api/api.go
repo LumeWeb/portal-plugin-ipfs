@@ -143,46 +143,89 @@ func (a API) Subdomain() string {
 	return internal.ProtocolName
 }
 
-func (a API) Configure(router *mux.Router) error {
-	authMiddlewareOpts := middleware.AuthMiddlewareOptions{
+func (a *API) Configure(router *mux.Router, accessSvc core.AccessService) error {
+	// Middleware setup
+	authMw := middleware.AuthMiddleware(middleware.AuthMiddlewareOptions{
 		Context: a.ctx,
 		Purpose: core.JWTPurposeLogin,
-	}
-
-	authMw := middleware.AuthMiddleware(authMiddlewareOpts)
-
+	})
 	verifyMw := middleware.AccountVerifiedMiddleware(a.ctx)
-
 	corsHandler := middleware.CorsMiddleware(nil)
 
-	pinRouter := router.PathPrefix("").Subrouter()
-	pinRouter.Use(corsHandler)
-	pinRouter.Use(authMw)
+	// Define route groups
+	routeGroups := []struct {
+		router *mux.Router
+		routes []struct {
+			path      string
+			method    string
+			handler   http.HandlerFunc
+			useVerify bool
+			access    string
+		}
+	}{
+		{
+			router: router.PathPrefix("").Subrouter(),
+			routes: []struct {
+				path      string
+				method    string
+				handler   http.HandlerFunc
+				useVerify bool
+				access    string
+			}{
+				{"/pins", "GET", a.handleGetPins, false, core.ACCESS_USER_ROLE},
+				{"/pins", "POST", a.handleAddPin, true, core.ACCESS_USER_ROLE},
+				{"/pins/{requestid}", "GET", a.handleGetPinByRequestId, false, core.ACCESS_USER_ROLE},
+				{"/pins/{requestid}", "POST", a.handleReplacePinByRequestId, true, core.ACCESS_USER_ROLE},
+				{"/pins/{requestid}", "DELETE", a.handleDeletePinByRequestId, true, core.ACCESS_USER_ROLE},
+				{"/ipfs/{cid}", "GET", a.handleIPFSGet, true, core.ACCESS_USER_ROLE},
+				{"/ipfs/{cid}", "HEAD", a.handleIPFSGet, true, core.ACCESS_USER_ROLE},
+			},
+		},
+		{
+			router: router.PathPrefix("/api").Subrouter(),
+			routes: []struct {
+				path      string
+				method    string
+				handler   http.HandlerFunc
+				useVerify bool
+				access    string
+			}{
+				{"/upload", "POST", a.handleUpload, true, core.ACCESS_USER_ROLE},
+				{"/block/meta/{cid}", "GET", a.handleGetBlockMeta, true, core.ACCESS_USER_ROLE},
+				{"/block/meta/batch", "POST", a.handleGetBlockMetaBatch, true, core.ACCESS_USER_ROLE},
+			},
+		},
+		{
+			router: router.PathPrefix("").Subrouter(),
+			routes: []struct {
+				path      string
+				method    string
+				handler   http.HandlerFunc
+				useVerify bool
+				access    string
+			}{
+				{"/api/info", "GET", a.handleGetInfo, false, ""},
+			},
+		},
+	}
 
-	// Configure Pinning Service routes
-	pinRouter.HandleFunc("/pins", a.handleGetPins).Methods("GET", "OPTIONS")
-	pinRouter.HandleFunc("/pins", a.handleAddPin).Methods("POST", "OPTIONS").Use(verifyMw)
-	pinRouter.HandleFunc("/pins/{requestid}", a.handleGetPinByRequestId).Methods("GET", "OPTIONS")
-	pinRouter.HandleFunc("/pins/{requestid}", a.handleReplacePinByRequestId).Methods("POST", "OPTIONS").Use(verifyMw)
-	pinRouter.HandleFunc("/pins/{requestid}", a.handleDeletePinByRequestId).Methods("DELETE", "OPTIONS").Use(verifyMw)
+	// Register routes
+	for _, group := range routeGroups {
+		group.router.Use(corsHandler)
+		group.router.Use(authMw)
 
-	// Configure Trustless Gateway routes
-	pinRouter.HandleFunc("/ipfs/{cid}", a.handleIPFSGet).Methods("GET", "HEAD", "OPTIONS").Use(verifyMw)
+		for _, route := range group.routes {
+			r := group.router.HandleFunc(route.path, route.handler).Methods(route.method, "OPTIONS")
+			if route.useVerify {
+				r.Use(verifyMw)
+			}
 
-	apiRouter := router.PathPrefix("").Subrouter()
-	apiRouter.Use(corsHandler)
-	apiRouter.Use(authMw)
-	// Car Post Upload
-	apiRouter.HandleFunc("/api/upload", a.handleUpload).Methods("POST", "OPTIONS").Use(verifyMw)
-	apiRouter.HandleFunc("/api/block/meta/{cid}", a.handleGetBlockMeta).Methods("GET", "OPTIONS").Use(verifyMw)
-	apiRouter.HandleFunc("/api/block/meta/batch", a.handleGetBlockMetaBatch).Methods("POST", "OPTIONS").Use(verifyMw)
+			if err := accessSvc.RegisterRoute(a.Subdomain(), route.path, route.method, route.access); err != nil {
+				return fmt.Errorf("failed to register route %s %s: %w", route.method, route.path, err)
+			}
+		}
+	}
 
-	// Info API route
-	infoRouter := router.PathPrefix("").Subrouter()
-	infoRouter.Use(corsHandler)
-	infoRouter.HandleFunc("/api/info", a.handleGetInfo).Methods("GET", "OPTIONS")
-
-	// Configure TUS routes
 	a.tus.SetupRoute(router, authMw, TUS_HTTP_ROUTE)
 
 	return nil
