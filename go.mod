@@ -7,7 +7,7 @@ toolchain go1.23.1
 require (
 	dario.cat/mergo v1.0.0
 	github.com/go-viper/mapstructure/v2 v2.0.0
-	github.com/golang-queue/queue v0.1.4-0.20240218073423-0c677f44188b
+	github.com/golang-queue/queue v0.1.4-0.20240914022627-ee5b6a2bee11
 	github.com/google/uuid v1.6.0
 	github.com/gookit/event v1.1.2
 	github.com/gorilla/mux v1.8.1
@@ -32,7 +32,7 @@ require (
 	github.com/samber/lo v1.47.0
 	github.com/tus/tusd/v2 v2.4.0
 	go.lumeweb.com/httputil v0.0.0-20240907105629-dbffb601f2ab
-	go.lumeweb.com/portal v0.1.2-0.20241019061432-edc1bb088f74
+	go.lumeweb.com/portal v0.1.2-0.20241021102513-2bcc2b5126e9
 	go.lumeweb.com/portal-plugin-billing v0.0.0-20241004130924-c3a63bbe39bc
 	go.sia.tech/renterd v1.0.8
 	go.uber.org/zap v1.27.0
@@ -223,9 +223,9 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/polydawn/refmt v0.89.0 // indirect
 	github.com/pquerna/otp v1.4.0 // indirect
-	github.com/prometheus/client_golang v1.19.1 // indirect
+	github.com/prometheus/client_golang v1.20.4 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
-	github.com/prometheus/common v0.54.0 // indirect
+	github.com/prometheus/common v0.55.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/quic-go/qpack v0.4.0 // indirect
 	github.com/quic-go/quic-go v0.45.0 // indirect
@@ -286,9 +286,9 @@ require (
 	golang.org/x/tools v0.23.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	gonum.org/v1/gonum v0.15.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20240617180043-68d350f18fd4 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20240617180043-68d350f18fd4 // indirect
-	google.golang.org/grpc v1.64.1 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20240827150818-7e3bb234dfed // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20240903143218-8af14fe29dc1 // indirect
+	google.golang.org/grpc v1.67.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 	gorm.io/driver/postgres v1.5.7 // indirect
 	gorm.io/driver/sqlite v1.5.6 // indirect
@@ -304,7 +304,6 @@ require (
 
 replace (
 	github.com/go-viper/mapstructure/v2 v2.0.0 => github.com/LumeWeb/mapstructure/v2 v2.0.0-20240603224933-c63fee0297e6
-	github.com/golang-queue/queue v0.1.4-0.20240218073423-0c677f44188b => github.com/LumeWeb/golang-queue v0.0.0-20240730091134-94422693c326
 	github.com/gorilla/mux v1.8.1 => github.com/cornejong/gormux v0.0.0-20240526072501-ce1c97b033ec
 	github.com/tus/tusd/v2 v2.4.0 => github.com/LumeWeb/tusd/v2 v2.2.3-0.20241008001850-1f6974596ff3
 )
