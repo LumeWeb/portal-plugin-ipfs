@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - "develop"
+    paths:
+      - '.changeset/**'
+    tags:
+      - '**'
+  pull_request:
+    types:
+      - closed
+    branches:
+      - '**'
+    paths:
+      - '.changeset/**'
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: LumeWeb/golang-versioner-action@v0.1.3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
