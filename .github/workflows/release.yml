@@ -8,13 +8,6 @@ on:
       - '.changeset/**'
     tags:
       - '**'
-  pull_request:
-    types:
-      - closed
-    branches:
-      - '**'
-    paths:
-      - '.changeset/**'
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
