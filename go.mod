@@ -5,7 +5,7 @@ go 1.23.0
 toolchain go1.23.1
 
 require (
-	dario.cat/mergo v1.0.0
+	dario.cat/mergo v1.0.1
 	github.com/go-viper/mapstructure/v2 v2.0.0
 	github.com/golang-queue/queue v0.1.4-0.20240914022627-ee5b6a2bee11
 	github.com/google/uuid v1.6.0
