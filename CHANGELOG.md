@@ -1,5 +1,11 @@
 # @lumeweb/portal-plugin-ipfs
 
+## 0.1.2
+
+### Patch Changes
+
+- 21db2db: - Use lo ToPtr for pointer handling
+
 ## 0.1.1
 
 ### Patch Changes
