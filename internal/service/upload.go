@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/gookit/event"
-	"github.com/icza/gox/gox"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
@@ -375,7 +374,7 @@ func (s *UploadService) GetPins(ctx context.Context, req messages.GetPinsRequest
 		BeforeCount: req.BeforeCount,
 		AfterCount:  req.AfterCount,
 		Limit:       req.Limit,
-		Partial:     gox.NewBool(false),
+		Partial:     lo.ToPtr(false),
 	}
 
 	// Apply general filters

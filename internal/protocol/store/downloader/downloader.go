@@ -8,7 +8,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"github.com/icza/gox/gox"
+	"github.com/samber/lo"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/core"
 	"io"
@@ -170,7 +170,7 @@ func (bd *BlockDownloader) queueRelated(c cid.Cid) {
 		return
 	}
 
-	children, err := bd.store.BlockChildren(c, gox.NewInt(64))
+	children, err := bd.store.BlockChildren(c, lo.ToPtr(64))
 	if err != nil {
 		log.Error("failed to get block children", zap.Error(err))
 		return
