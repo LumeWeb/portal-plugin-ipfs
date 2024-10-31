@@ -32,7 +32,7 @@ require (
 	github.com/samber/lo v1.47.0
 	github.com/tus/tusd/v2 v2.4.0
 	go.lumeweb.com/httputil v0.0.0-20240907105629-dbffb601f2ab
-	go.lumeweb.com/portal v0.1.2-0.20241021102513-2bcc2b5126e9
+	go.lumeweb.com/portal v0.2.1
 	go.lumeweb.com/portal-plugin-billing v0.0.0-20241004130924-c3a63bbe39bc
 	go.sia.tech/renterd v1.0.8
 	go.uber.org/zap v1.27.0
@@ -53,23 +53,23 @@ require (
 	github.com/alicebob/miniredis/v2 v2.32.1 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/aws/aws-sdk-go v1.54.6 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.32.2 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.32.3 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.6 // indirect
-	github.com/aws/aws-sdk-go-v2/config v1.27.43 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.17.41 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.17 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.21 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.21 // indirect
+	github.com/aws/aws-sdk-go-v2/config v1.28.1 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.17.42 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.18 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.22 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.22 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.1 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.3.21 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.3.22 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.12.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.4.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.18.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.65.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.24.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.28.2 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.32.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.4.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.18.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.66.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.24.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.28.3 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.32.3 // indirect
 	github.com/aws/smithy-go v1.22.0 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -245,7 +245,7 @@ require (
 	github.com/whyrusleeping/cbor-gen v0.1.2 // indirect
 	github.com/whyrusleeping/go-keyspace v0.0.0-20160322163242-5b898ac5add1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
-	github.com/wneessen/go-mail v0.5.0 // indirect
+	github.com/wneessen/go-mail v0.5.1 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	gitlab.com/NebulousLabs/bolt v1.4.4 // indirect
 	gitlab.com/NebulousLabs/encoding v0.0.0-20200604091946-456c3dc907fe // indirect
