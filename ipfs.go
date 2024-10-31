@@ -32,8 +32,13 @@ func viewExists(db *gorm.DB) (bool, error) {
 }
 
 func createView(db *gorm.DB) error {
+	var tablePrefix string
+	if isMySQL(db) {
+		tablePrefix = "portal."
+	}
+
 	// Define Common Table Expressions (CTEs)
-	ipfsRequestDataCTE := db.Table("portal.ipfs_requests ir").
+	ipfsRequestDataCTE := db.Table(tablePrefix + "ipfs_requests ir").
 		Select(`
             ir.request_id,
             ir.name AS ir_name,
@@ -51,9 +56,9 @@ func createView(db *gorm.DB) error {
             r.created_at AS r_created_at,
             r.updated_at AS r_updated_at
         `).
-		Joins("LEFT JOIN portal.requests r ON ir.request_id = r.id")
+		Joins("LEFT JOIN " + tablePrefix + "requests r ON ir.request_id = r.id")
 
-	pinUploadDataCTE := db.Table("portal.ipfs_pins ip").
+	pinUploadDataCTE := db.Table(tablePrefix + "ipfs_pins ip").
 		Select(`
             ip.request_id AS ip_request_id,
             ip.name AS ip_name,
@@ -65,10 +70,10 @@ func createView(db *gorm.DB) error {
             u.hash_type AS u_hash_type,
             u.cid_type AS u_cid_type,
             u.uploader_ip,
-			ip.partial AS partial
+            ip.partial AS partial
         `).
-		Joins("JOIN portal.pins p ON ip.id = p.id").
-		Joins("JOIN portal.uploads u ON p.upload_id = u.id").
+		Joins("JOIN " + tablePrefix + "pins p ON ip.id = p.id").
+		Joins("JOIN " + tablePrefix + "uploads u ON p.upload_id = u.id").
 		Where("ip.deleted_at IS NULL AND p.deleted_at IS NULL AND u.deleted_at IS NULL")
 
 	// Main query
@@ -79,13 +84,13 @@ func createView(db *gorm.DB) error {
             ird.status,
             COALESCE(pud.u_hash, ird.r_hash) AS hash,
             COALESCE(pud.u_hash_type, ird.r_hash_type) AS hash_type,
-			COALESCE(pud.u_cid_type, ird.r_cid_type) AS cid_type,
+            COALESCE(pud.u_cid_type, ird.r_cid_type) AS cid_type,
             COALESCE(pud.ip_name, ird.ir_name) AS name,
             ird.metadata AS meta,
             COALESCE(pud.pin_user_id, ird.r_user_id) AS user_id,
             COALESCE(ird.source_ip, pud.uploader_ip) AS uploader_ip,
             ird.internal,
-			COALESCE(pud.partial, false) AS partial,
+            COALESCE(pud.partial, false) AS partial,
             ird.pin_request_id,
             ird.parent_pin_request_id,
             pud.pin_id,
