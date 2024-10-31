@@ -11,7 +11,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gookit/event v1.1.2
 	github.com/gorilla/mux v1.8.1
-	github.com/icza/gox v0.0.0-20240829094117-5982a7a6cca1
+	github.com/icza/gox v0.2.0
 	github.com/ipfs/boxo v0.24.2
 	github.com/ipfs/go-block-format v0.2.0
 	github.com/ipfs/go-cid v0.4.1
