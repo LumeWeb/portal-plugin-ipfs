@@ -208,11 +208,6 @@ func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datasto
 		return nil, fmt.Errorf("failed to create connection manager: %w", err)
 	}
 
-	announceAddresses, err := AnnouncementAddresses()
-	if err != nil {
-		return nil, err
-	}
-
 	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(cfg.ListenAddresses...),
 		libp2p.ConnectionManager(cmgr),
@@ -221,8 +216,18 @@ func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datasto
 		libp2p.ResourceManager(rm),
 		libp2p.DefaultPeerstore,
 		libp2p.DefaultTransports,
-		libp2p.AddrsFactory(func([]multiaddr.Multiaddr) []multiaddr.Multiaddr {
-			return announceAddresses
+		libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+			announceAddresses, err := AnnouncementAddresses()
+			if err != nil {
+				ctx.Logger().Error("failed to get announcement addresses", zap.Error(err))
+				return lo.Filter(addrs, func(addr multiaddr.Multiaddr, _ int) bool {
+					return addr != nil
+				})
+			}
+
+			return lo.Filter(announceAddresses, func(addr multiaddr.Multiaddr, _ int) bool {
+				return addr != nil
+			})
 		}),
 	}
 
