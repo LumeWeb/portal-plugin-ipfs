@@ -1,5 +1,11 @@
 # @lumeweb/portal-plugin-ipfs
 
+## 0.1.3
+
+### Patch Changes
+
+- 49e6d23: add build information support
+
 ## 0.1.2
 
 ### Patch Changes
