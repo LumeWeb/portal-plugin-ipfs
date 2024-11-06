@@ -2,6 +2,7 @@ package ipfs
 
 import (
 	"fmt"
+	"go.lumeweb.com/portal-plugin-ipfs/build"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/cron"
@@ -113,7 +114,8 @@ func isMySQL(db *gorm.DB) bool {
 
 func init() {
 	core.RegisterPlugin(core.PluginInfo{
-		ID: internal.ProtocolName,
+		ID:      internal.ProtocolName,
+		Version: build.GetInfo(),
 		API: func() (core.API, []core.ContextBuilderOption, error) {
 			return api.NewAPI()
 		},
