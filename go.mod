@@ -32,7 +32,7 @@ require (
 	github.com/tus/tusd/v2 v2.4.0
 	go.lumeweb.com/httputil v0.0.0-20240907105629-dbffb601f2ab
 	go.lumeweb.com/portal v0.3.2
-	go.lumeweb.com/portal-plugin-billing v0.0.0-20241004130924-c3a63bbe39bc
+	go.lumeweb.com/portal-plugin-billing v0.2.1
 	go.sia.tech/renterd v1.0.8
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.28.0
