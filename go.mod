@@ -37,7 +37,7 @@ require (
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.29.0
 	gopkg.in/yaml.v3 v3.0.1
-	gorm.io/datatypes v1.2.4
+	gorm.io/datatypes v1.2.5
 	gorm.io/gorm v1.25.12
 )
 
@@ -180,7 +180,7 @@ require (
 	github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-sqlite3 v1.14.22 // indirect
-	github.com/microsoft/go-mssqldb v1.6.0 // indirect
+	github.com/microsoft/go-mssqldb v1.7.2 // indirect
 	github.com/miekg/dns v1.1.62 // indirect
 	github.com/mikioh/tcpinfo v0.0.0-20190314235526-30a79bb1804b // indirect
 	github.com/mikioh/tcpopt v0.0.0-20190314235656-172688c1accc // indirect
@@ -295,7 +295,7 @@ require (
 	gorm.io/driver/mysql v1.5.7 // indirect
 	gorm.io/driver/postgres v1.5.9 // indirect
 	gorm.io/driver/sqlite v1.5.6 // indirect
-	gorm.io/driver/sqlserver v1.5.3 // indirect
+	gorm.io/driver/sqlserver v1.5.4 // indirect
 	gorm.io/plugin/dbresolver v1.3.0 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
 	lukechampine.com/frand v1.4.2 // indirect
