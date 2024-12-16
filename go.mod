@@ -1,9 +1,6 @@
 module go.lumeweb.com/portal-plugin-ipfs
 
 go 1.23.0
-
-toolchain go1.23.1
-
 require (
 	dario.cat/mergo v1.0.1
 	github.com/go-viper/mapstructure/v2 v2.0.0
@@ -33,7 +30,7 @@ require (
 	go.lumeweb.com/httputil v0.0.0-20240907105629-dbffb601f2ab
 	go.lumeweb.com/portal v0.3.2
 	go.lumeweb.com/portal-plugin-billing v0.2.1
-	go.sia.tech/renterd v1.0.8
+	go.sia.tech/renterd v1.1.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.31.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -46,11 +43,10 @@ require (
 	github.com/AfterShip/email-verifier v1.4.1 // indirect
 	github.com/Boostport/address v0.11.2 // indirect
 	github.com/adjust/rmq/v5 v5.2.0 // indirect
-	github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da // indirect
 	github.com/alicebob/gopher-json v0.0.0-20230218143504-906a9b012302 // indirect
 	github.com/alicebob/miniredis/v2 v2.32.1 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
-	github.com/aws/aws-sdk-go v1.54.6 // indirect
+	github.com/aws/aws-sdk-go v1.55.5 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.32.3 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.6 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.28.1 // indirect
@@ -84,7 +80,6 @@ require (
 	github.com/cskr/pubsub v1.0.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
-	github.com/dchest/threefish v0.0.0-20120919164726-3ecf4c494abf // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.3.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/docker/go-units v0.5.0 // indirect
@@ -160,7 +155,7 @@ require (
 	github.com/killbill/kbcli/v3 v3.1.0 // indirect
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.8 // indirect
-	github.com/klauspost/reedsolomon v1.12.1 // indirect
+	github.com/klauspost/reedsolomon v1.12.4 // indirect
 	github.com/knadh/koanf v1.5.0 // indirect
 	github.com/knadh/koanf/v2 v2.1.1 // indirect
 	github.com/koron/go-ssdp v0.0.4 // indirect
@@ -180,7 +175,7 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-sqlite3 v1.14.22 // indirect
+	github.com/mattn/go-sqlite3 v1.14.24 // indirect
 	github.com/microsoft/go-mssqldb v1.7.2 // indirect
 	github.com/miekg/dns v1.1.62 // indirect
 	github.com/mikioh/tcpinfo v0.0.0-20190314235526-30a79bb1804b // indirect
@@ -249,18 +244,6 @@ require (
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/wneessen/go-mail v0.5.1 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
-	gitlab.com/NebulousLabs/bolt v1.4.4 // indirect
-	gitlab.com/NebulousLabs/encoding v0.0.0-20200604091946-456c3dc907fe // indirect
-	gitlab.com/NebulousLabs/entropy-mnemonics v0.0.0-20181018051301-7532f67e3500 // indirect
-	gitlab.com/NebulousLabs/errors v0.0.0-20200929122200-06c536cf6975 // indirect
-	gitlab.com/NebulousLabs/fastrand v0.0.0-20181126182046-603482d69e40 // indirect
-	gitlab.com/NebulousLabs/go-upnp v0.0.0-20211002182029-11da932010b6 // indirect
-	gitlab.com/NebulousLabs/log v0.0.0-20210609172545-77f6775350e2 // indirect
-	gitlab.com/NebulousLabs/merkletree v0.0.0-20200118113624-07fbf710afc4 // indirect
-	gitlab.com/NebulousLabs/persist v0.0.0-20200605115618-007e5e23d877 // indirect
-	gitlab.com/NebulousLabs/ratelimit v0.0.0-20200811080431-99b8f0768b2e // indirect
-	gitlab.com/NebulousLabs/siamux v0.0.2-0.20220630142132-142a1443a259 // indirect
-	gitlab.com/NebulousLabs/threadgroup v0.0.0-20200608151952-38921fbef213 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.16 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.16 // indirect
 	go.etcd.io/etcd/client/v3 v3.5.16 // indirect
@@ -269,12 +252,11 @@ require (
 	go.opentelemetry.io/otel v1.31.0 // indirect
 	go.opentelemetry.io/otel/metric v1.31.0 // indirect
 	go.opentelemetry.io/otel/trace v1.31.0 // indirect
-	go.sia.tech/core v0.4.7 // indirect
-	go.sia.tech/coreutils v0.3.3-0.20240927170025-f45eedc64d6f // indirect
-	go.sia.tech/gofakes3 v0.0.4 // indirect
-	go.sia.tech/jape v0.11.2-0.20240306154058-9832414a5385 // indirect
+	go.sia.tech/core v0.6.2 // indirect
+	go.sia.tech/coreutils v0.7.0 // indirect
+	go.sia.tech/gofakes3 v0.0.5 // indirect
+	go.sia.tech/jape v0.12.1 // indirect
 	go.sia.tech/mux v1.3.0 // indirect
-	go.sia.tech/siad v1.5.10-0.20230228235644-3059c0b930ca // indirect
 	go.uber.org/dig v1.18.0 // indirect
 	go.uber.org/fx v1.23.0 // indirect
 	go.uber.org/mock v0.5.0 // indirect
@@ -299,7 +281,7 @@ require (
 	gorm.io/driver/sqlserver v1.5.4 // indirect
 	gorm.io/plugin/dbresolver v1.3.0 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
-	lukechampine.com/frand v1.4.2 // indirect
+	lukechampine.com/frand v1.5.1 // indirect
 	modernc.org/libc v1.22.2 // indirect
 	modernc.org/mathutil v1.5.0 // indirect
 	modernc.org/memory v1.5.0 // indirect
