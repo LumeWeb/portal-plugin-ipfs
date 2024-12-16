@@ -35,7 +35,7 @@ require (
 	go.lumeweb.com/portal-plugin-billing v0.2.1
 	go.sia.tech/renterd v1.0.8
 	go.uber.org/zap v1.27.0
-	golang.org/x/crypto v0.30.0
+	golang.org/x/crypto v0.31.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/datatypes v1.2.5
 	gorm.io/gorm v1.25.12
