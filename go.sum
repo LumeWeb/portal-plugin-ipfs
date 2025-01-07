@@ -38,6 +38,10 @@ github.com/AzureAD/microsoft-authentication-library-for-go v1.2.1/go.mod h1:wP83
 github.com/Boostport/address v0.11.2 h1:A575XwuT+iTL2AVYT2ZbRLKult76E8encxqnHF9hmbk=
 github.com/Boostport/address v0.11.2/go.mod h1:8KISquC9gqfmnOrq2nmJ5di2YiaDWwFoxyDPz8FHhqE=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
+github.com/LumeWeb/gocron-redis-lock/v2 v2.0.0-20240722104549-387206078839 h1:zHqmLQsunveLyd9GBokm/yEI1hJhAjg33vg08fk9mt8=
+github.com/LumeWeb/gocron-redis-lock/v2 v2.0.0-20240722104549-387206078839/go.mod h1:T5w/btpGno2+FnYyaXAYTfavO6TTD+RyDSwJ3kPX7aE=
+github.com/LumeWeb/gocron/v2 v2.0.0-20240814201336-2d361739e9be h1:vOslxliDgU73P8ssbgMlPfZN7tV61dQIlNTf8pcyKTs=
+github.com/LumeWeb/gocron/v2 v2.0.0-20240814201336-2d361739e9be/go.mod h1:xY7bJxGazKam1cz04EebrlP4S9q4iWdiAylMGP3jY9w=
 github.com/LumeWeb/tusd/v2 v2.2.3-0.20241008001850-1f6974596ff3 h1:hhq3x7ZU/kvjgWQ8SrOCPJRRye04wpBiZhEzIGl+/44=
 github.com/LumeWeb/tusd/v2 v2.2.3-0.20241008001850-1f6974596ff3/go.mod h1:8qFqTEy1faR4dGjkuWOJANxGw4EMy5/ECsU2nII2jGs=
 github.com/Microsoft/go-winio v0.6.1 h1:9/kr64B9VUZrLm5YYwbGtUJnMgqWVOdUAXu6Migciow=

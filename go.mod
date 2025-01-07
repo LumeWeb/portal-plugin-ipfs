@@ -95,7 +95,7 @@ require (
 	github.com/glebarez/go-sqlite v1.20.3 // indirect
 	github.com/glebarez/sqlite v1.7.0 // indirect
 	github.com/go-co-op/gocron-redis-lock/v2 v2.0.1 // indirect
-	github.com/go-co-op/gocron/v2 v2.14.0 // indirect
+	github.com/go-co-op/gocron/v2 v2.9.0 // indirect
 	github.com/go-gorm/caches/v4 v4.0.5 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -290,6 +290,8 @@ require (
 )
 
 replace (
+	github.com/go-co-op/gocron-redis-lock/v2 v2.0.1 => github.com/LumeWeb/gocron-redis-lock/v2 v2.0.0-20240722104549-387206078839
+	github.com/go-co-op/gocron/v2 v2.9.0 => github.com/LumeWeb/gocron/v2 v2.0.0-20240814201336-2d361739e9be
 	github.com/go-viper/mapstructure/v2 v2.0.0 => github.com/LumeWeb/mapstructure/v2 v2.0.0-20240603224933-c63fee0297e6
 	github.com/gorilla/mux v1.8.1 => github.com/cornejong/gormux v0.0.0-20240526072501-ce1c97b033ec
 	github.com/tus/tusd/v2 v2.4.0 => github.com/LumeWeb/tusd/v2 v2.2.3-0.20241008001850-1f6974596ff3
