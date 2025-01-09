@@ -561,21 +561,35 @@ func (a API) prepareFileUpload(r *http.Request) (file io.ReadSeekCloser, size ui
 			return nil, size, NewError(ErrKeyFileUploadFailed, err)
 		}
 
-		size = uint64(multipartHeader.Size)
+		// Check if the multipart file supports seeking
+		if seeker, ok := multipartFile.(io.Seeker); ok {
+			// Verify seeking actually works with a test seek
+			if _, err := seeker.Seek(0, io.SeekCurrent); err == nil {
+				size = uint64(multipartHeader.Size)
+				return multipartFile, size, nil
+			}
+		}
 
-		return multipartFile, size, nil
+		// If seeking isn't supported or failed, fallback to buffering
+		data, err := io.ReadAll(multipartFile)
+		if err != nil {
+			multipartFile.Close()
+			return nil, size, NewError(ErrKeyFileUploadFailed, err)
+		}
+		multipartFile.Close()
+
+		size = uint64(len(data))
+		return readSeekNopCloser{bytes.NewReader(data)}, size, nil
 	}
 
-	// Handle raw body uploads
+	// Handle raw body uploads (this part remains unchanged)
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		return nil, size, NewError(ErrKeyFileUploadFailed, err)
 	}
 
 	buffer := readSeekNopCloser{bytes.NewReader(data)}
-
 	size = uint64(len(data))
-
 	return buffer, size, nil
 }
 
