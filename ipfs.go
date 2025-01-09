@@ -34,11 +34,24 @@ func viewExists(db *gorm.DB) (bool, error) {
 
 func createView(db *gorm.DB) error {
 	var tablePrefix string
+	var dateTimeExpr string
 	if isMySQL(db) {
 		tablePrefix = "portal."
+		// In MySQL, no need for datetime() function - it handles DATETIME type natively
+		dateTimeExpr = ""
+	} else {
+		// For SQLite, we need the datetime() function to ensure proper formatting
+		dateTimeExpr = "datetime"
 	}
 
-	// Define Common Table Expressions (CTEs)
+	// Helper function to format datetime expressions based on database type
+	formatDateTime := func(column string) string {
+		if dateTimeExpr == "" {
+			return column // MySQL: use column as-is
+		}
+		return dateTimeExpr + "(" + column + ")" // SQLite: wrap in datetime()
+	}
+
 	ipfsRequestDataCTE := db.Table(tablePrefix + "ipfs_requests ir").
 		Select(`
             ir.request_id,
@@ -54,8 +67,8 @@ func createView(db *gorm.DB) error {
             r.metadata,
             r.user_id AS r_user_id,
             r.source_ip,
-            datetime(r.created_at) AS r_created_at,
-            datetime(r.updated_at) AS r_updated_at
+            ` + formatDateTime("r.created_at") + ` AS r_created_at,
+            ` + formatDateTime("r.updated_at") + ` AS r_updated_at
         `).
 		Joins("LEFT JOIN " + tablePrefix + "requests r ON ir.request_id = r.id")
 
@@ -63,8 +76,8 @@ func createView(db *gorm.DB) error {
 		Select(`
             ip.request_id AS ip_request_id,
             ip.name AS ip_name,
-            datetime(ip.created_at) AS ip_created_at,
-            datetime(ip.updated_at) AS ip_updated_at,
+            ` + formatDateTime("ip.created_at") + ` AS ip_created_at,
+            ` + formatDateTime("ip.updated_at") + ` AS ip_updated_at,
             p.id AS pin_id,
             p.user_id AS pin_user_id,
             u.hash AS u_hash,
@@ -94,8 +107,8 @@ func createView(db *gorm.DB) error {
             ird.pin_request_id,
             ird.parent_pin_request_id,
             pud.pin_id,
-            datetime(COALESCE(pud.ip_created_at, ird.r_created_at)) AS created_at,
-            datetime(COALESCE(pud.ip_updated_at, ird.r_updated_at)) AS updated_at,
+            COALESCE(pud.ip_created_at, ird.r_created_at) AS created_at,
+            COALESCE(pud.ip_updated_at, ird.r_updated_at) AS updated_at,
             NULL AS deleted_at
         `).
 		Joins("LEFT JOIN (?) AS pud ON ird.r_hash = pud.u_hash AND ird.r_hash_type = pud.u_hash_type", pinUploadDataCTE).
