@@ -588,15 +588,23 @@ func (s *UploadService) HandlePostUpload(ctx context.Context, reader io.ReadSeek
 	}
 
 	// Create a new SHAReader
-	hashReader := NewSHAReader(reader)
+	hashReader, err := NewSHAReader(reader)
+	if err != nil {
+		return fmt.Errorf("failed to create hash reader: %w", err)
+	}
 
 	upload, err := s.storage.S3TemporaryUpload(ctx, hashReader, uint64(size), s.ipfs)
 	if err != nil {
 		return err
 	}
 
+	_cid, err := hashReader.CID()
+	if err != nil {
+		return fmt.Errorf("failed to get CID: %w", err)
+	}
+
 	// Create a new request
-	err = s.createUploadRequest(ctx, hashReader.CID(), roots[0], userId, uploaderIP, upload)
+	err = s.createUploadRequest(ctx, _cid, roots[0], userId, uploaderIP, upload)
 
 	if err != nil {
 		return fmt.Errorf("failed to create pin: %w", err)
@@ -878,7 +886,7 @@ func (s *UploadService) GetBlockMeta(ctx context.Context, c cid.Cid) (*messages.
 		return tx.WithContext(ctx).
 			Model(&pluginDb.UnixFSNode{}).
 			Preload("Block"). // This will automatically join with IPFSBlock
-			Joins("Block").   // This ensures the join condition is included in the main query
+			Joins("Block"). // This ensures the join condition is included in the main query
 			Where("Block.cid = ?", c.Bytes()).
 			First(&unixFSNode)
 	}); err != nil {
