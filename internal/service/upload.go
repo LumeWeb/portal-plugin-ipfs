@@ -827,7 +827,7 @@ func (s *UploadService) convertToPinStatus(imp *pluginDb.IPFSPinView) *messages.
 	return &messages.PinStatus{
 		RequestID: imp.PinRequestID.String(),
 		Status:    requestStatusToPinStatus(imp.Status),
-		Created:   imp.CreatedAt,
+		Created:   imp.CreatedAt.GetTime(),
 		Pin: messages.Pin{
 			CID:  c.String(),
 			Name: imp.Name,

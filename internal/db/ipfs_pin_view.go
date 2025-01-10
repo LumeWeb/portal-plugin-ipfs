@@ -2,6 +2,8 @@ package db
 
 import (
 	mh "github.com/multiformats/go-multihash"
+	"time"
+
 	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/db/types"
 	"gorm.io/gorm"
@@ -9,6 +11,8 @@ import (
 
 type IPFSPinView struct {
 	gorm.Model
+	CreatedAt          ViewTime                 `gorm:"type:datetime"`
+	UpdatedAt          ViewTime                 `gorm:"type:datetime"`
 	RequestID          uint                     `gorm:"column:request_id"`
 	Status             models.RequestStatusType `gorm:"column:status"`
 	Hash               mh.Multihash             `gorm:"column:hash;type:binary(64);"`
@@ -27,4 +31,20 @@ type IPFSPinView struct {
 
 func (IPFSPinView) TableName() string {
 	return "ipfs_pin_view"
+}
+
+func (ipv *IPFSPinView) BeforeCreate(tx *gorm.DB) error {
+	now := time.Now()
+	if ipv.CreatedAt.Time.IsZero() {
+		ipv.CreatedAt.Time = now
+	}
+	if ipv.UpdatedAt.Time.IsZero() {
+		ipv.UpdatedAt.Time = now
+	}
+	return nil
+}
+
+func (ipv *IPFSPinView) BeforeUpdate(tx *gorm.DB) error {
+	ipv.UpdatedAt.Time = time.Now()
+	return nil
 }
