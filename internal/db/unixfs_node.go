@@ -11,7 +11,7 @@ var _ schema.Tabler = (*UnixFSNode)(nil)
 
 type UnixFSNode struct {
 	gorm.Model
-	BlockID   uint
+	BlockID   uint                         `gorm:"uniqueIndex"`
 	Block     IPFSBlock                    `gorm:"foreignKey:BlockID"`
 	Name      string                       `gorm:"column:name"`
 	Type      uint8                        `gorm:"column:type"`
