@@ -1,75 +1,49 @@
 package api
 
 import (
-	"fmt"
 	"net/http"
+
+	core "go.lumeweb.com/portal/core"
 )
 
-// S5-specific error keys
+// Error keys
 const (
-	// File-related errors
-	ErrKeyFileUploadFailed     = "ErrFileUploadFailed"
-	ErrKeyFileDownloadFailed   = "ErrFileDownloadFailed"
-	ErrKeyMetadataFetchFailed  = "ErrMetadataFetchFailed"
-	ErrKeyInvalidFileFormat    = "ErrInvalidFileFormat"
-	ErrKeyUnsupportedFileType  = "ErrUnsupportedFileType"
-	ErrKeyFileProcessingFailed = "ErrFileProcessingFailed"
+	Namespace                                 = "ipfs-plugin-api"
+	ErrKeyFileUploadFailed     core.ErrorType = "ErrFileUploadFailed"
+	ErrKeyMetadataFetchFailed  core.ErrorType = "ErrMetadataFetchFailed"
+	ErrKeyPinFetchFailed       core.ErrorType = "ErrPinFetchFailed"
+	ErrKeyInvalidUUIDFormat    core.ErrorType = "ErrInvalidUUIDFormat"
+	ErrKeyFileProcessingFailed core.ErrorType = "ErrFileProcessingFailed"
+	ErrKeyCIDParseFailed       core.ErrorType = "ErrKeyCIDParseFailed"
+	ErrKeyBlockNotFound        core.ErrorType = "ErrKeyBlockNotFound"
+	ErrKeyUploadNotFound       core.ErrorType = "ErrKeyUploadNotFound"
 )
 
-// Default error messages for S5-specific errors
-var defaultErrorMessages = map[string]string{
-	ErrKeyFileUploadFailed:     "File ipfsUpload failed due to an internal error.",
-	ErrKeyFileDownloadFailed:   "File download failed.",
-	ErrKeyMetadataFetchFailed:  "Failed to fetch metadata for the resource.",
-	ErrKeyInvalidFileFormat:    "Invalid file format provided.",
-	ErrKeyUnsupportedFileType:  "Unsupported file type.",
-	ErrKeyFileProcessingFailed: "Failed to process the file.",
+func init() {
+	core.MustRegisterNamespace(Namespace)
+	core.MustRegisterDefaultErrorMessages(Namespace, map[core.ErrorType]core.ErrorDefinition{
+		ErrKeyFileUploadFailed:     {Key: ErrKeyFileUploadFailed, Message: "File upload failed due to an internal error."},
+		ErrKeyMetadataFetchFailed:  {Key: ErrKeyMetadataFetchFailed, Message: "Failed to fetch metadata."},
+		ErrKeyPinFetchFailed:       {Key: ErrKeyPinFetchFailed, Message: "Failed to fetch pin."},
+		ErrKeyInvalidUUIDFormat:    {Key: ErrKeyInvalidUUIDFormat, Message: "Invalid UUID format provided: %s"},
+		ErrKeyFileProcessingFailed: {Key: ErrKeyFileProcessingFailed, Message: "Failed to process the file."},
+		ErrKeyCIDParseFailed:       {Key: ErrKeyCIDParseFailed, Message: "Failed to parse CID."},
+		ErrKeyBlockNotFound:        {Key: ErrKeyBlockNotFound, Message: "Block not found."},
+		ErrKeyUploadNotFound:       {Key: ErrKeyUploadNotFound, Message: "Upload not found."},
+	})
+
+	core.MustRegisterErrorCodes(Namespace, map[core.ErrorType]int{
+		ErrKeyFileUploadFailed:     http.StatusInternalServerError,
+		ErrKeyMetadataFetchFailed:  http.StatusInternalServerError,
+		ErrKeyPinFetchFailed:       http.StatusInternalServerError,
+		ErrKeyInvalidUUIDFormat:    http.StatusBadRequest,
+		ErrKeyFileProcessingFailed: http.StatusInternalServerError,
+		ErrKeyCIDParseFailed:       http.StatusBadRequest,
+		ErrKeyBlockNotFound:        http.StatusNotFound,
+		ErrKeyUploadNotFound:       http.StatusNotFound,
+	})
 }
 
-// Mapping of S5-specific error keys to HTTP status codes
-var errorCodeToHttpStatus = map[string]int{
-	ErrKeyFileUploadFailed:     http.StatusInternalServerError,
-	ErrKeyFileDownloadFailed:   http.StatusInternalServerError,
-	ErrKeyMetadataFetchFailed:  http.StatusInternalServerError,
-	ErrKeyInvalidFileFormat:    http.StatusBadRequest,
-	ErrKeyUnsupportedFileType:  http.StatusBadRequest,
-	ErrKeyFileProcessingFailed: http.StatusInternalServerError,
-}
-
-// Error struct for representing S5-specific errors
-type Error struct {
-	Key     string
-	Message string
-	Err     error
-}
-
-// Error method to implement the error interface
-func (e *Error) Error() string {
-	if e.Err != nil {
-		return fmt.Sprintf("%s: %v", e.Message, e.Err)
-	}
-	return e.Message
-}
-
-func (e *Error) HttpStatus() int {
-	if code, exists := errorCodeToHttpStatus[e.Key]; exists {
-		return code
-	}
-	return http.StatusInternalServerError
-}
-
-func NewError(key string, err error, customMessage ...string) *Error {
-	message, exists := defaultErrorMessages[key]
-	if !exists {
-		message = "An unknown error occurred"
-	}
-	if len(customMessage) > 0 {
-		message = customMessage[0]
-	}
-
-	return &Error{
-		Key:     key,
-		Message: message,
-		Err:     err,
-	}
+func NewError(key core.ErrorType, err error, args ...any) *core.Error {
+	return core.NewError(Namespace, key, err, args...)
 }

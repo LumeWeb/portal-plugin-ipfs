@@ -8,6 +8,10 @@ import (
 	"go.lumeweb.com/portal/core"
 )
 
+type MockBlockstore interface {
+	blockstore.Blockstore
+}
+
 // VirtualBlockStore is a wrapper around a CachedBlockstore that can bypass the cache
 type VirtualBlockStore struct {
 	cachedBS blockstore.Blockstore

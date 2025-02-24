@@ -1,14 +1,13 @@
 package config
 
 import (
-	"errors"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"go.lumeweb.com/portal/config"
 	"time"
 )
 
-var _ config.Validator = (*Config)(nil)
-var _ config.Defaults = (*Config)(nil)
+// var _ config.Validator = (*ProtocolConfig)(nil)
+var _ config.Defaults = (*ProtocolConfig)(nil)
 var _ config.Defaults = (*BlockStore)(nil)
 var _ config.Defaults = (*IPFSProvider)(nil)
 
@@ -29,7 +28,7 @@ var bootstrapPeers = []IPFSPeer{
 	mustParsePeer("/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ"),
 }
 
-type Config struct {
+type ProtocolConfig struct {
 	ListenAddresses         []string     `config:"listen_addresses"`
 	Peers                   []IPFSPeer   `config:"peers"`
 	BootstrapPeers          []IPFSPeer   `config:"bootstrap_peers"`
@@ -39,31 +38,11 @@ type Config struct {
 	AutoScaleResourceLimits bool         `config:"auto_scale_resource_limits"`
 }
 
-func (c Config) Defaults() map[string]any {
+func (c ProtocolConfig) Defaults() map[string]any {
 	return map[string]any{
-		"listen_addresses": []string{"/ip4/0.0.0.0/tcp/4001"},
-		"bootstrap_peers":  bootstrapPeers,
+		"ListenAddresses": []string{"/ip4/0.0.0.0/tcp/4001"},
+		"BootstrapPeers":  bootstrapPeers,
 	}
-}
-
-func (c Config) Validate() error {
-	if len(c.ListenAddresses) == 0 {
-		return errors.New("listen_addresses is required")
-	}
-
-	if len(c.BootstrapPeers) == 0 {
-		return errors.New("bootstrap_peers is required")
-	}
-
-	if c.LogLevel != "" {
-		switch c.LogLevel {
-		case "debug", "info", "warn", "error":
-		default:
-			return errors.New("log_level must be one of debug, info, warn, error")
-		}
-	}
-
-	return nil
 }
 
 type (
@@ -87,17 +66,17 @@ type (
 
 func (b BlockStore) Defaults() map[string]any {
 	return map[string]any{
-		"max_concurrent_fetches":  10,
-		"max_concurrent_requests": 50,
-		"cache_size":              65536,
-		"timeout":                 120 * time.Second,
+		"MaxConcurrentFetches":  10,
+		"MaxConcurrentRequests": 50,
+		"CacheSize":             65536,
+		"Timeout":               120 * time.Second,
 	}
 }
 
 func (I IPFSProvider) Defaults() map[string]any {
 	return map[string]any{
-		"batch_size": 5000,
-		"interval":   18 * time.Hour,
-		"timeout":    30 * time.Minute,
+		"BatchSize": 5000,
+		"Interval":  18 * time.Hour,
+		"Timeout":   30 * time.Minute,
 	}
 }

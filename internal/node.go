@@ -8,32 +8,38 @@ import (
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
+	legacy "github.com/ipfs/go-ipld-legacy"
 	"github.com/samber/lo"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 )
 
-const typicalChunkSize = 256 * 1024
-const sizeThreshold = 240 * 1024
+const (
+	// 240 KiB - minimum size to consider as potential chunk
+	sizeThreshold = 240 * 1024
+	// 256 KiB - standard IPFS chunk size
+	typicalChunkSize = 256 * 1024
+)
 
 type NodeInfoType string
 
 const (
 	NodeTypeRaw      NodeInfoType = "raw"
-	NodeTypeProtobuf NodeInfoType = "protobuf"
+	NodeTypeProtobuf NodeInfoType = "dag-pb"
+	NodeTypeCBOR     NodeInfoType = "cbor"
 	NodeTypeUnknown  NodeInfoType = "unknown"
 )
 
 type NodeInfo struct {
-	Name             string
-	CID              cid.Cid
-	Type             NodeInfoType
-	UnixFSType       pb.Data_DataType
-	Size             uint64
-	Links            []*format.Link
-	IsUnixFS         bool
-	IsFileRoot       bool
-	DataSize         uint64
-	UnixFSBlockSizes []uint64
+	Name             string           // Name of the node (e.g., filename within a directory)
+	CID              cid.Cid          // CID of the block
+	Type             NodeInfoType     // Type of the node (raw, protobuf, cbor, etc.)
+	UnixFSType       pb.Data_DataType // UnixFS type (file, directory, symlink, etc.)
+	Links            []*format.Link   // Links to child nodes
+	IsUnixFS         bool             // Whether the node is a UnixFS node
+	IsFileRoot       bool             // Whether the node is the root of a UnixFS file
+	BlockSize        uint64           // Raw, encoded size of the block (disk usage)
+	DataSize         uint64           // Size of the data within the node (e.g., file size, metadata size)
+	UnixFSBlockSizes []uint64         // Block sizes for UnixFS files (chunk sizes)
 }
 
 func AnalyzeNode(ctx context.Context, block blocks.Block) (*NodeInfo, error) {
@@ -51,30 +57,35 @@ func AnalyzeNode(ctx context.Context, block blocks.Block) (*NodeInfo, error) {
 	})
 
 	info := &NodeInfo{
-		CID:   block.Cid(),
-		Links: links,
+		CID:       block.Cid(),
+		Links:     links,
+		BlockSize: uint64(len(block.RawData())),
 	}
 
 	switch n := node.(type) {
 	case *merkledag.RawNode:
 		info.Type = NodeTypeRaw
-		info.Size = uint64(len(n.RawData()))
-		info.DataSize = info.Size
+		info.DataSize = uint64(len(n.RawData()))
 	case *merkledag.ProtoNode:
 		info.Type = NodeTypeProtobuf
-		fsNode, err := unixfs.FSNodeFromBytes(n.Data())
-		if err == nil {
+		data := n.Data()
+		info.DataSize = uint64(len(data))
+
+		if fsNode, err := unixfs.FSNodeFromBytes(data); err == nil {
 			info.IsUnixFS = true
 			info.UnixFSType = fsNode.Type()
-			info.Size = fsNode.FileSize()
-			info.DataSize = uint64(len(fsNode.Data()))
-			info.IsFileRoot = fsNode.Type() == unixfs.TFile && len(info.Links) > 0
-			info.UnixFSBlockSizes = fsNode.BlockSizes()
-		} else {
-			// Handle non-UnixFS ProtoNodes
-			info.Size = uint64(len(n.Data()))
-			info.DataSize = info.Size
+
+			if fsNode.Type() == pb.Data_File {
+				info.IsFileRoot = len(info.Links) > 0
+				info.UnixFSBlockSizes = fsNode.BlockSizes()
+			}
 		}
+	case *encoding.CBORNode:
+		info.Type = NodeTypeCBOR
+		info.DataSize = uint64(len(n.Block.RawData()))
+	case *legacy.LegacyNode:
+		info.Type = NodeTypeUnknown
+		info.DataSize = uint64(len(n.Block.RawData()))
 	default:
 		info.Type = NodeTypeUnknown
 	}
@@ -82,26 +93,26 @@ func AnalyzeNode(ctx context.Context, block blocks.Block) (*NodeInfo, error) {
 	return info, nil
 }
 
+// isLikelyChunk determines if a size is characteristic of an IPFS file chunk
 func isLikelyChunk(size uint64) bool {
-	return size >= sizeThreshold && size <= typicalChunkSize
+	// Check for sizes in chunking range (240KB <= size < 256KB)
+	return size >= sizeThreshold && size < typicalChunkSize
 }
 
 func IsPartialFile(info *NodeInfo) bool {
-	if info.IsUnixFS {
-		if info.UnixFSType != pb.Data_File {
-			return false // Only consider File type
-		}
-		if info.IsFileRoot {
-			return false // File roots represent complete files, even if they have chunks
-		}
-		// For UnixFS file chunks, use size heuristic
-		return isLikelyChunk(info.Size)
+	if info.IsUnixFS && info.UnixFSType == pb.Data_File && !info.IsFileRoot {
+		// UnixFS files use the standard chunk size range (240KB <= size < 256KB)
+		return isLikelyChunk(info.DataSize)
 	}
 
-	// For non-UnixFS nodes (including raw), use size heuristic
-	return isLikelyChunk(info.Size)
-}
+	// Non-UnixFS raw data: 240KB <= size <= 256KB is considered partial
+	if info.Type == NodeTypeRaw {
+		return info.DataSize >= sizeThreshold && info.DataSize <= typicalChunkSize
+	}
 
+	// Non-UnixFS protobuf data: NEVER considered partial
+	return false
+}
 func DetectPartialFile(ctx context.Context, block blocks.Block) (bool, error) {
 	info, err := AnalyzeNode(ctx, block)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/samber/lo"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/core"
 	"io"
@@ -40,26 +41,19 @@ type (
 		priority  downloadPriority
 		index     int
 		timestamp time.Time
+		log       *core.Logger
 	}
 
 	priorityQueue []*blockResponse
 
-	// A MetadataStore is a store for IPFS block metadata. It is used to
-	// optimize block downloads by prefetching linked blocks.
-	MetadataStore interface {
-		BlockExists(c cid.Cid) (err error)
-		BlockSiblings(c cid.Cid, max int) (siblings []cid.Cid, err error)
-		BlockChildren(c cid.Cid, max *int) (siblings []cid.Cid, err error)
-	}
-
-	// BlockDownloader is a cache for downloading blocks from a renterd node.
+	// BlockDownloaderDefault is a cache for downloading blocks from a renterd node.
 	// It limits the number of in-flight requests to avoid overloading the node
 	// and caches blocks to avoid redundant downloads.
 	//
 	// For UnixFS nodes, it also prefetches linked blocks.
-	BlockDownloader struct {
+	BlockDownloaderDefault struct {
 		ctx     core.Context
-		store   MetadataStore
+		store   pluginCore.MetadataStore
 		proto   core.StorageProtocol
 		storage core.StorageService
 		log     *core.Logger
@@ -128,14 +122,17 @@ func (br *blockResponse) block(ctx context.Context, c cid.Cid) (blocks.Block, er
 	if br.err != nil {
 		return nil, br.err
 	}
+
+	br.log.Debug("resolved block", zap.String("CID", c.String()))
+
 	return blocks.NewBlockWithCid(br.b, c)
 }
 
-func (bd *BlockDownloader) downloadBlockData(ctx context.Context, c cid.Cid) ([]byte, error) {
+func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.Cid) ([]byte, error) {
 	blockBuf := bytes.NewBuffer(make([]byte, 0, 2<<20))
 
 	bd.log.Debug("Trying to download block", zap.String("CID", c.String()))
-	object, err := bd.storage.DownloadObject(ctx, bd.proto, internal.NewIPFSHash(c), 0)
+	object, err := bd.storage.DownloadObjectWithOptions(ctx, bd.proto, internal.NewIPFSHash(c), core.StorageDownloadWithSkipMetadataCheck(true))
 	if err != nil {
 		return nil, fmt.Errorf("failed to download block: %w", err)
 	}
@@ -152,7 +149,14 @@ func (bd *BlockDownloader) downloadBlockData(ctx context.Context, c cid.Cid) ([]
 		}
 	}(object)
 
-	h, err := mh.Sum(blockBuf.Bytes(), c.Prefix().MhType, -1)
+	// Check if the hash function is supported before verifying
+	mhType := c.Prefix().MhType
+	// TODO: Maybe allow other hash types?
+	if mhType != mh.SHA2_256 {
+		return nil, fmt.Errorf("unsupported hash function: %d", mhType)
+	}
+
+	h, err := mh.Sum(blockBuf.Bytes(), mhType, -1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify block: %w", err)
 	} else if c.Hash().HexString() != h.HexString() {
@@ -162,7 +166,7 @@ func (bd *BlockDownloader) downloadBlockData(ctx context.Context, c cid.Cid) ([]
 	return blockBuf.Bytes(), nil
 }
 
-func (bd *BlockDownloader) queueRelated(c cid.Cid) {
+func (bd *BlockDownloaderDefault) queueRelated(c cid.Cid) {
 	log := bd.log.Named("queueRelated").With(zap.Stringer("cid", c))
 	siblings, err := bd.store.BlockSiblings(c, 64)
 	if err != nil {
@@ -204,7 +208,7 @@ func (bd *BlockDownloader) queueRelated(c cid.Cid) {
 	}
 }
 
-func (bd *BlockDownloader) doDownloadTask(task *blockResponse, log *zap.Logger) {
+func (bd *BlockDownloaderDefault) doDownloadTask(task *blockResponse, log *zap.Logger) {
 	start := time.Now()
 	log = log.Named("doDownloadTask").With(zap.Stringer("cid", task.cid), zap.Stringer("priority", task.priority))
 
@@ -221,12 +225,12 @@ func (bd *BlockDownloader) doDownloadTask(task *blockResponse, log *zap.Logger) 
 	}
 	close(task.ch)
 
-	if task.priority >= downloadPriorityHigh {
+	if task.err == nil && task.priority >= downloadPriorityHigh {
 		go bd.queueRelated(task.cid)
 	}
 }
 
-func (bd *BlockDownloader) downloadWorker(n int) {
+func (bd *BlockDownloaderDefault) downloadWorker(n int) {
 	log := bd.log.Named("worker").With(zap.Int("id", n))
 	for {
 		bd.mu.Lock()
@@ -250,7 +254,7 @@ func (bd *BlockDownloader) downloadWorker(n int) {
 	}
 }
 
-func (bd *BlockDownloader) queueBlock(c cid.Cid, priority downloadPriority) (*blockResponse, bool) {
+func (bd *BlockDownloaderDefault) queueBlock(c cid.Cid, priority downloadPriority) (*blockResponse, bool) {
 	resp, ok := bd.inflight[cidKey(c)]
 	if ok {
 		if resp.priority < priority {
@@ -266,7 +270,8 @@ func (bd *BlockDownloader) queueBlock(c cid.Cid, priority downloadPriority) (*bl
 		priority:  priority,
 		timestamp: time.Now(),
 
-		ch: make(chan struct{}),
+		ch:  make(chan struct{}),
+		log: bd.log,
 	}
 	bd.inflight[cidKey(c)] = resp
 	heap.Push(bd.queue, resp)
@@ -275,7 +280,14 @@ func (bd *BlockDownloader) queueBlock(c cid.Cid, priority downloadPriority) (*bl
 }
 
 // Get returns a block by CID.
-func (bd *BlockDownloader) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+func (bd *BlockDownloaderDefault) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+	// Check context before doing any work
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	// check if the block exists in the store
 	err := bd.store.BlockExists(c)
 	if err != nil {
@@ -295,8 +307,10 @@ func cidKey(c cid.Cid) string {
 	return cid.NewCidV1(c.Type(), c.Hash()).String()
 }
 
-// NewBlockDownloader creates a new BlockDownloader.
-func NewBlockDownloader(ctx core.Context, store MetadataStore, workers int) (*BlockDownloader, error) {
+var _ pluginCore.BlockDownloader = (*BlockDownloaderDefault)(nil)
+
+// NewBlockDownloader creates a new BlockDownloaderDefault.
+func NewBlockDownloader(ctx core.Context, store pluginCore.MetadataStore, workers int) (*BlockDownloaderDefault, error) {
 	log := ctx.Logger()
 
 	proto, ok := core.GetProtocol(internal.ProtocolName).(core.StorageProtocol)
@@ -304,7 +318,7 @@ func NewBlockDownloader(ctx core.Context, store MetadataStore, workers int) (*Bl
 		return nil, fmt.Errorf("protocol not found: %s", internal.ProtocolName)
 	}
 
-	bd := &BlockDownloader{
+	bd := &BlockDownloaderDefault{
 		store:   store,
 		proto:   proto,
 		log:     log,

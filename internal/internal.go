@@ -1,38 +1,35 @@
 package internal
 
 import (
-	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"go.lumeweb.com/portal/db/models"
+	"fmt"
+	"github.com/ipfs/go-cid"
+	"github.com/ipld/go-car/v2"
+	"io"
 )
 
 const ProtocolName = "ipfs"
 
-func RequestStatusToPinStatus(statusType models.RequestStatusType) db.PinningStatus {
-	switch statusType {
-	case models.RequestStatusPending:
-		return db.PinningStatusQueued
-	case models.RequestStatusProcessing:
-		return db.PinningStatusPinning
-	case models.RequestStatusCompleted:
-		return db.PinningStatusPinned
-	case models.RequestStatusFailed:
-		return db.PinningStatusFailed
-	default:
-		return db.PinningStatusQueued
-	}
-}
+var cidUndefSlice = []cid.Cid{cid.Undef}
 
-func PinStatusToRequestStatus(status db.PinningStatus) models.RequestStatusType {
-	switch status {
-	case db.PinningStatusQueued:
-		return models.RequestStatusPending
-	case db.PinningStatusPinning:
-		return models.RequestStatusProcessing
-	case db.PinningStatusPinned:
-		return models.RequestStatusCompleted
-	case db.PinningStatusFailed:
-		return models.RequestStatusFailed
-	default:
-		return models.RequestStatusPending
+func GetCarRoots(reader io.Reader) ([]cid.Cid, error) {
+	readerAt, ok := reader.(io.ReaderAt)
+	if !ok {
+		return cidUndefSlice, fmt.Errorf("reader does not implement io.ReaderAt")
 	}
+	carReader, err := car.NewReader(readerAt)
+	if err != nil {
+		return cidUndefSlice, err
+	}
+	_, err = carReader.Inspect(true)
+	if err != nil {
+		return cidUndefSlice, err
+	}
+	roots, err := carReader.Roots()
+	if err != nil {
+		return cidUndefSlice, err
+	}
+	if len(roots) == 0 {
+		return cidUndefSlice, fmt.Errorf("no roots found in CAR file")
+	}
+	return roots, nil
 }

@@ -6,16 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ipfs/boxo/ipld/unixfs"
-	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/samber/lo"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store/downloader"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
 	"go.uber.org/zap"
@@ -25,41 +23,31 @@ import (
 	"time"
 )
 
-var _ downloader.MetadataStore = (*MetadataStoreDefault)(nil)
-var _ MetadataStore = (*MetadataStoreDefault)(nil)
+var _ pluginCore.MetadataStore = (*MetadataStoreDefault)(nil)
 
 type (
-	BlockDownloader interface {
-		Get(ctx context.Context, c cid.Cid) (blocks.Block, error)
-	}
-
-	MetadataStore interface {
-		BlockExists(c cid.Cid) (err error)
-		Pin(PinnedBlock) error
-		Unpin(c cid.Cid) error
-		Pinned(offset, limit int) (roots []cid.Cid, err error)
-		Size(c cid.Cid) (uint64, error)
-	}
-
-	PinnedBlock struct {
-		Cid   cid.Cid   `json:"cid"`
-		Links []cid.Cid `json:"links"`
-		Size  uint64    `json:"size"`
-		Node  format.Node
-	}
-
 	MetadataStoreDefault struct {
 		ctx    core.Context
+		proto  ProtoNode
 		upload core.UploadService
 		logger *core.Logger
 		db     *gorm.DB
 	}
 )
 
+type ProtoNode interface {
+	GetNode() *ipfs.Node
+}
+
 // Pin adds a block to the store.
-func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
+func (s *MetadataStoreDefault) Pin(b pluginCore.PinnedBlock) error {
 	b.Cid = encoding.NormalizeCid(b.Cid)
 	s.logger.Debug("pinning block", zap.Stringer("cid", b.Cid))
+
+	// Deduplicate links while preserving order
+	b.Links = lo.Uniq(lo.Map(b.Links, func(link cid.Cid, _ int) cid.Cid {
+		return encoding.NormalizeCid(link)
+	}))
 
 	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		// Insert or update the parent block
@@ -70,7 +58,7 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 			Ready:            true,
 		}
 
-		if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		if err := db.RetryableTransaction(s.ctx, tx, func(tx *gorm.DB) *gorm.DB {
 			return tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "cid"}},
 				DoUpdates: clause.AssignmentColumns([]string{"updated_at", "size", "ready"}),
@@ -80,13 +68,35 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 			return tx
 		}
 
+		// Process UnixFS metadata if applicable
 		unixfsNode, err := extractNodeMetadata(b)
 		if err == nil {
 			unixfsNode.BlockID = parentBlock.ID
-			if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+
+			// Attempt to resolve the name immediately
+			var existingNode pluginDb.UnixFSNode
+			if err := tx.Where("block_id = ?", parentBlock.ID).First(&existingNode).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				_ = tx.AddError(fmt.Errorf("failed to check for existing UnixFS node: %w", err))
+				return tx
+			}
+
+			if existingNode.Name == "" {
+				name, err := s.resolveNameFromParent(b.Cid, tx)
+				if err == nil {
+					unixfsNode.Name = name
+					s.logger.Debug("Resolved name on the fly", zap.String("name", name), zap.Stringer("cid", b.Cid))
+				} else {
+					s.logger.Warn("Failed to resolve name on the fly", zap.Error(err), zap.Stringer("cid", b.Cid))
+				}
+			} else {
+				unixfsNode.Name = existingNode.Name // Preserve existing name
+			}
+
+			if err = db.RetryableTransaction(s.ctx, tx, func(tx *gorm.DB) *gorm.DB {
 				return tx.Clauses(clause.OnConflict{
 					Columns: []clause.Column{{Name: "block_id"}},
 					DoUpdates: clause.Assignments(map[string]interface{}{
+						"name":       unixfsNode.Name,
 						"type":       unixfsNode.Type,
 						"block_size": unixfsNode.BlockSize,
 						"child_cid":  unixfsNode.ChildCID,
@@ -99,30 +109,30 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 			}
 		}
 
-		nodeInfo, err := internal.AnalyzeNode(context.Background(), b.Node)
-		if err != nil {
-			return nil
-		}
-
+		// Process links
 		for i, link := range b.Links {
 			link = encoding.NormalizeCid(link)
 			var childBlock pluginDb.IPFSBlock
-			childBlock.CID = link.Bytes()
-			childBlock.Size = 0
-			if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
-				return tx.FirstOrCreate(&childBlock)
+			if err = db.RetryableTransaction(s.ctx, tx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Where(&pluginDb.IPFSBlock{
+					CID: link.Bytes(),
+				}).FirstOrCreate(&childBlock, pluginDb.IPFSBlock{
+					CID:   link.Bytes(),
+					Ready: false, // Children start as not ready
+				})
 			}); err != nil {
 				_ = tx.AddError(fmt.Errorf("failed to find or create child block: %w", err))
 				return tx
 			}
 
+			// Create link relationship
 			linkedBlock := pluginDb.IPFSLinkedBlock{
 				ParentID:  parentBlock.ID,
 				ChildID:   childBlock.ID,
 				LinkIndex: i,
 			}
 
-			if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+			if err = db.RetryableTransaction(s.ctx, tx, func(tx *gorm.DB) *gorm.DB {
 				return tx.Clauses(clause.OnConflict{
 					Columns:   []clause.Column{{Name: "parent_id"}, {Name: "child_id"}, {Name: "link_index"}},
 					DoNothing: true,
@@ -133,7 +143,7 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 			}
 
 			// Update any existing linked blocks with the correct parent ID
-			if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+			if err = db.RetryableTransaction(s.ctx, tx, func(tx *gorm.DB) *gorm.DB {
 				return tx.Model(&pluginDb.IPFSLinkedBlock{}).
 					Where("child_id = ? AND parent_id IS NULL", childBlock.ID).
 					Update("parent_id", parentBlock.ID)
@@ -141,26 +151,46 @@ func (s *MetadataStoreDefault) Pin(b PinnedBlock) error {
 				_ = tx.AddError(fmt.Errorf("failed to update linked block: %w", err))
 				return tx
 			}
-
-			found := lo.Filter(nodeInfo.Links, func(n *format.Link, _ int) bool {
-				return n.Cid.Equals(link)
-			})
-
-			if len(found) > 0 {
-				if len(found[0].Name) > 0 {
-					err := core.GetService[core.CronService](s.ctx, core.CRON_SERVICE).CreateJobIfNotExists(define.CronTaskUnixFSUpdateMetadataName, define.CronTaskUnixFSUpdateMetadataArgs{
-						CID:  found[0].Cid.String(),
-						Name: found[0].Name,
-					})
-					if err != nil {
-						return nil
-					}
-				}
-			}
 		}
 
 		return tx
 	})
+}
+
+func (s *MetadataStoreDefault) resolveNameFromParent(childCid cid.Cid, tx *gorm.DB) (string, error) {
+	var link pluginDb.IPFSLinkedBlock
+	if err := tx.Where("child_id = ?", childCid.Bytes()).First(&link).Error; err != nil {
+		return "", fmt.Errorf("no parent found for node: %w", err)
+	}
+
+	var parentBlock pluginDb.IPFSBlock
+	if err := tx.First(&parentBlock, link.ParentID).Error; err != nil {
+		return "", fmt.Errorf("failed to find parent block: %w", err)
+	}
+
+	parentCid, err := cid.Parse(parentBlock.CID)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse parent CID: %w", err)
+	}
+
+	block, err := s.proto.GetNode().GetBlock(s.ctx, parentCid)
+
+	if err != nil {
+		return "", fmt.Errorf("failed to get parent block: %w", err)
+	}
+
+	ipldNode, err := encoding.DecodeBlock(s.ctx, block)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode parent block: %w", err)
+	}
+
+	for _, link := range ipldNode.Links() {
+		if link.Cid.Equals(childCid) {
+			return link.Name, nil
+		}
+	}
+
+	return "", fmt.Errorf("name not found in parent links")
 }
 
 func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
@@ -204,10 +234,10 @@ func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
 func (s *MetadataStoreDefault) BlockExists(c cid.Cid) error {
 	var block pluginDb.IPFSBlock
 
+	c = encoding.NormalizeCid(c)
+
 	block.CID = c.Bytes()
 	block.Ready = true
-
-	c = encoding.NormalizeCid(c)
 
 	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		return tx.Where(&block).First(&block)
@@ -230,18 +260,14 @@ func (s *MetadataStoreDefault) BlockExists(c cid.Cid) error {
 func (s *MetadataStoreDefault) BlockChildren(c cid.Cid, max *int) (children []cid.Cid, err error) {
 	c = encoding.NormalizeCid(c)
 	query := `
-WITH parent_block AS (
-    SELECT id 
-    FROM ipfs_blocks 
-    WHERE cid = ?
-)
-SELECT b.cid
-FROM ipfs_linked_blocks AS lb
-INNER JOIN ipfs_blocks AS b ON (lb.child_id = b.id)
-WHERE lb.parent_id = (SELECT id FROM parent_block)
-  AND b.ready = true
-ORDER BY lb.link_index ASC
-`
+        SELECT b.cid
+        FROM ipfs_linked_blocks AS lb
+        INNER JOIN ipfs_blocks AS b ON lb.child_id = b.id
+        INNER JOIN ipfs_blocks AS p ON lb.parent_id = p.id
+        WHERE p.cid = ?
+          AND b.ready = 1
+        ORDER BY lb.link_index ASC
+    `
 	args := []interface{}{c.Bytes()}
 
 	if max != nil {
@@ -253,7 +279,25 @@ ORDER BY lb.link_index ASC
 	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		ret := tx.Raw(query, args...)
 		if ret.Error == nil {
-			rows, _ = ret.Rows()
+			rows, err = ret.Rows()
+			if err != nil {
+				_ = tx.AddError(err)
+				return tx
+			}
+		}
+
+		for rows.Next() {
+			var childBytes []byte
+			if err = rows.Scan(&childBytes); err != nil {
+				_ = tx.AddError(fmt.Errorf("failed to scan child: %w", err))
+				return tx
+			}
+			child, err := cid.Parse(childBytes)
+			if err != nil {
+				_ = tx.AddError(fmt.Errorf("failed to parse child CID: %w", err))
+				return tx
+			}
+			children = append(children, child)
 		}
 
 		return ret
@@ -261,29 +305,7 @@ ORDER BY lb.link_index ASC
 		return nil, fmt.Errorf("failed to query children: %w", err)
 	}
 
-	defer func(rows *sql.Rows) {
-		if rows == nil {
-			return
-		}
-		err := rows.Close()
-		if err != nil {
-			s.logger.Error("failed to close rows", zap.Error(err))
-		}
-	}(rows)
-
-	for rows.Next() {
-		var childBytes []byte
-		if err := rows.Scan(&childBytes); err != nil {
-			return nil, fmt.Errorf("failed to scan child: %w", err)
-		}
-		child, err := cid.Parse(childBytes)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse child CID: %w", err)
-		}
-		children = append(children, child)
-	}
-
-	return children, rows.Err()
+	return children, nil
 }
 
 func (s *MetadataStoreDefault) BlockSiblings(c cid.Cid, max int) (siblings []cid.Cid, err error) {
@@ -313,39 +335,40 @@ WHERE b.ready = true
 	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		ret := tx.Raw(query, c.Bytes(), max)
 		if ret.Error == nil {
-			rows, _ = ret.Rows()
+			rows, err = ret.Rows()
+			if err != nil {
+				_ = tx.AddError(err)
+				return tx
+			}
+			defer func(rows *sql.Rows) {
+				err = rows.Close()
+				if err != nil {
+					s.logger.Error("Failed to close rows:", zap.Error(err))
+				}
+			}(rows)
 		}
+
+		for rows.Next() {
+			var siblingBytes []byte
+			if err := rows.Scan(&siblingBytes); err != nil {
+				_ = tx.AddError(fmt.Errorf("failed to scan sibling: %w", err))
+			}
+			sibling, err := cid.Parse(siblingBytes)
+			if err != nil {
+				_ = tx.AddError(fmt.Errorf("failed to parse sibling CID: %w", err))
+			}
+			siblings = append(siblings, sibling)
+		}
+
 		return ret
 	}); err != nil || rows == nil {
 		return nil, fmt.Errorf("failed to query siblings: %w", err)
 	}
 
-	defer func(rows *sql.Rows) {
-		if rows == nil {
-			return
-		}
-		err := rows.Close()
-		if err != nil {
-			s.logger.Error("failed to close rows", zap.Error(err))
-		}
-	}(rows)
-
-	for rows.Next() {
-		var siblingBytes []byte
-		if err := rows.Scan(&siblingBytes); err != nil {
-			return nil, fmt.Errorf("failed to scan sibling: %w", err)
-		}
-		sibling, err := cid.Parse(siblingBytes)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse sibling CID: %w", err)
-		}
-		siblings = append(siblings, sibling)
-	}
-
-	return siblings, rows.Err()
+	return siblings, nil
 }
 
-func (s *MetadataStoreDefault) ProvideCIDs(limit int) (cids []ipfs.PinnedCID, err error) {
+func (s *MetadataStoreDefault) ProvideCIDs(limit int) (cids []pluginCore.PinnedCID, err error) {
 	var _blocks []pluginDb.IPFSBlock
 	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		return tx.Where("ready = ?", true).Order("last_announcement ASC").Limit(limit).Find(&_blocks)
@@ -365,9 +388,7 @@ func (s *MetadataStoreDefault) ProvideCIDs(limit int) (cids []ipfs.PinnedCID, er
 			lastAnnouncement = *block.LastAnnouncement
 		}
 
-		time.Unix(0, 0)
-
-		cids = append(cids, ipfs.PinnedCID{
+		cids = append(cids, pluginCore.PinnedCID{
 			CID:              c,
 			LastAnnouncement: lastAnnouncement,
 		})
@@ -455,20 +476,66 @@ func (s *MetadataStoreDefault) Size(c cid.Cid) (uint64, error) {
 	return size, nil
 }
 
+func (s *MetadataStoreDefault) ProcessMissingUnixFSNames(cids []cid.Cid) error {
+	for _, c := range cids {
+		c = encoding.NormalizeCid(c)
+
+		var unixfsNode pluginDb.UnixFSNode
+		var block pluginDb.IPFSBlock
+
+		if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+			if err := tx.Where("cid = ?", c.Bytes()).First(&block).Error; err != nil {
+				_ = tx.AddError(fmt.Errorf("failed to find block for CID %s: %w", c.String(), err))
+				return tx
+			}
+
+			if err := tx.Where("block_id = ?", block.ID).First(&unixfsNode).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					s.logger.Debug("No UnixFS node found for CID, skipping", zap.Stringer("cid", c))
+					return tx // Not a UnixFS node, skip
+				}
+				_ = tx.AddError(fmt.Errorf("failed to find UnixFS node for CID %s: %w", c.String(), err))
+				return tx
+			}
+
+			if unixfsNode.Name != "" {
+				s.logger.Debug("Name already present, skipping", zap.Stringer("cid", c), zap.String("name", unixfsNode.Name))
+				return tx // Name already exists, skip
+			}
+
+			name, err := s.resolveNameFromParent(c, tx)
+			if err != nil {
+				s.logger.Warn("Failed to resolve name for CID, skipping", zap.Stringer("cid", c), zap.Error(err))
+				return tx // Failed to resolve, skip
+			}
+
+			if err := tx.Model(&unixfsNode).Update("name", name).Error; err != nil {
+				_ = tx.AddError(fmt.Errorf("failed to update name for CID %s: %w", c.String(), err))
+				return tx
+			}
+
+			s.logger.Debug("Successfully backfilled name", zap.Stringer("cid", c), zap.String("name", name))
+			return tx
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *MetadataStoreDefault) UpdateUnixFSMetadata(c cid.Cid, metadata *pluginDb.UnixFSNode) error {
 	c = encoding.NormalizeCid(c)
 
 	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		var block pluginDb.IPFSBlock
-		if err := tx.Where("cid = ?", c.Bytes()).First(&block).Error; err != nil {
+		if err := tx.Where(&pluginDb.IPFSBlock{CID: c.Bytes()}).First(&block).Error; err != nil {
 			_ = tx.AddError(fmt.Errorf("failed to find block: %w", err))
 			return tx
 		}
 
-		if err := tx.Model(&pluginDb.UnixFSNode{}).
-			Where("block_id = ?", block.ID).
-			Updates(metadata).Error; err != nil {
-			_ = tx.AddError(fmt.Errorf("failed to update UnixFS metadata: %w", err))
+		metadata.BlockID = block.ID
+		if err := tx.Where(&pluginDb.UnixFSNode{BlockID: block.ID}).FirstOrCreate(metadata).Error; err != nil {
+			_ = tx.AddError(fmt.Errorf("failed to upsert UnixFS metadata: %w", err))
 			return tx
 		}
 
@@ -511,16 +578,17 @@ func (s *MetadataStoreDefault) MarkBlockReady(c cid.Cid, ready bool) error {
 }
 
 // NewMetadataStore creates a new blockstore backed by a renterd node
-func NewMetadataStore(ctx core.Context) *MetadataStoreDefault {
+func NewMetadataStore(ctx core.Context, proto ProtoNode) *MetadataStoreDefault {
 	return &MetadataStoreDefault{
 		ctx:    ctx,
-		upload: ctx.Service(core.UPLOAD_SERVICE).(core.UploadService),
+		proto:  proto,
+		upload: core.GetService[core.UploadService](ctx, core.UPLOAD_SERVICE),
 		db:     ctx.DB(),
 		logger: ctx.Logger(),
 	}
 }
 
-func extractNodeMetadata(block PinnedBlock) (*pluginDb.UnixFSNode, error) {
+func extractNodeMetadata(block pluginCore.PinnedBlock) (*pluginDb.UnixFSNode, error) {
 	analyzedNode, err := internal.AnalyzeNode(context.Background(), block.Node)
 	if err != nil {
 		return nil, err
