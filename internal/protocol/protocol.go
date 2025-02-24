@@ -2,13 +2,13 @@ package protocol
 
 import (
 	"context"
-	"dario.cat/mergo"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"github.com/ipfs/boxo/blockstore"
 	levelds "github.com/ipfs/go-ds-leveldb"
 	ipfsLog "github.com/ipfs/go-log/v2"
+	"github.com/samber/lo"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
@@ -17,9 +17,8 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store/downloader"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
-	"go.lumeweb.com/portal/db"
 	"go.lumeweb.com/portal/db/models"
-	"go.lumeweb.com/portal/event"
+	"go.lumeweb.com/portal/db/models/data_models"
 	"go.lumeweb.com/portal/service"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -30,18 +29,150 @@ import (
 
 var _ core.Protocol = (*Protocol)(nil)
 var _ core.StorageProtocol = (*Protocol)(nil)
-var _ core.ProtocolRequestDataHandler = (*Protocol)(nil)
-var _ core.ProtocolPinHandler = (*Protocol)(nil)
+var _ core.ProtocolGetPinHandler = (*Protocol)(nil)
+var _ core.ProtocolPinHandler = (*pinHandler)(nil)
 
 type Protocol struct {
+	ctx           core.Context
 	db            *gorm.DB
 	node          *ipfs.Node
 	metadataStore *store.MetadataStoreDefault
 	pin           core.PinService
+	coordinator   core.WorkflowCoordinator
 }
 
-func (p Protocol) CompleteProtocolData(_ context.Context, _ uint) error {
+type pinHandler struct {
+}
+
+func (p pinHandler) CreateProtocolPin(ctx context.Context, id uint, data any) error {
 	return nil
+}
+
+func (p pinHandler) GetProtocolPin(ctx context.Context, tx *gorm.DB, id uint) (any, error) {
+	return nil, nil
+}
+
+func (p pinHandler) UpdateProtocolPin(ctx context.Context, id uint, data any) error {
+	return nil
+}
+
+func (p pinHandler) DeleteProtocolPin(ctx context.Context, id uint) error {
+	return nil
+}
+
+func (p pinHandler) QueryProtocolPin(ctx context.Context, query any) *gorm.DB {
+	return nil
+}
+
+func (p pinHandler) GetProtocolPinModel() data_models.PinDataModel {
+	return nil
+}
+
+func (p Protocol) PinHandler() core.ProtocolPinHandler {
+	return &pinHandler{}
+}
+
+func (p Protocol) Workflows() []core.WorkflowDefinition {
+	return []core.WorkflowDefinition{
+		{
+			Name:                 PIN_WORKFLOW,
+			AutoTriggerFirstStep: true,
+			Steps: []core.OperationStep{
+				{
+					Operation:       core.RetrieveOperationName(internal.ProtocolName),
+					FailureBehavior: core.RetryStep,
+				},
+				{
+					Operation:       core.ScanOperationName(internal.ProtocolName),
+					FailureBehavior: core.RetryStep,
+				},
+				{
+					Operation:       core.StoreOperationName(internal.ProtocolName),
+					FailureBehavior: core.RetryStep,
+				},
+				{
+					Operation:       core.PublishOperationName(internal.ProtocolName),
+					FailureBehavior: core.ContinueWorkflow,
+				},
+				{
+					Operation:       "ipfs.confirm",
+					FailureBehavior: core.RetryStep,
+				},
+			},
+		},
+		{
+			Name:                 PIN_CHILD_BLOCK_WORKFLOW,
+			AutoTriggerFirstStep: true,
+			Steps: []core.OperationStep{
+				{
+					Operation:       "ipfs.pin.children",
+					FailureBehavior: core.RetryStep,
+				},
+			},
+		},
+		{
+			Name:                 UPLOAD_WORKFLOW,
+			AutoTriggerFirstStep: true,
+			Steps: []core.OperationStep{
+				{
+					Operation:       "ipfs.post.upload",
+					FailureBehavior: core.RetryStep,
+				},
+			},
+		},
+		{
+			Name:                 TUS_UPLOAD_WORKFLOW,
+			AutoTriggerFirstStep: true,
+			Steps: []core.OperationStep{
+				{
+					Operation:       core.TUSUploadOperationName(p.Name()),
+					FailureBehavior: core.RetryStep,
+				},
+			},
+		},
+	}
+}
+
+func (p Protocol) Operations() []core.Operation {
+	return []core.Operation{
+		NewRetrieveOperation(p.ctx),
+		NewScanOperation(p.ctx),
+		NewStoreOperation(p.ctx),
+		NewPublishOperation(p.ctx),
+		NewConfirmOperation(p.ctx),
+		NewPinChildBlocksOperation(p.ctx),
+		NewPostUploadOperation(p.ctx),
+		service.NewTUSOperationHandler(p.ctx, p, func(ctx context.Context, helper core.OperationHelper, request *models.Request, tsReq *models.TUSRequest) error {
+			tusHandler := core.GetAPI(internal.ProtocolName).(core.APITusHandler).GetTusHandler()
+
+			reader, err := tusHandler.UploadReader(ctx, tsReq.TUSUploadID, p, 0)
+			if err != nil {
+				return fmt.Errorf("failed to get upload reader: %w", err)
+			}
+			defer func(reader io.ReadCloser) {
+				if reader == nil {
+					return
+				}
+				err = reader.Close()
+				if err != nil {
+					helper.Logger().Error("Failed to close upload reader", zap.Error(err))
+				}
+			}(reader)
+
+			// Process the upload
+			cids, err := ProcessCar(helper.Context(), reader)
+			if err != nil {
+				return fmt.Errorf("failed to process upload: %w", err)
+			}
+
+			err = core.GetService[pluginCore.UploadService](helper.Context(), pluginCore.UPLOAD_SERVICE).ProcessCIDs(ctx, cids, lo.FromPtrOr(request.UserID, 0))
+			if err != nil {
+				return fmt.Errorf("failed to process upload: %w", err)
+			}
+
+			return nil
+		}),
+	}
 }
 
 func (p Protocol) GetProtocolPinModel() any {
@@ -65,173 +196,7 @@ func (p Protocol) Name() string {
 }
 
 func (p Protocol) Config() config.ProtocolConfig {
-	return &pluginConfig.Config{}
-}
-
-func (p Protocol) CreateProtocolData(ctx context.Context, id uint, data any) error {
-	req := data.(*pluginDb.IPFSRequest)
-	req.RequestID = id
-
-	return p.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-			return db.WithContext(ctx).FirstOrCreate(req, &pluginDb.IPFSRequest{
-				RequestID: id,
-			})
-		})
-	})
-}
-
-func (p Protocol) GetProtocolData(ctx context.Context, tx *gorm.DB, id uint) (any, error) {
-	req := &pluginDb.IPFSRequest{
-		RequestID: id,
-	}
-	err := tx.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-			return db.Where(req).First(req)
-		})
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-func (p Protocol) UpdateProtocolData(ctx context.Context, id uint, data any) error {
-	req := data.(*pluginDb.IPFSRequest)
-	req.RequestID = id
-
-	curRequest := &pluginDb.IPFSRequest{}
-
-	if err := p.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-			return db.WithContext(ctx).Unscoped().Model(&pluginDb.IPFSRequest{}).Where(&pluginDb.IPFSRequest{RequestID: id}).First(curRequest)
-		})
-	}); err != nil {
-		return err
-	}
-
-	req.ID = curRequest.ID
-
-	if err := mergo.Merge(curRequest, req); err != nil {
-		return err
-	}
-
-	if uuid.UUID(req.PinRequestID) != uuid.Nil {
-		curRequest.PinRequestID = req.PinRequestID
-	}
-
-	if req.ParentPinRequestID != nil {
-		curRequest.ParentPinRequestID = req.ParentPinRequestID
-	}
-
-	return p.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-			return db.WithContext(ctx).Save(curRequest)
-		})
-	})
-}
-
-func (p Protocol) DeleteProtocolData(ctx context.Context, id uint) error {
-	req := &pluginDb.IPFSRequest{}
-	err := p.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-			return db.WithContext(ctx).Delete(req, id)
-		})
-	})
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (p Protocol) QueryProtocolData(_ context.Context, tx *gorm.DB, query any) *gorm.DB {
-	return tx.Where(query)
-}
-
-func (p Protocol) CreateProtocolPin(ctx context.Context, id uint, data any) error {
-	req := data.(*pluginDb.IPFSPin)
-	req.PinID = id
-
-	return p.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-			return db.WithContext(ctx).FirstOrCreate(req, req)
-		})
-	})
-}
-
-func (p Protocol) GetProtocolPin(ctx context.Context, tx *gorm.DB, id uint) (any, error) {
-	req := &pluginDb.IPFSPin{
-		PinID: id,
-	}
-	err := tx.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-			return db.Preload("Request").Where(req).First(req)
-		})
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-func (p Protocol) UpdateProtocolPin(ctx context.Context, id uint, data any) error {
-	req := data.(*pluginDb.IPFSPin)
-	req.PinID = id
-
-	curPin := &pluginDb.IPFSPin{}
-
-	if err := p.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-			return db.WithContext(ctx).Model(&pluginDb.IPFSPin{}).Where(&pluginDb.IPFSPin{PinID: id}).First(curPin)
-		})
-	}); err != nil {
-		return err
-	}
-
-	if err := mergo.Merge(curPin, req); err != nil {
-		return err
-	}
-
-	if uuid.UUID(req.RequestID) != uuid.Nil {
-		curPin.RequestID = req.RequestID
-	}
-
-	if req.ParentRequestID != nil {
-		curPin.ParentRequestID = req.ParentRequestID
-	}
-
-	return p.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-			return db.WithContext(ctx).Save(curPin)
-		})
-	})
-}
-
-func (p Protocol) DeleteProtocolPin(ctx context.Context, id uint) error {
-	req := &pluginDb.IPFSPin{
-		PinID: id,
-	}
-	err := p.db.Transaction(func(tx *gorm.DB) error {
-		return db.RetryOnLock(tx, func(db *gorm.DB) *gorm.DB {
-			return db.WithContext(ctx).Where(req).First(req)
-		})
-	})
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (p Protocol) QueryProtocolPin(ctx context.Context, query any) *gorm.DB {
-	return p.db.WithContext(ctx).Where(query)
-}
-
-func (p Protocol) GetProtocolDataModel() any {
-	return &pluginDb.IPFSRequest{}
+	return &pluginConfig.ProtocolConfig{}
 }
 
 func (p Protocol) GetMetadataStore() *store.MetadataStoreDefault {
@@ -243,11 +208,12 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 
 	opts := core.ContextOptions(
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
-			cfg := ctx.Config().GetProtocol(internal.ProtocolName).(*pluginConfig.Config)
+			proto.ctx = ctx
+			cfg := ctx.Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig)
 			proto.db = ctx.DB()
 			proto.pin = core.GetService[core.PinService](ctx, core.PIN_SERVICE)
 
-			ms := store.NewMetadataStore(ctx)
+			ms := store.NewMetadataStore(ctx, proto)
 			proto.metadataStore = ms
 
 			bd, err := downloader.NewBlockDownloader(ctx, ms, cfg.BlockStore.MaxConcurrentFetches)
@@ -286,16 +252,6 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 
 			return nil
 		}),
-		core.ContextWithStartupFunc(func(ctx core.Context) error {
-			event.Listen[*event.StorageObjectPinnedEvent](ctx, event.EVENT_STORAGE_OBJECT_UNPINNED, func(evt *event.StorageObjectPinnedEvent) error {
-				return handlePinningChanged(proto, evt.Pin())
-			})
-			event.Listen[*event.StorageObjectUnpinnedEvent](ctx, event.EVENT_STORAGE_OBJECT_UNPINNED, func(evt *event.StorageObjectUnpinnedEvent) error {
-				return handlePinningChanged(proto, evt.Pin())
-			})
-
-			return nil
-		}),
 		core.ContextWithExitFunc(func(ctx core.Context) error {
 			if proto.node != nil {
 				return proto.node.Close()
@@ -318,20 +274,4 @@ func mapLogLevel(level string) ipfsLog.LogLevel {
 	default:
 		return ipfsLog.LevelError
 	}
-}
-
-func handlePinningChanged(proto *Protocol, pin *models.Pin) error {
-	hash := service.NewStorageHashFromMultihashBytes(pin.Upload.Hash, pin.Upload.CIDType, nil)
-
-	pinned, err := proto.pin.UploadPinnedGlobal(hash)
-	if err != nil {
-		return err
-	}
-
-	cid, err := internal.CIDFromHash(pin.Upload.Hash, pin.Upload.CIDType)
-	if err != nil {
-		return err
-	}
-
-	return proto.metadataStore.MarkBlockReady(cid, pinned)
 }

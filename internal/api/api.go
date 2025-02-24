@@ -1,82 +1,86 @@
 package api
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+
 	"github.com/google/uuid"
-	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
-	"github.com/ipld/go-car/v2"
+	"github.com/labstack/echo/v4"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/samber/lo"
 	"github.com/tus/tusd/v2/pkg/handler"
-	billingPluginService "go.lumeweb.com/portal-plugin-billing/service"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/api/messages"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/cron/define"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
-	pluginService "go.lumeweb.com/portal-plugin-ipfs/internal/service"
-	"go.lumeweb.com/portal/event"
-	"go.lumeweb.com/portal/middleware"
-	"go.lumeweb.com/portal/service"
-	"go.uber.org/zap"
-	"gorm.io/gorm"
-	"io"
-	"net/http"
-	"strconv"
-	"strings"
-
-	"github.com/gorilla/mux"
 	"go.lumeweb.com/httputil"
+	"go.lumeweb.com/portal-middleware/auth/jwt"
+	mcontext "go.lumeweb.com/portal-middleware/context"
+	"go.lumeweb.com/portal-middleware/middleware"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
+	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
+	"go.lumeweb.com/portal-router"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal/db/types"
+	"go.lumeweb.com/portal/service"
+	"go.lumeweb.com/queryutil"
+	queryUtilHttp "go.lumeweb.com/queryutil/http"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 var _ core.API = (*API)(nil)
+var _ core.APITusHandler = (*API)(nil)
 
 const TUS_HTTP_ROUTE = "/api/upload/tus"
 
 type API struct {
-	ctx        core.Context
-	config     config.Manager
-	logger     *core.Logger
-	ipfs       *protocol.Protocol
-	ipfsUpload *pluginService.UploadService
-	cron       core.CronService
-	tus        *service.TusHandler
-	upload     core.UploadService
+	ctx               core.Context
+	config            config.Manager
+	logger            *core.Logger
+	coreUploadService core.UploadService
+	uploadService     pluginCore.UploadService
+	pinService        pluginCore.IPFSPinService
+	blockService      pluginCore.BlockService
+	workflowService   core.WorkflowService
+	tus               core.TusHandler
+	ipfs              ProtoNode
+}
+
+type ProtoNode interface {
+	GetNode() *ipfs.Node
 }
 
 func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 	api := &API{}
 	return api, core.ContextOptions(
+
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
 			api.ctx = ctx
 			api.config = ctx.Config()
 			api.logger = ctx.APILogger(api)
-			api.ipfs = core.GetProtocol(internal.ProtocolName).(*protocol.Protocol)
-			api.ipfsUpload = core.GetService[*pluginService.UploadService](ctx, pluginService.UPLOAD_SERVICE)
-			api.cron = core.GetService[core.CronService](ctx, core.CRON_SERVICE)
-			api.upload = core.GetService[core.UploadService](ctx, core.UPLOAD_SERVICE)
-			tus, err := service.CreateTusHandler(ctx, service.TusHandlerConfig{
+			api.pinService = core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)
+			api.blockService = core.GetService[pluginCore.BlockService](ctx, pluginCore.BLOCK_SERVICE)
+			api.coreUploadService = core.GetService[core.UploadService](ctx, core.UPLOAD_SERVICE)
+			api.uploadService = core.GetService[pluginCore.UploadService](ctx, pluginCore.UPLOAD_SERVICE)
+			api.workflowService = core.GetService[core.WorkflowService](ctx, core.WORKFLOW_SERVICE)
+			proto := core.GetProtocol(internal.ProtocolName)
+			sproto := proto.(core.StorageProtocol)
+
+			tus, err := service.CreateTusHandler(ctx, core.TUSHandlerConfig{
+				Protocol: proto,
 				BasePath: TUS_HTTP_ROUTE,
 				CreatedUploadHandler: service.TUSDefaultUploadCreatedHandler(ctx, func(hook handler.HookEvent, uploaderId uint) (core.StorageHash, error) {
 					return nil, nil
-				}, func(requestId uint) error {
-					err := api.ipfsUpload.SetTusUploadRequestID(ctx, requestId)
-					if err != nil {
-						return err
-					}
-
-					return nil
-				}),
+				}, nil),
 				UploadProgressHandler:   service.TUSDefaultUploadProgressHandler(ctx),
 				TerminatedUploadHandler: service.TUSDefaultUploadTerminatedHandler(ctx),
-				CompletedUploadHandler: service.TUSDefaultUploadCompletedHandler(ctx, func(_ *service.TusHandler, hook handler.HookEvent) {
-					upload, err := api.tus.UploadReader(ctx, hook.Upload.ID, 0)
+				CompletedUploadHandler: service.TUSDefaultUploadCompletedHandler(ctx, func(_ core.TusHandler, hook handler.HookEvent) {
+					upload, err := api.tus.UploadReader(ctx, hook.Upload.ID, sproto, 0)
 
 					if err != nil {
 						api.logger.Error("Failed to get request reader", zap.Error(err))
@@ -90,29 +94,17 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 						}
 					}(upload)
 
-					root, err := validateCar(upload)
+					_, err = internal.GetCarRoots(upload)
 
 					if err != nil {
 						api.logger.Error("Failed to validate car", zap.Error(err))
-						err = api.tus.FailUploadById(ctx, hook.Upload.ID)
+						err = api.tus.FailUploadById(ctx, sproto, hook.Upload.ID)
 						if err != nil {
 							api.logger.Error("Failed to fail ipfsUpload", zap.Error(err))
 						}
 						return
 					}
-
-					err = api.tus.SetHashById(ctx, hook.Upload.ID, internal.NewIPFSHash(root.Cid()))
-					if err != nil {
-						api.logger.Error("Failed to set ipfsUpload hash", zap.Error(err))
-						return
-					}
-					err = api.cron.CreateJobIfNotExists(define.CronTaskTusUploadName, define.CronTaskTusUploadArgs{
-						UploadID: hook.Upload.ID,
-					})
-					if err != nil {
-						api.logger.Error("Failed to create ipfsUpload cron job", zap.Error(err))
-					}
-				}),
+				}, protocol.TUS_UPLOAD_WORKFLOW),
 			})
 
 			if err != nil {
@@ -120,501 +112,446 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 			}
 
 			api.tus = tus
-			api.tus.SetStorageProtocol(api.ipfs)
+			api.ipfs = proto.(ProtoNode)
 
 			return nil
 		}),
 	), nil
 }
 
-type readSeekNopCloser struct {
-	*bytes.Reader
-}
-
-func (rsnc readSeekNopCloser) Close() error {
-	return nil
-}
-
-func (a API) Name() string {
-	return internal.ProtocolName
-}
-
-func (a API) Subdomain() string {
-	return internal.ProtocolName
-}
-
-func (a *API) Configure(router *mux.Router, accessSvc core.AccessService) error {
-	// Middleware setup
-	authMw := middleware.AuthMiddleware(middleware.AuthMiddlewareOptions{
-		Context: a.ctx,
-		Purpose: core.JWTPurposeLogin,
-	})
-	verifyMw := middleware.AccountVerifiedMiddleware(a.ctx)
-	corsHandler := middleware.CorsMiddleware(nil)
-
-	// Define route groups
-	routeGroups := []struct {
-		router *mux.Router
-		routes []struct {
-			path      string
-			method    string
-			handler   http.HandlerFunc
-			useVerify bool
-			access    string
-		}
-	}{
-		{
-			router: router.PathPrefix("").Subrouter(),
-			routes: []struct {
-				path      string
-				method    string
-				handler   http.HandlerFunc
-				useVerify bool
-				access    string
-			}{
-				{"/pins", "GET", a.handleGetPins, false, core.ACCESS_USER_ROLE},
-				{"/pins", "POST", a.handleAddPin, true, core.ACCESS_USER_ROLE},
-				{"/pins/{requestid}", "GET", a.handleGetPinByRequestId, false, core.ACCESS_USER_ROLE},
-				{"/pins/{requestid}", "POST", a.handleReplacePinByRequestId, true, core.ACCESS_USER_ROLE},
-				{"/pins/{requestid}", "DELETE", a.handleDeletePinByRequestId, true, core.ACCESS_USER_ROLE},
-				{"/ipfs/{cid}", "GET", a.handleIPFSGet, true, core.ACCESS_USER_ROLE},
-				{"/ipfs/{cid}", "HEAD", a.handleIPFSGet, true, core.ACCESS_USER_ROLE},
-			},
-		},
-		{
-			router: router.PathPrefix("/api").Subrouter(),
-			routes: []struct {
-				path      string
-				method    string
-				handler   http.HandlerFunc
-				useVerify bool
-				access    string
-			}{
-				{"/upload", "POST", a.handleUpload, true, core.ACCESS_USER_ROLE},
-				{"/block/meta/{cid}", "GET", a.handleGetBlockMeta, true, core.ACCESS_USER_ROLE},
-				{"/block/meta/batch", "POST", a.handleGetBlockMetaBatch, true, core.ACCESS_USER_ROLE},
-			},
-		},
-		{
-			router: router.PathPrefix("").Subrouter(),
-			routes: []struct {
-				path      string
-				method    string
-				handler   http.HandlerFunc
-				useVerify bool
-				access    string
-			}{
-				{"/api/info", "GET", a.handleGetInfo, false, ""},
-			},
-		},
-	}
-
-	// Register routes
-	for _, group := range routeGroups {
-		group.router.Use(corsHandler)
-		group.router.Use(authMw)
-
-		for _, route := range group.routes {
-			r := group.router.HandleFunc(route.path, route.handler).Methods(route.method, "OPTIONS")
-			if route.useVerify {
-				r.Use(verifyMw)
-			}
-
-			if err := accessSvc.RegisterRoute(a.Subdomain(), route.path, route.method, route.access); err != nil {
-				return fmt.Errorf("failed to register route %s %s: %w", route.method, route.path, err)
-			}
-		}
-	}
-
-	a.tus.SetupRoute(router, authMw, TUS_HTTP_ROUTE)
-
-	return nil
-}
-
-func (a API) TusHandler() *service.TusHandler {
+func (a *API) GetTusHandler() core.TusHandler {
 	return a.tus
 }
 
-func (a API) AuthTokenName() string {
+func (a *API) Name() string {
+	return internal.ProtocolName
+}
+
+func (a *API) Subdomain() string {
+	return internal.ProtocolName
+}
+
+func (a *API) AuthTokenName() string {
 	return core.AUTH_TOKEN_NAME
 }
 
-func (a API) Config() config.APIConfig {
+func (a *API) Config() config.APIConfig {
+	return &pluginConfig.APIConfig{}
+}
+
+func (a *API) OpenAPIInfo() router.APIInfoDefinition {
+	return router.APIInfo().
+		Title("IPFS Pinning Service API").
+		Description(`
+## About this spec
+
+The IPFS Pinning Service API is intended to be an implementation-agnostic API:
+
+- For use and implementation by pinning service providers
+
+- For use in client mode by IPFS nodes and GUI-based applications
+
+
+### Document scope and intended audience
+
+The intended audience of this document is **IPFS developers** building pinning service clients or servers compatible with this OpenAPI spec.
+Your input and feedback are welcome and valuable as we develop this API spec. Please join the design discussion at [github.com/ipfs/pinning-services-api-spec](https://github.com/ipfs/pinning-services-api-spec).
+
+
+**IPFS users** should see the tutorial at [docs.ipfs.io/how-to/work-with-pinning-services/](https://docs.ipfs.io/how-to/work-with-pinning-services/) instead.
+
+
+### Related resources
+
+The latest version of this spec and additional resources can be found at:
+
+- Specification: https://github.com/ipfs/pinning-services-api-spec/raw/main/ipfs-pinning-service.yaml
+
+- Docs: https://ipfs.github.io/pinning-services-api-spec/
+
+- Clients and services: https://github.com/ipfs/pinning-services-api-spec#adoption
+`)
+}
+
+func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
+	// Middleware setup
+	authMw := middleware.AuthMiddleware(a.ctx, jwt.PurposeLogin)
+
+	// Pinning service routes
+	pinRoutes := router.DefineRoutes(
+		router.NewRoute(http.MethodGet, "/pins", a.listPins,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("List pin objects"),
+				router.WithDescription("List all the pin objects, matching optional filters; when no filter is provided, only successful pins are returned"),
+				router.WithTags("pins"),
+				router.WithQueryParam("cid", "Return pin objects responsible for pinning the specified CID(s)", []string{}),
+				router.WithQueryParam("name", "Return pin objects with specified name", ""),
+				router.WithQueryParam("match", "Customize the text matching strategy", "exact"),
+				router.WithQueryParam("status", "Return pin objects for pins with the specified status", []string{}),
+				router.WithQueryParam("before", "Return results created (queued) before provided timestamp", "2020-07-27T17:32:28.276Z"),
+				router.WithQueryParam("after", "Return results created (queued) after provided timestamp", "2020-07-27T17:32:28.276Z"),
+				router.WithQueryParam("limit", "Max records to return", 10),
+				router.WithQueryParam("meta", "Return pin objects that match specified metadata", "{}"),
+				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(dto.PinResultsResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/pins", a.addPin,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Add pin object"),
+				router.WithDescription("Add a new pin object for the current access token"),
+				router.WithTags("pins"),
+				router.WithRequestBody(&dto.PinRequest{}, "Pin object", true),
+				router.WithSuccessResponse(http.StatusAccepted, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/pins/:requestid", a.getPin,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Get pin object"),
+				router.WithDescription("Get a pin object and its status"),
+				router.WithTags("pins"),
+				router.WithPathParam("requestid", "Unique identifier of a pin request", ""),
+				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/pins/:requestid", a.replacePin,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Replace pin object"),
+				router.WithDescription("Replace an existing pin object"),
+				router.WithTags("pins"),
+				router.WithPathParam("requestid", "Unique identifier of a pin request", ""),
+				router.WithRequestBody(&dto.PinRequest{}, "Pin object", true),
+				router.WithSuccessResponse(http.StatusAccepted, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodDelete, "/pins/:requestid", a.deletePin,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Remove pin object"),
+				router.WithDescription("Remove a pin object"),
+				router.WithTags("pins"),
+				router.WithPathParam("requestid", "Unique identifier of a pin request", ""),
+				router.WithSuccessResponse(http.StatusAccepted, "Successful response"),
+			),
+		),
+	)
+
+	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), pinRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register pin routes: %w", err)
+	}
+
+	// Other IPFS routes
+	ipfsApiGroup, err := r.Group("/api")
+	if err != nil {
+		return fmt.Errorf("failed to create api group: %w", err)
+	}
+
+	ipfsRoutes := router.DefineRoutes(
+		router.NewRoute(http.MethodPost, "/upload", a.handleUpload,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Upload a file"),
+				router.WithDescription("Uploads a file to IPFS."),
+				router.WithTags("ipfs"),
+				router.WithFileUpload("File to upload", true),
+				router.WithSuccessResponse(http.StatusOK, "File uploaded successfully"),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/block/meta/:cid", a.handleGetBlockMeta,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Get block metadata"),
+				router.WithDescription("Gets metadata for a block."),
+				router.WithTags("ipfs"),
+				router.WithPathParam("cid", "The CID of the block.", ""),
+				router.WithSuccessResponse(http.StatusOK, "Block metadata", router.WithJSONContent(dto.BlockMetaResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/block/meta/batch", a.handleGetBlockMetaBatch,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Get block metadata in batch"),
+				router.WithDescription("Gets metadata for multiple blocks in a single request."),
+				router.WithTags("ipfs"),
+				router.WithRequestBody(&dto.GetBlockMetaBatchRequest{}, "Batch request for block metadata", true),
+				router.WithSuccessResponse(http.StatusOK, "Block metadata map", router.WithJSONContent(map[string]*dto.BlockMetaResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/info", a.handleGetInfo,
+			router.WithSwagger(
+				router.WithSummary("Get IPFS node info"),
+				router.WithDescription("Gets information about the IPFS node."),
+				router.WithTags("ipfs"),
+				router.WithSuccessResponse(http.StatusOK, "Node information", router.WithJSONContent(dto.InfoResponse{})),
+			),
+		),
+	)
+
+	if err := router.RegisterRoutes(ipfsApiGroup, accessSvc, a.Subdomain(), ipfsRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register ipfs routes: %w", err)
+	}
+
+	// IPFS content addressing routes
+	ipfsContentGroup, err := r.Group("/ipfs")
+	if err != nil {
+		return fmt.Errorf("failed to create ipfs content group: %w", err)
+	}
+
+	ipfsContentRoutes := router.DefineRoutes(
+		router.NewRoute(http.MethodGet, "/:cid", a.handleIPFSGet,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Get IPFS content"),
+				router.WithDescription("Retrieves content from IPFS by CID."),
+				router.WithTags("ipfs"),
+				router.WithPathParam("cid", "The CID of the content.", ""),
+				// Raw response, so no JSON content
+			),
+		),
+		router.NewRoute(http.MethodHead, "/:cid", a.handleIPFSGet,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Check IPFS content existence"),
+				router.WithDescription("Checks if content exists on IPFS by CID."),
+				router.WithTags("ipfs"),
+				router.WithPathParam("cid", "The CID of the content.", ""),
+			),
+		),
+	)
+
+	if err := router.RegisterRoutes(ipfsContentGroup, accessSvc, a.Subdomain(), ipfsContentRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register ipfs content routes: %w", err)
+	}
+
 	return nil
 }
 
-func (a API) handleGetPins(w http.ResponseWriter, r *http.Request) {
-	ctx := httputil.Context(r, w)
-	var req messages.GetPinsRequest
+func (a *API) listPins(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
 
-	if err := ctx.DecodeForm("cid", &req.CID); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("name", &req.Name); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("match", &req.Match); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("status", &req.Status); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("before", &req.Before); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("after", &req.After); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("_before", &req.BeforeCount); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("_after", &req.AfterCount); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("limit", &req.Limit); err != nil {
-		return
+	filter := dto.IPFSPinFilter{}
+	if _, ok := httputil.DecodeAndValidateRequest(ctx, &filter); !ok {
+		return nil
 	}
 
-	user, err := middleware.GetUserFromContext(r.Context())
+	reqParser := pluginCore.NewIPFSPinParser(reqCtx, filter)
+
+	filters, _, pagination, err := queryutil.ParseFromCustomSource(reqParser)
 	if err != nil {
-		_ = ctx.Error(core.NewAccountError(core.ErrKeyLoginFailed, nil), http.StatusBadRequest)
-		return
+		return err
 	}
 
-	results, err := a.ipfsUpload.GetPins(ctx, req, user)
+	pins, total, err := a.pinService.ListPins(reqCtx, filters, pagination)
 	if err != nil {
-		_ = ctx.Error(err, http.StatusInternalServerError)
-		return
+		a.logger.Error("Failed to list pins", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	ctx.Response.Header().Set("X-Total-Count", strconv.FormatUint(results.Count, 10))
-	ctx.Encode(results)
+	queryUtilHttp.SetContentRangeHeader(c.Response(), "pins", pagination, pins, total)
+
+	return httputil.EncodeResponse(ctx, pins, &dto.PinResultsResponse{})
 }
 
-func (a API) handleAddPin(w http.ResponseWriter, r *http.Request) {
-	ctx := httputil.Context(r, w)
-	var req messages.AddPinRequest
-	if err := ctx.Decode(&req); err != nil {
-		return
-	}
-
-	user, err := middleware.GetUserFromContext(r.Context())
+func (a *API) addPin(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+	user, err := mcontext.GetUserID(c)
 	if err != nil {
-		_ = ctx.Error(core.NewAccountError(core.ErrKeyLoginFailed, nil), http.StatusBadRequest)
-		return
+		return err
 	}
 
-	status, err := a.ipfsUpload.AddQueuedPin(ctx, req.Pin, user, r.RemoteAddr)
+	var req dto.PinRequest
+	model, ok := httputil.DecodeAndValidateRequest(ctx, &req)
+
+	if !ok {
+		return nil
+	}
+
+	_pin, err := a.pinService.AddPin(reqCtx, model)
 	if err != nil {
-		_ = ctx.Error(err, http.StatusInternalServerError)
-		return
+		a.logger.Error("Failed to add pin", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	w.WriteHeader(http.StatusAccepted)
-	ctx.Encode(status)
-}
-func (a API) handleGetPinByRequestId(w http.ResponseWriter, r *http.Request) {
-	ctx := httputil.Context(r, w)
-	requestid := mux.Vars(r)["requestid"]
-
-	id, err := uuid.Parse(requestid)
-	if err != nil {
-		_ = ctx.Error(fmt.Errorf("invalid requestid: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	user, err := middleware.GetUserFromContext(r.Context())
-	if err != nil {
-		_ = ctx.Error(core.NewAccountError(core.ErrKeyLoginFailed, nil), http.StatusBadRequest)
-		return
-	}
-
-	status, err := a.ipfsUpload.GetPinStatus(ctx, id, user)
+	_, err = a.workflowService.StartWorkflow(ctx.Request().Context(), protocol.PIN_WORKFLOW, core.WithWorkflowStructData(protocol.PinWorkflowData{
+		PinRequestID: _pin.RequestID.ToUUID(),
+	}, "json"),
+		core.WithWorkflowSourceIP(c.RealIP()),
+		core.WithWorkflowUserID(user),
+		core.WithWorkflowStorageHash(internal.NewIPFSHash(cid.MustParse(_pin.CID))),
+	)
 	if err != nil {
 		_ = ctx.Error(err, http.StatusInternalServerError)
-		return
 	}
 
-	ctx.Encode(status)
+	ctx.Response().Before(func() {
+		ctx.Response().Status = http.StatusAccepted
+	})
+
+	return httputil.EncodeResponse(ctx, _pin, &dto.PinStatusResponse{})
 }
 
-func (a API) handleReplacePinByRequestId(w http.ResponseWriter, r *http.Request) {
-	ctx := httputil.Context(r, w)
-	requestid := mux.Vars(r)["requestid"]
+func (a *API) getPin(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
 
-	id, err := uuid.Parse(requestid)
+	_uuid, err := uuid.Parse(c.Param("requestid"))
 	if err != nil {
-		_ = ctx.Error(fmt.Errorf("invalid requestid: %w", err), http.StatusBadRequest)
-		return
+		apiErr := NewError(ErrKeyInvalidUUIDFormat, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	user, err := middleware.GetUserFromContext(r.Context())
+	requestID := types.FromUUID(_uuid)
+
+	_pin, err := a.pinService.GetPinByRequestID(reqCtx, requestID)
 	if err != nil {
-		_ = ctx.Error(core.NewAccountError(core.ErrKeyLoginFailed, nil), http.StatusBadRequest)
-		return
+		a.logger.Error("Failed to get pin", zap.Error(err))
+		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	var req messages.ReplacePinRequest
-	if err := ctx.Decode(&req); err != nil {
-		return
+	if _pin == nil {
+		apiErr := NewError(ErrKeyMetadataFetchFailed, fmt.Errorf("pin not found"))
+		return ctx.Error(apiErr, http.StatusNotFound)
 	}
 
-	status, err := a.ipfsUpload.ReplacePin(ctx, id, req.Pin, user)
+	return httputil.EncodeResponse(ctx, _pin, &dto.PinStatusResponse{})
+}
+
+func (a *API) replacePin(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	_uuid, err := uuid.Parse(c.Param("requestid"))
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidUUIDFormat, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	user, err := mcontext.GetUserID(c)
+	if err != nil {
+		return err
+	}
+
+	requestID := types.FromUUID(_uuid)
+
+	var req dto.PinRequest
+	model, ok := httputil.DecodeAndValidateRequest(ctx, &req)
+
+	if !ok {
+		return nil
+	}
+
+	_pin, err := a.pinService.ReplacePin(reqCtx, 0, "", requestID, model)
+	if err != nil {
+		a.logger.Error("Failed to replace pin", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	_, err = a.workflowService.StartWorkflow(ctx.Request().Context(), protocol.PIN_WORKFLOW, core.WithWorkflowStructData(protocol.PinWorkflowData{
+		PinRequestID: _pin.RequestID.ToUUID(),
+	}, "json"),
+		core.WithWorkflowSourceIP(c.RealIP()),
+		core.WithWorkflowUserID(user),
+		core.WithWorkflowStorageHash(internal.NewIPFSHash(cid.MustParse(_pin.CID))),
+	)
 	if err != nil {
 		_ = ctx.Error(err, http.StatusInternalServerError)
-		return
 	}
 
-	w.WriteHeader(http.StatusAccepted)
-	ctx.Encode(status)
+	ctx.Response().Before(func() {
+		ctx.Response().Status = http.StatusAccepted
+	})
+
+	return httputil.EncodeResponse(ctx, _pin, &dto.PinStatusResponse{})
 }
 
-func (a API) handleDeletePinByRequestId(w http.ResponseWriter, r *http.Request) {
-	ctx := httputil.Context(r, w)
-	requestid := mux.Vars(r)["requestid"]
+func (a *API) deletePin(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
 
-	id, err := uuid.Parse(requestid)
+	_uuid, err := uuid.Parse(c.Param("requestid"))
 	if err != nil {
-		_ = ctx.Error(fmt.Errorf("invalid requestid: %w", err), http.StatusBadRequest)
-		return
+		apiErr := NewError(ErrKeyInvalidUUIDFormat, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	user, err := middleware.GetUserFromContext(r.Context())
-	if err != nil {
-		_ = ctx.Error(core.NewAccountError(core.ErrKeyLoginFailed, nil), http.StatusBadRequest)
-		return
+	requestID := types.FromUUID(_uuid)
+
+	if err := a.pinService.DeletePin(reqCtx, requestID); err != nil {
+		a.logger.Error("Failed to delete pin", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	err = a.ipfsUpload.DeletePin(ctx, id, user)
-	if err != nil {
-		_ = ctx.Error(err, http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusAccepted)
+	return ctx.NoContent(http.StatusAccepted)
 }
 
-func (a API) handleIPFSGet(w http.ResponseWriter, r *http.Request) {
-	ctx := httputil.Context(r, w)
-	_cid := mux.Vars(r)["cid"]
+func (a *API) handleIPFSGet(c echo.Context) error {
+	ctx := httputil.Context(c)
 
-	var req messages.IPFSRequest
-	if err := ctx.DecodeForm("format", &req.Format); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("filename", &req.Filename); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("download", &req.Download); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("dag-scope", &req.DagScope); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("entity-bytes", &req.EntityBytes); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("car-version", &req.CarVersion); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("car-order", &req.CarOrder); err != nil {
-		return
-	}
-	if err := ctx.DecodeForm("car-dups", &req.CarDups); err != nil {
-		return
-	}
+	req := dto.IPFSRequest{}
+	model, ok := httputil.DecodeAndValidateRequest(ctx, &req)
 
-	// Set default values
-	if req.Format == "" {
-		req.Format = "raw"
+	if !ok {
+		return nil
 	}
-	if req.DagScope == "" {
-		req.DagScope = "all"
-	}
-
-	// Validate and process the request
-	switch req.Format {
+	switch model.Format {
 	case "raw":
-		a.handleRawBlockRequest(ctx, _cid, w, r)
+		a.handleRawBlockRequest(ctx, model.CID, c.Response(), c.Request())
 	case "car":
 		// TODO: Implement CAR handling
-		w.Header().Set("Content-Type", "application/vnd.ipld.car")
-		w.WriteHeader(http.StatusNotImplemented)
+		ctx.Response().Header().Set("Content-Type", "application/vnd.ipld.car")
+		ctx.Response().WriteHeader(http.StatusNotImplemented)
 	default:
-		http.Error(w, "Unsupported format", http.StatusBadRequest)
-		return
+		return ctx.Error(errors.New("Unsupported format"), http.StatusBadRequest)
 	}
+
+	return nil
 }
 
-func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid string, w http.ResponseWriter, r *http.Request) {
-	pCid, err := cid.Parse(_cid)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to parse CID: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	user, err := middleware.GetUserFromContext(r.Context())
-	if err != nil {
-		_ = ctx.Error(core.NewAccountError(core.ErrKeyLoginFailed, nil), http.StatusBadRequest)
-		return
-	}
-
+func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w http.ResponseWriter, r *http.Request) {
 	// Check if the block exists before trying to fetch it
-	exists, err := a.ipfs.GetNode().HasBlock(ctx, pCid)
+	exists, err := a.ipfs.GetNode().HasBlock(ctx.Request().Context(), _cid)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to check if block exists: %v", err), http.StatusInternalServerError)
+		a.logger.Error("Failed to check if block exists", zap.Error(err))
+		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
+		_ = ctx.Error(apiErr, apiErr.HttpStatus())
 		return
 	}
 
 	if !exists {
-		http.Error(w, fmt.Sprintf("Block not found: %s", pCid.String()), http.StatusNotFound)
+		apiErr := NewError(ErrKeyBlockNotFound, fmt.Errorf("Block not found: %s", _cid.String()))
+		_ = ctx.Error(apiErr, apiErr.HttpStatus())
 		return
 	}
 
-	upload, err := a.upload.GetUpload(ctx, internal.NewIPFSHash(pCid))
+	_, err = a.coreUploadService.GetUpload(ctx.Request().Context(), internal.NewIPFSHash(_cid))
 	if err != nil {
-		_ = ctx.Error(err, http.StatusInternalServerError)
+		a.logger.Error("Failed to get upload", zap.Error(err))
+		apiErr := NewError(ErrKeyUploadNotFound, err)
+		_ = ctx.Error(apiErr, apiErr.HttpStatus())
 		return
 	}
 
-	if core.ServiceExists(a.ctx, billingPluginService.QUOTA_SERVICE) {
-		quotaService := core.GetService[billingPluginService.QuotaService](a.ctx, billingPluginService.QUOTA_SERVICE)
-		allowed, err := quotaService.CheckDownloadQuota(user, upload.Size)
-		if err != nil {
-			_ = ctx.Error(err, http.StatusInternalServerError)
-			return
-		}
-
-		if !allowed {
-			_ = ctx.Error(err, http.StatusInsufficientStorage)
-			return
-		}
-	}
-
-	block, err := a.ipfs.GetNode().GetBlock(ctx, pCid)
+	block, err := a.ipfs.GetNode().GetBlock(ctx.Request().Context(), _cid)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get block: %v", err), http.StatusInternalServerError)
+		a.logger.Error("Failed to get block", zap.Error(err))
+		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
+		_ = ctx.Error(apiErr, apiErr.HttpStatus())
 		return
 	}
 
-	err = event.FireDownloadCompletedEventAsync(a.ctx, upload.ID, upload.Size, r.RemoteAddr)
-	if err != nil {
-		a.logger.Error("Failed to fire storage object uploaded event", zap.Error(err))
-	}
-
-	a.setTrustlessHeaders(w, r, _cid)
+	a.setTrustlessHeaders(w, r, _cid.String())
 	w.Header().Set("Content-Type", "application/vnd.ipld.raw")
 	_, _ = w.Write(block.RawData())
-}
-
-func (a API) handleUpload(w http.ResponseWriter, r *http.Request) {
-	ctx := httputil.Context(r, w)
-	user, err := middleware.GetUserFromContext(r.Context())
-
-	if err != nil {
-		_ = ctx.Error(core.NewAccountError(core.ErrKeyLoginFailed, nil), http.StatusBadRequest)
-		return
-	}
-
-	file, _, err := a.prepareFileUpload(r)
-	if err != nil {
-		_ = ctx.Error(err, http.StatusBadRequest)
-		return
-	}
-
-	defer func(file io.ReadSeekCloser) {
-		err := file.Close()
-		if err != nil {
-			a.logger.Error("Error closing file", zap.Error(err))
-		}
-	}(file)
-
-	err = a.ipfsUpload.HandlePostUpload(ctx, file, user, r.RemoteAddr)
-	if err != nil {
-		sysError := NewError(ErrKeyFileUploadFailed, err)
-		errorCode := sysError.HttpStatus()
-
-		if errors.Is(err, pluginService.ErrStorageQuotaExceeded) ||
-			errors.Is(err, pluginService.ErrDownloadQuotaExceeded) ||
-			errors.Is(err, pluginService.ErrUploadQuotaExceeded) {
-			errorCode = http.StatusInsufficientStorage
-		}
-
-		_ = ctx.Error(sysError, errorCode)
-		return
-	}
-
-	ctx.Encode(&messages.PostUploadResponse{})
-}
-
-func (a API) prepareFileUpload(r *http.Request) (file io.ReadSeekCloser, size uint64, err error) {
-	contentType := r.Header.Get("Content-Type")
-
-	// Handle multipart form data uploads
-	if strings.HasPrefix(contentType, "multipart/form-data") {
-		if err := r.ParseMultipartForm(int64(a.config.Config().Core.PostUploadLimit)); err != nil {
-			return nil, size, NewError(ErrKeyFileUploadFailed, err)
-		}
-
-		multipartFile, multipartHeader, err := r.FormFile("file")
-		if err != nil {
-			return nil, size, NewError(ErrKeyFileUploadFailed, err)
-		}
-
-		// Check if the multipart file supports seeking
-		if seeker, ok := multipartFile.(io.Seeker); ok {
-			// Verify seeking actually works with a test seek
-			if _, err := seeker.Seek(0, io.SeekCurrent); err == nil {
-				size = uint64(multipartHeader.Size)
-				return multipartFile, size, nil
-			}
-		}
-
-		// If seeking isn't supported or failed, fallback to buffering
-		data, err := io.ReadAll(multipartFile)
-		if err != nil {
-			multipartFile.Close()
-			return nil, size, NewError(ErrKeyFileUploadFailed, err)
-		}
-		multipartFile.Close()
-
-		size = uint64(len(data))
-		return readSeekNopCloser{bytes.NewReader(data)}, size, nil
-	}
-
-	// Handle raw body uploads (this part remains unchanged)
-	data, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, size, NewError(ErrKeyFileUploadFailed, err)
-	}
-
-	buffer := readSeekNopCloser{bytes.NewReader(data)}
-	size = uint64(len(data))
-	return buffer, size, nil
-}
-
-func (a API) handleGetBlockMeta(w http.ResponseWriter, r *http.Request) {
-	ctx := httputil.Context(r, w)
-	_cid := mux.Vars(r)["cid"]
-
-	pCid, err := cid.Parse(_cid)
-	if err != nil {
-		_ = ctx.Error(fmt.Errorf("failed to parse CID: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	meta, err := a.ipfsUpload.GetBlockMeta(ctx, pCid)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			_ = ctx.Error(fmt.Errorf("block not found: %w", err), http.StatusNotFound)
-			return
-		}
-
-		_ = ctx.Error(fmt.Errorf("failed to get block: %w", err), http.StatusInternalServerError)
-		return
-	}
-
-	ctx.Encode(meta)
 }
 
 func (a API) setTrustlessHeaders(w http.ResponseWriter, r *http.Request, id string) {
@@ -638,53 +575,104 @@ func (a API) getTrustlessContentType(r *http.Request) string {
 	}
 }
 
-func (a API) handleGetBlockMetaBatch(w http.ResponseWriter, r *http.Request) {
-	ctx := httputil.Context(r, w)
-	var req messages.GetBlockMetaBatchRequest
-	if err := ctx.Decode(&req); err != nil {
-		return
+func (a *API) handleUpload(c echo.Context) error {
+	ctx := httputil.Context(c)
+
+	user, err := mcontext.GetUserID(ctx.Context)
+	if err != nil {
+		apiErr := core.NewAccountError(core.ErrKeyLoginFailed, nil)
+		_ = ctx.Error(apiErr, apiErr.HttpStatus())
+		return nil
 	}
 
-	metas := make(map[string]*messages.BlockMetaResponse, len(req.CID))
-
-	for _, _cid := range req.CID {
-		parsedCid, err := cid.Decode(_cid)
-		if err != nil {
-			_ = ctx.Error(fmt.Errorf("invalid CID: %w", err), http.StatusBadRequest)
-			return
-		}
-
-		meta, err := a.ipfsUpload.GetBlockMeta(ctx, parsedCid)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				continue
-			}
-			_ = ctx.Error(err, http.StatusInternalServerError)
-			return
-		}
-
-		metas[encoding.ToV1(parsedCid).String()] = meta
-
+	upload, err := ctx.PrepareFileUpload(int64(a.config.Config().Core.PostUploadLimit))
+	if err != nil {
+		_ = ctx.Error(err, http.StatusBadRequest)
+		return nil
 	}
-	ctx.Encode(metas)
+
+	_cid, uploadId, err := a.uploadService.HandleUpload(ctx.Request().Context(), upload.File, user)
+	if err != nil {
+		_ = ctx.Error(err, http.StatusBadRequest)
+	}
+
+	_, err = a.workflowService.StartWorkflow(ctx.Request().Context(), protocol.UPLOAD_WORKFLOW, core.WithWorkflowStructData(protocol.PostUploadWorkflowData{
+		UploadID: uploadId,
+	}, "json"),
+		core.WithWorkflowSourceIP(c.RealIP()),
+		core.WithWorkflowUserID(user),
+		core.WithWorkflowStorageHash(internal.NewIPFSHash(_cid)))
+	if err != nil {
+		return ctx.Error(err, http.StatusInternalServerError)
+	}
+
+	return httputil.EncodeResponse(ctx, &dto.PostUploadResponse{}, &dto.PostUploadResponse{CID: _cid.String()})
 }
 
-func (a API) handleGetInfo(w http.ResponseWriter, r *http.Request) {
-	ctx := httputil.Context(r, w)
+func (a *API) handleGetBlockMeta(c echo.Context) error {
+	ctx := httputil.Context(c)
+
+	req := dto.GetBlockMetaRequest{}
+	model, ok := httputil.DecodeAndValidateRequest(ctx, &req)
+
+	if !ok {
+		return nil
+	}
+
+	meta, err := a.blockService.GetBlockMeta(ctx.Request().Context(), model.CID)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			apiErr := NewError(ErrKeyMetadataFetchFailed, err)
+			return ctx.Error(apiErr, http.StatusNotFound)
+		}
+
+		a.logger.Error("Failed to get block meta", zap.Error(err))
+		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	return httputil.EncodeResponse(ctx, meta, &dto.BlockMetaResponse{})
+}
+
+func (a *API) handleGetBlockMetaBatch(c echo.Context) error {
+	ctx := httputil.Context(c)
+
+	req := dto.GetBlockMetaBatchRequest{}
+	model, ok := httputil.DecodeAndValidateRequest(ctx, &req)
+
+	if !ok {
+		return nil
+	}
+
+	meta, err := a.blockService.GetBlockMetaBatch(ctx.Request().Context(), model.CID)
+
+	if err != nil {
+		a.logger.Error("Failed to get block meta", zap.Error(err))
+		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	return httputil.EncodeResponse(ctx, meta, &dto.GetBlockMetaBatchResponse{})
+}
+
+func (a *API) handleGetInfo(c echo.Context) error {
+	ctx := httputil.Context(c)
 
 	addrs, err := ipfs.AnnouncementAddresses()
 	if err != nil {
-		_ = ctx.Error(err, http.StatusInternalServerError)
-		return
+		a.logger.Error("Failed to get announcement addresses", zap.Error(err))
+		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	connAddrs, err := a.ipfs.GetNode().ConnectionAddresses()
 	if err != nil {
-		_ = ctx.Error(err, http.StatusInternalServerError)
-		return
+		a.logger.Error("Failed to get connection addresses", zap.Error(err))
+		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	ctx.Encode(&messages.InfoResponse{
+	nodeInfo := dto.NodeInfo{
 		PeerID: a.ipfs.GetNode().PeerID().String(),
 		AnnouncementAddresses: lo.Map(addrs, func(addr multiaddr.Multiaddr, _ int) string {
 			return addr.String()
@@ -692,19 +680,7 @@ func (a API) handleGetInfo(w http.ResponseWriter, r *http.Request) {
 		ConnectionAddresses: lo.Map(connAddrs, func(addr multiaddr.Multiaddr, _ int) string {
 			return addr.String()
 		}),
-	})
-}
-
-func validateCar(r io.Reader) (blocks.Block, error) {
-	reader, err := car.NewBlockReader(r)
-	if err != nil {
-		return nil, err
 	}
 
-	rootBlock, err := reader.Next()
-	if err != nil {
-		return nil, err
-	}
-
-	return rootBlock, nil
+	return httputil.EncodeResponse(ctx, &nodeInfo, &dto.InfoResponse{})
 }

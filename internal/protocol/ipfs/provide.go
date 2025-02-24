@@ -2,39 +2,24 @@ package ipfs
 
 import (
 	"context"
+	"go.lumeweb.com/portal-plugin-ipfs/core"
 	"sync"
 	"time"
 
-	"github.com/ipfs/boxo/provider"
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multihash"
 	"go.uber.org/zap"
 )
 
 type (
-	// PinnedCID is a CID that needs to be periodically announced.
-	PinnedCID struct {
-		CID              cid.Cid   `json:"cid"`
-		LastAnnouncement time.Time `json:"lastAnnouncement"`
-	}
+// PinnedCID is a CID that needs to be periodically announced.
 
-	// A Provider provides CIDs to the IPFS network.
-	Provider interface {
-		provider.Ready
-		provider.ProvideMany
-	}
-
-	// A ReprovideStore stores CIDs that need to be periodically announced.
-	ReprovideStore interface {
-		ProvideCIDs(limit int) ([]PinnedCID, error)
-		SetLastAnnouncement(cids []cid.Cid, t time.Time) error
-	}
 )
 
 // A Reprovider periodically announces CIDs to the IPFS network.
 type Reprovider struct {
-	provider Provider
-	store    ReprovideStore
+	provider core.Provider
+	store    core.ReprovideStore
 	log      *zap.Logger
 
 	triggerProvide       chan struct{}
@@ -58,6 +43,11 @@ func (r *Reprovider) Run(ctx context.Context, interval, timeout time.Duration, b
 	for {
 		if r.provider.Ready() {
 			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		default:
 		}
 		r.log.Debug("provider not ready")
 		time.Sleep(30 * time.Second)
@@ -90,6 +80,9 @@ func (r *Reprovider) handleTriggers(ctx context.Context, interval, timeout time.
 	for {
 		select {
 		case <-ctx.Done():
+			if triggerTimer != nil {
+				triggerTimer.Stop()
+			}
 			return
 		case <-r.triggerProvide:
 			if triggerTimer != nil {
@@ -164,7 +157,7 @@ func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.
 }
 
 // NewReprovider creates a new reprovider.
-func NewReprovider(provider Provider, store ReprovideStore, log *zap.Logger) *Reprovider {
+func NewReprovider(provider core.Provider, store core.ReprovideStore, log *zap.Logger) *Reprovider {
 	return &Reprovider{
 		provider:             provider,
 		store:                store,

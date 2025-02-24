@@ -5,12 +5,16 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"fmt"
+	"github.com/ipfs/boxo/exchange"
+	"github.com/ipfs/boxo/exchange/providing"
+	"github.com/ipfs/boxo/provider"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 	"github.com/samber/lo"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal/core"
@@ -21,7 +25,7 @@ import (
 	"time"
 
 	"github.com/ipfs/boxo/bitswap"
-	bnetwork "github.com/ipfs/boxo/bitswap/network"
+	bsnet "github.com/ipfs/boxo/bitswap/network/bsnet"
 	"github.com/ipfs/boxo/blockservice"
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/boxo/ipld/merkledag"
@@ -38,21 +42,27 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 )
 
+var _ exchange.Interface = (*NopExchange)(nil)
+
 var cachedAnnouncementAddresses []multiaddr.Multiaddr
 
 // A Node is a minimal IPFS node
 type Node struct {
-	log          *core.Logger
-	host         host.Host
-	frt          *fullrt.FullRT
-	reprovider   *Reprovider
-	blockService blockservice.BlockService
-	dagService   format.DAGService
-	bitswap      *bitswap.Bitswap
+	log              *core.Logger
+	host             host.Host
+	frt              *fullrt.FullRT
+	reprovider       *Reprovider
+	blockService     blockservice.BlockService
+	dagService       format.DAGService
+	bitswap          *bitswap.Bitswap
+	reproviderCancel context.CancelFunc
 }
 
 // Close closes the node
 func (n *Node) Close() error {
+	if n.reproviderCancel != nil {
+		n.reproviderCancel()
+	}
 	err := n.frt.Close()
 	if err != nil {
 		return err
@@ -88,6 +98,10 @@ func (n *Node) AddBlock(ctx context.Context, block blocks.Block) error {
 		return fmt.Errorf("failed to add block: %w", err)
 	}
 	return nil
+}
+
+func (n *Node) DagService() format.DAGService {
+	return n.dagService
 }
 
 // PeerID returns the peer ID of the node
@@ -173,7 +187,7 @@ func (n *Node) Pin(ctx context.Context, root cid.Cid, recursive bool) error {
 }
 
 // NewNode creates a new IPFS node
-func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datastore.Batching, bs blockstore.Blockstore) (*Node, error) {
+func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.ReprovideStore, ds datastore.Batching, bs blockstore.Blockstore) (*Node, error) {
 	hasher := hkdf.New(sha256.New, ctx.Config().Config().Core.Identity.PrivateKey(), ctx.Config().Config().Core.NodeID.Bytes(), []byte(internal.ProtocolName))
 	derivedSeed := make([]byte, 32)
 
@@ -256,13 +270,22 @@ func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datasto
 		bitswap.EngineBlockstoreWorkerCount(cfg.BlockStore.MaxConcurrentRequests),
 		bitswap.TaskWorkerCount(cfg.BlockStore.MaxConcurrentRequests),
 		bitswap.MaxOutstandingBytesPerPeer(1 << 20),
-		bitswap.ProvideEnabled(true),
 	}
 
-	bitswapNet := bnetwork.NewFromIpfsHost(node, frt)
-	_bitswap := bitswap.New(ctx, bitswapNet, bs, bitswapOpts...)
+	bitswapNet := bsnet.NewFromIpfsHost(node)
 
-	blockServ := blockservice.New(bs, _bitswap)
+	_provider, err := provider.New(ds, provider.Online(frt))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create provider: %w", err)
+	}
+
+	_bitswap := bitswap.New(ctx, bitswapNet, frt, bs, bitswapOpts...)
+	// A wrapped providing exchange using the previous exchange and the provider.
+	exch := &NopExchange{
+		Interface: providing.New(_bitswap, _provider),
+	}
+
+	blockServ := blockservice.New(bs, exch)
 	dagService := merkledag.NewDAGService(blockServ)
 
 	for _, p := range cfg.Peers {
@@ -275,16 +298,18 @@ func NewNode(ctx core.Context, cfg *config.Config, rs ReprovideStore, ds datasto
 	}
 
 	rp := NewReprovider(frt, rs, ctx.Logger().Named("reprovider"))
-	go rp.Run(ctx, cfg.Provider.Interval, cfg.Provider.Timeout, cfg.Provider.BatchSize)
+	reproviderCtx, reproviderCancel := context.WithCancel(ctx)
+	go rp.Run(reproviderCtx, cfg.Provider.Interval, cfg.Provider.Timeout, cfg.Provider.BatchSize)
 
 	return &Node{
-		log:          ctx.Logger(),
-		frt:          frt,
-		host:         node,
-		bitswap:      _bitswap,
-		blockService: blockServ,
-		dagService:   dagService,
-		reprovider:   rp,
+		log:              ctx.Logger(),
+		frt:              frt,
+		host:             node,
+		bitswap:          _bitswap,
+		blockService:     blockServ,
+		dagService:       dagService,
+		reprovider:       rp,
+		reproviderCancel: reproviderCancel,
 	}, nil
 }
 func (n *Node) TriggerReprovider() {
@@ -332,4 +357,28 @@ func isIPv4PrivateRange(addr multiaddr.Multiaddr) bool {
 	private192 := net.IPNet{IP: net.ParseIP("192.168.0.0"), Mask: net.CIDRMask(16, 32)}
 
 	return private10.Contains(ip) || private172.Contains(ip) || private192.Contains(ip)
+}
+
+// NopExchange wraps an exchange.Interface and disables NotifyNewBlocks.
+// This prevents the node from announcing new blocks to the network,
+// because we want to selectively control when blocks are announced,
+// thus we make NotifyNewBlocks a no-op.
+type NopExchange struct {
+	exchange.Interface
+}
+
+func (n NopExchange) GetBlock(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+	return n.Interface.GetBlock(ctx, c)
+}
+
+func (n NopExchange) GetBlocks(ctx context.Context, cids []cid.Cid) (<-chan blocks.Block, error) {
+	return n.Interface.GetBlocks(ctx, cids)
+}
+
+func (n NopExchange) NotifyNewBlocks(ctx context.Context, blocks ...blocks.Block) error {
+	return nil
+}
+
+func (n NopExchange) Close() error {
+	return n.Interface.Close()
 }
