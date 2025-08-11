@@ -24,7 +24,7 @@ require (
 	github.com/libp2p/go-libp2p v0.42.1-0.20250702212416-7b7c3ed4ce04
 	github.com/libp2p/go-libp2p-kad-dht v0.33.1
 	github.com/mitchellh/copystructure v1.2.0
-	github.com/multiformats/go-multiaddr v0.16.0
+	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/multiformats/go-multicodec v0.9.2
 	github.com/multiformats/go-multihash v0.2.3
 	github.com/samber/lo v1.51.0
