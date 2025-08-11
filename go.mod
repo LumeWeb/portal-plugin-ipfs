@@ -24,7 +24,7 @@ require (
 	github.com/libp2p/go-libp2p v0.42.1-0.20250702212416-7b7c3ed4ce04
 	github.com/libp2p/go-libp2p-kad-dht v0.33.1
 	github.com/mitchellh/copystructure v1.2.0
-	github.com/multiformats/go-multiaddr v0.16.0
+	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/multiformats/go-multicodec v0.9.2
 	github.com/multiformats/go-multihash v0.2.3
 	github.com/samber/lo v1.51.0
@@ -39,7 +39,6 @@ require (
 	golang.org/x/crypto v0.39.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/datatypes v1.2.6
-	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.30.0
 )
 
@@ -289,6 +288,7 @@ require (
 	google.golang.org/grpc v1.73.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
+	gorm.io/driver/mysql v1.6.0 // indirect
 	gorm.io/driver/postgres v1.6.0 // indirect
 	gorm.io/driver/sqlite v1.6.0 // indirect
 	gorm.io/driver/sqlserver v1.6.0 // indirect
