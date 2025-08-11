@@ -33,13 +33,12 @@ require (
 	go.lumeweb.com/httputil v0.5.3
 	go.lumeweb.com/portal v0.4.2-0.20250711061623-d692196397f1
 	go.lumeweb.com/portal-middleware v0.2.9
-	go.lumeweb.com/portal-router v0.6.1
+	go.lumeweb.com/portal-router v0.6.3
 	go.lumeweb.com/queryutil v0.3.12
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.39.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/datatypes v1.2.6
-	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.30.0
 )
 
@@ -289,6 +288,7 @@ require (
 	google.golang.org/grpc v1.73.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
+	gorm.io/driver/mysql v1.6.0 // indirect
 	gorm.io/driver/postgres v1.6.0 // indirect
 	gorm.io/driver/sqlite v1.6.0 // indirect
 	gorm.io/driver/sqlserver v1.6.0 // indirect
