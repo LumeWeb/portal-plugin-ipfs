@@ -5,6 +5,10 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"fmt"
+	"io"
+	"net"
+	"time"
+
 	"github.com/ipfs/boxo/exchange"
 	"github.com/ipfs/boxo/exchange/providing"
 	"github.com/ipfs/boxo/provider"
@@ -20,9 +24,6 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/hkdf"
-	"io"
-	"net"
-	"time"
 
 	"github.com/ipfs/boxo/bitswap"
 	bsnet "github.com/ipfs/boxo/bitswap/network/bsnet"
@@ -123,6 +124,11 @@ func (n *Node) ConnectionAddresses() ([]multiaddr.Multiaddr, error) {
 	}
 
 	return connAddrs, nil
+}
+
+// DelegateAddresses returns the multiaddr addresses that can be used as delegates
+func (n *Node) DelegateAddresses() ([]multiaddr.Multiaddr, error) {
+	return n.ConnectionAddresses()
 }
 
 // Peers returns the list of peers in the routing table

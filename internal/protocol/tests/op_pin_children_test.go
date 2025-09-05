@@ -2,17 +2,13 @@ package tests
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/ipfs/go-cid"
-	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
-	"go.lumeweb.com/portal/service"
-	"testing"
 )
 
 func TestPinChildBlocksOperationHandler_Execute_Integration(t *testing.T) {
@@ -50,17 +46,6 @@ func TestPinChildBlocksOperationHandler_Execute_Integration(t *testing.T) {
 		wfTest.AssertOperationStatusProgress(req, 100)
 
 	},
-		coreTesting.WithStatefulMockRenterService(),
-		coreTesting.WithServiceFactory(core.UPLOAD_SERVICE, service.NewMetadataService),
-		coreTesting.WithServiceFactory(core.STORAGE_SERVICE, service.NewStorageService),
-		coreTesting.WithServiceFactory(core.CRON_SERVICE, service.NewCronService),
-		coreTesting.WithServiceFactory(core.REQUEST_SERVICE, service.NewRequestService),
-		coreTesting.WithServiceFactory(core.WORKFLOW_SERVICE, service.NewWorkflowCoordinator),
-		coreTesting.WithServiceFactory(pluginCore.PIN_SERVICE, pin.NewPinService),
-		coreTesting.WithProtocol(internal.ProtocolName, protocol.NewProtocol),
-		coreTesting.WithProtocolConfig(internal.ProtocolName, &config.ProtocolConfig{}),
-		coreTesting.WithSQLitePluginMigrations(
-			internal.ProtocolName, migrations.GetSQLite(),
-		),
+		coreTesting.CombineOptions(GetCommonTestOptions(), GetDbTestOptions()),
 	)
 }

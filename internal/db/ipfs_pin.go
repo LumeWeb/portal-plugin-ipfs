@@ -1,6 +1,7 @@
 package db
 
 import (
+	"fmt"
 	"go.lumeweb.com/portal/db/types"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -18,6 +19,14 @@ const (
 	PinningStatusFailed  PinningStatus = "failed"
 )
 
+// validStatuses is a map of valid pinning statuses for quick lookup
+var validStatuses = map[PinningStatus]struct{}{
+	PinningStatusQueued:  {},
+	PinningStatusPinning: {},
+	PinningStatusPinned:  {},
+	PinningStatusFailed:  {},
+}
+
 type IPFSPin struct {
 	gorm.Model
 	RequestID types.BinaryUUID
@@ -33,4 +42,27 @@ type IPFSPin struct {
 
 func (I IPFSPin) TableName() string {
 	return "ipfs_pins"
+}
+
+// BeforeCreate hook to set default values
+func (pin *IPFSPin) BeforeCreate(tx *gorm.DB) error {
+	// Set default RequestID if not provided
+	if pin.RequestID.Empty() {
+		pin.RequestID = types.NewBinUUID()
+	}
+
+	// Set default status if not provided
+	if pin.Status == "" {
+		pin.Status = PinningStatusQueued
+	}
+
+	return nil
+}
+
+// BeforeSave hook to validate status
+func (pin *IPFSPin) BeforeSave(tx *gorm.DB) error {
+	if _, ok := validStatuses[pin.Status]; !ok {
+		return fmt.Errorf("invalid status: %s", pin.Status)
+	}
+	return nil
 }

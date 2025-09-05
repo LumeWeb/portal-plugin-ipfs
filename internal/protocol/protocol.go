@@ -81,22 +81,27 @@ func (p Protocol) Workflows() []core.WorkflowDefinition {
 				{
 					Operation:       core.RetrieveOperationName(internal.ProtocolName),
 					FailureBehavior: core.RetryStep,
+					ID:              "ipfs.retrieve",
 				},
 				{
 					Operation:       core.ScanOperationName(internal.ProtocolName),
 					FailureBehavior: core.RetryStep,
+					ID:              "ipfs.scan",
 				},
 				{
 					Operation:       core.StoreOperationName(internal.ProtocolName),
 					FailureBehavior: core.RetryStep,
+					ID:              "ipfs.store",
 				},
 				{
 					Operation:       core.PublishOperationName(internal.ProtocolName),
 					FailureBehavior: core.ContinueWorkflow,
+					ID:              "ipfs.publish",
 				},
 				{
 					Operation:       "ipfs.confirm",
 					FailureBehavior: core.RetryStep,
+					ID:              "ipfs.confirm",
 				},
 			},
 		},
@@ -107,6 +112,7 @@ func (p Protocol) Workflows() []core.WorkflowDefinition {
 				{
 					Operation:       "ipfs.pin.children",
 					FailureBehavior: core.RetryStep,
+					ID:              "ipfs.pin-children",
 				},
 			},
 		},
@@ -117,6 +123,7 @@ func (p Protocol) Workflows() []core.WorkflowDefinition {
 				{
 					Operation:       "ipfs.post.upload",
 					FailureBehavior: core.RetryStep,
+					ID:              "ipfs.post-upload",
 				},
 			},
 		},
@@ -127,6 +134,7 @@ func (p Protocol) Workflows() []core.WorkflowDefinition {
 				{
 					Operation:       core.TUSUploadOperationName(p.Name()),
 					FailureBehavior: core.RetryStep,
+					ID:              "ipfs.tus-upload",
 				},
 			},
 		},

@@ -8,6 +8,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/block"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/upload"
 	"go.lumeweb.com/portal/core"
@@ -31,6 +32,10 @@ func init() {
 					Factory: upload.NewUploadService,
 					Depends: []string{core.PIN_SERVICE, pluginCore.PIN_SERVICE},
 				},
+				{
+					ID:      pluginCore.BLOCK_SERVICE,
+					Factory: block.NewBlockService,
+				},
 			}, nil
 		},
 		Models: []any{
@@ -41,6 +46,7 @@ func init() {
 		},
 		Migrations: core.DBMigration{
 			core.DB_TYPE_SQLITE: migrations.GetSQLite(),
+			core.DB_TYPE_MYSQL:  migrations.GetMySQL(),
 		},
 	})
 

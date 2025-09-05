@@ -32,6 +32,8 @@ CREATE INDEX IF NOT EXISTS idx_ipfs_blocks_last_announcement ON ipfs_blocks (las
 CREATE INDEX IF NOT EXISTS idx_ipfs_blocks_cid_last_announcement ON ipfs_blocks (cid, last_announcement);
 CREATE INDEX IF NOT EXISTS idx_ipfs_blocks_ready ON ipfs_blocks (ready) WHERE ready = 0;
 
+CREATE INDEX IF NOT EXISTS idx_ipfs_pins_created_at ON ipfs_pins (created_at);
+
 CREATE TABLE IF NOT EXISTS ipfs_linked_blocks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     parent_id INTEGER,
@@ -80,6 +82,7 @@ DROP INDEX IF EXISTS idx_ipfs_blocks_cid_last_announcement;
 DROP INDEX IF EXISTS idx_ipfs_blocks_ready;
 DROP INDEX IF EXISTS ipfs_idx_linked_blocks_unique;
 DROP INDEX IF EXISTS idx_ipfs_unixfs_nodes_block_id;
+DROP INDEX IF EXISTS idx_ipfs_pins_created_at;
 
 DROP TABLE IF EXISTS ipfs_pins;
 DROP TABLE IF EXISTS ipfs_blocks;
