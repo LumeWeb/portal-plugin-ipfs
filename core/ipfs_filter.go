@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+
 	"github.com/samber/lo"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"go.lumeweb.com/queryutil"
@@ -28,17 +29,19 @@ func (p *IPFSPinParser) ParseFilters() ([]filter.CrudFilter, error) {
 	}
 
 	if p.filter.Name != "" {
-		op := queryutil.OpEq
 		switch p.filter.Match {
-		case dto.TextMatchingStrategyIExact, dto.TextMatchingStrategyExact:
-			op = queryutil.OpEq
+		case dto.TextMatchingStrategyExact:
+			crudFilters = append(crudFilters, filter.StringField("name").Eq(p.filter.Name))
+		case dto.TextMatchingStrategyIExact:
+			// For exact matching, we need both starts with and ends with the same value
+			startFilter := filter.NewLogicalFilter("name", queryutil.OpStartswith, p.filter.Name)
+			endFilter := filter.NewLogicalFilter("name", queryutil.OpEndswith, p.filter.Name)
+			crudFilters = append(crudFilters, filter.AndF(startFilter, endFilter))
 		case dto.TextMatchingStrategyIPartial:
-			op = queryutil.OpContains
+			crudFilters = append(crudFilters, filter.StringField("name").Contains(p.filter.Name))
 		case dto.TextMatchingStrategyPartial:
-			op = queryutil.OpContainss
+			crudFilters = append(crudFilters, filter.NewLogicalFilter("name", queryutil.OpContainss, p.filter.Name))
 		}
-
-		crudFilters = append(crudFilters, filter.NewLogicalFilter("name", op, p.filter.Name))
 	}
 
 	if len(p.filter.Status) > 0 {
@@ -69,26 +72,14 @@ func (p *IPFSPinParser) ParseFilters() ([]filter.CrudFilter, error) {
 }
 
 func (p *IPFSPinParser) ParseSorts(_ *filter.SortConfig) ([]filter.Sort, error) {
-	return []filter.Sort{}, nil
+	return []filter.Sort{
+		{
+			Field: "created_at",
+			Order: filter.OrderDesc,
+		},
+	}, nil
 }
 
 func (p *IPFSPinParser) ParsePagination() (filter.Pagination, error) {
 	return filter.NewPagination(0, p.filter.Limit)
-}
-
-// ParseIPFSPinFilter converts an IPFSPinFilter DTO to filter, sort, and pagination AST structs.
-func ParseIPFSPinFilter(ctx context.Context, input dto.IPFSPinFilter) ([]filter.CrudFilter, []filter.Sort, filter.Pagination, error) { //Removed sortConfig
-	parser := NewIPFSPinParser(ctx, input)
-
-	crudFilters, err := parser.ParseFilters()
-	if err != nil {
-		return nil, nil, filter.Pagination{}, err
-	}
-
-	pagination, err := parser.ParsePagination()
-	if err != nil {
-		return nil, nil, filter.Pagination{}, err
-	}
-
-	return crudFilters, []filter.Sort{}, pagination, nil
 }

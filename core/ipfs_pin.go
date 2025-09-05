@@ -6,6 +6,7 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/types"
 	"go.lumeweb.com/queryutil"
+	"go.lumeweb.com/queryutil/filter"
 	"gorm.io/datatypes"
 )
 
@@ -20,7 +21,7 @@ type IPFSPinService interface {
 	GetPinByRequestID(ctx context.Context, requestID types.BinaryUUID) (*db.IPFSPin, error)
 
 	// ListPins retrieves a paginated and filtered list of pin jobs.
-	ListPins(ctx context.Context, filter []queryutil.CrudFilter, pagination queryutil.Pagination) ([]*db.IPFSPin, int64, error)
+	ListPins(ctx context.Context, filter []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*db.IPFSPin, int64, error)
 
 	// ReplacePin creates a new pin job to replace an old one.
 	ReplacePin(ctx context.Context, userId uint, userIp string, oldRequestID types.BinaryUUID, newPin *db.IPFSPin) (*db.IPFSPin, error)

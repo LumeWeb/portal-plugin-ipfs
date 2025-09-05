@@ -3,11 +3,13 @@ package dto
 import (
 	"encoding/json"
 	"fmt"
+	"time"
+
 	"github.com/Oudwins/zog"
 	"github.com/ipfs/go-cid"
+	"github.com/multiformats/go-multiaddr"
 	"go.lumeweb.com/httputil"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"time"
 )
 
 // jsonToMap converts datatypes.JSON to map[string]string
@@ -32,6 +34,33 @@ func jsonToStringSlice(jsonData []byte) ([]string, error) {
 		}
 	}
 	return result, nil
+}
+
+// parseAndDeduplicateDelegates converts delegate strings to multiaddrs and removes duplicates
+func parseAndDeduplicateDelegates(delegateStrings []string) []multiaddr.Multiaddr {
+	// Parse delegates as multiaddrs and deduplicate
+	parsedDelegates := make([]multiaddr.Multiaddr, 0, len(delegateStrings))
+	for _, delegateStr := range delegateStrings {
+		delegate, err := multiaddr.NewMultiaddr(delegateStr)
+		if err != nil {
+			continue // Skip invalid multiaddrs
+		}
+		parsedDelegates = append(parsedDelegates, delegate)
+	}
+
+	// Deduplicate
+	uniqueDelegates := make([]multiaddr.Multiaddr, 0, len(parsedDelegates))
+	seen := make(map[string]bool)
+
+	for _, delegate := range parsedDelegates {
+		delegateStr := delegate.String()
+		if !seen[delegateStr] {
+			seen[delegateStr] = true
+			uniqueDelegates = append(uniqueDelegates, delegate)
+		}
+	}
+
+	return uniqueDelegates
 }
 
 // PinRequest and PinStatusResponse
@@ -83,12 +112,12 @@ func (p PinRequest) ToModel() (*db.IPFSPin, error) {
 }
 
 type PinStatusResponse struct {
-	RequestID string            `json:"requestid"`
-	Status    db.PinningStatus  `json:"status"`
-	Created   time.Time         `json:"created"`
-	Pin       PinRequest        `json:"pin"`
-	Delegates []string          `json:"delegates"`
-	Info      map[string]string `json:"info,omitempty"`
+	RequestID string                `json:"requestid"`
+	Status    db.PinningStatus      `json:"status"`
+	Created   time.Time             `json:"created"`
+	Pin       PinRequest            `json:"pin"`
+	Delegates []multiaddr.Multiaddr `json:"delegates"`
+	Info      map[string]string     `json:"info,omitempty"`
 }
 
 func (p *PinStatusResponse) FromModel(model *db.IPFSPin) error {
@@ -107,10 +136,30 @@ func (p *PinStatusResponse) FromModel(model *db.IPFSPin) error {
 		return fmt.Errorf("failed to convert meta: %w", err)
 	}
 
-	// Convert Delegates from JSON to []string
+	// Convert Delegates from JSON to []string and deduplicate
 	delegates, err := jsonToStringSlice(model.Delegates)
 	if err != nil {
 		return fmt.Errorf("failed to convert delegates: %w", err)
+	}
+	// Ensure delegates is always an array
+	if delegates == nil {
+		delegates = []string{}
+	}
+
+	// Parse and deduplicate delegates, then convert back to stable []string
+	parsedDelegates := parseAndDeduplicateDelegates(delegates)
+	
+	// Convert multiaddrs back to strings for stable response schema
+	delegateStrings := make([]string, len(parsedDelegates))
+	for i, delegate := range parsedDelegates {
+		delegateStrings[i] = delegate.String()
+	}
+	
+	// Ensure we always have a stable []string value (never nil)
+	if delegateStrings == nil {
+		p.Delegates = []string{}
+	} else {
+		p.Delegates = delegateStrings
 	}
 
 	infoMap, err := jsonToMap(model.Info)
@@ -130,7 +179,7 @@ func (p *PinStatusResponse) FromModel(model *db.IPFSPin) error {
 		Origins: origins,
 		Meta:    metaMap,
 	}
-	p.Delegates = delegates
+
 	p.Info = infoMap
 	return nil
 }

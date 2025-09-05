@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -175,7 +176,10 @@ The latest version of this spec and additional resources can be found at:
 
 func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 	// Middleware setup
-	authMw := middleware.AuthMiddleware(a.ctx, jwt.PurposeLogin)
+	authMw := middleware.AuthMiddleware(a.ctx, middleware.WithAuthErrorCallback(func(c echo.Context) (int, json.Marshaler) {
+		err := NewError(ErrKeyUnauthorized, nil)
+		return err.HttpStatus(), err
+	}), middleware.WithAuthPurpose(jwt.PurposeLogin, jwt.PurposeAPI))
 
 	// Pinning service routes
 	pinRoutes := router.DefineRoutes(
@@ -277,7 +281,8 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 				router.WithDescription("Gets metadata for multiple blocks in a single request."),
 				router.WithTags("ipfs"),
 				router.WithRequestBody(&dto.GetBlockMetaBatchRequest{}, "Batch request for block metadata", true),
-				router.WithSuccessResponse(http.StatusOK, "Block metadata map", router.WithJSONContent(map[string]*dto.BlockMetaResponse{})),
+				// TODO: Fix openapi processing of this map type
+				// router.WithSuccessResponse(http.StatusOK, "Block metadata map", router.WithJSONContent(dto.BlockMap{})),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/info", a.handleGetInfo,
@@ -338,23 +343,35 @@ func (a *API) listPins(c echo.Context) error {
 		return nil
 	}
 
-	reqParser := pluginCore.NewIPFSPinParser(reqCtx, filter)
-
-	filters, _, pagination, err := queryutil.ParseFromCustomSource(reqParser)
-	if err != nil {
-		return err
+	// Post-process statuses
+	if err := filter.PostProcessStatuses(); err != nil {
+		// Use default error handler for validation errors
+		errorHandler := &httputil.DefaultErrorHandler{}
+		errorHandler.HandleError(ctx, err)
+		return nil
 	}
 
-	pins, total, err := a.pinService.ListPins(reqCtx, filters, pagination)
+	reqParser := pluginCore.NewIPFSPinParser(reqCtx, filter)
+
+	filters, sort, pagination, err := queryutil.ParseFromCustomSource(reqParser)
+	if err != nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	pins, total, err := a.pinService.ListPins(reqCtx, filters, sort, pagination)
 	if err != nil {
 		a.logger.Error("Failed to list pins", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
+	var dtoResp dto.PinResultsResponse
+
+	dtoResp.Count = uint64(total)
+
 	queryUtilHttp.SetContentRangeHeader(c.Response(), "pins", pagination, pins, total)
 
-	return httputil.EncodeResponse(ctx, pins, &dto.PinResultsResponse{})
+	return httputil.EncodeResponse(ctx, pins, &dtoResp)
 }
 
 func (a *API) addPin(c echo.Context) error {
@@ -412,12 +429,12 @@ func (a *API) getPin(c echo.Context) error {
 	_pin, err := a.pinService.GetPinByRequestID(reqCtx, requestID)
 	if err != nil {
 		a.logger.Error("Failed to get pin", zap.Error(err))
-		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
+		apiErr := NewError(ErrKeyPinFetchFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	if _pin == nil {
-		apiErr := NewError(ErrKeyMetadataFetchFailed, fmt.Errorf("pin not found"))
+		apiErr := NewError(ErrKeyPinFetchFailed, fmt.Errorf("pin not found"))
 		return ctx.Error(apiErr, http.StatusNotFound)
 	}
 
@@ -550,7 +567,6 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	}
 
 	a.setTrustlessHeaders(w, r, _cid.String())
-	w.Header().Set("Content-Type", "application/vnd.ipld.raw")
 	_, _ = w.Write(block.RawData())
 }
 

@@ -19,6 +19,8 @@ var _ httputil.DTORequest[*GetBlockMetaBatchParsedRequest] = (*GetBlockMetaBatch
 var _ httputil.DTOResponse[map[string]*pluginDb.UnixFSNode] = (*GetBlockMetaBatchResponse)(nil)
 var _ httputil.DTOResponse[*pluginDb.UnixFSNode] = (*BlockMetaResponse)(nil)
 
+type BlockMap = map[string]*BlockMetaResponse
+
 var (
 	cidValidator = zog.String().TestFunc(func(val *string, ctx internals.Ctx) bool {
 		_, err := cid.Parse(*val)

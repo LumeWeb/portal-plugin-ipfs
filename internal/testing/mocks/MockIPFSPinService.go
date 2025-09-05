@@ -11,6 +11,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/db/types"
 	"go.lumeweb.com/queryutil"
+	"go.lumeweb.com/queryutil/filter"
 	"gorm.io/datatypes"
 )
 
@@ -279,8 +280,8 @@ func (_c *MockIPFSPinService_ID_Call) RunAndReturn(run func() string) *MockIPFSP
 }
 
 // ListPins provides a mock function for the type MockIPFSPinService
-func (_mock *MockIPFSPinService) ListPins(ctx context.Context, filter []queryutil.CrudFilter, pagination queryutil.Pagination) ([]*db.IPFSPin, int64, error) {
-	ret := _mock.Called(ctx, filter, pagination)
+func (_mock *MockIPFSPinService) ListPins(ctx context.Context, filter1 []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*db.IPFSPin, int64, error) {
+	ret := _mock.Called(ctx, filter1, sort, pagination)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ListPins")
@@ -289,23 +290,23 @@ func (_mock *MockIPFSPinService) ListPins(ctx context.Context, filter []queryuti
 	var r0 []*db.IPFSPin
 	var r1 int64
 	var r2 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, []queryutil.CrudFilter, queryutil.Pagination) ([]*db.IPFSPin, int64, error)); ok {
-		return returnFunc(ctx, filter, pagination)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, []queryutil.CrudFilter, []filter.Sort, queryutil.Pagination) ([]*db.IPFSPin, int64, error)); ok {
+		return returnFunc(ctx, filter1, sort, pagination)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, []queryutil.CrudFilter, queryutil.Pagination) []*db.IPFSPin); ok {
-		r0 = returnFunc(ctx, filter, pagination)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, []queryutil.CrudFilter, []filter.Sort, queryutil.Pagination) []*db.IPFSPin); ok {
+		r0 = returnFunc(ctx, filter1, sort, pagination)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]*db.IPFSPin)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, []queryutil.CrudFilter, queryutil.Pagination) int64); ok {
-		r1 = returnFunc(ctx, filter, pagination)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, []queryutil.CrudFilter, []filter.Sort, queryutil.Pagination) int64); ok {
+		r1 = returnFunc(ctx, filter1, sort, pagination)
 	} else {
 		r1 = ret.Get(1).(int64)
 	}
-	if returnFunc, ok := ret.Get(2).(func(context.Context, []queryutil.CrudFilter, queryutil.Pagination) error); ok {
-		r2 = returnFunc(ctx, filter, pagination)
+	if returnFunc, ok := ret.Get(2).(func(context.Context, []queryutil.CrudFilter, []filter.Sort, queryutil.Pagination) error); ok {
+		r2 = returnFunc(ctx, filter1, sort, pagination)
 	} else {
 		r2 = ret.Error(2)
 	}
@@ -319,13 +320,14 @@ type MockIPFSPinService_ListPins_Call struct {
 
 // ListPins is a helper method to define mock.On call
 //   - ctx context.Context
-//   - filter []queryutil.CrudFilter
+//   - filter1 []queryutil.CrudFilter
+//   - sort []filter.Sort
 //   - pagination queryutil.Pagination
-func (_e *MockIPFSPinService_Expecter) ListPins(ctx interface{}, filter interface{}, pagination interface{}) *MockIPFSPinService_ListPins_Call {
-	return &MockIPFSPinService_ListPins_Call{Call: _e.mock.On("ListPins", ctx, filter, pagination)}
+func (_e *MockIPFSPinService_Expecter) ListPins(ctx interface{}, filter1 interface{}, sort interface{}, pagination interface{}) *MockIPFSPinService_ListPins_Call {
+	return &MockIPFSPinService_ListPins_Call{Call: _e.mock.On("ListPins", ctx, filter1, sort, pagination)}
 }
 
-func (_c *MockIPFSPinService_ListPins_Call) Run(run func(ctx context.Context, filter []queryutil.CrudFilter, pagination queryutil.Pagination)) *MockIPFSPinService_ListPins_Call {
+func (_c *MockIPFSPinService_ListPins_Call) Run(run func(ctx context.Context, filter1 []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination)) *MockIPFSPinService_ListPins_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -335,14 +337,19 @@ func (_c *MockIPFSPinService_ListPins_Call) Run(run func(ctx context.Context, fi
 		if args[1] != nil {
 			arg1 = args[1].([]queryutil.CrudFilter)
 		}
-		var arg2 queryutil.Pagination
+		var arg2 []filter.Sort
 		if args[2] != nil {
-			arg2 = args[2].(queryutil.Pagination)
+			arg2 = args[2].([]filter.Sort)
+		}
+		var arg3 queryutil.Pagination
+		if args[3] != nil {
+			arg3 = args[3].(queryutil.Pagination)
 		}
 		run(
 			arg0,
 			arg1,
 			arg2,
+			arg3,
 		)
 	})
 	return _c
@@ -353,7 +360,7 @@ func (_c *MockIPFSPinService_ListPins_Call) Return(iPFSPins []*db.IPFSPin, n int
 	return _c
 }
 
-func (_c *MockIPFSPinService_ListPins_Call) RunAndReturn(run func(ctx context.Context, filter []queryutil.CrudFilter, pagination queryutil.Pagination) ([]*db.IPFSPin, int64, error)) *MockIPFSPinService_ListPins_Call {
+func (_c *MockIPFSPinService_ListPins_Call) RunAndReturn(run func(ctx context.Context, filter1 []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*db.IPFSPin, int64, error)) *MockIPFSPinService_ListPins_Call {
 	_c.Call.Return(run)
 	return _c
 }

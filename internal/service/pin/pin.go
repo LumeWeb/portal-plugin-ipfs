@@ -2,14 +2,19 @@ package pin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+
 	"github.com/ipfs/go-cid"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
 	"go.lumeweb.com/portal/db/types"
 	"go.lumeweb.com/queryutil"
+	"go.lumeweb.com/queryutil/filter"
 	"go.uber.org/zap"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -21,6 +26,7 @@ type PinServiceDefault struct {
 	db       *gorm.DB
 	logger   *core.Logger
 	workflow core.WorkflowService
+	ipfs     *protocol.Protocol
 }
 
 // Ensure PinServiceDefault implements the interface
@@ -36,6 +42,12 @@ func NewPinService() (core.Service, []core.ContextBuilderOption, error) {
 			svc.logger = ctx.ServiceLogger(svc)
 			svc.db = ctx.DB()
 			svc.workflow = core.GetService[core.WorkflowService](ctx, core.WORKFLOW_SERVICE)
+			proto := core.GetProtocol(internal.ProtocolName)
+			ipfsProto, ok := proto.(*protocol.Protocol)
+			if !ok {
+				return fmt.Errorf("protocol %s is not of type *protocol.Protocol", internal.ProtocolName)
+			}
+			svc.ipfs = ipfsProto
 			return nil
 		}),
 	)
@@ -49,10 +61,13 @@ func (s *PinServiceDefault) ID() string {
 
 // AddPin creates a new pin job record.
 func (s *PinServiceDefault) AddPin(ctx context.Context, pin *pluginDb.IPFSPin) (*pluginDb.IPFSPin, error) {
-	pin.RequestID = types.NewBinUUID()
-	pin.Status = pluginDb.PinningStatusQueued
+	// Get delegate addresses and store them as JSON
+	err := s.addDelegateAddresses(pin)
+	if err != nil {
+		s.logger.Error("Failed to get delegate addresses", zap.Error(err))
+	}
 
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
+	err = db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
 		return g.WithContext(ctx).Create(pin)
 	})
 	if err != nil {
@@ -90,7 +105,7 @@ func (s *PinServiceDefault) GetPinByRequestID(ctx context.Context, requestID typ
 }
 
 // ListPins retrieves a paginated and filtered list of pin jobs.
-func (s *PinServiceDefault) ListPins(ctx context.Context, filter []queryutil.CrudFilter, pagination queryutil.Pagination) ([]*pluginDb.IPFSPin, int64, error) {
+func (s *PinServiceDefault) ListPins(ctx context.Context, filter []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.IPFSPin, int64, error) {
 	var pins []*pluginDb.IPFSPin
 	var total int64
 
@@ -98,6 +113,7 @@ func (s *PinServiceDefault) ListPins(ctx context.Context, filter []queryutil.Cru
 		// Construct the query
 		query := g.WithContext(ctx).Model(&pluginDb.IPFSPin{})
 		query = queryutil.ApplyFilters(query, filter, nil)
+		query = queryutil.ApplySort(query, sort)
 		query = queryutil.ApplyPagination(query, pagination)
 
 		// Get total count
@@ -110,6 +126,19 @@ func (s *PinServiceDefault) ListPins(ctx context.Context, filter []queryutil.Cru
 		if err := query.Find(&pins).Error; err != nil {
 			_ = g.AddError(fmt.Errorf("failed to list pins: %w", err))
 			return g
+		}
+
+		// Get delegate addresses once and reuse for all pins
+		delegatesJSON, err := s.getDelegatesJSON()
+		if err != nil {
+			s.logger.Error("Failed to get delegate addresses", zap.Error(err))
+			_ = g.AddError(fmt.Errorf("failed to get delegate addresses: %w", err))
+			return g
+		}
+
+		// Set the pre-marshalled delegates JSON onto each pin
+		for _, pin := range pins {
+			pin.Delegates = delegatesJSON
 		}
 
 		return g
@@ -236,4 +265,30 @@ func (s *PinServiceDefault) UpdatePinStatus(ctx context.Context, requestID types
 		zap.String("status", string(status)),
 		zap.Int64("rows_affected", rowsAffected))
 	return nil
+}
+
+// addDelegateAddresses retrieves delegate addresses and marshals them to JSON, then sets them on the pin model
+func (s *PinServiceDefault) addDelegateAddresses(pin *pluginDb.IPFSPin) error {
+	delegatesJSON, err := s.getDelegatesJSON()
+	if err != nil {
+		return err
+	}
+
+	pin.Delegates = delegatesJSON
+	return nil
+}
+
+// getDelegatesJSON retrieves delegate addresses once and marshals them to JSON
+func (s *PinServiceDefault) getDelegatesJSON() ([]byte, error) {
+	delegates, err := s.ipfs.GetNode().DelegateAddresses()
+	if err != nil {
+		return nil, err
+	}
+
+	delegatesJSON, err := json.Marshal(delegates)
+	if err != nil {
+		return nil, err
+	}
+
+	return delegatesJSON, nil
 }
