@@ -2,11 +2,11 @@ package dto
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/Oudwins/zog"
-	"github.com/samber/lo"
 	"go.lumeweb.com/httputil"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/config"
@@ -30,7 +30,7 @@ type IPFSPinFilter struct {
 	CIDs   []string             `query:"cid"`
 	Name   string               `query:"name"`
 	Match  TextMatchingStrategy `query:"match"`
-	Status []db.PinningStatus    `query:"status"`
+	Status []db.PinningStatus   `query:"status"`
 	Before *time.Time           `query:"before"`
 	After  *time.Time           `query:"after"`
 	Meta   map[string]string    `query:"meta"`
@@ -75,7 +75,7 @@ func (I *IPFSPinFilter) PostProcessStatuses() error {
 
 	// Process all status elements, split on commas, trim whitespace and convert to lowercase
 	processedStatuses := make(map[db.PinningStatus]bool)
-	
+
 	for _, status := range I.Status {
 		statusStr := string(status)
 		if strings.Contains(statusStr, ",") {
@@ -105,12 +105,10 @@ func (I *IPFSPinFilter) PostProcessStatuses() error {
 	for status := range processedStatuses {
 		statusKeys = append(statusKeys, status)
 	}
-	
+
 	// Sort to maintain stable order
-	lo.SortBy(statusKeys, func(item db.PinningStatus) string {
-		return string(item)
-	})
-	
+	slices.Sort(statusKeys)
+
 	I.Status = statusKeys
 
 	// Validate all statuses

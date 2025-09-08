@@ -70,7 +70,7 @@ func TestIPFSPinningServiceCompliance(t *testing.T) {
 		workDir := filepath.Dir(currentFile)
 
 		// Create context with timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		tctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
 		// Handle NODE_PATH environment variable
@@ -92,7 +92,7 @@ func TestIPFSPinningServiceCompliance(t *testing.T) {
 		}
 
 		// Create the command with context
-		cmd := exec.CommandContext(ctx, cmdParts[0], cmdParts[1:]...)
+		cmd := exec.CommandContext(tctx, cmdParts[0], cmdParts[1:]...)
 		cmd.Dir = workDir
 
 		// Apply extra environment if set
@@ -110,7 +110,7 @@ func TestIPFSPinningServiceCompliance(t *testing.T) {
 		err = cmd.Run()
 		if err != nil {
 			// Check if the error was due to context timeout
-			if ctx.Err() == context.DeadlineExceeded {
+			if tctx.Err() == context.DeadlineExceeded {
 				tb.Fatalf("Compliance test timed out after 5 minutes. Stderr: %s", stderr.String())
 			}
 		}

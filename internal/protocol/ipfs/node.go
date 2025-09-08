@@ -9,9 +9,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/ipfs/boxo/exchange"
-	"github.com/ipfs/boxo/exchange/providing"
-	"github.com/ipfs/boxo/provider"
+	"github.com/ipfs/boxo/exchange/offline"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -26,7 +24,7 @@ import (
 	"golang.org/x/crypto/hkdf"
 
 	"github.com/ipfs/boxo/bitswap"
-	bsnet "github.com/ipfs/boxo/bitswap/network/bsnet"
+	"github.com/ipfs/boxo/bitswap/network/bsnet"
 	"github.com/ipfs/boxo/blockservice"
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/boxo/ipld/merkledag"
@@ -42,8 +40,6 @@ import (
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 )
-
-var _ exchange.Interface = (*NopExchange)(nil)
 
 var cachedAnnouncementAddresses []multiaddr.Multiaddr
 
@@ -280,18 +276,9 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 
 	bitswapNet := bsnet.NewFromIpfsHost(node)
 
-	_provider, err := provider.New(ds, provider.Online(frt))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create provider: %w", err)
-	}
-
 	_bitswap := bitswap.New(ctx, bitswapNet, frt, bs, bitswapOpts...)
-	// A wrapped providing exchange using the previous exchange and the provider.
-	exch := &NopExchange{
-		Interface: providing.New(_bitswap, _provider),
-	}
 
-	blockServ := blockservice.New(bs, exch)
+	blockServ := blockservice.New(bs, offline.Exchange(bs))
 	dagService := merkledag.NewDAGService(blockServ)
 
 	for _, p := range cfg.Peers {
@@ -363,28 +350,4 @@ func isIPv4PrivateRange(addr multiaddr.Multiaddr) bool {
 	private192 := net.IPNet{IP: net.ParseIP("192.168.0.0"), Mask: net.CIDRMask(16, 32)}
 
 	return private10.Contains(ip) || private172.Contains(ip) || private192.Contains(ip)
-}
-
-// NopExchange wraps an exchange.Interface and disables NotifyNewBlocks.
-// This prevents the node from announcing new blocks to the network,
-// because we want to selectively control when blocks are announced,
-// thus we make NotifyNewBlocks a no-op.
-type NopExchange struct {
-	exchange.Interface
-}
-
-func (n NopExchange) GetBlock(ctx context.Context, c cid.Cid) (blocks.Block, error) {
-	return n.Interface.GetBlock(ctx, c)
-}
-
-func (n NopExchange) GetBlocks(ctx context.Context, cids []cid.Cid) (<-chan blocks.Block, error) {
-	return n.Interface.GetBlocks(ctx, cids)
-}
-
-func (n NopExchange) NotifyNewBlocks(ctx context.Context, blocks ...blocks.Block) error {
-	return nil
-}
-
-func (n NopExchange) Close() error {
-	return n.Interface.Close()
 }
