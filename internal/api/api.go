@@ -27,6 +27,7 @@ import (
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/types"
+	"go.lumeweb.com/portal/event"
 	"go.lumeweb.com/portal/service"
 	"go.lumeweb.com/queryutil"
 	queryUtilHttp "go.lumeweb.com/queryutil/http"
@@ -72,47 +73,50 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 			proto := core.GetProtocol(internal.ProtocolName)
 			sproto := proto.(core.StorageProtocol)
 
-			tus, err := service.CreateTusHandler(ctx, core.TUSHandlerConfig{
-				Protocol: proto,
-				BasePath: TUS_HTTP_ROUTE,
-				CreatedUploadHandler: service.TUSDefaultUploadCreatedHandler(ctx, func(hook handler.HookEvent, uploaderId uint) (core.StorageHash, error) {
-					return nil, nil
-				}, nil),
-				UploadProgressHandler:   service.TUSDefaultUploadProgressHandler(ctx),
-				TerminatedUploadHandler: service.TUSDefaultUploadTerminatedHandler(ctx),
-				CompletedUploadHandler: service.TUSDefaultUploadCompletedHandler(ctx, func(_ core.TusHandler, hook handler.HookEvent) {
-					upload, err := api.tus.UploadReader(ctx, hook.Upload.ID, sproto, 0)
+			event.OnBootHTTP(ctx, func(ctx core.Context) error {
+				tus, err := service.CreateTusHandler(ctx, core.TUSHandlerConfig{
+					Protocol: proto,
+					BasePath: TUS_HTTP_ROUTE,
+					CreatedUploadHandler: service.TUSDefaultUploadCreatedHandler(ctx, func(hook handler.HookEvent, uploaderId uint) (core.StorageHash, error) {
+						return nil, nil
+					}, nil),
+					UploadProgressHandler:   service.TUSDefaultUploadProgressHandler(ctx),
+					TerminatedUploadHandler: service.TUSDefaultUploadTerminatedHandler(ctx),
+					CompletedUploadHandler: service.TUSDefaultUploadCompletedHandler(ctx, func(_ core.TusHandler, hook handler.HookEvent) {
+						upload, err := api.tus.UploadReader(ctx, hook.Upload.ID, sproto, 0)
 
-					if err != nil {
-						api.logger.Error("Failed to get request reader", zap.Error(err))
-						return
-					}
-
-					defer func(upload io.ReadCloser) {
-						err := upload.Close()
 						if err != nil {
-							api.logger.Error("Failed to close reader", zap.Error(err))
+							api.logger.Error("Failed to get request reader", zap.Error(err))
+							return
 						}
-					}(upload)
 
-					_, err = internal.GetCarRoots(upload)
+						defer func(upload io.ReadCloser) {
+							err := upload.Close()
+							if err != nil {
+								api.logger.Error("Failed to close reader", zap.Error(err))
+							}
+						}(upload)
 
-					if err != nil {
-						api.logger.Error("Failed to validate car", zap.Error(err))
-						err = api.tus.FailUploadById(ctx, sproto, hook.Upload.ID)
+						_, err = internal.GetCarRoots(upload)
+
 						if err != nil {
-							api.logger.Error("Failed to fail ipfsUpload", zap.Error(err))
+							api.logger.Error("Failed to validate car", zap.Error(err))
+							err = api.tus.FailUploadById(ctx, sproto, hook.Upload.ID)
+							if err != nil {
+								api.logger.Error("Failed to fail ipfsUpload", zap.Error(err))
+							}
+							return
 						}
-						return
-					}
-				}, protocol.TUS_UPLOAD_WORKFLOW),
+					}, protocol.TUS_UPLOAD_WORKFLOW),
+				})
+
+				if err != nil {
+					return fmt.Errorf("failed to create tus handler: %w", err)
+				}
+				api.tus = tus
+
+				return nil
 			})
-
-			if err != nil {
-				return fmt.Errorf("failed to create tus handler: %w", err)
-			}
-
-			api.tus = tus
 			api.ipfs = proto.(ProtoNode)
 
 			return nil
