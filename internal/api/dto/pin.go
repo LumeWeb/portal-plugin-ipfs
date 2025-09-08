@@ -149,18 +149,7 @@ func (p *PinStatusResponse) FromModel(model *db.IPFSPin) error {
 	// Parse and deduplicate delegates, then convert back to stable []string
 	parsedDelegates := parseAndDeduplicateDelegates(delegates)
 	
-	// Convert multiaddrs back to strings for stable response schema
-	delegateStrings := make([]string, len(parsedDelegates))
-	for i, delegate := range parsedDelegates {
-		delegateStrings[i] = delegate.String()
-	}
-	
-	// Ensure we always have a stable []string value (never nil)
-	if delegateStrings == nil {
-		p.Delegates = []string{}
-	} else {
-		p.Delegates = delegateStrings
-	}
+	p.Delegates = parsedDelegates
 
 	infoMap, err := jsonToMap(model.Info)
 	if err != nil {

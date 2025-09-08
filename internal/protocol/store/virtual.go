@@ -86,9 +86,3 @@ func (v *VirtualBlockStore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, er
 	}
 	return v.cachedBS.AllKeysChan(ctx)
 }
-
-// HashOnRead specifies if every read block should be rehashed to make sure it matches its CID
-func (v *VirtualBlockStore) HashOnRead(enabled bool) {
-	v.cachedBS.HashOnRead(enabled)
-	v.directBS.HashOnRead(enabled)
-}
