@@ -16,7 +16,7 @@ require (
 	github.com/ipfs/go-ipld-format v0.6.2
 	github.com/ipfs/go-ipld-legacy v0.2.2
 	github.com/ipfs/go-log/v2 v2.8.1
-	github.com/ipld/go-car/v2 v2.14.3
+	github.com/ipld/go-car/v2 v2.15.0
 	github.com/ipld/go-codec-dagpb v1.7.0
 	github.com/ipld/go-ipld-prime v0.21.0
 	github.com/labstack/echo/v4 v4.13.4
