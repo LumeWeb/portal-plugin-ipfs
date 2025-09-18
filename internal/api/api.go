@@ -38,7 +38,7 @@ import (
 var _ core.API = (*API)(nil)
 var _ core.APITusHandler = (*API)(nil)
 
-const TUS_HTTP_ROUTE = "/api/upload/tus"
+const TUS_HTTP_ROUTE = "/upload/tus"
 
 type API struct {
 	ctx               core.Context
@@ -187,7 +187,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 
 	// Pinning service routes
 	pinRoutes := router.DefineRoutes(
-		router.NewRoute(http.MethodGet, "/pins", a.listPins,
+		router.NewRoute(http.MethodGet, "/api/pins", a.listPins,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("List pin objects"),
@@ -204,7 +204,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(dto.PinResultsResponse{})),
 			),
 		),
-		router.NewRoute(http.MethodPost, "/pins", a.addPin,
+		router.NewRoute(http.MethodPost, "/api/pins", a.addPin,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Add pin object"),
@@ -214,7 +214,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 				router.WithSuccessResponse(http.StatusAccepted, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
 			),
 		),
-		router.NewRoute(http.MethodGet, "/pins/:requestid", a.getPin,
+		router.NewRoute(http.MethodGet, "/api/pins/:requestid", a.getPin,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Get pin object"),
@@ -224,7 +224,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
 			),
 		),
-		router.NewRoute(http.MethodPost, "/pins/:requestid", a.replacePin,
+		router.NewRoute(http.MethodPost, "/api/pins/:requestid", a.replacePin,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Replace pin object"),
@@ -235,7 +235,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 				router.WithSuccessResponse(http.StatusAccepted, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
 			),
 		),
-		router.NewRoute(http.MethodDelete, "/pins/:requestid", a.deletePin,
+		router.NewRoute(http.MethodDelete, "/api/pins/:requestid", a.deletePin,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Remove pin object"),
@@ -247,14 +247,14 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		),
 	)
 
-	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), pinRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
-		return fmt.Errorf("failed to register pin routes: %w", err)
-	}
-
 	// Other IPFS routes
-	ipfsApiGroup, err := r.Group("/api")
+	apiGroup, err := r.Group("/api")
 	if err != nil {
 		return fmt.Errorf("failed to create api group: %w", err)
+	}
+
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), pinRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register pin routes: %w", err)
 	}
 
 	ipfsRoutes := router.DefineRoutes(
@@ -299,12 +299,12 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		),
 	)
 
-	if err := router.RegisterRoutes(ipfsApiGroup, accessSvc, a.Subdomain(), ipfsRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), ipfsRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register ipfs routes: %w", err)
 	}
 
 	// IPFS content addressing routes
-	ipfsContentGroup, err := r.Group("/ipfs")
+	ipfsContentGroup, err := apiGroup.Group("/ipfs")
 	if err != nil {
 		return fmt.Errorf("failed to create ipfs content group: %w", err)
 	}
@@ -331,8 +331,13 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		),
 	)
 
-	if err := router.RegisterRoutes(ipfsContentGroup, accessSvc, a.Subdomain(), ipfsContentRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
+	if err = router.RegisterRoutes(ipfsContentGroup, accessSvc, a.Subdomain(), ipfsContentRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register ipfs content routes: %w", err)
+	}
+
+	err = a.tus.SetupRoute(ipfsContentGroup, a.Subdomain(), true, false, TUS_HTTP_ROUTE)
+	if err != nil {
+		return err
 	}
 
 	return nil

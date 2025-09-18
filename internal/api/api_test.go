@@ -126,7 +126,7 @@ func TestAPI_listPins(t *testing.T) {
 		helper := setupPinTest(t, ctx)
 
 		// Make HTTP request
-		req := ctx.NewAPIRequest(http.MethodGet, "/pins", nil)
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/pins", nil)
 		setAuthHeader(req, helper.token)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
@@ -146,7 +146,7 @@ func TestAPI_addPin(t *testing.T) {
 
 		// Make HTTP request
 		reqBody := `{"cid":"bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4","name":"test"}`
-		req := ctx.NewAPIRequest(http.MethodPost, "/pins", []byte(reqBody))
+		req := ctx.NewAPIRequest(http.MethodPost, "/api/pins", []byte(reqBody))
 		setAuthHeader(req, token)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
@@ -167,7 +167,7 @@ func TestAPI_getPin(t *testing.T) {
 		helper := setupPinTest(t, ctx)
 
 		// Make HTTP request
-		req := ctx.NewAPIRequest(http.MethodGet, fmt.Sprintf("/pins/%s", helper.pinID), nil)
+		req := ctx.NewAPIRequest(http.MethodGet, fmt.Sprintf("/api/pins/%s", helper.pinID), nil)
 		setAuthHeader(req, helper.token)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
@@ -189,7 +189,7 @@ func TestAPI_replacePin(t *testing.T) {
 
 		// Make HTTP request
 		reqBody := `{"cid":"bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4","name":"test"}`
-		req := ctx.NewAPIRequest(http.MethodPost, fmt.Sprintf("/pins/%s", helper.pinID), []byte(reqBody))
+		req := ctx.NewAPIRequest(http.MethodPost, fmt.Sprintf("/api/pins/%s", helper.pinID), []byte(reqBody))
 		setAuthHeader(req, helper.token)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
@@ -210,7 +210,7 @@ func TestAPI_deletePin(t *testing.T) {
 		helper := setupPinTest(t, ctx)
 
 		// Make HTTP request
-		req := ctx.NewAPIRequest(http.MethodDelete, fmt.Sprintf("/pins/%s", helper.pinID), nil)
+		req := ctx.NewAPIRequest(http.MethodDelete, fmt.Sprintf("/api/pins/%s", helper.pinID), nil)
 		setAuthHeader(req, helper.token)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
