@@ -38,7 +38,7 @@ import (
 var _ core.API = (*API)(nil)
 var _ core.APITusHandler = (*API)(nil)
 
-const TUS_HTTP_ROUTE = "/upload/tus"
+const TUS_HTTP_ROUTE = "/api/upload/tus"
 
 type API struct {
 	ctx               core.Context
@@ -335,7 +335,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		return fmt.Errorf("failed to register ipfs content routes: %w", err)
 	}
 
-	err = a.tus.SetupRoute(ipfsContentGroup, a.Subdomain(), true, false, TUS_HTTP_ROUTE)
+	err = a.tus.SetupRoute(r, a.Subdomain(), true, false, TUS_HTTP_ROUTE)
 	if err != nil {
 		return err
 	}
