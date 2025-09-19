@@ -187,7 +187,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 
 	// Pinning service routes
 	pinRoutes := router.DefineRoutes(
-		router.NewRoute(http.MethodGet, "/api/pins", a.listPins,
+		router.NewRoute(http.MethodGet, "/pins", a.listPins,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("List pin objects"),
@@ -204,7 +204,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(dto.PinResultsResponse{})),
 			),
 		),
-		router.NewRoute(http.MethodPost, "/api/pins", a.addPin,
+		router.NewRoute(http.MethodPost, "/pins", a.addPin,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Add pin object"),
@@ -214,7 +214,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 				router.WithSuccessResponse(http.StatusAccepted, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
 			),
 		),
-		router.NewRoute(http.MethodGet, "/api/pins/:requestid", a.getPin,
+		router.NewRoute(http.MethodGet, "/pins/:requestid", a.getPin,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Get pin object"),
@@ -224,7 +224,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
 			),
 		),
-		router.NewRoute(http.MethodPost, "/api/pins/:requestid", a.replacePin,
+		router.NewRoute(http.MethodPost, "/pins/:requestid", a.replacePin,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Replace pin object"),
@@ -235,7 +235,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 				router.WithSuccessResponse(http.StatusAccepted, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
 			),
 		),
-		router.NewRoute(http.MethodDelete, "/api/pins/:requestid", a.deletePin,
+		router.NewRoute(http.MethodDelete, "/pins/:requestid", a.deletePin,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Remove pin object"),
