@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+
 	"go.lumeweb.com/portal/db/types"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -45,22 +46,21 @@ func (I IPFSPin) TableName() string {
 }
 
 // BeforeCreate hook to set default values
-func (pin *IPFSPin) BeforeCreate(tx *gorm.DB) error {
+func (pin *IPFSPin) BeforeCreate(_ *gorm.DB) error {
 	// Set default RequestID if not provided
 	if pin.RequestID.Empty() {
 		pin.RequestID = types.NewBinUUID()
 	}
+	return nil
+}
 
+// BeforeSave hook to validate status
+func (pin *IPFSPin) BeforeSave(_ *gorm.DB) error {
 	// Set default status if not provided
 	if pin.Status == "" {
 		pin.Status = PinningStatusQueued
 	}
 
-	return nil
-}
-
-// BeforeSave hook to validate status
-func (pin *IPFSPin) BeforeSave(tx *gorm.DB) error {
 	if _, ok := validStatuses[pin.Status]; !ok {
 		return fmt.Errorf("invalid status: %s", pin.Status)
 	}
