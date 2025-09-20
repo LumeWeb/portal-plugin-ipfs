@@ -74,7 +74,9 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 			sproto := proto.(core.StorageProtocol)
 
 			event.OnBootHTTP(ctx, func(ctx core.Context) error {
-				tus, err := service.CreateTusHandler(ctx, core.TUSHandlerConfig{
+				var _tus core.TusHandler
+				var err error
+				_tus, err = service.CreateTusHandler(ctx, core.TUSHandlerConfig{
 					Protocol: proto,
 					BasePath: TUS_HTTP_ROUTE,
 					CreatedUploadHandler: service.TUSDefaultUploadCreatedHandler(ctx, func(hook handler.HookEvent, uploaderId uint) (core.StorageHash, error) {
@@ -108,12 +110,20 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 							return
 						}
 					}, protocol.TUS_UPLOAD_WORKFLOW),
+					PreFinishResponse: service.TUSDefaultPreFinishResponse(_tus, func(hook handler.HookEvent, data io.Reader, size uint64) (core.StorageHash, error) {
+						roots, err := internal.GetCarRoots(data)
+						if err != nil {
+							return nil, err
+						}
+
+						return internal.NewIPFSHash(roots[0]), nil
+					}),
 				})
 
 				if err != nil {
 					return fmt.Errorf("failed to create tus handler: %w", err)
 				}
-				api.tus = tus
+				api.tus = _tus
 
 				return nil
 			})
