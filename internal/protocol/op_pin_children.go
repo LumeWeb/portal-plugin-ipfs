@@ -3,7 +3,10 @@ package protocol
 import (
 	"context"
 	"fmt"
+
 	"github.com/ipfs/go-cid"
+	"github.com/samber/lo"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
@@ -39,6 +42,12 @@ func (h *PinChildBlockOperationHandler) Execute(ctx context.Context, req *models
 	_, err = proto.GetNode().GetBlock(ctx, c)
 	if err != nil {
 		return fmt.Errorf("failed to pin child block %s: %w", c, err)
+	}
+
+	// Create core pin record for the child block
+	err = core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE).ProcessCIDs(ctx, []cid.Cid{c}, lo.FromPtrOr(req.UserID, 0))
+	if err != nil {
+		return fmt.Errorf("failed to process child block pin %s: %w", c, err)
 	}
 
 	return nil
