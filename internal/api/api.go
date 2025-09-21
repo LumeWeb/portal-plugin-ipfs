@@ -59,6 +59,8 @@ type ProtoNode interface {
 	GetNode() *ipfs.Node
 }
 
+var _ io.ReaderAt = (*readerAtWrapper)(nil)
+
 // readerAtWrapper wraps an io.Reader to implement io.ReaderAt
 // by using a buffered reader that tracks position
 type readerAtWrapper struct {
@@ -95,12 +97,12 @@ func (r *readerAtWrapper) ReadAt(p []byte, off int64) (n int, err error) {
 	// Read the requested bytes
 	n, err = io.ReadFull(r.reader, p)
 	r.position += int64(n)
-	
+
 	// Handle partial reads
 	if err == io.EOF || err == io.ErrUnexpectedEOF {
 		return n, io.EOF
 	}
-	
+
 	return n, err
 }
 
