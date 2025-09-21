@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sync"
 
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
@@ -121,10 +120,10 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 						if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 							return nil, err
 						}
-						
+
 						// Create a bytes.Reader that supports ReaderAt
 						reader := bytes.NewReader(buf[:n])
-						
+
 						roots, err := internal.GetCarRoots(reader, false)
 						if err != nil {
 							return nil, err
