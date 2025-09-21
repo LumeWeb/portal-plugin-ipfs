@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
+	"github.com/ipld/go-car/v2"
 	"github.com/labstack/echo/v4"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/samber/lo"
@@ -115,7 +116,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 						return _tus
 					}, func(hook handler.HookEvent, data io.Reader, size uint64) (core.StorageHash, error) {
 						// Read the first carv1.DefaultMaxAllowedHeaderSize bytes into a buffer
-						buf := make([]byte, carv1.DefaultMaxAllowedHeaderSize)
+						buf := make([]byte, car.DefaultMaxAllowedHeaderSize)
 						n, err := io.ReadFull(data, buf)
 						if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 							return nil, err
