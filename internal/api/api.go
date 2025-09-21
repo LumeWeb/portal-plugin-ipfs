@@ -101,7 +101,17 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 							}
 						}(upload)
 
-						_, err = internal.GetCarRoots(upload, true)
+						reader, err := api.createCARReader(upload)
+						if err != nil {
+							api.logger.Error("Failed to create CAR reader", zap.Error(err))
+							err = api.tus.FailUploadById(ctx, sproto, hook.Upload.ID)
+							if err != nil {
+								api.logger.Error("Failed to fail ipfsUpload", zap.Error(err))
+							}
+							return
+						}
+
+						_, err = internal.GetCarRoots(reader, true)
 
 						if err != nil {
 							api.logger.Error("Failed to validate car", zap.Error(err))
