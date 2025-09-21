@@ -101,7 +101,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 							}
 						}(upload)
 
-						reader, err := api.createCARReader(upload)
+						reader, err := createCARReader(upload)
 						if err != nil {
 							api.logger.Error("Failed to create CAR reader", zap.Error(err))
 							err = api.tus.FailUploadById(ctx, sproto, hook.Upload.ID)
