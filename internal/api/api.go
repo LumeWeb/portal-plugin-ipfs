@@ -115,7 +115,17 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 					PreFinishResponse: service.TUSDefaultPreFinishResponse(func() core.TusHandler {
 						return _tus
 					}, func(hook handler.HookEvent, data io.Reader, size uint64) (core.StorageHash, error) {
-						roots, err := internal.GetCarRoots(data, false)
+						// Read the first carv1.DefaultMaxAllowedHeaderSize bytes into a buffer
+						buf := make([]byte, carv1.DefaultMaxAllowedHeaderSize)
+						n, err := io.ReadFull(data, buf)
+						if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+							return nil, err
+						}
+						
+						// Create a bytes.Reader that supports ReaderAt
+						reader := bytes.NewReader(buf[:n])
+						
+						roots, err := internal.GetCarRoots(reader, false)
 						if err != nil {
 							return nil, err
 						}
