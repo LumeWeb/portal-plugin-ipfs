@@ -37,7 +37,7 @@ func TestTUSUploadOperationHandler_Execute_Integration(t *testing.T) {
 		carSize, err := carFile.Stat()
 		require.NoError(tb, err)
 
-		roots, err := internal.GetCarRoots(carFile)
+		roots, err := internal.GetCarRoots(carFile, false)
 		require.NoError(tb, err)
 
 		// 2. Create test user
