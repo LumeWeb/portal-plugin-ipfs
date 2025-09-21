@@ -898,6 +898,10 @@ go.lumeweb.com/portal v0.4.2-0.20250920233543-b500d998a33a h1:9xBQMkZhTVIbn2M6Ak
 go.lumeweb.com/portal v0.4.2-0.20250920233543-b500d998a33a/go.mod h1:Ue8rxq1lBAbBCpmzoUkwitVWBsjwafdFxsSu55E/DXw=
 go.lumeweb.com/portal v0.4.2-0.20250921012901-e5882a677a82 h1:ahYwf8/5tmVcX/3BHRJEb6MnyNpLUcfPNDgElElOSms=
 go.lumeweb.com/portal v0.4.2-0.20250921012901-e5882a677a82/go.mod h1:Ue8rxq1lBAbBCpmzoUkwitVWBsjwafdFxsSu55E/DXw=
+go.lumeweb.com/portal v0.4.2-0.20250921110520-89af8254efd4 h1:7x1AADldJnSfGGI9ATQYO+BxAK15xgJk6jgNAlzWQAM=
+go.lumeweb.com/portal v0.4.2-0.20250921110520-89af8254efd4/go.mod h1:Ue8rxq1lBAbBCpmzoUkwitVWBsjwafdFxsSu55E/DXw=
+go.lumeweb.com/portal v0.4.2-0.20250921120801-338455d0201f h1:BvqAKav9W8ZmQuro7y+i1ugbz1W3AX3GqU4EZtQC/Jo=
+go.lumeweb.com/portal v0.4.2-0.20250921120801-338455d0201f/go.mod h1:Ue8rxq1lBAbBCpmzoUkwitVWBsjwafdFxsSu55E/DXw=
 go.lumeweb.com/portal-middleware v0.3.1 h1:XfYQPqCWFkUbyGa0nSbKlHYxZgs+jVdovkQusTACbBs=
 go.lumeweb.com/portal-middleware v0.3.1/go.mod h1:zxCrbMLGjhnzCl3lC/fFp3583/2eRLAsCiwnTrs+O48=
 go.lumeweb.com/portal-middleware v0.3.2 h1:xtDwpvnuAKm9yvhKRi9JSbpHYk9O9VXC7WOVSpKKAVA=

@@ -3,6 +3,8 @@ package upload
 import (
 	"context"
 	"fmt"
+	"io"
+
 	"github.com/ipfs/go-cid"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
@@ -11,7 +13,6 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"gorm.io/gorm"
-	"io"
 )
 
 var _ pluginCore.UploadService = (*UploadServiceDefault)(nil)
@@ -55,7 +56,7 @@ func (s *UploadServiceDefault) HandleUpload(ctx context.Context, reader io.ReadS
 		return cid.Undef, "", err
 	}
 
-	roots, err := internal.GetCarRoots(reader)
+	roots, err := internal.GetCarRoots(reader, false)
 	if err != nil {
 		return cid.Undef, "", err
 	}

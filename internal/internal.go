@@ -2,16 +2,17 @@ package internal
 
 import (
 	"fmt"
+	"io"
+
 	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
-	"io"
 )
 
 const ProtocolName = "ipfs"
 
 var cidUndefSlice = []cid.Cid{cid.Undef}
 
-func GetCarRoots(reader io.Reader) ([]cid.Cid, error) {
+func GetCarRoots(reader io.Reader, inspect bool) ([]cid.Cid, error) {
 	readerAt, ok := reader.(io.ReaderAt)
 	if !ok {
 		return cidUndefSlice, fmt.Errorf("reader does not implement io.ReaderAt")
@@ -20,10 +21,15 @@ func GetCarRoots(reader io.Reader) ([]cid.Cid, error) {
 	if err != nil {
 		return cidUndefSlice, err
 	}
-	_, err = carReader.Inspect(true)
-	if err != nil {
-		return cidUndefSlice, err
+	
+	if inspect {
+		_, err = carReader.Inspect(true)
+		if err != nil {
+			return cidUndefSlice, err
+		}
+
 	}
+
 	roots, err := carReader.Roots()
 	if err != nil {
 		return cidUndefSlice, err
