@@ -739,7 +739,7 @@ func (a *API) handleGetInfo(c echo.Context) error {
 	return httputil.EncodeResponse(ctx, &nodeInfo, &dto.InfoResponse{})
 }
 
-func createCARReader(data io.Reader) (io.ReaderAt, error) {
+func createCARReader(data io.Reader) (io.Reader, error) {
 	// Read the first carv1.DefaultMaxAllowedHeaderSize bytes into a buffer
 	buf := make([]byte, car.DefaultMaxAllowedHeaderSize)
 	n, err := io.ReadFull(data, buf)
@@ -751,4 +751,3 @@ func createCARReader(data io.Reader) (io.ReaderAt, error) {
 	reader := bytes.NewReader(buf[:n])
 	return reader, nil
 }
-
