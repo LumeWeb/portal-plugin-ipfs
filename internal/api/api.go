@@ -101,10 +101,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 							}
 						}(upload)
 
-						// Wrap the reader to ensure it implements io.ReaderAt
-						readerAt := &readerAtWrapper{reader: upload}
-
-						_, err = internal.GetCarRoots(readerAt, false)
+						_, err = internal.GetCarRoots(upload, true)
 
 						if err != nil {
 							api.logger.Error("Failed to validate car", zap.Error(err))
@@ -118,7 +115,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 					PreFinishResponse: service.TUSDefaultPreFinishResponse(func() core.TusHandler {
 						return _tus
 					}, func(hook handler.HookEvent, data io.Reader, size uint64) (core.StorageHash, error) {
-						roots, err := internal.GetCarRoots(data, true)
+						roots, err := internal.GetCarRoots(data, false)
 						if err != nil {
 							return nil, err
 						}
