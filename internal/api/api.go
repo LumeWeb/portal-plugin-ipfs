@@ -110,7 +110,9 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 							return
 						}
 					}, protocol.TUS_UPLOAD_WORKFLOW),
-					PreFinishResponse: service.TUSDefaultPreFinishResponse(_tus, func(hook handler.HookEvent, data io.Reader, size uint64) (core.StorageHash, error) {
+					PreFinishResponse: service.TUSDefaultPreFinishResponse(func() core.TusHandler {
+						return _tus
+					}, func(hook handler.HookEvent, data io.Reader, size uint64) (core.StorageHash, error) {
 						roots, err := internal.GetCarRoots(data)
 						if err != nil {
 							return nil, err
