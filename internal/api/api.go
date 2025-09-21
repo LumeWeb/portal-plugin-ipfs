@@ -125,7 +125,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 					PreFinishResponse: service.TUSDefaultPreFinishResponse(func() core.TusHandler {
 						return _tus
 					}, func(hook handler.HookEvent, data io.Reader, size uint64) (core.StorageHash, error) {
-						reader, err := api.createCARReader(data)
+						reader, err := createCARReader(data)
 						if err != nil {
 							return nil, err
 						}
@@ -739,7 +739,7 @@ func (a *API) handleGetInfo(c echo.Context) error {
 	return httputil.EncodeResponse(ctx, &nodeInfo, &dto.InfoResponse{})
 }
 
-func (a *API) createCARReader(data io.Reader) (io.ReaderAt, error) {
+func createCARReader(data io.Reader) (io.ReaderAt, error) {
 	// Read the first carv1.DefaultMaxAllowedHeaderSize bytes into a buffer
 	buf := make([]byte, car.DefaultMaxAllowedHeaderSize)
 	n, err := io.ReadFull(data, buf)
@@ -751,3 +751,4 @@ func (a *API) createCARReader(data io.Reader) (io.ReaderAt, error) {
 	reader := bytes.NewReader(buf[:n])
 	return reader, nil
 }
+
