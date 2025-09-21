@@ -59,62 +59,6 @@ type ProtoNode interface {
 	GetNode() *ipfs.Node
 }
 
-var _ io.ReaderAt = (*readerAtWrapper)(nil)
-
-// readerAtWrapper wraps an io.Reader to implement io.ReaderAt
-// by using a buffered reader that tracks position
-type readerAtWrapper struct {
-	reader   io.Reader
-	buffer   *bytes.Buffer
-	position int64
-	mutex    sync.Mutex
-}
-
-func (r *readerAtWrapper) ReadAt(p []byte, off int64) (n int, err error) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	// If seeking backwards from current position, we can't support it properly
-	// since we don't have the previous data. This is a limitation of wrapping
-	// a sequential reader into a random-access reader.
-	if off < r.position {
-		return 0, errors.New("readerAtWrapper: cannot seek backwards from current position")
-	}
-
-	// Skip bytes to reach the desired offset if needed
-	if off > r.position {
-		skip := off - r.position
-		_, err := io.CopyN(io.Discard, r.reader, skip)
-		if err != nil {
-			if err == io.EOF {
-				return 0, io.EOF
-			}
-			return 0, err
-		}
-		r.position = off
-	}
-
-	// Read the requested bytes
-	n, err = io.ReadFull(r.reader, p)
-	r.position += int64(n)
-
-	// Handle partial reads
-	if err == io.EOF || err == io.ErrUnexpectedEOF {
-		return n, io.EOF
-	}
-
-	return n, err
-}
-
-func (r *readerAtWrapper) Read(p []byte) (n int, err error) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	n, err = r.reader.Read(p)
-	r.position += int64(n)
-	return n, err
-}
-
 func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 	api := &API{}
 	return api, core.ContextOptions(
@@ -160,7 +104,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 						// Wrap the reader to ensure it implements io.ReaderAt
 						readerAt := &readerAtWrapper{reader: upload}
 
-						_, err = internal.GetCarRoots(readerAt)
+						_, err = internal.GetCarRoots(readerAt, false)
 
 						if err != nil {
 							api.logger.Error("Failed to validate car", zap.Error(err))
@@ -174,7 +118,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 					PreFinishResponse: service.TUSDefaultPreFinishResponse(func() core.TusHandler {
 						return _tus
 					}, func(hook handler.HookEvent, data io.Reader, size uint64) (core.StorageHash, error) {
-						roots, err := internal.GetCarRoots(data)
+						roots, err := internal.GetCarRoots(data, true)
 						if err != nil {
 							return nil, err
 						}

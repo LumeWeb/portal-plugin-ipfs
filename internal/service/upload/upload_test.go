@@ -43,7 +43,7 @@ func TestUploadService_HandleUpload(t *testing.T) {
 
 		userId := uint(123)
 
-		roots, err := internal.GetCarRoots(testReader)
+		roots, err := internal.GetCarRoots(testReader, false)
 		require.NoError(tb, err)
 
 		// Set expectations on the mock services
