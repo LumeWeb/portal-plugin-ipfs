@@ -12,6 +12,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/upload"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/web/go/portal-plugin-ipfs"
 )
 
 func init() {
@@ -48,6 +49,7 @@ func init() {
 			core.DB_TYPE_SQLITE: migrations.GetSQLite(),
 			core.DB_TYPE_MYSQL:  migrations.GetMySQL(),
 		},
+		WebBundles: core.NewWebBundles(core.NewWebBundle(portal_plugin_ipfs.GetFS(), core.WithWebBundleTargetApps("dashboard"))),
 	})
 
 	internal.RegisterHashes()

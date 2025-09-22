@@ -271,6 +271,7 @@ require (
 	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20250902102957-647bde87ec98 // indirect
 	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20250901035555-d0898ae91f80 // indirect
 	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20250902102957-647bde87ec98 // indirect
+	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20250922174307-2f5de9e6503c // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel v1.37.0 // indirect
 	go.opentelemetry.io/otel/metric v1.37.0 // indirect
