@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log"
+	"path/filepath"
+
 	"github.com/ipfs/boxo/blockstore"
 	levelds "github.com/ipfs/go-ds-leveldb"
 	ipfsLog "github.com/ipfs/go-log/v2"
@@ -22,9 +26,6 @@ import (
 	"go.lumeweb.com/portal/service"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
-	"io"
-	"log"
-	"path/filepath"
 )
 
 var _ core.Protocol = (*Protocol)(nil)
@@ -201,6 +202,10 @@ func (p Protocol) GetNode() *ipfs.Node {
 
 func (p Protocol) Name() string {
 	return internal.ProtocolName
+}
+
+func (p Protocol) DisplayName() string {
+	return internal.ProtocolDisplayName
 }
 
 func (p Protocol) Config() config.ProtocolConfig {
