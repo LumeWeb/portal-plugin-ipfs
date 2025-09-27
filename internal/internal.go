@@ -9,6 +9,7 @@ import (
 )
 
 const ProtocolName = "ipfs"
+const ProtocolDisplayName = "IPFS"
 
 var cidUndefSlice = []cid.Cid{cid.Undef}
 
@@ -21,7 +22,7 @@ func GetCarRoots(reader io.Reader, inspect bool) ([]cid.Cid, error) {
 	if err != nil {
 		return cidUndefSlice, err
 	}
-	
+
 	if inspect {
 		_, err = carReader.Inspect(true)
 		if err != nil {
