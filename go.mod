@@ -32,7 +32,7 @@ require (
 	github.com/tus/tusd/v2 v2.8.0
 	go.lumeweb.com/httputil v0.5.3
 	go.lumeweb.com/portal v0.4.2-0.20250927013046-41c69f1889b1
-	go.lumeweb.com/portal-middleware v0.3.2
+	go.lumeweb.com/portal-middleware v0.3.3
 	go.lumeweb.com/portal-plugin-core v0.0.0-20250901040103-722b9278443b
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20250907005009-b11aa07802ad
 	go.lumeweb.com/portal-router v0.6.7
@@ -42,7 +42,6 @@ require (
 	golang.org/x/crypto v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/datatypes v1.2.6
-	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.31.0
 )
 
@@ -305,6 +304,7 @@ require (
 	google.golang.org/grpc v1.73.0 // indirect
 	google.golang.org/protobuf v1.36.7 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
+	gorm.io/driver/mysql v1.6.0 // indirect
 	gorm.io/driver/postgres v1.6.0 // indirect
 	gorm.io/driver/sqlite v1.6.0 // indirect
 	gorm.io/driver/sqlserver v1.6.0 // indirect
