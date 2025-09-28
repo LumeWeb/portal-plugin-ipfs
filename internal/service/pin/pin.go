@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // PinServiceDefault implements the IPFSPinService interface
@@ -203,75 +204,64 @@ func (s *PinServiceDefault) ReplacePin(ctx context.Context, _ uint, _ string, ol
 
 // DeletePin soft-deletes a pin job by its RequestID.
 func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.BinaryUUID) error {
-	// First, get the pin record being deleted to extract UserID and CID
-	pin, err := s.GetPinByRequestID(ctx, requestID)
-	if err != nil {
-		return err
-	}
-
-	// If pin doesn't exist, nothing to do
-	if pin == nil {
-		return nil
-	}
-
-	// Count other active pins by the same user for the same CID
-	otherPinsCount, err := s.countUserPinsByCID(ctx, pin.UserID, pin.CID, requestID)
-	if err != nil {
-		s.logger.Error("Failed to count other user pins for CID",
-			zap.Error(err),
-			zap.Uint("user_id", pin.UserID),
-			zap.Binary("cid", pin.CID),
-			zap.String("request_id", requestID.String()))
-		return err
-	}
-
-	// Only call core unpin operation if there are no other active pins for this user/CID combination
-	if otherPinsCount == 0 {
-		cidToUnpin, err := cid.Parse(pin.CID)
-		if err != nil {
-			s.logger.Error("Failed to parse CID for unpinning",
-				zap.Error(err),
-				zap.Binary("cid", pin.CID))
-			return fmt.Errorf("failed to parse CID: %w", err)
+	// load + delete + re-check inside one txn with row lock; unpin after commit
+	var (
+		pin         pluginDb.IPFSPin
+		shouldUnpin bool
+	)
+	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
+		// Lock the target row to serialize concurrent deletes on same request
+		if err := g.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("request_id = ?", requestID).
+			First(&pin).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				// If pin doesn't exist, nothing to do
+				return g
+			}
+			_ = g.AddError(err)
 		}
-
-		hash := internal.NewIPFSHash(cidToUnpin)
-		if err := s.pinSvc.DeletePinByHash(hash, pin.UserID); err != nil {
-			s.logger.Error("Failed to unpin CID in core",
-				zap.Error(err),
-				zap.Stringer("cid", cidToUnpin),
-				zap.Uint("user_id", pin.UserID))
-			return fmt.Errorf("failed to unpin CID in core: %w", err)
-		}
-
-		s.logger.Debug("Core unpin operation completed",
-			zap.Stringer("cid", cidToUnpin),
-			zap.Uint("user_id", pin.UserID))
-	}
-
-	// Always soft-delete the IPFSPin record
-	err = db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
+		// Soft-delete the target
 		if err := g.WithContext(ctx).
 			Where("request_id = ?", requestID).
-			Delete(&pluginDb.IPFSPin{}).
-			Error; err != nil {
-			_ = g.AddError(fmt.Errorf("failed to delete pin: %w", err))
-			return g
+			Delete(&pluginDb.IPFSPin{}).Error; err != nil {
+			_ = g.AddError(err)
 		}
+		// Check if any other active pins remain for (user_id, cid)
+		var cnt int64
+		if err := g.WithContext(ctx).
+			Model(&pluginDb.IPFSPin{}).
+			Where("user_id = ? AND cid = ? AND request_id != ?", pin.UserID, pin.CID, requestID).
+			Limit(1).Count(&cnt).Error; err != nil {
+			_ = g.AddError(err)
+		}
+		shouldUnpin = (cnt == 0)
 		return g
 	})
-
 	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil
+		}
 		s.logger.Error("Failed to delete pin",
 			zap.Error(err),
 			zap.String("request_id", requestID.String()))
 		return err
 	}
-
-	s.logger.Debug("Deleted pin record",
-		zap.String("request_id", requestID.String()),
-		zap.Uint("user_id", pin.UserID),
-		zap.Int64("other_pins_count", otherPinsCount))
+	if shouldUnpin {
+		c, err := cid.Cast(pin.CID)
+		if err != nil {
+			return fmt.Errorf("cid cast: %w", err)
+		}
+		if err := s.pinSvc.DeletePinByHash(internal.NewIPFSHash(c), pin.UserID); err != nil {
+			s.logger.Error("Failed to unpin CID in core",
+				zap.Error(err),
+				zap.Stringer("cid", c),
+				zap.Uint("user_id", pin.UserID))
+			return fmt.Errorf("failed to unpin CID in core: %w", err)
+		}
+		s.logger.Debug("Core unpin operation completed", zap.Stringer("cid", c), zap.Uint("user_id", pin.UserID))
+	}
+	s.logger.Debug("Deleted pin record", zap.String("request_id", requestID.String()), zap.Uint("user_id", pin.UserID))
 	return nil
 }
 
