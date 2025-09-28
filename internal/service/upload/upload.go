@@ -76,20 +76,6 @@ func (s *UploadServiceDefault) HandleUpload(ctx context.Context, reader io.ReadS
 		return cid.Undef, "", err
 	}
 
-	// TODO: check if we need to prevent duplication here or in AddPin
-	_, err = s.pin.AddPin(ctx, &pluginDb.IPFSPin{
-		UserID:    userId,
-		CID:       roots[0].Bytes(),
-		Name:      "",
-		Origins:   nil,
-		Meta:      nil,
-		Delegates: nil,
-		Info:      nil,
-	})
-	if err != nil {
-		return cid.Undef, "", err
-	}
-
 	return roots[0], uploadId, nil
 }
 
