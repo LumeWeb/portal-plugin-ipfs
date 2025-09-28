@@ -123,12 +123,25 @@ func (s *UploadServiceDefault) ProcessCIDs(ctx context.Context, cids []cid.Cid, 
 			UserID:   uploadMeta.UserID,
 		}
 
-		// Create the upload record
+		// Create the core pin record
 		_, err = s.corePin.CreatePin(ctx, pinMeta, nil)
 		if err != nil {
 			return fmt.Errorf("failed to create pin record: %w", err)
 		}
 
+		// Create the IPFS pin record
+		_, err = s.pin.AddPin(ctx, &pluginDb.IPFSPin{
+			UserID:    userId,
+			CID:       _cid.Bytes(),
+			Name:      "",
+			Origins:   nil,
+			Meta:      nil,
+			Delegates: nil,
+			Info:      nil,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create IPFS pin record: %w", err)
+		}
 	}
 
 	return nil
