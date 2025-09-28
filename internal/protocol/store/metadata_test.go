@@ -5,6 +5,7 @@ import (
 	"fmt"
 	format "github.com/ipfs/go-ipld-format"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal/core"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ func createPinnedBlock(tb testing.TB, ctx coreTesting.TestContext, data string) 
 func TestMetadataStore_PinUnpinBlockExists(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		testData := "test data"
 		pinnedBlock := createPinnedBlock(tb, ctx, testData)
 
@@ -64,7 +65,7 @@ func TestMetadataStore_PinUnpinBlockExists(t *testing.T) {
 func TestMetadataStore_BlockChildren(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 
 		// Generate test data and CIDs first
 		parentData := "parent data"
@@ -112,7 +113,7 @@ func TestMetadataStore_BlockChildren(t *testing.T) {
 func TestMetadataStore_BlockSiblings(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		parentData := "parent data"
 		child1Data := "child1 data"
 		child1Cid := generateCid(t, child1Data)
@@ -156,7 +157,7 @@ func TestMetadataStore_BlockSiblings(t *testing.T) {
 func TestMetadataStore_ProvideCIDs(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		testData1 := "test data 1"
 		testCid1 := generateCid(t, testData1)
 		testData2 := "test data 2"
@@ -184,7 +185,7 @@ func TestMetadataStore_ProvideCIDs(t *testing.T) {
 func TestMetadataStore_SetLastAnnouncement(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		testData := "test data"
 		pinnedBlock := createPinnedBlock(tb, ctx, testData)
 		err := metadataStore.Pin(pinnedBlock)
@@ -209,7 +210,7 @@ func TestMetadataStore_SetLastAnnouncement(t *testing.T) {
 func TestMetadataStore_Pinned(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		testData1 := "test data 1"
 		testCid1 := generateCid(t, testData1)
 		testData2 := "test data 2"
@@ -236,7 +237,7 @@ func TestMetadataStore_Pinned(t *testing.T) {
 func TestMetadataStore_Size(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		testData := "test data"
 		pinnedBlock := createPinnedBlock(tb, ctx, testData)
 		err := metadataStore.Pin(pinnedBlock)
@@ -254,7 +255,7 @@ func TestMetadataStore_Size(t *testing.T) {
 func TestMetadataStore_UpdateUnixFSMetadata(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		testData := "test data"
 		pinnedBlock := createPinnedBlock(tb, ctx, testData)
 		err := metadataStore.Pin(pinnedBlock)
@@ -281,7 +282,7 @@ func TestMetadataStore_UpdateUnixFSMetadata(t *testing.T) {
 func TestMetadataStore_GetUnixFSMetadata(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		testData := "test data"
 		pinnedBlock := createPinnedBlock(tb, ctx, testData)
 
@@ -310,7 +311,7 @@ func TestMetadataStore_GetUnixFSMetadata(t *testing.T) {
 func TestMetadataStore_MarkBlockReady(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		testData := "test data"
 		pinnedBlock := createPinnedBlock(tb, ctx, testData)
 		err := metadataStore.Pin(pinnedBlock)
@@ -340,7 +341,7 @@ func TestMetadataStore_MarkBlockReady(t *testing.T) {
 func TestMetadataStore_SetLastAnnouncement_NoBlockFound(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		testData := "test data"
 		testCid := generateCid(t, testData)
 
@@ -358,7 +359,7 @@ func TestMetadataStore_SetLastAnnouncement_NoBlockFound(t *testing.T) {
 func TestMetadataStore_Pin_DuplicateLinks(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		parentData := "parent data"
 		parentCid := generateCid(t, parentData)
 		childData := "child data"
@@ -390,7 +391,7 @@ func TestMetadataStore_Pin_DuplicateLinks(t *testing.T) {
 func TestMetadataStore_Pin_ExistingLinkedBlockWithoutParent(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		parentData := "parent data"
 		parentCid := generateCid(t, parentData)
 		childData := "child data"
@@ -431,7 +432,7 @@ func TestMetadataStore_Pin_ExistingLinkedBlockWithoutParent(t *testing.T) {
 func TestMetadataStore_Unpin_NonExistentBlock(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		testData := "test data"
 		testCid := generateCid(t, testData)
 
@@ -446,7 +447,7 @@ func TestMetadataStore_Unpin_NonExistentBlock(t *testing.T) {
 func TestMetadataStore_Unpin_WithLinkedBlocks(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protoNode))
+		metadataStore := NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(*protocol.Protocol))
 		parentData := "parent data"
 		parentBlock := createPinnedBlock(tb, ctx, parentData)
 		childData := "child data"

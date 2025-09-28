@@ -67,7 +67,7 @@ func (h *PinChildBlockOperationHandler) Cleanup(_ context.Context, _ *models.Req
 
 func NewPinChildBlocksOperation(ctx core.Context) core.Operation {
 	return core.NewOperation(
-		fmt.Sprintf("%s.pin.children", internal.ProtocolName),
+		pinChildrenOperationName(),
 		"", // No global type for pin children
 		&PinChildBlockOperationHandler{
 			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),

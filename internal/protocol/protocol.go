@@ -33,6 +33,15 @@ var _ core.StorageProtocol = (*Protocol)(nil)
 var _ core.ProtocolGetPinHandler = (*Protocol)(nil)
 var _ core.ProtocolPinHandler = (*pinHandler)(nil)
 
+// Helper functions for operation names
+func pinChildrenOperationName() string {
+	return core.OperationName(internal.ProtocolName, "pin", "children")
+}
+
+func confirmOperationName() string {
+	return core.OperationName(internal.ProtocolName, "confirm")
+}
+
 type Protocol struct {
 	ctx           core.Context
 	db            *gorm.DB
@@ -82,27 +91,27 @@ func (p Protocol) Workflows() []core.WorkflowDefinition {
 				{
 					Operation:       core.RetrieveOperationName(internal.ProtocolName),
 					FailureBehavior: core.RetryStep,
-					ID:              "ipfs.retrieve",
+					ID:              core.RetrieveOperationName(internal.ProtocolName),
 				},
 				{
 					Operation:       core.ScanOperationName(internal.ProtocolName),
 					FailureBehavior: core.RetryStep,
-					ID:              "ipfs.scan",
+					ID:              core.ScanOperationName(internal.ProtocolName),
 				},
 				{
 					Operation:       core.StoreOperationName(internal.ProtocolName),
 					FailureBehavior: core.RetryStep,
-					ID:              "ipfs.store",
+					ID:              core.StoreOperationName(internal.ProtocolName),
 				},
 				{
 					Operation:       core.PublishOperationName(internal.ProtocolName),
 					FailureBehavior: core.ContinueWorkflow,
-					ID:              "ipfs.publish",
+					ID:              core.PublishOperationName(internal.ProtocolName),
 				},
 				{
-					Operation:       "ipfs.confirm",
+					Operation:       confirmOperationName(),
 					FailureBehavior: core.RetryStep,
-					ID:              "ipfs.confirm",
+					ID:              confirmOperationName(),
 				},
 			},
 		},
@@ -111,9 +120,9 @@ func (p Protocol) Workflows() []core.WorkflowDefinition {
 			AutoTriggerFirstStep: true,
 			Steps: []core.OperationStep{
 				{
-					Operation:       "ipfs.pin.children",
+					Operation:       pinChildrenOperationName(),
 					FailureBehavior: core.RetryStep,
-					ID:              "ipfs.pin-children",
+					ID:              pinChildrenOperationName(),
 				},
 			},
 		},
@@ -122,9 +131,9 @@ func (p Protocol) Workflows() []core.WorkflowDefinition {
 			AutoTriggerFirstStep: true,
 			Steps: []core.OperationStep{
 				{
-					Operation:       "ipfs.post.upload",
+					Operation:       core.PostUploadOperationName(p.Name()),
 					FailureBehavior: core.RetryStep,
-					ID:              "ipfs.post-upload",
+					ID:              core.PostUploadOperationName(p.Name()),
 				},
 			},
 		},
@@ -135,7 +144,7 @@ func (p Protocol) Workflows() []core.WorkflowDefinition {
 				{
 					Operation:       core.TUSUploadOperationName(p.Name()),
 					FailureBehavior: core.RetryStep,
-					ID:              "ipfs.tus-upload",
+					ID:              core.TUSUploadOperationName(p.Name()),
 				},
 			},
 		},
