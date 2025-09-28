@@ -208,6 +208,7 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 	var (
 		pin         pluginDb.IPFSPin
 		shouldUnpin bool
+		loaded      bool
 	)
 	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
 		// Lock the target row to serialize concurrent deletes on same request
@@ -220,12 +221,15 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 				return g
 			}
 			_ = g.AddError(err)
+			return g
 		}
+		loaded = true
 		// Soft-delete the target
 		if err := g.WithContext(ctx).
 			Where("request_id = ?", requestID).
 			Delete(&pluginDb.IPFSPin{}).Error; err != nil {
 			_ = g.AddError(err)
+			return g
 		}
 		// Check if any other active pins remain for (user_id, cid)
 		var cnt int64
@@ -234,19 +238,22 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 			Where("user_id = ? AND cid = ? AND request_id != ?", pin.UserID, pin.CID, requestID).
 			Limit(1).Count(&cnt).Error; err != nil {
 			_ = g.AddError(err)
+			return g
 		}
 		shouldUnpin = (cnt == 0)
 		return g
 	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil
-		}
 		s.logger.Error("Failed to delete pin",
 			zap.Error(err),
 			zap.String("request_id", requestID.String()))
 		return err
 	}
+	
+	if !loaded {
+		return nil
+	}
+
 	if shouldUnpin {
 		c, err := cid.Cast(pin.CID)
 		if err != nil {
