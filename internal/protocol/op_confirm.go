@@ -82,7 +82,7 @@ func (h *ConfirmOperationHandler) Cleanup(_ context.Context, _ *models.Request) 
 
 func NewConfirmOperation(ctx core.Context) core.Operation {
 	return core.NewOperation(
-		fmt.Sprintf("%s.confirm", internal.ProtocolName),
+		confirmOperationName(),
 		"", // No global type for confirm
 		&ConfirmOperationHandler{
 			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),

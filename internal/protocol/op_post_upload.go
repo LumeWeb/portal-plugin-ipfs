@@ -78,9 +78,7 @@ func (h *PostUploadOperationHandler) Cleanup(ctx context.Context, req *models.Re
 }
 
 func NewPostUploadOperation(ctx core.Context) core.Operation {
-	return core.NewOperation(
-		fmt.Sprintf("%s.post.upload", internal.ProtocolName),
-		core.OpTypeUpload,
+	return core.NewPostUploadOperation(internal.ProtocolName,
 		&PostUploadOperationHandler{
 			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
 		},
