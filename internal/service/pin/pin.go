@@ -27,6 +27,7 @@ type PinServiceDefault struct {
 	logger   *core.Logger
 	workflow core.WorkflowService
 	ipfs     *protocol.Protocol
+	pinSvc   core.PinService
 }
 
 // Ensure PinServiceDefault implements the interface
@@ -42,6 +43,7 @@ func NewPinService() (core.Service, []core.ContextBuilderOption, error) {
 			svc.logger = ctx.ServiceLogger(svc)
 			svc.db = ctx.DB()
 			svc.workflow = core.GetService[core.WorkflowService](ctx, core.WORKFLOW_SERVICE)
+			svc.pinSvc = core.GetService[core.PinService](ctx, core.PIN_SERVICE)
 			proto := core.GetProtocol(internal.ProtocolName)
 			ipfsProto, ok := proto.(*protocol.Protocol)
 			if !ok {
@@ -201,7 +203,54 @@ func (s *PinServiceDefault) ReplacePin(ctx context.Context, _ uint, _ string, ol
 
 // DeletePin soft-deletes a pin job by its RequestID.
 func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.BinaryUUID) error {
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
+	// First, get the pin record being deleted to extract UserID and CID
+	pin, err := s.GetPinByRequestID(ctx, requestID)
+	if err != nil {
+		return err
+	}
+
+	// If pin doesn't exist, nothing to do
+	if pin == nil {
+		return nil
+	}
+
+	// Count other active pins by the same user for the same CID
+	otherPinsCount, err := s.countUserPinsByCID(ctx, pin.UserID, pin.CID, requestID)
+	if err != nil {
+		s.logger.Error("Failed to count other user pins for CID",
+			zap.Error(err),
+			zap.Uint("user_id", pin.UserID),
+			zap.Binary("cid", pin.CID),
+			zap.String("request_id", requestID.String()))
+		return err
+	}
+
+	// Only call core unpin operation if there are no other active pins for this user/CID combination
+	if otherPinsCount == 0 {
+		cidToUnpin, err := cid.Parse(pin.CID)
+		if err != nil {
+			s.logger.Error("Failed to parse CID for unpinning",
+				zap.Error(err),
+				zap.Binary("cid", pin.CID))
+			return fmt.Errorf("failed to parse CID: %w", err)
+		}
+
+		hash := internal.NewIPFSHash(cidToUnpin)
+		if err := s.pinSvc.DeletePinByHash(hash, pin.UserID); err != nil {
+			s.logger.Error("Failed to unpin CID in core",
+				zap.Error(err),
+				zap.Stringer("cid", cidToUnpin),
+				zap.Uint("user_id", pin.UserID))
+			return fmt.Errorf("failed to unpin CID in core: %w", err)
+		}
+
+		s.logger.Debug("Core unpin operation completed",
+			zap.Stringer("cid", cidToUnpin),
+			zap.Uint("user_id", pin.UserID))
+	}
+
+	// Always soft-delete the IPFSPin record
+	err = db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
 		if err := g.WithContext(ctx).
 			Where("request_id = ?", requestID).
 			Delete(&pluginDb.IPFSPin{}).
@@ -219,8 +268,10 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 		return err
 	}
 
-	s.logger.Debug("Deleted pin",
-		zap.String("request_id", requestID.String()))
+	s.logger.Debug("Deleted pin record",
+		zap.String("request_id", requestID.String()),
+		zap.Uint("user_id", pin.UserID),
+		zap.Int64("other_pins_count", otherPinsCount))
 	return nil
 }
 
@@ -265,6 +316,24 @@ func (s *PinServiceDefault) UpdatePinStatus(ctx context.Context, requestID types
 		zap.String("status", string(status)),
 		zap.Int64("rows_affected", rowsAffected))
 	return nil
+}
+
+// countUserPinsByCID counts active pin records for a specific user and CID, excluding a specific request ID
+func (s *PinServiceDefault) countUserPinsByCID(ctx context.Context, userID uint, cidBytes []byte, excludeRequestID types.BinaryUUID) (int64, error) {
+	var count int64
+
+	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
+		query := g.WithContext(ctx).Model(&pluginDb.IPFSPin{}).
+			Where("user_id = ? AND cid = ? AND request_id != ?", userID, cidBytes, excludeRequestID)
+
+		return query.Count(&count)
+	})
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to count user pins by CID: %w", err)
+	}
+
+	return count, nil
 }
 
 // addDelegateAddresses retrieves delegate addresses and marshals them to JSON, then sets them on the pin model
