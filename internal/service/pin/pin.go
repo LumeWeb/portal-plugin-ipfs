@@ -232,11 +232,8 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 			return g
 		}
 		// Check if any other active pins remain for (user_id, cid)
-		var cnt int64
-		if err := g.WithContext(ctx).
-			Model(&pluginDb.IPFSPin{}).
-			Where("user_id = ? AND cid = ? AND request_id != ?", pin.UserID, pin.CID, requestID).
-			Limit(1).Count(&cnt).Error; err != nil {
+		cnt, err := s.countUserPinsByCID(ctx, pin.UserID, pin.CID, requestID)
+		if err != nil {
 			_ = g.AddError(err)
 			return g
 		}
