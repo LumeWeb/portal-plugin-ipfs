@@ -86,70 +86,80 @@ func (p Protocol) PinHandler() core.ProtocolPinHandler {
 
 func (p Protocol) Workflows() []core.WorkflowDefinition {
 	return []core.WorkflowDefinition{
-		{
-			Name:                 PIN_WORKFLOW,
-			AutoTriggerFirstStep: true,
-			Steps: []core.OperationStep{
-				{
-					Operation:       core.RetrieveOperationName(internal.ProtocolName),
-					FailureBehavior: core.RetryStep,
-					ID:              core.RetrieveOperationName(internal.ProtocolName),
-				},
-				{
-					Operation:       core.ScanOperationName(internal.ProtocolName),
-					FailureBehavior: core.RetryStep,
-					ID:              core.ScanOperationName(internal.ProtocolName),
-				},
-				{
-					Operation:       core.StoreOperationName(internal.ProtocolName),
-					FailureBehavior: core.RetryStep,
-					ID:              core.StoreOperationName(internal.ProtocolName),
-				},
-				{
-					Operation:       core.PublishOperationName(internal.ProtocolName),
-					FailureBehavior: core.ContinueWorkflow,
-					ID:              core.PublishOperationName(internal.ProtocolName),
-				},
-				{
-					Operation:       confirmOperationName(),
-					FailureBehavior: core.RetryStep,
-					ID:              confirmOperationName(),
-				},
-			},
+		p.newPinWorkflow(),
+		p.newPinChildBlockWorkflow(), 
+		p.newUploadWorkflow(),
+		p.newTUSUploadWorkflow(),
+	}
+}
+
+func (p Protocol) pinWorkflowSteps() []core.OperationStep {
+	return []core.OperationStep{
+		p.newRetryStep(core.RetrieveOperationName(internal.ProtocolName)),
+		p.newRetryStep(core.ScanOperationName(internal.ProtocolName)),
+		p.newRetryStep(core.StoreOperationName(internal.ProtocolName)),
+		p.newContinueStep(core.PublishOperationName(internal.ProtocolName)),
+		p.newRetryStep(confirmOperationName()),
+	}
+}
+
+func (p Protocol) publishWorkflowSteps() []core.OperationStep {
+	return []core.OperationStep{
+		p.newRetryStep(core.PublishOperationName(internal.ProtocolName)),
+	}
+}
+
+func (p Protocol) newPinWorkflow() core.WorkflowDefinition {
+	return core.WorkflowDefinition{
+		Name:                 PIN_WORKFLOW,
+		AutoTriggerFirstStep: true,
+		Steps:                p.pinWorkflowSteps(),
+	}
+}
+
+func (p Protocol) newPinChildBlockWorkflow() core.WorkflowDefinition {
+	return core.WorkflowDefinition{
+		Name:                 PIN_CHILD_BLOCK_WORKFLOW,
+		AutoTriggerFirstStep: true,
+		Steps: append([]core.OperationStep{
+			p.newRetryStep(pinChildrenOperationName()),
+		}, p.publishWorkflowSteps()...),
+	}
+}
+
+func (p Protocol) newUploadWorkflow() core.WorkflowDefinition {
+	return core.WorkflowDefinition{
+		Name:                 UPLOAD_WORKFLOW,
+		AutoTriggerFirstStep: true,
+		Steps: []core.OperationStep{
+			p.newRetryStep(core.PostUploadOperationName(p.Name())),
 		},
-		{
-			Name:                 PIN_CHILD_BLOCK_WORKFLOW,
-			AutoTriggerFirstStep: true,
-			Steps: []core.OperationStep{
-				{
-					Operation:       pinChildrenOperationName(),
-					FailureBehavior: core.RetryStep,
-					ID:              pinChildrenOperationName(),
-				},
-			},
-		},
-		{
-			Name:                 UPLOAD_WORKFLOW,
-			AutoTriggerFirstStep: true,
-			Steps: []core.OperationStep{
-				{
-					Operation:       core.PostUploadOperationName(p.Name()),
-					FailureBehavior: core.RetryStep,
-					ID:              core.PostUploadOperationName(p.Name()),
-				},
-			},
-		},
-		{
-			Name:                 TUS_UPLOAD_WORKFLOW,
-			AutoTriggerFirstStep: true,
-			Steps: []core.OperationStep{
-				{
-					Operation:       core.TUSUploadOperationName(p.Name()),
-					FailureBehavior: core.RetryStep,
-					ID:              core.TUSUploadOperationName(p.Name()),
-				},
-			},
-		},
+	}
+}
+
+func (p Protocol) newTUSUploadWorkflow() core.WorkflowDefinition {
+	return core.WorkflowDefinition{
+		Name:                 TUS_UPLOAD_WORKFLOW,
+		AutoTriggerFirstStep: true,
+		Steps: append([]core.OperationStep{
+			p.newRetryStep(core.TUSUploadOperationName(p.Name())),
+		}, p.publishWorkflowSteps()...),
+	}
+}
+
+func (p Protocol) newRetryStep(operation string) core.OperationStep {
+	return core.OperationStep{
+		Operation:       operation,
+		FailureBehavior: core.RetryStep,
+		ID:              operation,
+	}
+}
+
+func (p Protocol) newContinueStep(operation string) core.OperationStep {
+	return core.OperationStep{
+		Operation:       operation,
+		FailureBehavior: core.ContinueWorkflow,
+		ID:              operation,
 	}
 }
 
