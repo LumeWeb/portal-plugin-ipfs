@@ -16,6 +16,8 @@ import (
 	"testing"
 )
 
+
+
 var TestOptions = coreTesting.CombineOptions(
 	coreTesting.WithServiceFactory(pluginCore.BLOCK_SERVICE, NewBlockService),
 	coreTesting.WithSQLitePluginMigrations(
@@ -23,26 +25,7 @@ var TestOptions = coreTesting.CombineOptions(
 	),
 )
 
-func createTestBlockAndNode(t *testing.T, ctx coreTesting.TestContext, cid cid.Cid, name string, nodeType uint8, blockSize int64, childCIDs []cid.Cid) (*pluginDb.IPFSBlock, *pluginDb.UnixFSNode) {
-	block := &pluginDb.IPFSBlock{
-		CID:  cid.Bytes(),
-		Size: uint64(blockSize),
-	}
-	err := ctx.DB().Create(block).Error
-	require.NoError(t, err)
 
-	node := &pluginDb.UnixFSNode{
-		BlockID:   block.ID,
-		Name:      name,
-		Type:      nodeType,
-		BlockSize: blockSize,
-		ChildCID:  childCIDs,
-	}
-	err = ctx.DB().Create(node).Error
-	require.NoError(t, err)
-
-	return block, node
-}
 
 func TestBlockService_GetBlockMeta(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
@@ -55,7 +38,7 @@ func TestBlockService_GetBlockMeta(t *testing.T) {
 		blockSize := int64(1024)
 		childCIDs := []cid.Cid{util.GenerateTestCID(t, "child1"), util.GenerateTestCID(t, "child2")}
 
-		_, expectedNode := createTestBlockAndNode(t, ctx, testCID, name, nodeType, blockSize, childCIDs)
+		_, expectedNode := util.CreateTestBlockAndNode(t, ctx, testCID, name, nodeType, blockSize, childCIDs)
 
 		// Act
 		meta, err := blockService.GetBlockMeta(context.Background(), testCID)
@@ -102,14 +85,14 @@ func TestBlockService_GetBlockMetaBatch(t *testing.T) {
 		nodeType1 := uint8(1)
 		blockSize1 := int64(1024)
 		childCIDs1 := []cid.Cid{util.GenerateTestCID(t, "child1"), util.GenerateTestCID(t, "child2")}
-		_, expectedNode1 := createTestBlockAndNode(t, ctx, testCID1, name1, nodeType1, blockSize1, childCIDs1)
+		_, expectedNode1 := util.CreateTestBlockAndNode(t, ctx, testCID1, name1, nodeType1, blockSize1, childCIDs1)
 
 		testCID2 := util.GenerateTestCID(t, "test data 2")
 		name2 := "test_file2.txt"
 		nodeType2 := uint8(2)
 		blockSize2 := int64(2048)
 		childCIDs2 := []cid.Cid{util.GenerateTestCID(t, "child3"), util.GenerateTestCID(t, "child4")}
-		_, expectedNode2 := createTestBlockAndNode(t, ctx, testCID2, name2, nodeType2, blockSize2, childCIDs2)
+		_, expectedNode2 := util.CreateTestBlockAndNode(t, ctx, testCID2, name2, nodeType2, blockSize2, childCIDs2)
 
 		cids := []cid.Cid{testCID1, testCID2}
 
@@ -159,14 +142,14 @@ func TestBlockService_GetBlockMetaBatch_Mixed(t *testing.T) {
 		nodeType1 := uint8(1)
 		blockSize1 := int64(1024)
 		childCIDs1 := []cid.Cid{util.GenerateTestCID(t, "child1"), util.GenerateTestCID(t, "child2")}
-		_, expectedNode1 := createTestBlockAndNode(t, ctx, testCID1, name1, nodeType1, blockSize1, childCIDs1)
+		_, expectedNode1 := util.CreateTestBlockAndNode(t, ctx, testCID1, name1, nodeType1, blockSize1, childCIDs1)
 
 		testCID2 := util.GenerateTestCID(t, "test data 2")
 		name2 := "test_file2.txt"
 		nodeType2 := uint8(2)
 		blockSize2 := int64(2048)
 		childCIDs2 := []cid.Cid{util.GenerateTestCID(t, "child3"), util.GenerateTestCID(t, "child4")}
-		_, expectedNode2 := createTestBlockAndNode(t, ctx, testCID2, name2, nodeType2, blockSize2, childCIDs2)
+		_, expectedNode2 := util.CreateTestBlockAndNode(t, ctx, testCID2, name2, nodeType2, blockSize2, childCIDs2)
 
 		nonExistentCID := util.GenerateTestCID(t, "non existent")
 

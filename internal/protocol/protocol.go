@@ -87,7 +87,7 @@ func (p Protocol) PinHandler() core.ProtocolPinHandler {
 func (p Protocol) Workflows() []core.WorkflowDefinition {
 	return []core.WorkflowDefinition{
 		p.newPinWorkflow(),
-		p.newPinChildBlockWorkflow(), 
+		p.newPinChildBlockWorkflow(),
 		p.newUploadWorkflow(),
 		p.newTUSUploadWorkflow(),
 	}
@@ -100,6 +100,7 @@ func (p Protocol) pinWorkflowSteps() []core.OperationStep {
 		p.newRetryStep(core.StoreOperationName(internal.ProtocolName)),
 		p.newContinueStep(core.PublishOperationName(internal.ProtocolName)),
 		p.newRetryStep(confirmOperationName()),
+		p.newRetryStep(FilePathOperationName()),
 	}
 }
 
@@ -172,6 +173,7 @@ func (p Protocol) Operations() []core.Operation {
 		NewConfirmOperation(p.ctx),
 		NewPinChildBlocksOperation(p.ctx),
 		NewPostUploadOperation(p.ctx),
+		NewFilePathOperation(p.ctx),
 		service.NewTUSOperationHandler(p.ctx, p, func(ctx context.Context, helper core.OperationHelper, request *models.Request, tsReq *models.TUSRequest) error {
 			tusHandler := core.GetAPI(internal.ProtocolName).(core.APITusHandler).GetTusHandler()
 

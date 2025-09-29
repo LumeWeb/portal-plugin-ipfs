@@ -74,8 +74,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 			api.workflowService = core.GetService[core.WorkflowService](ctx, core.WORKFLOW_SERVICE)
 			proto := core.GetProtocol(internal.ProtocolName)
 			sproto := proto.(core.StorageProtocol)
-
-			event.OnBootHTTP(ctx, func(ctx core.Context) error {
+			event.OnBootStartupFuncsCompleted(ctx, func(ctx core.Context) error {
 				var _tus core.TusHandler
 				var err error
 				_tus, err = service.CreateTusHandler(ctx, core.TUSHandlerConfig{
@@ -252,6 +251,46 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		),
 	)
 
+	fileManagerListProvider := queryutil.NewSchemaProvider().ForType(&dto.FileManagerListRequest{})
+	fileManagerDirProvider := queryutil.NewSchemaProvider().ForType(&dto.FileManagerDirectoryRequest{})
+	fileManagerBreadcrumbProvider := queryutil.NewSchemaProvider().ForType(&dto.FileManagerBreadcrumbRequest{})
+
+	// File manager routes
+	fileManagerRoutes := router.DefineRoutes(
+		router.NewRoute(http.MethodGet, "/files", a.listFiles,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("List pinned files"),
+				router.WithDescription("List all pinned files with their metadata"),
+				router.WithSchema(fileManagerListProvider),
+				router.WithTags("file-manager"),
+				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(dto.FileManagerResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/files/directory", a.listDirectoryContents,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("List directory contents"),
+				router.WithDescription("List files and subdirectories within a specified parent directory path"),
+				router.WithTags("file-manager"),
+				router.WithSchema(fileManagerDirProvider),
+				router.WithTags("file-manager"),
+				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(dto.FileManagerResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/files/breadcrumbs", a.getBreadcrumbs,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Get path breadcrumbs"),
+				router.WithDescription("Retrieve breadcrumb navigation elements for a given file path"),
+				router.WithTags("file-manager"),
+				router.WithSchema(fileManagerBreadcrumbProvider),
+				router.WithQueryParam("path", "File path to retrieve breadcrumbs for", ""),
+				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(dto.FileManagerResponse{})),
+			),
+		),
+	)
+
 	// Other IPFS routes
 	apiGroup, err := r.Group("/api")
 	if err != nil {
@@ -260,6 +299,10 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 
 	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), pinRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register pin routes: %w", err)
+	}
+
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), fileManagerRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register file manager routes: %w", err)
 	}
 
 	ipfsRoutes := router.DefineRoutes(
@@ -523,6 +566,115 @@ func (a *API) deletePin(c echo.Context) error {
 	}
 
 	return ctx.NoContent(http.StatusAccepted)
+}
+
+func (a *API) listFiles(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	filter := dto.FileManagerFilter{}
+	if _, ok := httputil.DecodeAndValidateRequest(ctx, &filter); !ok {
+		return nil
+	}
+
+	filters, sort, pagination, err := queryutil.ParseRequest(ctx.Request())
+	if err != nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	// Use file manager service to list files
+	fileManagerService := core.GetService[pluginCore.FileManagerService](a.ctx, pluginCore.FILE_MANAGER_SERVICE)
+	paths, total, err := fileManagerService.ListFiles(reqCtx, filters, sort, pagination)
+	if err != nil {
+		a.logger.Error("Failed to list files", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	var dtoResp dto.FileManagerResponse
+	dtoResp.Count = uint64(total)
+
+	// Convert paths to file manager response
+	if err := dtoResp.FromModel(paths); err != nil {
+		a.logger.Error("Failed to convert paths to file manager response", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	queryUtilHttp.SetContentRangeHeader(c.Response(), "files", pagination, paths, total)
+
+	return httputil.EncodeResponse(ctx, paths, &dtoResp)
+}
+
+func (a *API) listDirectoryContents(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	user, err := mcontext.GetUserID(c)
+	if err != nil {
+		apiErr := NewError(ErrKeyUnauthorized, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	request := dto.FileManagerDirectoryRequest{}
+	if _, ok := httputil.DecodeAndValidateRequest(ctx, &request); !ok {
+		return nil
+	}
+
+	fileManagerService := core.GetService[pluginCore.FileManagerService](a.ctx, pluginCore.FILE_MANAGER_SERVICE)
+	paths, err := fileManagerService.ListDirectoryContents(reqCtx, user, request.ParentPath)
+	if err != nil {
+		a.logger.Error("Failed to list directory contents", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	var dtoResp dto.FileManagerResponse
+	dtoResp.Count = uint64(len(paths))
+
+	if err := dtoResp.FromModel(paths); err != nil {
+		a.logger.Error("Failed to convert paths to file manager response", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	return httputil.EncodeResponse(ctx, paths, &dtoResp)
+}
+
+func (a *API) getBreadcrumbs(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	user, err := mcontext.GetUserID(c)
+	if err != nil {
+		apiErr := NewError(ErrKeyUnauthorized, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	request := dto.FileManagerBreadcrumbRequest{}
+	if _, ok := httputil.DecodeAndValidateRequest(ctx, &request); !ok {
+		return nil
+	}
+
+	fileManagerService := core.GetService[pluginCore.FileManagerService](a.ctx, pluginCore.FILE_MANAGER_SERVICE)
+	breadcrumbs, err := fileManagerService.GetBreadcrumbs(reqCtx, user, request.Path)
+	if err != nil {
+		a.logger.Error("Failed to get breadcrumbs", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	var dtoResp dto.FileManagerResponse
+	dtoResp.Count = uint64(len(breadcrumbs))
+
+	if err := dtoResp.FromModel(breadcrumbs); err != nil {
+		a.logger.Error("Failed to convert breadcrumbs to file manager response", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	return httputil.EncodeResponse(ctx, breadcrumbs, &dtoResp)
 }
 
 func (a *API) handleIPFSGet(c echo.Context) error {

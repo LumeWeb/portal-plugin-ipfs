@@ -34,7 +34,7 @@ require (
 	go.lumeweb.com/portal v0.4.2-0.20250929035044-f0147ad9b04d
 	go.lumeweb.com/portal-middleware v0.3.3
 	go.lumeweb.com/portal-plugin-core v0.0.0-20250901040103-722b9278443b
-	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20250907005009-b11aa07802ad
+	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20250929152847-5c490637a2be
 	go.lumeweb.com/portal-router v0.6.7
 	go.lumeweb.com/queryutil v0.3.14
 	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20250922174307-2f5de9e6503c
@@ -54,20 +54,20 @@ require (
 	github.com/adjust/rmq/v5 v5.2.0 // indirect
 	github.com/alicebob/miniredis/v2 v2.35.0 // indirect
 	github.com/aws/aws-sdk-go v1.55.7 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.39.0 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.0 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.39.2 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.1 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.31.6 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.13 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.7 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.7 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.7 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.9 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.9 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.3 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.3 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.9 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.1 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.8.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.3 // indirect
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.87.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.8.9 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.9 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.9 // indirect
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.88.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.29.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.34.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.38.4 // indirect
@@ -268,9 +268,9 @@ require (
 	go.lumeweb.com/configmanager v0.3.20 // indirect
 	go.lumeweb.com/event/v2 v2.1.0 // indirect
 	go.lumeweb.com/gswagger v0.20.10 // indirect
-	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20250902102957-647bde87ec98 // indirect
+	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20250922174307-2f5de9e6503c // indirect
 	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20250901035555-d0898ae91f80 // indirect
-	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20250902102957-647bde87ec98 // indirect
+	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20250922174307-2f5de9e6503c // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel v1.38.0 // indirect
 	go.opentelemetry.io/otel/metric v1.38.0 // indirect
@@ -288,7 +288,7 @@ require (
 	go.uber.org/zap/exp v0.3.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20250819193227-8b4c13bb791b // indirect
-	golang.org/x/image v0.30.0 // indirect
+	golang.org/x/image v0.31.0 // indirect
 	golang.org/x/mod v0.27.0 // indirect
 	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
@@ -308,7 +308,7 @@ require (
 	gorm.io/driver/postgres v1.6.0 // indirect
 	gorm.io/driver/sqlite v1.6.0 // indirect
 	gorm.io/driver/sqlserver v1.6.0 // indirect
-	gorm.io/plugin/dbresolver v1.6.0 // indirect
+	gorm.io/plugin/dbresolver v1.6.2 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 	lukechampine.com/frand v1.5.1 // indirect
 	modernc.org/libc v1.66.3 // indirect
