@@ -896,6 +896,10 @@ go.lumeweb.com/portal v0.4.2-0.20250928220934-92a156860354 h1:E/Q39Ye7cVUvej6Qhy
 go.lumeweb.com/portal v0.4.2-0.20250928220934-92a156860354/go.mod h1:jnt7XiFkYBSJZ0eZ/kApFEnl9gm+f40f0y/dtaccr0g=
 go.lumeweb.com/portal v0.4.2-0.20250928224529-c2d810984a87 h1:phpCgZwBXSi3f82s9c5gcVNxgJIcfaqI+22it8Zg6cE=
 go.lumeweb.com/portal v0.4.2-0.20250928224529-c2d810984a87/go.mod h1:jnt7XiFkYBSJZ0eZ/kApFEnl9gm+f40f0y/dtaccr0g=
+go.lumeweb.com/portal v0.4.2-0.20250929030754-b7672e87f9df h1:OeBbG8zI0fCr41RjsO5aYYvPgBOzgmo2D4/vGZfO5dI=
+go.lumeweb.com/portal v0.4.2-0.20250929030754-b7672e87f9df/go.mod h1:jnt7XiFkYBSJZ0eZ/kApFEnl9gm+f40f0y/dtaccr0g=
+go.lumeweb.com/portal v0.4.2-0.20250929035044-f0147ad9b04d h1:R7FSAtlnLpZp2lE4wBkdlRmwB3K0UIXF68bPAsw/6R8=
+go.lumeweb.com/portal v0.4.2-0.20250929035044-f0147ad9b04d/go.mod h1:jnt7XiFkYBSJZ0eZ/kApFEnl9gm+f40f0y/dtaccr0g=
 go.lumeweb.com/portal-middleware v0.3.3 h1:hoqSOPGhKGS8yEULhccFHUFckkVjS0JduEFSVbn2X5A=
 go.lumeweb.com/portal-middleware v0.3.3/go.mod h1:FjxHJnUuSVlRF7SqWMm3QXEf5fgbZqfNrYUpCnUZ4kM=
 go.lumeweb.com/portal-plugin-core v0.0.0-20250901040103-722b9278443b h1:hiIaRe77BLYOTLqoxLq2n1RHvJn54+d5OJ+1VkxW1VE=
