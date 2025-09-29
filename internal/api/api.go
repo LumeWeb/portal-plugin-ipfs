@@ -88,54 +88,30 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 					TerminatedUploadHandler: service.TUSDefaultUploadTerminatedHandler(ctx),
 					CompletedUploadHandler: service.TUSDefaultUploadCompletedHandler(ctx, func(_ core.TusHandler, hook handler.HookEvent) {
 						upload, err := api.tus.UploadReader(ctx, hook.Upload.ID, sproto, 0)
-
 						if err != nil {
 							api.logger.Error("Failed to get request reader", zap.Error(err))
 							return
 						}
+						defer closeUpload(upload, api.logger)
 
-						defer func(upload io.ReadCloser) {
-							err := upload.Close()
-							if err != nil {
-								api.logger.Error("Failed to close reader", zap.Error(err))
-							}
-						}(upload)
-
-						reader, err := createCARReader(upload)
-						if err != nil {
-							api.logger.Error("Failed to create CAR reader", zap.Error(err))
-							err = api.tus.FailUploadById(ctx, sproto, hook.Upload.ID)
-							if err != nil {
-								api.logger.Error("Failed to fail ipfsUpload", zap.Error(err))
-							}
+						if !validateCARUpload(upload, api.tus, ctx, sproto, hook.Upload.ID, api.logger) {
 							return
 						}
-
-						_, err = internal.GetCarRoots(reader, false)
-
-						if err != nil {
-							api.logger.Error("Failed to validate car", zap.Error(err))
-							err = api.tus.FailUploadById(ctx, sproto, hook.Upload.ID)
+					}, protocol.TUS_UPLOAD_WORKFLOW,
+						func(handlr core.TusHandler, hook handler.HookEvent) (core.StorageHash, error) {
+							upload, err := api.tus.UploadReader(ctx, hook.Upload.ID, sproto, 0)
 							if err != nil {
-								api.logger.Error("Failed to fail ipfsUpload", zap.Error(err))
+								return nil, err
 							}
-							return
-						}
-					}, protocol.TUS_UPLOAD_WORKFLOW),
+							defer closeUpload(upload, api.logger)
+
+							return getCARUploadHash(upload, api.tus, ctx, sproto, hook.Upload.ID, api.logger)
+						},
+					),
 					PreFinishResponse: service.TUSDefaultPreFinishResponse(func() core.TusHandler {
 						return _tus
 					}, func(hook handler.HookEvent, data io.Reader, size uint64) (core.StorageHash, error) {
-						reader, err := createCARReader(data)
-						if err != nil {
-							return nil, err
-						}
-
-						roots, err := internal.GetCarRoots(reader, false)
-						if err != nil {
-							return nil, err
-						}
-
-						return internal.NewIPFSHash(roots[0]), nil
+						return processCARData(data)
 					}),
 				})
 
@@ -751,4 +727,72 @@ func createCARReader(data io.Reader) (io.Reader, error) {
 	// Create a bytes.Reader that supports ReaderAt
 	reader := bytes.NewReader(buf[:n])
 	return reader, nil
+}
+
+func closeUpload(upload io.ReadCloser, logger *core.Logger) {
+	err := upload.Close()
+	if err != nil {
+		logger.Error("Failed to close reader", zap.Error(err))
+	}
+}
+
+func validateCARUpload(upload io.ReadCloser, tus core.TusHandler, ctx core.Context, sproto core.StorageProtocol, uploadId string, logger *core.Logger) bool {
+	reader, err := createCARReader(upload)
+	if err != nil {
+		logger.Error("Failed to create CAR reader", zap.Error(err))
+		err = tus.FailUploadById(ctx, sproto, uploadId)
+		if err != nil {
+			logger.Error("Failed to fail ipfsUpload", zap.Error(err))
+		}
+		return false
+	}
+
+	_, err = internal.GetCarRoots(reader, false)
+	if err != nil {
+		logger.Error("Failed to validate car", zap.Error(err))
+		err = tus.FailUploadById(ctx, sproto, uploadId)
+		if err != nil {
+			logger.Error("Failed to fail ipfsUpload", zap.Error(err))
+		}
+		return false
+	}
+
+	return true
+}
+
+func getCARUploadHash(upload io.ReadCloser, tus core.TusHandler, ctx core.Context, sproto core.StorageProtocol, uploadId string, logger *core.Logger) (core.StorageHash, error) {
+	reader, err := createCARReader(upload)
+	if err != nil {
+		logger.Error("Failed to create CAR reader", zap.Error(err))
+		err = tus.FailUploadById(ctx, sproto, uploadId)
+		if err != nil {
+			logger.Error("Failed to fail ipfsUpload", zap.Error(err))
+		}
+		return nil, err
+	}
+
+	cids, err := internal.GetCarRoots(reader, false)
+	if err != nil {
+		err = tus.FailUploadById(ctx, sproto, uploadId)
+		if err != nil {
+			logger.Error("Failed to fail ipfsUpload", zap.Error(err))
+		}
+		return nil, err
+	}
+
+	return internal.NewIPFSHash(cids[0]), nil
+}
+
+func processCARData(data io.Reader) (core.StorageHash, error) {
+	reader, err := createCARReader(data)
+	if err != nil {
+		return nil, err
+	}
+
+	roots, err := internal.GetCarRoots(reader, false)
+	if err != nil {
+		return nil, err
+	}
+
+	return internal.NewIPFSHash(roots[0]), nil
 }
