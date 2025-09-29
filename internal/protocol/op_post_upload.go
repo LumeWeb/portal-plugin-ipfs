@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
@@ -48,6 +49,17 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	cids, err := ProcessCar(h.Context(), upload)
 	if err != nil {
 		return fmt.Errorf("failed to process CIDs from upload: %w", err)
+	}
+
+	// Prepare workflow data for publish operation
+	workflowData := &PinWorkflowData{
+		PinRequestID: uuid.New(),
+		Cids:         lo.Map(cids, func(item cid.Cid, index int) string { return item.String() }),
+	}
+
+	err = h.UpdateWorkflowDataStruct(req.ID, workflowData)
+	if err != nil {
+		return fmt.Errorf("failed to update workflow data: %w", err)
 	}
 
 	err = core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE).ProcessCIDs(ctx, cids, lo.FromPtrOr(req.UserID, 0))

@@ -8,7 +8,9 @@ import (
 	"log"
 	"path/filepath"
 
+	"github.com/google/uuid"
 	"github.com/ipfs/boxo/blockstore"
+	"github.com/ipfs/go-cid"
 	levelds "github.com/ipfs/go-ds-leveldb"
 	ipfsLog "github.com/ipfs/go-log/v2"
 	"github.com/samber/lo"
@@ -181,6 +183,17 @@ func (p Protocol) Operations() []core.Operation {
 			cids, err := ProcessCar(helper.Context(), reader)
 			if err != nil {
 				return fmt.Errorf("failed to process upload: %w", err)
+			}
+
+			// Prepare workflow data for publish operation
+			workflowData := &PinWorkflowData{
+				PinRequestID: uuid.New(),
+				Cids:         lo.Map(cids, func(item cid.Cid, index int) string { return item.String() }),
+			}
+
+			err = helper.UpdateWorkflowDataStruct(request.ID, workflowData)
+			if err != nil {
+				return fmt.Errorf("failed to update workflow data: %w", err)
 			}
 
 			err = core.GetService[pluginCore.UploadService](helper.Context(), pluginCore.UPLOAD_SERVICE).ProcessCIDs(ctx, cids, lo.FromPtrOr(request.UserID, 0))
