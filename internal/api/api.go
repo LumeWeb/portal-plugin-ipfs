@@ -655,6 +655,7 @@ func (a *API) handleUpload(c echo.Context) error {
 	}, "json"),
 		core.WithWorkflowSourceIP(c.RealIP()),
 		core.WithWorkflowUserID(user),
+		core.WithWorkflowProtocol(internal.ProtocolName),
 		core.WithWorkflowStorageHash(internal.NewIPFSHash(_cid)))
 	if err != nil {
 		return ctx.Error(err, http.StatusInternalServerError)
