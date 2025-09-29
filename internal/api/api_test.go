@@ -12,11 +12,14 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/block"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/upload"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/service"
 	"io"
@@ -24,6 +27,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +38,7 @@ import (
 	"github.com/multiformats/go-multihash"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 )
@@ -48,6 +53,7 @@ var TestOptions = coreTesting.CombineOptions(
 	coreTesting.WithServiceFactory(core.USER_SERVICE, service.NewUserService),
 	coreTesting.WithServiceFactory(core.AUTH_SERVICE, service.NewAuthService),
 	coreTesting.WithServiceFactory(core.STORAGE_SERVICE, service.NewStorageService),
+	coreTesting.WithServiceFactory(pluginCore.FILE_MANAGER_SERVICE, filemanager.NewFileManagerService),
 	coreTesting.WithServiceFactory(pluginCore.PIN_SERVICE, pin.NewPinService),
 	coreTesting.WithServiceFactory(pluginCore.BLOCK_SERVICE, block.NewBlockService),
 	coreTesting.WithServiceFactory(pluginCore.UPLOAD_SERVICE, upload.NewUploadService),
@@ -61,11 +67,11 @@ var TestOptions = coreTesting.CombineOptions(
 	coreTesting.WithCron(),
 )
 
-func createTestUserAndLogin(ctx coreTesting.TestContext) string {
+func createTestUserAndLogin(ctx coreTesting.TestContext) (string, uint) {
 	userSvc := core.GetService[core.UserService](ctx, core.USER_SERVICE)
 	authSvc := core.GetService[core.AuthService](ctx, core.AUTH_SERVICE)
 
-	_, err := userSvc.CreateAccount("test@example.com", "example", false)
+	user, err := userSvc.CreateAccount("test@example.com", "example", false)
 	if err != nil {
 		ctx.T().Fatalf("failed to create test user: %v", err)
 	}
@@ -75,11 +81,42 @@ func createTestUserAndLogin(ctx coreTesting.TestContext) string {
 		ctx.T().Fatalf("failed to login test user: %v", err)
 	}
 
-	return token
+	return token, user.ID
 }
 
 func setAuthHeader(req *http.Request, token string) {
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+}
+
+func createTestFilePath(t *testing.T, ctx coreTesting.TestContext, userID uint, testCID cid.Cid, path, name string, isDirectory bool) *pluginDb.FilePath {
+	// Calculate parent path
+	parentPath := pluginDb.RootPath
+	if path != pluginDb.RootPath && path != "" {
+		// Find the last slash to get the parent directory
+		lastSlash := strings.LastIndex(path, "/")
+		if lastSlash > 0 {
+			parentPath = path[:lastSlash]
+		} else if lastSlash == 0 {
+			parentPath = pluginDb.RootPath
+		}
+	}
+
+	filePath := &pluginDb.FilePath{
+		UserID:      userID,
+		CID:         testCID.Bytes(),
+		Path:        path,
+		Name:        name,
+		Type:        0,
+		Size:        1024,
+		IsDirectory: isDirectory,
+		IsOrphan:    false,
+		ParentPath:  parentPath,
+		Depth:       0,
+	}
+
+	err := ctx.DB().Create(filePath).Error
+	require.NoError(t, err)
+	return filePath
 }
 
 type pinTestHelper struct {
@@ -89,7 +126,7 @@ type pinTestHelper struct {
 }
 
 func setupPinTest(t *testing.T, ctx coreTesting.TestContext) *pinTestHelper {
-	token := createTestUserAndLogin(ctx)
+	token, _ := createTestUserAndLogin(ctx)
 
 	// Create Pin
 	reqBody := `{"cid":"bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4","name":"test"}`
@@ -142,7 +179,7 @@ func TestAPI_listPins(t *testing.T) {
 
 func TestAPI_addPin(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token := createTestUserAndLogin(ctx)
+		token, _ := createTestUserAndLogin(ctx)
 
 		// Make HTTP request
 		reqBody := `{"cid":"bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4","name":"test"}`
@@ -220,6 +257,382 @@ func TestAPI_deletePin(t *testing.T) {
 	}, TestOptions)
 }
 
+func TestAPI_listFiles(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		token, userID := createTestUserAndLogin(ctx)
+
+		// Create test file paths
+		testCID1 := util.GenerateTestCID(t, "test data 1")
+		testCID2 := util.GenerateTestCID(t, "test data 2")
+
+		createTestFilePath(t, ctx, userID, testCID1, "/file1.txt", "file1.txt", false)
+		createTestFilePath(t, ctx, userID, testCID2, "/file2.txt", "file2.txt", false)
+
+		// Make HTTP request
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files", nil)
+		setAuthHeader(req, token)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		// Verify response
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var response dto.FileManagerResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(2), response.Count)
+		assert.Len(t, response.Results, 2)
+
+		// Verify response structure
+		for _, item := range response.Results {
+			assert.NotEmpty(t, item.Path)
+			assert.NotEmpty(t, item.Name)
+			assert.IsType(t, uint64(0), item.Size)
+			assert.IsType(t, false, item.IsDirectory)
+			assert.IsType(t, 0, item.Depth)
+			assert.IsType(t, time.Time{}, item.Created)
+			assert.IsType(t, time.Time{}, item.Updated)
+		}
+	}, TestOptions)
+}
+
+func TestAPI_listFiles_Unauthorized(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Make HTTP request without auth
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files", nil)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		// Verify response
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	}, TestOptions)
+}
+
+func TestAPI_listFiles_EmptyResults(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		token, _ := createTestUserAndLogin(ctx)
+
+		// Make HTTP request with no data
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files", nil)
+		setAuthHeader(req, token)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		// Verify response
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var response dto.FileManagerResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(0), response.Count)
+		assert.Empty(t, response.Results)
+	}, TestOptions)
+}
+
+func TestAPI_listFiles_WithFilters(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		token, userID := createTestUserAndLogin(ctx)
+
+		// Create test file paths
+		testCID1 := util.GenerateTestCID(t, "test data 1")
+		testCID2 := util.GenerateTestCID(t, "test data 2")
+		testCID3 := util.GenerateTestCID(t, "test data 3")
+
+		createTestFilePath(t, ctx, userID, testCID1, "/file1.txt", "file1.txt", false)
+		createTestFilePath(t, ctx, userID, testCID2, "/test_dir", "test_dir", true)
+		createTestFilePath(t, ctx, userID, testCID3, "/file2.txt", "file2.txt", false)
+
+		// Test name filter with proper bracket notation
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[name][eq]=file1.txt", nil)
+		setAuthHeader(req, token)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var response dto.FileManagerResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(1), response.Count)
+		assert.Len(t, response.Results, 1)
+		assert.Equal(t, "file1.txt", response.Results[0].Name)
+
+		// Test is_directory filter with proper bracket notation
+		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[is_directory][eq]=true", nil)
+		setAuthHeader(req, token)
+		rec = httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		err = json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(1), response.Count)
+		assert.Len(t, response.Results, 1)
+		assert.True(t, response.Results[0].IsDirectory)
+		assert.Equal(t, "test_dir", response.Results[0].Name)
+
+		// Test contains operator for name
+		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[name][contains]=file", nil)
+		setAuthHeader(req, token)
+		rec = httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		err = json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(2), response.Count)
+		assert.Len(t, response.Results, 2)
+
+		// Test OR operator with nested filters
+		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[or][0][name][eq]=file1.txt&filters[or][1][is_directory][eq]=true", nil)
+		setAuthHeader(req, token)
+		rec = httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		err = json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(2), response.Count)
+		assert.Len(t, response.Results, 2)
+
+		// Test AND operator with multiple conditions
+		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[and][0][name][contains]=file&filters[and][1][is_directory][eq]=false", nil)
+		setAuthHeader(req, token)
+		rec = httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		err = json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(2), response.Count)
+		assert.Len(t, response.Results, 2)
+		for _, result := range response.Results {
+			assert.Contains(t, result.Name, "file")
+			assert.False(t, result.IsDirectory)
+		}
+	}, TestOptions)
+}
+
+func TestAPI_listFiles_Pagination(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		token, userID := createTestUserAndLogin(ctx)
+
+		// Create test file paths
+		testCID1 := util.GenerateTestCID(t, "test data 1")
+		testCID2 := util.GenerateTestCID(t, "test data 2")
+		testCID3 := util.GenerateTestCID(t, "test data 3")
+
+		createTestFilePath(t, ctx, userID, testCID1, "/file1.txt", "file1.txt", false)
+		createTestFilePath(t, ctx, userID, testCID2, "/file2.txt", "file2.txt", false)
+		createTestFilePath(t, ctx, userID, testCID3, "/file3.txt", "file3.txt", false)
+
+		// Test pagination with _start and _end parameters (first 2 items)
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files?_start=0&_end=2", nil)
+		setAuthHeader(req, token)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var response dto.FileManagerResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(3), response.Count)
+		assert.Len(t, response.Results, 2)
+
+		// Test pagination with offset (items 1-2, skipping first item)
+		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?_start=1&_end=3", nil)
+		setAuthHeader(req, token)
+		rec = httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		err = json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(3), response.Count)
+		assert.Len(t, response.Results, 2)
+
+		// Test single item pagination
+		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?_start=0&_end=1", nil)
+		setAuthHeader(req, token)
+		rec = httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		err = json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(3), response.Count)
+		assert.Len(t, response.Results, 1)
+	}, TestOptions)
+}
+
+func TestAPI_listDirectoryContents(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		token, userID := createTestUserAndLogin(ctx)
+
+		// Create test file paths
+		testCID1 := util.GenerateTestCID(t, "test data 1")
+		testCID2 := util.GenerateTestCID(t, "test data 2")
+		testCID3 := util.GenerateTestCID(t, "test data 3")
+
+		createTestFilePath(t, ctx, userID, testCID1, "/file1.txt", "file1.txt", false)
+		createTestFilePath(t, ctx, userID, testCID2, "/test_dir", "test_dir", true)
+		createTestFilePath(t, ctx, userID, testCID3, "/test_dir/file2.txt", "file2.txt", false)
+
+		// Make HTTP request to list root directory
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?parent_path=/", nil)
+		setAuthHeader(req, token)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		// Verify response
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var response dto.FileManagerResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(2), response.Count)
+		assert.Len(t, response.Results, 2)
+
+		// Verify directories come first
+		assert.True(t, response.Results[0].IsDirectory)
+		assert.False(t, response.Results[1].IsDirectory)
+		assert.Equal(t, "test_dir", response.Results[0].Name)
+		assert.Equal(t, "file1.txt", response.Results[1].Name)
+	}, TestOptions)
+}
+
+func TestAPI_listDirectoryContents_Unauthorized(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Make HTTP request without auth
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?parent_path=/", nil)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		// Verify response
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	}, TestOptions)
+}
+
+func TestAPI_listDirectoryContents_EmptyDirectory(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		token, _ := createTestUserAndLogin(ctx)
+
+		// Make HTTP request to empty directory
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?parent_path=/empty", nil)
+		setAuthHeader(req, token)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		// Verify response
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var response dto.FileManagerResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(0), response.Count)
+		assert.Empty(t, response.Results)
+	}, TestOptions)
+}
+
+func TestAPI_listDirectoryContents_NonExistentUser(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		token, _ := createTestUserAndLogin(ctx)
+
+		// Make HTTP request with different user ID
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?parent_path=/", nil)
+		setAuthHeader(req, token)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		// Verify response (should be empty but not error)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var response dto.FileManagerResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(0), response.Count)
+	}, TestOptions)
+}
+
+func TestAPI_getBreadcrumbs(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		token, userID := createTestUserAndLogin(ctx)
+
+		// Create test file paths for breadcrumb hierarchy
+		testCID1 := util.GenerateTestCID(t, "test data 1")
+		testCID2 := util.GenerateTestCID(t, "test data 2")
+		testCID3 := util.GenerateTestCID(t, "test data 3")
+
+		createTestFilePath(t, ctx, userID, testCID1, "/test_dir", "test_dir", true)
+		createTestFilePath(t, ctx, userID, testCID2, "/test_dir/subdir", "subdir", true)
+		createTestFilePath(t, ctx, userID, testCID3, "/test_dir/subdir/file.txt", "file.txt", false)
+
+		// Make HTTP request
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?path=/test_dir/subdir/file.txt", nil)
+		setAuthHeader(req, token)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		// Verify response
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var response dto.FileManagerResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(3), response.Count)
+		assert.Len(t, response.Results, 3)
+
+		// Verify breadcrumb order (should be ordered by depth)
+		assert.Equal(t, "/test_dir", response.Results[0].Path)
+		assert.Equal(t, "/test_dir/subdir", response.Results[1].Path)
+		assert.Equal(t, "/test_dir/subdir/file.txt", response.Results[2].Path)
+	}, TestOptions)
+}
+
+func TestAPI_getBreadcrumbs_Unauthorized(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Make HTTP request without auth
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?path=/test", nil)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		// Verify response
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	}, TestOptions)
+}
+
+func TestAPI_getBreadcrumbs_InvalidPath(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		token, _ := createTestUserAndLogin(ctx)
+
+		// Make HTTP request with empty path
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?path=", nil)
+		setAuthHeader(req, token)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		// Verify response
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+		// Make HTTP request with path without leading slash
+		req = ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?path=test/file.txt", nil)
+		setAuthHeader(req, token)
+		rec = httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		// Verify response
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	}, TestOptions)
+}
+
+func TestAPI_getBreadcrumbs_PathNotFound(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		token, _ := createTestUserAndLogin(ctx)
+
+		// Make HTTP request with non-existent path
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?path=/nonexistent/file.txt", nil)
+		setAuthHeader(req, token)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		// Verify response
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	}, TestOptions)
+}
+
 func createTestCAR(t *testing.T) ([]byte, cid.Cid) {
 	// Create a simple CAR file with one block containing "test file content"
 	content := []byte("test file content")
@@ -277,7 +690,7 @@ func createTestCAR(t *testing.T) ([]byte, cid.Cid) {
 
 func TestAPI_handleUpload(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token := createTestUserAndLogin(ctx)
+		token, _ := createTestUserAndLogin(ctx)
 
 		// Create test CAR file
 		carData, expectedCID := createTestCAR(t)
@@ -365,7 +778,7 @@ func TestAPI_handleGetBlockMetaBatch(t *testing.T) {
 
 func TestAPI_handleGetInfo(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token := createTestUserAndLogin(ctx)
+		token, _ := createTestUserAndLogin(ctx)
 
 		// Make HTTP request
 		req := ctx.NewAPIRequest(http.MethodGet, "/api/info", nil)

@@ -9,6 +9,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/block"
+	filemanager "go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/upload"
 	"go.lumeweb.com/portal/core"
@@ -26,6 +27,7 @@ func init() {
 				{
 					ID:      pluginCore.PIN_SERVICE,
 					Factory: pin.NewPinService,
+					Depends: []string{pluginCore.FILE_MANAGER_SERVICE},
 				},
 
 				{
@@ -36,6 +38,10 @@ func init() {
 				{
 					ID:      pluginCore.BLOCK_SERVICE,
 					Factory: block.NewBlockService,
+				},
+				{
+					ID:      pluginCore.FILE_MANAGER_SERVICE,
+					Factory: filemanager.NewFileManagerService,
 				},
 			}, nil
 		},
