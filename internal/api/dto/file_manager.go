@@ -1,10 +1,11 @@
 package dto
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Oudwins/zog"
-	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
 
 // FileManagerFilter represents the filtering options for file listings
@@ -38,6 +39,19 @@ func (f FileManagerFilter) ToModel() (FileManagerFilter, error) {
 	return f, nil
 }
 
+// ValidateFileManagerPath validates that a path is properly formatted for file operations
+func ValidateFileManagerPath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path is required")
+	}
+
+	if !strings.HasPrefix(path, "/") {
+		return "", fmt.Errorf("path must start with '/'")
+	}
+
+	return path, nil
+}
+
 // FileManagerItem represents a unified file view for the file manager UI
 type FileManagerItem struct {
 	Path        string    `json:"path"`
@@ -48,52 +62,7 @@ type FileManagerItem struct {
 	Depth       int       `json:"depth"`
 	Created     time.Time `json:"created"`
 	Updated     time.Time `json:"updated"`
-}
-
-// FileManagerResponse represents paginated file manager results
-type FileManagerResponse struct {
-	Count   uint64            `json:"count"`
-	Results []FileManagerItem `json:"results"`
-}
-
-func (f *FileManagerResponse) FromModel(model []*pluginDb.FilePath) error {
-	f.Results = make([]FileManagerItem, len(model))
-
-	for i, path := range model {
-		item := FileManagerItem{
-			Path:        path.Path,
-			Name:        path.Name,
-			Type:        path.Type,
-			Size:        uint64(path.Size),
-			IsDirectory: path.IsDirectory,
-			Depth:       path.Depth,
-			Created:     path.CreatedAt,
-			Updated:     path.UpdatedAt,
-		}
-
-		f.Results[i] = item
-	}
-
-	return nil
-}
-
-func (f *FileManagerResponse) FromModelSingle(model *pluginDb.FilePath) error {
-	f.Results = make([]FileManagerItem, 1)
-
-	item := FileManagerItem{
-		Path:        model.Path,
-		Name:        model.Name,
-		Type:        model.Type,
-		Size:        uint64(model.Size),
-		IsDirectory: model.IsDirectory,
-		Depth:       model.Depth,
-		Created:     model.CreatedAt,
-		Updated:     model.UpdatedAt,
-	}
-
-	f.Results[0] = item
-
-	return nil
+	CID         string    `json:"cid"`
 }
 
 // FileManagerListRequest represents the request for listing files
@@ -104,18 +73,6 @@ type FileManagerListRequest struct {
 	Offset  *int          `json:"offset,omitempty"`
 }
 
-// FileManagerDirectoryRequest represents the request for listing directory contents
-type FileManagerDirectoryRequest struct {
-	ParentPath string `json:"parent_path" query:"parent_path"`
-	Limit      *int   `json:"limit,omitempty" query:"limit"`
-	Offset     *int   `json:"offset,omitempty" query:"offset"`
-}
-
-// FileManagerBreadcrumbRequest represents the request for getting breadcrumbs
-type FileManagerBreadcrumbRequest struct {
-	Path string `json:"path" query:"path"`
-}
-
 func (f FileManagerListRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
 		"Limit":  zog.Int().Optional(),
@@ -123,28 +80,6 @@ func (f FileManagerListRequest) Schema() *zog.StructSchema {
 	})
 }
 
-func (f FileManagerDirectoryRequest) Schema() *zog.StructSchema {
-	return zog.Struct(zog.Shape{
-		"ParentPath": zog.String(),
-		"Limit":      zog.Ptr(zog.Int().Optional()),
-		"Offset":     zog.Ptr(zog.Int().Optional()),
-	})
-}
-
-func (f FileManagerBreadcrumbRequest) Schema() *zog.StructSchema {
-	return zog.Struct(zog.Shape{
-		"Path": zog.String(),
-	})
-}
-
 func (f FileManagerListRequest) ToModel() (FileManagerListRequest, error) {
-	return f, nil
-}
-
-func (f FileManagerDirectoryRequest) ToModel() (FileManagerDirectoryRequest, error) {
-	return f, nil
-}
-
-func (f FileManagerBreadcrumbRequest) ToModel() (FileManagerBreadcrumbRequest, error) {
 	return f, nil
 }

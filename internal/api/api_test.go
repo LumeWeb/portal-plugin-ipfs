@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
 	"github.com/samber/lo"
@@ -22,6 +23,8 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/service"
+	"go.lumeweb.com/queryutil"
+
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -95,6 +98,14 @@ func createTestFilePath(t *testing.T, ctx coreTesting.TestContext, userID uint, 
 		parentPath = pluginDb.RootPath
 	}
 
+	// Calculate depth
+	depth := 0
+	if path != "/" {
+		// Count the number of path segments
+		segments := strings.Split(strings.Trim(path, "/"), "/")
+		depth = len(segments)
+	}
+
 	filePath := &pluginDb.FilePath{
 		UserID:      userID,
 		CID:         testCID.Bytes(),
@@ -105,7 +116,7 @@ func createTestFilePath(t *testing.T, ctx coreTesting.TestContext, userID uint, 
 		IsDirectory: isDirectory,
 		IsOrphan:    false,
 		ParentPath:  parentPath,
-		Depth:       0,
+		Depth:       depth,
 	}
 
 	err := ctx.DB().Create(filePath).Error
@@ -270,14 +281,14 @@ func TestAPI_listFiles(t *testing.T) {
 
 		// Verify response
 		assert.Equal(t, http.StatusOK, rec.Code)
-		var response dto.FileManagerResponse
+		var response queryutil.Response[[]dto.FileManagerItem]
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(2), response.Count)
-		assert.Len(t, response.Results, 2)
+		assert.Equal(t, int64(2), response.Total)
+		assert.Len(t, response.Data, 2)
 
 		// Verify response structure
-		for _, item := range response.Results {
+		for _, item := range response.Data {
 			assert.NotEmpty(t, item.Path)
 			assert.NotEmpty(t, item.Name)
 			assert.IsType(t, uint64(0), item.Size)
@@ -313,11 +324,11 @@ func TestAPI_listFiles_EmptyResults(t *testing.T) {
 
 		// Verify response
 		assert.Equal(t, http.StatusOK, rec.Code)
-		var response dto.FileManagerResponse
+		var response queryutil.Response[[]dto.FileManagerItem]
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(0), response.Count)
-		assert.Empty(t, response.Results)
+		assert.Equal(t, int64(0), response.Total)
+		assert.Empty(t, response.Data)
 	}, TestOptions)
 }
 
@@ -341,12 +352,12 @@ func TestAPI_listFiles_WithFilters(t *testing.T) {
 		ctx.Router().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		var response dto.FileManagerResponse
+		var response queryutil.Response[[]dto.FileManagerItem]
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(1), response.Count)
-		assert.Len(t, response.Results, 1)
-		assert.Equal(t, "file1.txt", response.Results[0].Name)
+		assert.Equal(t, int64(1), response.Total)
+		assert.Len(t, response.Data, 1)
+		assert.Equal(t, "file1.txt", response.Data[0].Name)
 
 		// Test is_directory filter with proper bracket notation
 		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[is_directory][eq]=true", nil)
@@ -357,10 +368,10 @@ func TestAPI_listFiles_WithFilters(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 		err = json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(1), response.Count)
-		assert.Len(t, response.Results, 1)
-		assert.True(t, response.Results[0].IsDirectory)
-		assert.Equal(t, "test_dir", response.Results[0].Name)
+		assert.Equal(t, int64(1), response.Total)
+		assert.Len(t, response.Data, 1)
+		assert.True(t, response.Data[0].IsDirectory)
+		assert.Equal(t, "test_dir", response.Data[0].Name)
 
 		// Test contains operator for name
 		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[name][contains]=file", nil)
@@ -371,8 +382,8 @@ func TestAPI_listFiles_WithFilters(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 		err = json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(2), response.Count)
-		assert.Len(t, response.Results, 2)
+		assert.Equal(t, int64(2), response.Total)
+		assert.Len(t, response.Data, 2)
 
 		// Test OR operator with nested filters
 		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[or][0][name][eq]=file1.txt&filters[or][1][is_directory][eq]=true", nil)
@@ -383,8 +394,8 @@ func TestAPI_listFiles_WithFilters(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 		err = json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(2), response.Count)
-		assert.Len(t, response.Results, 2)
+		assert.Equal(t, int64(2), response.Total)
+		assert.Len(t, response.Data, 2)
 
 		// Test AND operator with multiple conditions
 		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[and][0][name][contains]=file&filters[and][1][is_directory][eq]=false", nil)
@@ -395,9 +406,9 @@ func TestAPI_listFiles_WithFilters(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 		err = json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(2), response.Count)
-		assert.Len(t, response.Results, 2)
-		for _, result := range response.Results {
+		assert.Equal(t, int64(2), response.Total)
+		assert.Len(t, response.Data, 2)
+		for _, result := range response.Data {
 			assert.Contains(t, result.Name, "file")
 			assert.False(t, result.IsDirectory)
 		}
@@ -424,11 +435,11 @@ func TestAPI_listFiles_Pagination(t *testing.T) {
 		ctx.Router().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		var response dto.FileManagerResponse
+		var response queryutil.Response[[]dto.FileManagerItem]
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(3), response.Count)
-		assert.Len(t, response.Results, 2)
+		assert.Equal(t, int64(3), response.Total)
+		assert.Len(t, response.Data, 2)
 
 		// Test pagination with offset (items 1-2, skipping first item)
 		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?_start=1&_end=3", nil)
@@ -439,8 +450,8 @@ func TestAPI_listFiles_Pagination(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 		err = json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(3), response.Count)
-		assert.Len(t, response.Results, 2)
+		assert.Equal(t, int64(3), response.Total)
+		assert.Len(t, response.Data, 2)
 
 		// Test single item pagination
 		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?_start=0&_end=1", nil)
@@ -451,8 +462,8 @@ func TestAPI_listFiles_Pagination(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 		err = json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(3), response.Count)
-		assert.Len(t, response.Results, 1)
+		assert.Equal(t, int64(3), response.Total)
+		assert.Len(t, response.Data, 1)
 	}, TestOptions)
 }
 
@@ -470,31 +481,31 @@ func TestAPI_listDirectoryContents(t *testing.T) {
 		createTestFilePath(t, ctx, userID, testCID3, "/test_dir/file2.txt", "file2.txt", false)
 
 		// Make HTTP request to list root directory
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?parent_path=/", nil)
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?filters[parent_path][eq]=/", nil)
 		setAuthHeader(req, token)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
 
 		// Verify response
 		assert.Equal(t, http.StatusOK, rec.Code)
-		var response dto.FileManagerResponse
+		var response queryutil.Response[[]dto.FileManagerItem]
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(2), response.Count)
-		assert.Len(t, response.Results, 2)
+		assert.Equal(t, int64(2), response.Total)
+		assert.Len(t, response.Data, 2)
 
 		// Verify directories come first
-		assert.True(t, response.Results[0].IsDirectory)
-		assert.False(t, response.Results[1].IsDirectory)
-		assert.Equal(t, "test_dir", response.Results[0].Name)
-		assert.Equal(t, "file1.txt", response.Results[1].Name)
+		assert.True(t, response.Data[0].IsDirectory)
+		assert.False(t, response.Data[1].IsDirectory)
+		assert.Equal(t, "test_dir", response.Data[0].Name)
+		assert.Equal(t, "file1.txt", response.Data[1].Name)
 	}, TestOptions)
 }
 
 func TestAPI_listDirectoryContents_Unauthorized(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Make HTTP request without auth
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?parent_path=/", nil)
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?filters[parent_path][eq]=/", nil)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
 
@@ -508,18 +519,18 @@ func TestAPI_listDirectoryContents_EmptyDirectory(t *testing.T) {
 		token, _ := createTestUserAndLogin(ctx)
 
 		// Make HTTP request to empty directory
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?parent_path=/empty", nil)
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?filters[parent_path][eq]=/empty", nil)
 		setAuthHeader(req, token)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
 
 		// Verify response
 		assert.Equal(t, http.StatusOK, rec.Code)
-		var response dto.FileManagerResponse
+		var response queryutil.Response[[]dto.FileManagerItem]
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(0), response.Count)
-		assert.Empty(t, response.Results)
+		assert.Equal(t, int64(0), response.Total)
+		assert.Empty(t, response.Data)
 	}, TestOptions)
 }
 
@@ -528,17 +539,17 @@ func TestAPI_listDirectoryContents_NonExistentUser(t *testing.T) {
 		token, _ := createTestUserAndLogin(ctx)
 
 		// Make HTTP request with different user ID
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?parent_path=/", nil)
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?filters[parent_path][eq]=/", nil)
 		setAuthHeader(req, token)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
 
 		// Verify response (should be empty but not error)
 		assert.Equal(t, http.StatusOK, rec.Code)
-		var response dto.FileManagerResponse
+		var response queryutil.Response[[]dto.FileManagerItem]
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(0), response.Count)
+		assert.Equal(t, int64(0), response.Total)
 	}, TestOptions)
 }
 
@@ -556,30 +567,30 @@ func TestAPI_getBreadcrumbs(t *testing.T) {
 		createTestFilePath(t, ctx, userID, testCID3, "/test_dir/subdir/file.txt", "file.txt", false)
 
 		// Make HTTP request
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?path=/test_dir/subdir/file.txt", nil)
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?filters[path][eq]=/test_dir/subdir/file.txt", nil)
 		setAuthHeader(req, token)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
 
 		// Verify response
 		assert.Equal(t, http.StatusOK, rec.Code)
-		var response dto.FileManagerResponse
+		var response queryutil.Response[[]dto.FileManagerItem]
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(3), response.Count)
-		assert.Len(t, response.Results, 3)
+		assert.Equal(t, int64(3), response.Total)
+		assert.Len(t, response.Data, 3)
 
 		// Verify breadcrumb order (should be ordered by depth)
-		assert.Equal(t, "/test_dir", response.Results[0].Path)
-		assert.Equal(t, "/test_dir/subdir", response.Results[1].Path)
-		assert.Equal(t, "/test_dir/subdir/file.txt", response.Results[2].Path)
+		assert.Equal(t, "/test_dir", response.Data[0].Path)
+		assert.Equal(t, "/test_dir/subdir", response.Data[1].Path)
+		assert.Equal(t, "/test_dir/subdir/file.txt", response.Data[2].Path)
 	}, TestOptions)
 }
 
 func TestAPI_getBreadcrumbs_Unauthorized(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Make HTTP request without auth
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?path=/test", nil)
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?filters[path][eq]=/test", nil)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
 
@@ -593,7 +604,7 @@ func TestAPI_getBreadcrumbs_InvalidPath(t *testing.T) {
 		token, _ := createTestUserAndLogin(ctx)
 
 		// Make HTTP request with empty path
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?path=", nil)
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?filters[path][eq]=", nil)
 		setAuthHeader(req, token)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
@@ -602,7 +613,7 @@ func TestAPI_getBreadcrumbs_InvalidPath(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 		// Make HTTP request with path without leading slash
-		req = ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?path=test/file.txt", nil)
+		req = ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?filters[path][eq]=test/file.txt", nil)
 		setAuthHeader(req, token)
 		rec = httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
@@ -617,7 +628,7 @@ func TestAPI_getBreadcrumbs_PathNotFound(t *testing.T) {
 		token, _ := createTestUserAndLogin(ctx)
 
 		// Make HTTP request with non-existent path
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?path=/nonexistent/file.txt", nil)
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?filters[path][eq]=/nonexistent/file.txt", nil)
 		setAuthHeader(req, token)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)

@@ -90,7 +90,7 @@ func TestFileManagerService_ListFiles(t *testing.T) {
 		createTestFilePath(t, ctx, userID, testCID2, "/file2.txt", "file2.txt", false)
 
 		// Act
-		files, total, err := fileManagerSvc.ListFiles(context.Background(), nil, nil, queryutil.DefaultPagination)
+		files, total, err := fileManagerSvc.ListFiles(context.Background(), userID, nil, nil, queryutil.DefaultPagination)
 
 		// Assert
 		require.NoError(tb, err)
@@ -108,9 +108,10 @@ func TestFileManagerService_ListFiles_Empty(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		fileManagerSvc := core.GetService[pluginCore.FileManagerService](ctx, pluginCore.FILE_MANAGER_SERVICE)
+		userID := uint(123)
 
 		// Act
-		files, total, err := fileManagerSvc.ListFiles(context.Background(), nil, nil, queryutil.DefaultPagination)
+		files, total, err := fileManagerSvc.ListFiles(context.Background(), userID, nil, nil, queryutil.DefaultPagination)
 
 		// Assert
 		require.NoError(tb, err)
@@ -501,8 +502,10 @@ func TestFileManagerService_ListFiles_InvalidFilters(t *testing.T) {
 			queryutil.NewLogicalFilter("nonexistent_field", queryutil.OpEq, "test_value"),
 		}
 
+		userID := uint(123)
+
 		// Act
-		files, total, err := fileManagerSvc.ListFiles(context.Background(), invalidFilters, nil, queryutil.DefaultPagination)
+		files, total, err := fileManagerSvc.ListFiles(context.Background(), userID, invalidFilters, nil, queryutil.DefaultPagination)
 
 		// Assert
 		assert.Error(tb, err)
@@ -633,7 +636,7 @@ func TestFileManagerService_ListFiles_EmptyPagination(t *testing.T) {
 
 		// Act with empty pagination
 		emptyPagination := queryutil.Pagination{}
-		files, total, err := fileManagerSvc.ListFiles(context.Background(), nil, nil, emptyPagination)
+		files, total, err := fileManagerSvc.ListFiles(context.Background(), userID, nil, nil, emptyPagination)
 
 		// Assert
 		require.NoError(tb, err)
@@ -657,7 +660,7 @@ func TestFileManagerService_ListFiles_PaginationBeyondData(t *testing.T) {
 			Start: 100, // Start beyond available data
 			End:   110,
 		}
-		files, total, err := fileManagerSvc.ListFiles(context.Background(), nil, nil, beyondPagination)
+		files, total, err := fileManagerSvc.ListFiles(context.Background(), userID, nil, nil, beyondPagination)
 
 		// Assert
 		require.NoError(tb, err)
@@ -684,7 +687,7 @@ func TestFileManagerService_ListFiles_WithFilters(t *testing.T) {
 		}
 
 		// Act
-		files, total, err := fileManagerSvc.ListFiles(context.Background(), nameFilters, nil, queryutil.DefaultPagination)
+		files, total, err := fileManagerSvc.ListFiles(context.Background(), userID, nameFilters, nil, queryutil.DefaultPagination)
 
 		// Assert
 		require.NoError(tb, err)
@@ -715,7 +718,7 @@ func TestFileManagerService_ListFiles_WithSorting(t *testing.T) {
 		}
 
 		// Act
-		files, total, err := fileManagerSvc.ListFiles(context.Background(), nil, ascSort, queryutil.DefaultPagination)
+		files, total, err := fileManagerSvc.ListFiles(context.Background(), userID, nil, ascSort, queryutil.DefaultPagination)
 
 		// Assert
 		require.NoError(tb, err)
@@ -733,7 +736,7 @@ func TestFileManagerService_ListFiles_WithSorting(t *testing.T) {
 		}
 
 		// Act
-		files, total, err = fileManagerSvc.ListFiles(context.Background(), nil, descSort, queryutil.DefaultPagination)
+		files, total, err = fileManagerSvc.ListFiles(context.Background(), userID, nil, descSort, queryutil.DefaultPagination)
 
 		// Assert
 		require.NoError(tb, err)
@@ -873,16 +876,17 @@ func TestFileManagerService_ListDirectoryContents_OnlyOrphans(t *testing.T) {
 		err = ctx.DB().Create(orphanPath2).Error
 		require.NoError(t, err)
 
-		// Act - list root directory (should include orphans)
-		contents, err := fileManagerSvc.ListDirectoryContents(context.Background(), userID, pluginDb.RootPath)
+		// Act - list files for user (should include orphans)
+		files, total, err := fileManagerSvc.ListFiles(context.Background(), userID, nil, nil, queryutil.DefaultPagination)
 
 		// Assert
 		require.NoError(tb, err)
-		assert.Len(tb, contents, 2) // Should have both orphan files
+		assert.Len(tb, files, 2) // Should have both orphan files
+		assert.Equal(tb, int64(2), total)
 
 		// Verify both files are orphans
-		assert.True(tb, contents[0].IsOrphan)
-		assert.True(tb, contents[1].IsOrphan)
+		assert.True(tb, files[0].IsOrphan)
+		assert.True(tb, files[1].IsOrphan)
 	}, TestOptions)
 }
 
@@ -999,6 +1003,40 @@ func TestFileManagerService_CreateFilePath_InvalidParentPath(t *testing.T) {
 		var retrievedPath pluginDb.FilePath
 		result := ctx.DB().Where("user_id = ? AND path = ?", userID, "/test/file.txt").First(&retrievedPath)
 		require.NoError(tb, result.Error)
+	}, TestOptions)
+}
+
+func TestFileManagerService_ListFiles_UserIDScoping(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		fileManagerSvc := core.GetService[pluginCore.FileManagerService](ctx, pluginCore.FILE_MANAGER_SERVICE)
+
+		userID1 := uint(123)
+		userID2 := uint(456)
+		testCID1 := util.GenerateTestCID(t, "test data 1")
+		testCID2 := util.GenerateTestCID(t, "test data 2")
+
+		// Create test file paths for different users
+		createTestFilePath(t, ctx, userID1, testCID1, "/file1.txt", "file1.txt", false)
+		createTestFilePath(t, ctx, userID2, testCID2, "/file2.txt", "file2.txt", false)
+
+		// Act - list files for user 1
+		files1, total1, err1 := fileManagerSvc.ListFiles(context.Background(), userID1, nil, nil, queryutil.DefaultPagination)
+
+		// Assert
+		require.NoError(tb, err1)
+		assert.Len(tb, files1, 1)
+		assert.Equal(tb, int64(1), total1)
+		assert.Equal(tb, "file1.txt", files1[0].Name)
+
+		// Act - list files for user 2
+		files2, total2, err2 := fileManagerSvc.ListFiles(context.Background(), userID2, nil, nil, queryutil.DefaultPagination)
+
+		// Assert
+		require.NoError(tb, err2)
+		assert.Len(tb, files2, 1)
+		assert.Equal(tb, int64(1), total2)
+		assert.Equal(tb, "file2.txt", files2[0].Name)
 	}, TestOptions)
 }
 
