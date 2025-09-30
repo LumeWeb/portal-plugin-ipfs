@@ -389,7 +389,7 @@ func TestUnpinOperationHandler_StressConcurrentUnpinRequests(t *testing.T) {
 			createTestPin(t, ctx, userID, cids[i])
 		}
 
-		// Run 200 operations cycling through the 100 CIDs
+		// Run concurrent operations cycling through the 100 CIDs
 		runConcurrentAnalysisTest(t, ctx, handler, userID, cids, false)
 	}, UnpinTestOptions)
 }

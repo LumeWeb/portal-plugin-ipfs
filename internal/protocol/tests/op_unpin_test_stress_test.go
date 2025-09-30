@@ -50,6 +50,11 @@ func TestUnpinOperationHandler_LargeDAGStructure(t *testing.T) {
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
+		// Optional: Verify analysis handled large size correctly
+		assert.True(tb, analysis.WouldCreateOrphans, "Root with pinned children should create orphans")
+		// Optional: Verify expected results
+		assert.Equal(tb, 1000, len(analysis.RootLevelCandidates), "All 1000 children should be root level candidates since they're pinned")
+		assert.Equal(tb, 1000, len(analysis.AllChildren), "All 1000 children should be in AllChildren")
 	}, UnpinTestOptions)
 }
 

@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS ipfs_file_paths (
     cid VARBINARY(64) NOT NULL,
     path VARCHAR(1000) NOT NULL,
     name VARCHAR(255) NOT NULL,
-    type TINYINT NOT NULL,
+    type TINYINT UNSIGNED NOT NULL,
     size BIGINT,
     is_directory BOOLEAN DEFAULT FALSE,
     parent_path VARCHAR(1000),
