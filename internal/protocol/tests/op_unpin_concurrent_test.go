@@ -58,6 +58,21 @@ func runConcurrentAnalysisTest(t *testing.T, ctx coreTesting.TestContext, handle
 	}, expectErrors)
 }
 
+// runHighFrequencyConcurrentAnalysisTest runs high-frequency concurrent DAG analysis operations
+// It launches 2*len(cids) operations, cycling through the CIDs
+func runHighFrequencyConcurrentAnalysisTest(t *testing.T, ctx coreTesting.TestContext, handler *protocol.UnpinOperationHandler,
+	userID uint, cids []cid.Cid, expectErrors bool) {
+	
+	// Create a slice with 2*len(cids) elements, cycling through the original CIDs
+	highFrequencyCIDs := make([]cid.Cid, 2*len(cids))
+	for i := 0; i < 2*len(cids); i++ {
+		highFrequencyCIDs[i] = cids[i%len(cids)]
+	}
+	
+	// Reuse the existing concurrent analysis test function
+	runConcurrentAnalysisTest(t, ctx, handler, userID, highFrequencyCIDs, expectErrors)
+}
+
 // Test concurrent unpin operations
 func TestUnpinOperationHandler_ConcurrentUnpinOperations(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
@@ -502,27 +517,16 @@ func TestUnpinOperationHandler_ConcurrentDatabaseContention(t *testing.T) {
 		}
 
 		// Act - Concurrent operations that all access the same user's pins
-		var wg sync.WaitGroup
-		_errors := make(chan error, len(cids))
-
-		for _, _cid := range cids {
-			wg.Add(1)
-			go func(c cid.Cid) {
-				defer wg.Done()
-				_, err := handler.GetAllUserPins(context.Background(), ctx.DB(), userID)
-				_errors <- err
-				_, err = handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), c, userID)
-				_errors <- err
-			}(_cid)
+		operation := func(c cid.Cid) error {
+			_, err := handler.GetAllUserPins(context.Background(), ctx.DB(), userID)
+			if err != nil {
+				return err
+			}
+			_, err = handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), c, userID)
+			return err
 		}
 
-		wg.Wait()
-		close(_errors)
-
-		// Assert - Check that operations completed
-		for err := range _errors {
-			assert.NoError(tb, err)
-		}
+		runConcurrentUnpinTest(t, ctx, handler, userID, cids, operation, false)
 	}, UnpinTestOptions)
 }
 
@@ -993,30 +997,7 @@ func TestUnpinOperationHandler_HighFrequencyConcurrentUnpins(t *testing.T) {
 			createTestPin(t, ctx, userID, _cid)
 		}
 
-		blockSvc := core.GetService[pluginCore.BlockService](ctx, pluginCore.BLOCK_SERVICE)
-		require.NotNil(tb, blockSvc)
-
-		// Act - High frequency concurrent operations
-		var wg sync.WaitGroup
-		_errors := make(chan error, 100)
-
-		// Launch 100 concurrent operations
-		for i := 0; i < 100; i++ {
-			wg.Add(1)
-			go func(idx int) {
-				defer wg.Done()
-				_cid := cids[idx%len(cids)] // Cycle through CIDs
-				_, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), _cid, userID)
-				_errors <- err
-			}(i)
-		}
-
-		wg.Wait()
-		close(_errors)
-
-		// Assert - Check that all operations completed
-		for err := range _errors {
-			assert.NoError(tb, err)
-		}
+		// Act - High frequency concurrent operations using helper
+		runHighFrequencyConcurrentAnalysisTest(t, ctx, handler, userID, cids, false)
 	}, UnpinTestOptions)
 }
