@@ -19,14 +19,14 @@ import (
 )
 
 const (
-	UnpinPhaseStarting                     = "starting"
-	UnpinPhaseValidatingDAGBefore          = "validating_dag_before"
-	UnpinPhaseAnalyzingDAGDependencies     = "analyzing_dag_dependencies"
-	UnpinPhasePromotingOrphans             = "promoting_orphans"
-	UnpinPhaseAnalyzingPathDependencies    = "analyzing_path_dependencies"
-	UnpinPhaseHandlingPathCascadingEffects = "handling_path_cascading_effects"
-	UnpinPhaseUnpinning                    = "unpinning"
-	UnpinPhaseValidatingDAGAfter           = "validating_dag_after"
+	UnpinPhaseStarting                        = "starting"
+	UnpinPhaseValidatingDAGBefore             = "validating_dag_before"
+	UnpinPhaseAnalyzingDAGDependencies        = "analyzing_dag_dependencies"
+	UnpinPhasePromotingToRootLevelVisibility = "promoting_to_root_level_visibility"
+	UnpinPhaseAnalyzingPathDependencies       = "analyzing_path_dependencies"
+	UnpinPhaseHandlingPathCascadingEffects    = "handling_path_cascading_effects"
+	UnpinPhaseUnpinning                       = "unpinning"
+	UnpinPhaseValidatingDAGAfter              = "validating_dag_after"
 )
 
 // UnpinWorkflowData represents the workflow data for unpin operations
@@ -103,55 +103,61 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 	}
 
 	txErr := db.RetryableTransaction(h.Context(), _db, func(tx *gorm.DB) *gorm.DB {
-		// Analyze DAG dependencies before unpinning
+		// Analyze unpin impact before unpinning
+		// This checks if unpinning this CID would create orphans in the file UI
+		// We're specifically looking for child CIDs that are also pinned by the user
+		// If found, these children need to be promoted to root-level paths to maintain file UI consistency
 		h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhaseAnalyzingDAGDependencies, 2)
 
-		analysis, err := h.AnalyzeDAGDependencies(ctx, tx, c, userID)
+		analysis, err := h.AnalyzeUnpinImpact(ctx, tx, c, userID)
 		if err != nil {
-			h.Logger().Error("Failed to analyze DAG dependencies",
+			h.Logger().Error("Failed to analyze unpin impact",
 				zap.Stringer("cid", c),
 				zap.Uint("user_id", userID),
 				zap.Error(err))
-			_ = tx.AddError(fmt.Errorf("failed to analyze DAG dependencies: %w", err))
+			_ = tx.AddError(fmt.Errorf("failed to analyze unpin impact: %w", err))
 			return tx
 		}
 
 		// Log the analysis results
-		h.Logger().Info("DAG dependency analysis completed",
+		h.Logger().Info("Unpin impact analysis completed",
 			zap.Stringer("cid", c),
 			zap.Uint("user_id", userID),
-			zap.Int("dependent_pins_count", len(analysis.DependentPins)),
-			zap.Int("parent_blocks_count", len(analysis.ParentBlocks)),
-			zap.Int("child_blocks_count", len(analysis.ChildBlocks)),
-			zap.Bool("would_break_structure", analysis.WouldBreakStructure))
+			zap.Bool("would_create_orphans", analysis.WouldCreateOrphans),
+			zap.Int("orphan_candidates_count", len(analysis.RootLevelCandidates)),
+			zap.Int("all_children_count", len(analysis.AllChildren)))
 
-		// If this unpin would break the structure, promote dependent pins to orphan status
-		if analysis.WouldBreakStructure {
-			h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhasePromotingOrphans, 3)
+		// If this unpin would create orphans in the file UI, promote those children to root-level visibility
+		// This ensures that even though the parent is being unpinned, users can still access the child files
+		// in the root of their file UI rather than losing access to them entirely
+		if analysis.WouldCreateOrphans {
+			h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhasePromotingToRootLevelVisibility, 3)
 
-			h.Logger().Warn("Unpinning this CID would break DAG structure",
+			h.Logger().Warn("Unpinning this CID would create orphans in file UI",
 				zap.Stringer("cid", c),
 				zap.Uint("user_id", userID),
-				zap.Strings("dependent_pins", analysis.DependentPins))
+				zap.Strings("root_level_candidates", analysis.RootLevelCandidates))
 
-			// Promote dependent pins to orphan status
-			err = h.PromotePinsToOrphan(ctx, tx, analysis.DependentPins, userID)
+			// Promote dependent pins to root-level visibility in the file UI
+			// The analysis.RootLevelCandidates list contains child CIDs that are pinned by the user
+			// These children will become orphans when we unpin the parent, so we move them to root-level paths
+			err = h.PromotePinsToRootLevelVisibility(ctx, tx, analysis.RootLevelCandidates, userID)
 			if err != nil {
-				h.Logger().Error("Failed to promote pins to orphan status",
+				h.Logger().Error("Failed to promote pins to root level visibility",
 					zap.Stringer("cid", c),
 					zap.Uint("user_id", userID),
 					zap.Error(err))
-				_ = tx.AddError(fmt.Errorf("failed to promote pins to orphan status: %w", err))
+				_ = tx.AddError(fmt.Errorf("failed to promote pins to root level visibility: %w", err))
 				return tx
 			}
 
-			// Validate orphan promotion results
-			if err := h.ValidateOrphanPromotion(ctx, analysis.DependentPins, userID); err != nil {
-				h.Logger().Error("Orphan promotion validation failed",
+			// Validate root level visibility promotion results
+			if err := h.ValidateRootLevelVisibilityPromotion(ctx, analysis.RootLevelCandidates, userID); err != nil {
+				h.Logger().Error("Root level visibility promotion validation failed",
 					zap.Stringer("cid", c),
 					zap.Uint("user_id", userID),
 					zap.Error(err))
-				_ = tx.AddError(fmt.Errorf("orphan promotion validation failed: %w", err))
+				_ = tx.AddError(fmt.Errorf("root level visibility promotion validation failed: %w", err))
 				return tx
 			}
 		}
@@ -220,6 +226,22 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 			zap.Stringer("cid", c),
 			zap.Uint("user_id", userID))
 
+		// Clean up file paths after unpinning
+		fileManagerSvc := core.GetService[pluginCore.FileManagerService](h.Context(), pluginCore.FILE_MANAGER_SERVICE)
+		if fileManagerSvc != nil {
+			// Use smart deletion to properly clean up file paths
+			// This will only delete paths that are no longer referenced by other pins
+			err = fileManagerSvc.DeleteFilePathSmart(ctx, userID, c.Bytes())
+			if err != nil {
+				h.Logger().Error("Failed to clean up file paths after unpin",
+					zap.Stringer("cid", c),
+					zap.Uint("user_id", userID),
+					zap.Error(err))
+				_ = tx.AddError(fmt.Errorf("failed to clean up file paths: %w", err))
+				return tx
+			}
+		}
+
 		// Final validation to ensure system consistency
 		if err := h.ValidateSystemConsistency(ctx, c, userID); err != nil {
 			h.Logger().Error("System consistency validation failed",
@@ -255,21 +277,24 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 	return nil
 }
 
-// DAGDependencyAnalysis represents the results of dependency analysis
-type DAGDependencyAnalysis struct {
-	CID                 string   // The CID being analyzed
-	DependentPins       []string // CIDs of pins that depend on this block
-	ParentBlocks        []string // CIDs of parent blocks in the DAG
-	ChildBlocks         []string // CIDs of child blocks in the DAG
-	WouldBreakStructure bool     // Whether unpinning would break the DAG structure
+// UnpinImpactAnalysis represents the results of unpin impact analysis
+// This analysis is specifically concerned with maintaining file UI consistency when a CID is unpinned.
+// We only care about children that need to be promoted to root-level visibility - parent dependencies
+// don't matter for structure breaking. The goal is to identify which children need to be promoted
+// to root-level paths in the file UI so users can still access them even after the parent is unpinned.
+type UnpinImpactAnalysis struct {
+	TargetCID             string   // The CID being analyzed for unpinning
+	WouldCreateOrphans    bool     // True if unpinning this CID would require promoting child files to root-level visibility
+	RootLevelCandidates   []string // Child CIDs that are pinned by the user and need to be promoted to root-level visibility
+	AllChildren           []string // All child CIDs of the target CID (for informational purposes)
 }
 
 // PathDependencyAnalysis represents the results of file path dependency analysis
 type PathDependencyAnalysis struct {
-	AffectedPaths     []string // Paths that would be affected by unpinning
-	WouldBreakPaths   bool     // Whether unpinning would break path structures
-	SharedDirectories []string // Directories shared by multiple pins
-	OrphanCandidates  []string // CIDs that could become orphans
+	AffectedPaths        []string // Paths that would be affected by unpinning
+	WouldBreakPaths      bool     // Whether unpinning would break path structures
+	SharedDirectories    []string // Directories shared by multiple pins
+	RootLevelCandidates  []string // CIDs that need to be promoted to root-level visibility
 }
 
 // DAGValidationResult represents the results of DAG integrity validation
@@ -281,59 +306,76 @@ type DAGValidationResult struct {
 	ErrorMessage   string   // Detailed error message if validation failed
 }
 
-// AnalyzeDAGDependencies analyzes which other pins depend on the given CID
-func (h *UnpinOperationHandler) AnalyzeDAGDependencies(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) (*DAGDependencyAnalysis, error) {
-	h.Logger().Debug("Starting DAG dependency analysis",
+// AnalyzeUnpinImpact analyzes the impact of unpinning a CID, specifically looking for children that would become orphans in the file UI
+// This method is concerned with maintaining file UI consistency, not DAG integrity. The step-by-step logic is:
+// 1. Get all child relationships of the target CID being unpinned
+// 2. Check if any of those child blocks are also pinned by the same user
+// 3. If child blocks are pinned, they would become orphans when we unpin the parent
+// 4. These orphaned children need to be promoted to root-level paths in the file UI so users can still access them
+// We only care about children becoming orphans because parent dependencies don't affect file UI structure breaking.
+func (h *UnpinOperationHandler) AnalyzeUnpinImpact(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) (*UnpinImpactAnalysis, error) {
+	h.Logger().Debug("Starting unpin impact analysis",
 		zap.Stringer("target_cid", c),
 		zap.Uint("user_id", userID))
 
-	analysis := &DAGDependencyAnalysis{
-		CID:           c.String(),
-		DependentPins: make([]string, 0),
-		ParentBlocks:  make([]string, 0),
-		ChildBlocks:   make([]string, 0),
-	}
-
-	blockSvc := core.GetService[pluginCore.BlockService](h.Context(), pluginCore.BLOCK_SERVICE)
-	if blockSvc == nil {
-		h.Logger().Error("Block service not available during DAG dependency analysis")
-		return nil, fmt.Errorf("block service not available")
-	}
-
-	// Get all pins for this user to check dependencies
-	allPins, err := h.GetAllUserPins(ctx, tx, userID)
-	if err != nil {
-		h.Logger().Error("Failed to get user pins during DAG dependency analysis",
-			zap.Uint("user_id", userID),
-			zap.Error(err))
-		return nil, fmt.Errorf("failed to get user pins: %w", err)
-	}
-
-	h.Logger().Debug("Found user pins for DAG dependency analysis",
-		zap.Uint("user_id", userID),
-		zap.Int("pin_count", len(allPins)))
-
-	// Create a map of pinned CIDs for quick lookup
-	pinnedCIDs := make(map[string]bool)
-	for _, pin := range allPins {
-		pinCID, err := cid.Cast(pin.CID)
-		if err != nil {
-			h.Logger().Warn("Failed to cast pin CID during dependency analysis",
-				zap.Binary("cid_bytes", pin.CID),
-				zap.Error(err))
-			continue
-		}
-		pinnedCIDs[pinCID.String()] = true
+	analysis := &UnpinImpactAnalysis{
+		TargetCID: c.String(),
 	}
 
 	// Get parent and child relationships for the target CID
-	parents, children, err := h.GetBlockRelationships(ctx, tx, blockSvc, c, userID)
+	_, children, err := h.getBlockRelationshipsWithLogging(ctx, tx, c, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Populate all children
+	analysis.AllChildren = children
+
+	// Check if any child blocks are pinned by this user
+	// These would become orphans if we unpin the target CID
+	pinnedDescendants, err := h.findPinnedChildBlocks(ctx, tx, c, userID, children)
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter out the target CID itself from the candidates
+	var rootLevelCandidates []string
+	for _, descendant := range pinnedDescendants {
+		if descendant != c.String() {
+			rootLevelCandidates = append(rootLevelCandidates, descendant)
+		}
+	}
+	analysis.RootLevelCandidates = rootLevelCandidates
+
+	// Determine if unpinning would create orphans in the file UI
+	analysis.WouldCreateOrphans = len(analysis.RootLevelCandidates) > 0
+
+	h.Logger().Debug("Unpin impact analysis completed",
+		zap.Stringer("cid", c),
+		zap.Uint("user_id", userID),
+		zap.Strings("root_level_candidates", analysis.RootLevelCandidates),
+		zap.Strings("all_children", analysis.AllChildren),
+		zap.Bool("would_create_orphans", analysis.WouldCreateOrphans))
+
+	return analysis, nil
+}
+
+// getBlockRelationshipsWithLogging retrieves parent and child relationships for a CID with logging
+func (h *UnpinOperationHandler) getBlockRelationshipsWithLogging(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) (parents []string, children []string, err error) {
+	blockSvc := core.GetService[pluginCore.BlockService](h.Context(), pluginCore.BLOCK_SERVICE)
+	if blockSvc == nil {
+		h.Logger().Error("Block service not available during DAG dependency analysis")
+		return nil, nil, fmt.Errorf("block service not available")
+	}
+
+	// Get parent and child relationships for the target CID
+	parents, children, err = h.GetBlockRelationships(ctx, tx, blockSvc, c, userID)
 	if err != nil {
 		h.Logger().Error("Failed to get block relationships",
 			zap.Stringer("cid", c),
 			zap.Uint("user_id", userID),
 			zap.Error(err))
-		return nil, fmt.Errorf("failed to get block relationships: %w", err)
+		return nil, nil, fmt.Errorf("failed to get block relationships: %w", err)
 	}
 
 	h.Logger().Debug("Block relationships found",
@@ -341,52 +383,83 @@ func (h *UnpinOperationHandler) AnalyzeDAGDependencies(ctx context.Context, tx *
 		zap.Int("parent_count", len(parents)),
 		zap.Int("child_count", len(children)))
 
-	analysis.ParentBlocks = parents
-	analysis.ChildBlocks = children
+	return parents, children, nil
+}
 
-	// For each pin, check if it depends on the block we're about to unpin
-	for _, pin := range allPins {
-		// Skip the pin that we're currently unpinning
-		pinCID, err := cid.Cast(pin.CID)
-		if err != nil {
-			h.Logger().Warn("Failed to cast pin CID during dependency analysis",
-				zap.Binary("cid_bytes", pin.CID),
-				zap.Error(err))
-			continue
-		}
-
-		if pinCID.Equals(c) {
-			continue
-		}
-
-		// Check if this pin depends on our target CID
-		depends, err := h.DoesPinDependOnCID(ctx, blockSvc, pinCID, c)
-		if err != nil {
-			h.Logger().Error("Failed to check pin dependency",
-				zap.Stringer("pin_cid", pinCID),
-				zap.Stringer("target_cid", c),
-				zap.Error(err))
-			continue
-		}
-
-		if depends {
-			analysis.DependentPins = append(analysis.DependentPins, pinCID.String())
-		}
+// findPinnedChildBlocks identifies all descendant blocks that are pinned by the user
+func (h *UnpinOperationHandler) findPinnedChildBlocks(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint, children []string) ([]string, error) {
+	blockSvc := core.GetService[pluginCore.BlockService](h.Context(), pluginCore.BLOCK_SERVICE)
+	if blockSvc == nil {
+		return nil, fmt.Errorf("block service not available")
 	}
 
-	// Determine if unpinning would break the structure
-	// A structure would be broken if:
-	// 1. There are dependent pins (other pins that reference this CID)
-	analysis.WouldBreakStructure = len(analysis.DependentPins) > 0
+	// Use a map to track visited CIDs to prevent infinite loops
+	visited := make(map[string]bool)
+	
+	// Find all pinned descendants recursively
+	pinnedDescendants, err := h.findPinnedDescendants(ctx, tx, blockSvc, c, userID, visited)
+	if err != nil {
+		return nil, err
+	}
 
-	h.Logger().Debug("DAG dependency analysis completed",
-		zap.Stringer("cid", c),
-		zap.Uint("user_id", userID),
-		zap.Strings("dependent_pins", analysis.DependentPins),
-		zap.Strings("child_blocks", analysis.ChildBlocks),
-		zap.Bool("would_break_structure", analysis.WouldBreakStructure))
+	return pinnedDescendants, nil
+}
 
-	return analysis, nil
+// findPinnedDescendants recursively finds all descendant CIDs that are pinned by the user
+func (h *UnpinOperationHandler) findPinnedDescendants(ctx context.Context, tx *gorm.DB, blockSvc pluginCore.BlockService, currentCID cid.Cid, userID uint, visited map[string]bool) ([]string, error) {
+	cidStr := currentCID.String()
+	
+	// If we've already visited this CID, skip to prevent infinite loops
+	if visited[cidStr] {
+		return []string{}, nil
+	}
+	visited[cidStr] = true
+
+	// Get metadata for the current block
+	meta, err := blockSvc.GetBlockMeta(ctx, currentCID)
+	if err != nil {
+		h.Logger().Warn("Failed to get block metadata during descendant search",
+			zap.Stringer("cid", currentCID),
+			zap.Error(err))
+		return []string{}, nil
+	}
+
+	if meta == nil {
+		return []string{}, nil
+	}
+
+	var pinnedDescendants []string
+
+	// Check if current CID is pinned by the user (but not the original target)
+	// We don't want to include the target CID itself in the results
+	var pinCount int64
+	err = tx.WithContext(ctx).
+		Model(&pluginDb.IPFSPin{}).
+		Where("user_id = ? AND cid = ?", userID, currentCID.Bytes()).
+		Count(&pinCount).Error
+	if err != nil && err != gorm.ErrRecordNotFound {
+		h.Logger().Warn("Failed to check if CID is pinned during descendant search",
+			zap.Stringer("cid", currentCID),
+			zap.Error(err))
+	} else if pinCount > 0 {
+		// Only add to results if this isn't the original target (which is already tracked as visited)
+		pinnedDescendants = append(pinnedDescendants, cidStr)
+	}
+
+	// Recursively check all children
+	for _, childCID := range meta.ChildCID {
+		childDescendants, err := h.findPinnedDescendants(ctx, tx, blockSvc, childCID, userID, visited)
+		if err != nil {
+			h.Logger().Warn("Failed to find pinned descendants for child",
+				zap.Stringer("parent_cid", currentCID),
+				zap.Stringer("child_cid", childCID),
+				zap.Error(err))
+			continue
+		}
+		pinnedDescendants = append(pinnedDescendants, childDescendants...)
+	}
+
+	return pinnedDescendants, nil
 }
 
 // GetAllUserPins retrieves all pins for a specific user
@@ -602,8 +675,8 @@ func (h *UnpinOperationHandler) GetBlockRelationships(ctx context.Context, tx *g
 		return make([]string, 0), make([]string, 0), nil
 	}
 
-	// Collect parent CIDs that are pinned by the same user
-	parents = make([]string, 0, len(linkedBlocks))
+	// Collect parent CIDs
+	var parentCIDs [][]byte
 	for _, link := range linkedBlocks {
 		var parentBlock pluginDb.IPFSBlock
 		err := tx.WithContext(ctx).Where("id = ?", link.ParentID).First(&parentBlock).Error
@@ -613,35 +686,37 @@ func (h *UnpinOperationHandler) GetBlockRelationships(ctx context.Context, tx *g
 			}
 			continue
 		}
+		parentCIDs = append(parentCIDs, parentBlock.CID)
+	}
 
-		parentCID, err := cid.Cast(parentBlock.CID)
+	// Batch check which parent CIDs are pinned by the user
+	var pinnedParentCIDs [][]byte
+	if len(parentCIDs) > 0 {
+		err = tx.WithContext(ctx).
+			Model(&pluginDb.IPFSPin{}).
+			Where("user_id = ? AND cid IN ?", userID, parentCIDs).
+			Pluck("cid", &pinnedParentCIDs).Error
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return nil, nil, err
+		}
+	}
+
+	// Convert pinned parent CIDs to strings
+	parents = make([]string, 0, len(pinnedParentCIDs))
+	for _, parentCIDBytes := range pinnedParentCIDs {
+		parentCID, err := cid.Cast(parentCIDBytes)
 		if err != nil {
 			h.Logger().Warn("Failed to cast parent CID", zap.Error(err))
 			continue
 		}
-
-		// Check if this parent CID is pinned by the same user
-		var pinCount int64
-		err = tx.WithContext(ctx).
-			Model(&pluginDb.IPFSPin{}).
-			Where("user_id = ? AND cid = ?", userID, parentBlock.CID).
-			Count(&pinCount).Error
-		if err != nil {
-			h.Logger().Warn("Failed to check if parent is pinned by user", zap.Error(err))
-			continue
-		}
-
-		// Only include parent if it's pinned by the same user
-		if pinCount > 0 {
-			parents = append(parents, parentCID.String())
-		}
+		parents = append(parents, parentCID.String())
 	}
 
 	return parents, children, nil
 }
 
-// PromotePinsToOrphan updates file paths for dependent pins to mark them as orphans
-func (h *UnpinOperationHandler) PromotePinsToOrphan(ctx context.Context, tx *gorm.DB, dependentPins []string, userID uint) error {
+// PromotePinsToRootLevelVisibility updates file paths for dependent pins to mark them as root level visible
+func (h *UnpinOperationHandler) PromotePinsToRootLevelVisibility(ctx context.Context, tx *gorm.DB, dependentPins []string, userID uint) error {
 	fileManagerSvc := core.GetService[pluginCore.FileManagerService](h.Context(), pluginCore.FILE_MANAGER_SERVICE)
 	if fileManagerSvc == nil {
 		return fmt.Errorf("file manager service not available")
@@ -650,23 +725,23 @@ func (h *UnpinOperationHandler) PromotePinsToOrphan(ctx context.Context, tx *gor
 	for _, pinCIDStr := range dependentPins {
 		pinCID, err := cid.Parse(pinCIDStr)
 		if err != nil {
-			h.Logger().Warn("Failed to parse dependent pin CID during orphan promotion",
+			h.Logger().Warn("Failed to parse dependent pin CID during root level visibility promotion",
 				zap.String("cid", pinCIDStr),
 				zap.Error(err))
 			continue
 		}
 
-		// Update file paths to mark them as orphans
-		err = h.UpdatePathsToOrphanWithTx(ctx, tx, pinCID, userID)
+		// Update file paths to mark them as root level visible
+		err = h.UpdatePathsToRootLevelVisibilityWithTx(ctx, tx, pinCID, userID)
 		if err != nil {
-			h.Logger().Error("Failed to update paths to orphan status",
+			h.Logger().Error("Failed to update paths to root level visibility",
 				zap.Stringer("cid", pinCID),
 				zap.Uint("user_id", userID),
 				zap.Error(err))
 			return err
 		}
 
-		h.Logger().Info("Successfully promoted pin to orphan status",
+		h.Logger().Info("Successfully promoted pin to root level visibility",
 			zap.Stringer("cid", pinCID),
 			zap.Uint("user_id", userID))
 	}
@@ -677,9 +752,9 @@ func (h *UnpinOperationHandler) PromotePinsToOrphan(ctx context.Context, tx *gor
 // AnalyzePathDependencies analyzes file path dependencies for the given CID
 func (h *UnpinOperationHandler) AnalyzePathDependencies(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) (*PathDependencyAnalysis, error) {
 	analysis := &PathDependencyAnalysis{
-		AffectedPaths:     make([]string, 0),
-		SharedDirectories: make([]string, 0),
-		OrphanCandidates:  make([]string, 0),
+		AffectedPaths:        make([]string, 0),
+		SharedDirectories:    make([]string, 0),
+		RootLevelCandidates: make([]string, 0),
 	}
 
 	// Validate input CID
@@ -734,7 +809,7 @@ func (h *UnpinOperationHandler) AnalyzePathDependencies(ctx context.Context, tx 
 		if err != nil {
 			return nil, fmt.Errorf("failed to get orphan candidates: %w", err)
 		}
-		analysis.OrphanCandidates = orphanCandidates
+		analysis.RootLevelCandidates = orphanCandidates
 	} else {
 		// If not shared, check if removing it would break directory structures
 		analysis.WouldBreakPaths = h.WouldBreakDirectoryStructure(targetPath)
@@ -935,12 +1010,12 @@ func (h *UnpinOperationHandler) HandlePathCascadingEffects(ctx context.Context, 
 		return fmt.Errorf("file manager service not available")
 	}
 
-	// Handle orphan candidates - promote them to orphan status
-	if len(analysis.OrphanCandidates) > 0 {
-		h.Logger().Info("Promoting orphan candidates to orphan status",
-			zap.Int("count", len(analysis.OrphanCandidates)))
+	// Handle orphan candidates - promote them to root level visibility
+	if len(analysis.RootLevelCandidates) > 0 {
+		h.Logger().Info("Promoting orphan candidates to root level visibility",
+			zap.Int("count", len(analysis.RootLevelCandidates)))
 
-		for _, cidStr := range analysis.OrphanCandidates {
+		for _, cidStr := range analysis.RootLevelCandidates {
 			orphanCID, err := cid.Parse(cidStr)
 			if err != nil {
 				h.Logger().Warn("Failed to parse orphan candidate CID",
@@ -949,9 +1024,9 @@ func (h *UnpinOperationHandler) HandlePathCascadingEffects(ctx context.Context, 
 				continue
 			}
 
-			err = h.UpdatePathsToOrphanWithTx(ctx, tx, orphanCID, userID)
+			err = h.UpdatePathsToRootLevelVisibilityWithTx(ctx, tx, orphanCID, userID)
 			if err != nil {
-				h.Logger().Error("Failed to update paths to orphan status for candidate",
+				h.Logger().Error("Failed to update paths to root level visibility for candidate",
 					zap.Stringer("cid", orphanCID),
 					zap.Uint("user_id", userID),
 					zap.Error(err))
@@ -973,24 +1048,24 @@ func (h *UnpinOperationHandler) HandlePathCascadingEffects(ctx context.Context, 
 	return nil
 }
 
-// UpdatePathsToOrphan moves orphaned pins to root level path structure and marks them as orphans
-func (h *UnpinOperationHandler) UpdatePathsToOrphan(ctx context.Context, c cid.Cid, userID uint) error {
+// UpdatePathsToRootLevelVisibility moves orphaned pins to root level path structure and marks them as root level visible
+func (h *UnpinOperationHandler) UpdatePathsToRootLevelVisibility(ctx context.Context, c cid.Cid, userID uint) error {
 	// Check for service availability before proceeding
 	fileManagerSvc := core.GetService[pluginCore.FileManagerService](h.Context(), pluginCore.FILE_MANAGER_SERVICE)
 	if fileManagerSvc == nil {
 		return fmt.Errorf("file manager service not available")
 	}
 
-	return h.updatePathsToOrphanWithDB(ctx, h.Context().DB(), c, userID)
+	return h.updatePathsToRootLevelVisibilityWithDB(ctx, h.Context().DB(), c, userID)
 }
 
-// UpdatePathsToOrphanWithTx moves orphaned pins to root level path structure and marks them as orphans using a transaction
-func (h *UnpinOperationHandler) UpdatePathsToOrphanWithTx(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) error {
-	return h.updatePathsToOrphanWithDB(ctx, tx, c, userID)
+// UpdatePathsToRootLevelVisibilityWithTx moves orphaned pins to root level path structure and marks them as root level visible using a transaction
+func (h *UnpinOperationHandler) UpdatePathsToRootLevelVisibilityWithTx(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) error {
+	return h.updatePathsToRootLevelVisibilityWithDB(ctx, tx, c, userID)
 }
 
-// updatePathsToOrphanWithDB contains the shared logic for updating paths to orphan status
-func (h *UnpinOperationHandler) updatePathsToOrphanWithDB(ctx context.Context, db *gorm.DB, c cid.Cid, userID uint) error {
+// updatePathsToRootLevelVisibilityWithDB contains the shared logic for updating paths to root level visibility
+func (h *UnpinOperationHandler) updatePathsToRootLevelVisibilityWithDB(ctx context.Context, db *gorm.DB, c cid.Cid, userID uint) error {
 	// Get all file paths for this CID and user
 	var paths []pluginDb.FilePath
 
@@ -1001,7 +1076,7 @@ func (h *UnpinOperationHandler) updatePathsToOrphanWithDB(ctx context.Context, d
 		return fmt.Errorf("failed to get file paths: %w", err)
 	}
 
-	// Update each path to be an orphan at root level
+	// Update each path to be root level visible (orphaned) at root level
 	for _, path := range paths {
 		// Move to root level with CID as name
 		rootPath := "/" + c.String()
@@ -1018,7 +1093,7 @@ func (h *UnpinOperationHandler) updatePathsToOrphanWithDB(ctx context.Context, d
 				"is_orphan":    true,
 			}).Error
 		if err != nil {
-			h.Logger().Error("Failed to update file path to orphan status",
+			h.Logger().Error("Failed to update file path to root level visibility",
 				zap.Stringer("cid", c),
 				zap.Uint("user_id", userID),
 				zap.String("path", path.Path),
@@ -1026,7 +1101,7 @@ func (h *UnpinOperationHandler) updatePathsToOrphanWithDB(ctx context.Context, d
 			return err
 		}
 
-		h.Logger().Debug("Updated file path to orphan status",
+		h.Logger().Debug("Updated file path to root level visibility",
 			zap.Stringer("cid", c),
 			zap.Uint("user_id", userID),
 			zap.String("old_path", path.Path),
@@ -1306,8 +1381,8 @@ func (h *UnpinOperationHandler) ValidateAllPins(ctx context.Context, blockSvc pl
 	return missingBlocks, cycleDetected, nil
 }
 
-// ValidateOrphanPromotion validates that orphan promotion was successful
-func (h *UnpinOperationHandler) ValidateOrphanPromotion(ctx context.Context, dependentPins []string, userID uint) error {
+// ValidateRootLevelVisibilityPromotion validates that root level visibility promotion was successful
+func (h *UnpinOperationHandler) ValidateRootLevelVisibilityPromotion(ctx context.Context, dependentPins []string, userID uint) error {
 	__db := h.Context().DB()
 
 	for _, pinCIDStr := range dependentPins {
@@ -1319,7 +1394,7 @@ func (h *UnpinOperationHandler) ValidateOrphanPromotion(ctx context.Context, dep
 			continue
 		}
 
-		// Check if file paths exist for this pin and are marked as orphan
+		// Check if file paths exist for this pin and are marked as root level visible
 		var paths []pluginDb.FilePath
 		err = __db.WithContext(ctx).
 			Where("user_id = ? AND cid = ?", userID, pinCID.Bytes()).
@@ -1328,10 +1403,10 @@ func (h *UnpinOperationHandler) ValidateOrphanPromotion(ctx context.Context, dep
 			return fmt.Errorf("failed to get file paths for pin %s: %w", pinCIDStr, err)
 		}
 
-		// Validate that all paths are marked as orphan
+		// Validate that all paths are marked as root level visible (orphaned)
 		for _, path := range paths {
 			if !path.IsOrphan {
-				return fmt.Errorf("file path %s for pin %s is not marked as orphan", path.Path, pinCIDStr)
+				return fmt.Errorf("file path %s for pin %s is not marked as root level visible", path.Path, pinCIDStr)
 			}
 		}
 	}

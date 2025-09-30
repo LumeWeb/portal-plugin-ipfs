@@ -45,7 +45,7 @@ func TestUnpinOperationHandler_LargeDAGStructure(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), rootCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), rootCID, userID)
 
 		// Assert
 		assert.NoError(tb, err)

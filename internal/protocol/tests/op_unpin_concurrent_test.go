@@ -53,7 +53,7 @@ func runConcurrentUnpinTest(t *testing.T, ctx coreTesting.TestContext, handler *
 func runConcurrentAnalysisTest(t *testing.T, ctx coreTesting.TestContext, handler *protocol.UnpinOperationHandler,
 	userID uint, cids []cid.Cid, expectErrors bool) {
 	runConcurrentUnpinTest(t, ctx, handler, userID, cids, func(c cid.Cid) error {
-		_, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), c, userID)
+		_, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), c, userID)
 		return err
 	}, expectErrors)
 }
@@ -127,7 +127,7 @@ func TestUnpinOperationHandler_ConcurrentSameCID(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), targetCID, userID)
+				_, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), targetCID, userID)
 				errors <- err
 			}()
 		}
@@ -178,21 +178,21 @@ func TestUnpinOperationHandler_ConcurrentDependentCIDs(t *testing.T) {
 		runConcurrentAnalysisTest(t, ctx, handler, userID, cids, false)
 
 		// Verify analysis results
-		analysisA, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), cidA, userID)
+		analysisA, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), cidA, userID)
 		require.NoError(tb, err)
-		assert.True(tb, analysisA.WouldBreakStructure, "A should break structure as it depends on B")
+		assert.True(tb, analysisA.WouldCreateOrphans, "A should create root level visibility candidates as it has child pins")
 
-		analysisB, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), cidB, userID)
+		analysisB, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), cidB, userID)
 		require.NoError(tb, err)
-		assert.True(tb, analysisB.WouldBreakStructure, "B should break structure as it depends on C")
+		assert.True(tb, analysisB.WouldCreateOrphans, "B should create root level visibility candidates as it has child pins")
 
-		analysisC, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), cidC, userID)
+		analysisC, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), cidC, userID)
 		require.NoError(tb, err)
-		assert.True(tb, analysisC.WouldBreakStructure, "C should break structure as it depends on D")
+		assert.True(tb, analysisC.WouldCreateOrphans, "C should create root level visibility candidates as it has child pins")
 
-		analysisD, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), cidD, userID)
+		analysisD, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), cidD, userID)
 		require.NoError(tb, err)
-		assert.False(tb, analysisD.WouldBreakStructure, "D should not break structure as it has no dependencies")
+		assert.False(tb, analysisD.WouldCreateOrphans, "D should not create root level visibility candidates as it has no child pins")
 	}, UnpinTestOptions)
 }
 
@@ -241,15 +241,15 @@ func TestUnpinOperationHandler_ConcurrentSharedDirectoryStructures(t *testing.T)
 		runConcurrentAnalysisTest(t, ctx, handler, userID1, cids, false)
 
 		// Verify analysis results
-		analysis1, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), rootDirCID, userID1)
+		analysis1, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), rootDirCID, userID1)
 		require.NoError(tb, err)
-		assert.True(tb, analysis1.WouldBreakStructure)
-		assert.Len(tb, analysis1.DependentPins, 2) // subdir and file
+		assert.True(tb, analysis1.WouldCreateOrphans)
+		assert.Len(tb, analysis1.RootLevelCandidates, 2) // subdir and file
 
-		analysis2, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), rootDirCID, userID2)
+		analysis2, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), rootDirCID, userID2)
 		require.NoError(tb, err)
-		assert.True(tb, analysis2.WouldBreakStructure)
-		assert.Len(tb, analysis2.DependentPins, 2) // subdir and file
+		assert.True(tb, analysis2.WouldCreateOrphans)
+		assert.Len(tb, analysis2.RootLevelCandidates, 2) // subdir and file
 
 		// Verify paths still exist
 		var path pluginDb.FilePath
@@ -297,7 +297,7 @@ func TestUnpinOperationHandler_ConcurrentLargeDAG(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), rootCID, userID)
+				_, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), rootCID, userID)
 				errors <- err
 			}()
 		}
@@ -339,14 +339,14 @@ func TestUnpinOperationHandler_ConcurrentManyDependentPins(t *testing.T) {
 		// Act - Concurrent operations with many dependent pins
 		var wg sync.WaitGroup
 		errors := make(chan error, 10)
-		results := make(chan *protocol.DAGDependencyAnalysis, 10)
+		results := make(chan *protocol.UnpinImpactAnalysis, 10)
 
 		// Run concurrent analyses on different dependent CIDs
 		for i := 0; i < 10; i++ {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), dependentCIDs[idx], userID)
+				analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), dependentCIDs[idx], userID)
 				errors <- err
 				results <- analysis
 			}(i)
@@ -366,7 +366,7 @@ func TestUnpinOperationHandler_ConcurrentManyDependentPins(t *testing.T) {
 			if analysis != nil {
 				resultCount++
 				// Each dependent file should not break structure since they have no dependencies
-				assert.False(tb, analysis.WouldBreakStructure)
+				assert.False(tb, analysis.WouldCreateOrphans)
 			}
 		}
 		assert.Equal(tb, 10, resultCount)
@@ -420,7 +420,7 @@ func TestUnpinOperationHandler_ConcurrentPartialFailures(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), validCID, userID)
+			_, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), validCID, userID)
 			errors <- err
 		}()
 
@@ -428,7 +428,7 @@ func TestUnpinOperationHandler_ConcurrentPartialFailures(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), undefinedCID, userID)
+			_, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), undefinedCID, userID)
 			errors <- err
 		}()
 
@@ -511,7 +511,7 @@ func TestUnpinOperationHandler_ConcurrentDatabaseContention(t *testing.T) {
 				defer wg.Done()
 				_, err := handler.GetAllUserPins(context.Background(), ctx.DB(), userID)
 				_errors <- err
-				_, err = handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), c, userID)
+				_, err = handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), c, userID)
 				_errors <- err
 			}(_cid)
 		}
@@ -556,7 +556,7 @@ func TestUnpinOperationHandler_ConcurrentTimeouts(t *testing.T) {
 				defer wg.Done()
 				timeoutCtx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 				defer cancel()
-				_, err := handler.AnalyzeDAGDependencies(timeoutCtx, ctx.DB(), cids[idx], userID)
+				_, err := handler.AnalyzeUnpinImpact(timeoutCtx, ctx.DB(), cids[idx], userID)
 				_errors <- err
 			}(i)
 		}
@@ -566,7 +566,7 @@ func TestUnpinOperationHandler_ConcurrentTimeouts(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				_, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), cids[idx], userID)
+				_, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), cids[idx], userID)
 				_errors <- err
 			}(i)
 		}
@@ -623,7 +623,7 @@ func TestUnpinOperationHandler_RaceUnpinPinSameCID(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), targetCID, userID)
+			_, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), targetCID, userID)
 			errors <- err
 		}()
 
@@ -728,7 +728,7 @@ func TestUnpinOperationHandler_RaceUnpinDAGValidation(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), rootCID, userID)
+			analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), rootCID, userID)
 			errors <- err
 			results <- analysis
 		}()
@@ -776,7 +776,7 @@ func TestUnpinOperationHandler_RaceOrphanPromotion(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			dependentPins := []string{c.String()}
-			return handler.PromotePinsToOrphan(context.Background(), ctx.DB(), dependentPins, userID)
+			return handler.PromotePinsToRootLevelVisibility(context.Background(), ctx.DB(), dependentPins, userID)
 		}
 
 		// Create a custom path update function that uses the lock
@@ -789,30 +789,30 @@ func TestUnpinOperationHandler_RaceOrphanPromotion(t *testing.T) {
 		// Run concurrent operations with our locked functions
 		runConcurrentUnpinTest(t, ctx, handler, userID, []cid.Cid{fileCID}, func(c cid.Cid) error {
 			var wg sync.WaitGroup
-			errors := make(chan error, 2)
+			_errors := make(chan error, 2)
 
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				errors <- lockedOperation(c)
+				_errors <- lockedOperation(c)
 			}()
 
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				errors <- lockedPathUpdate()
+				_errors <- lockedPathUpdate()
 			}()
 
 			wg.Wait()
-			close(errors)
+			close(_errors)
 
-			for err := range errors {
+			for err := range _errors {
 				if err != nil {
 					return err
 				}
 			}
 			return nil
-		})
+		}, false)
 
 		// Verify the file path was either updated or orphaned, but not corrupted
 		var updatedPath pluginDb.FilePath
@@ -848,7 +848,7 @@ func TestUnpinOperationHandler_ConcurrentWithLocking(t *testing.T) {
 		lockedOperation := func(c cid.Cid) error {
 			mu.Lock()
 			defer mu.Unlock()
-			_, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), c, userID)
+			_, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), c, userID)
 			return err
 		}
 
@@ -881,7 +881,7 @@ func TestUnpinOperationHandler_ConcurrentTransactionIsolation(t *testing.T) {
 		var successCount int32
 		operation := func(c cid.Cid) error {
 			return ctx.DB().Transaction(func(tx *gorm.DB) error {
-				_, err := handler.AnalyzeDAGDependencies(context.Background(), tx, c, userID)
+				_, err := handler.AnalyzeUnpinImpact(context.Background(), tx, c, userID)
 				if err != nil {
 					return err
 				}
@@ -921,40 +921,23 @@ func TestUnpinOperationHandler_ConcurrentContextCancellation(t *testing.T) {
 			_ctx, cancel := context.WithTimeout(context.Background(), 1*time.Microsecond)
 			defer cancel()
 
-			_, err := handler.AnalyzeDAGDependencies(_ctx, ctx.DB(), c, userID)
+			_, err := handler.AnalyzeUnpinImpact(_ctx, ctx.DB(), c, userID)
 			return err
 		}
 
 		// Run concurrent operations with our helper
-		runConcurrentUnpinTest(t, ctx, handler, userID, cids, func(c cid.Cid) error {
-			err := cancellableOperation(c)
-			return err
-		}, true)
+		runConcurrentUnpinTest(t, ctx, handler, userID, cids, cancellableOperation, true)
 
 		// Verify that errors were context cancellation errors
-		var wg sync.WaitGroup
-		errors := make(chan error, len(cids))
-
-		for _, c := range cids {
-			wg.Add(1)
-			go func(c cid.Cid) {
-				defer wg.Done()
-				err := cancellableOperation(c)
-				errors <- err
-			}(c)
-		}
-
-		wg.Wait()
-		close(errors)
-
 		errorCount := 0
-		for err := range errors {
+		for _, c := range cids {
+			err := cancellableOperation(c)
 			if err != nil {
 				errorCount++
 				assert.True(tb,
 					errors.Is(err, context.Canceled) ||
 						errors.Is(err, context.DeadlineExceeded),
-					"Expected context cancellation error")
+					"Expected context cancellation error, got: %v", err)
 			}
 		}
 
@@ -1023,7 +1006,7 @@ func TestUnpinOperationHandler_HighFrequencyConcurrentUnpins(t *testing.T) {
 			go func(idx int) {
 				defer wg.Done()
 				_cid := cids[idx%len(cids)] // Cycle through CIDs
-				_, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), _cid, userID)
+				_, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), _cid, userID)
 				_errors <- err
 			}(i)
 		}

@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS ipfs_file_paths (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP,
     
-    UNIQUE KEY (user_id, cid, path),
+    UNIQUE KEY (user_id, cid, path, deleted_at),
     KEY (user_id, path),
     KEY (user_id, parent_path),
     KEY (user_id, parent_path, name),
