@@ -90,25 +90,19 @@ CREATE TABLE IF NOT EXISTS ipfs_file_paths (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP,
     
-    UNIQUE KEY (user_id, cid),
+    UNIQUE KEY (user_id, cid, path),
     KEY (user_id, path),
     KEY (user_id, parent_path),
     KEY (user_id, parent_path, name),
     KEY (user_id, is_directory, depth),
-    KEY (user_id, is_orphan)
+    KEY (user_id, is_orphan),
+    KEY idx_ipfs_file_paths_deleted_at (deleted_at)
 );
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-ALTER TABLE ipfs_blocks DROP INDEX idx_ipfs_blocks_last_announcement;
-ALTER TABLE ipfs_blocks DROP INDEX idx_ipfs_blocks_cid_last_announcement;
-ALTER TABLE ipfs_blocks DROP INDEX idx_ipfs_blocks_ready;
-ALTER TABLE ipfs_pins DROP INDEX idx_ipfs_pins_created_at;
-ALTER TABLE ipfs_pins DROP INDEX idx_ipfs_pins_status_user_created_at;
-ALTER TABLE ipfs_linked_blocks DROP INDEX ipfs_idx_linked_blocks_unique;
-ALTER TABLE ipfs_requests DROP INDEX idx_ipfs_requests_pin_request_id;
-ALTER TABLE ipfs_requests DROP INDEX idx_ipfs_requests_parent_pin_request_id;
+
 
 DROP TABLE ipfs_linked_blocks;
 DROP TABLE ipfs_unixfs_nodes;

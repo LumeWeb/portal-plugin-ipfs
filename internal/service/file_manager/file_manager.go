@@ -102,9 +102,7 @@ func (s *FileManagerServiceDefault) ListDirectoryContents(ctx context.Context, u
 			Where("user_id = ? AND parent_path = ?", userID, parentPath)
 
 		// When listing root directory, include orphaned files
-		if parentPath == pluginDb.RootPath {
-			query = query.Where("is_orphan = ? OR is_orphan = ?", true, false)
-		}
+		// No additional filter needed as the base query already includes all entries for the parent path
 
 		return query.Order("is_directory DESC, name ASC").Find(&paths)
 	})
@@ -324,7 +322,7 @@ func (s *FileManagerServiceDefault) DeleteFilePathSmart(ctx context.Context, use
 			// Check if any other pins have this CID
 			return g.WithContext(ctx).
 				Model(&pluginDb.IPFSPin{}).
-				Where("user_id = ? AND cid = ? AND request_id != ?", userID, cid, "").
+				Where("user_id = ? AND cid = ?", userID, cid).
 				Count(&pinCount)
 		})
 

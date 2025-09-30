@@ -1,6 +1,7 @@
 package util
 
 import (
+	"strings"
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/require"
@@ -8,6 +9,21 @@ import (
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"testing"
 )
+
+// CalculateParentPath computes the parent directory path for a given file path
+func CalculateParentPath(path string) string {
+	if path == "/" || path == "" {
+		return ""
+	}
+	lastSlash := strings.LastIndex(path, "/")
+	if lastSlash > 0 {
+		return path[:lastSlash]
+	}
+	if lastSlash == 0 {
+		return "/"
+	}
+	return ""
+}
 
 func GenerateTestCID(t *testing.T, data string) cid.Cid {
 	hash, err := multihash.Sum([]byte(data), multihash.SHA2_256, -1)

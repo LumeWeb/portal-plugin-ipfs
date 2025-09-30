@@ -1,17 +1,11 @@
 package dto
 
 import (
-	"context"
 	"time"
 
 	"github.com/Oudwins/zog"
-	"github.com/ipfs/go-cid"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
-
-type BlockService interface {
-	GetBlockMeta(ctx context.Context, c cid.Cid) (*pluginDb.UnixFSNode, error)
-}
 
 // FileManagerFilter represents the filtering options for file listings
 type FileManagerFilter struct {

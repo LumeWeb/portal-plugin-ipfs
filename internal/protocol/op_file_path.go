@@ -57,6 +57,11 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 
 	userID := lo.FromPtrOr(req.UserID, 0)
 
+	// Validate that userID is non-nil and not zero
+	if req.UserID == nil || userID == 0 {
+		return fmt.Errorf("invalid or missing user ID")
+	}
+
 	// Initialize workflow data with progress tracking
 	workflowData := FilePathWorkflowData{
 		RequestID:       strconv.FormatUint(uint64(req.ID), 10),

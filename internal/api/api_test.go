@@ -90,15 +90,9 @@ func setAuthHeader(req *http.Request, token string) {
 
 func createTestFilePath(t *testing.T, ctx coreTesting.TestContext, userID uint, testCID cid.Cid, path, name string, isDirectory bool) *pluginDb.FilePath {
 	// Calculate parent path
-	parentPath := pluginDb.RootPath
-	if path != pluginDb.RootPath && path != "" {
-		// Find the last slash to get the parent directory
-		lastSlash := strings.LastIndex(path, "/")
-		if lastSlash > 0 {
-			parentPath = path[:lastSlash]
-		} else if lastSlash == 0 {
-			parentPath = pluginDb.RootPath
-		}
+	parentPath := util.CalculateParentPath(path)
+	if parentPath == "" {
+		parentPath = pluginDb.RootPath
 	}
 
 	filePath := &pluginDb.FilePath{

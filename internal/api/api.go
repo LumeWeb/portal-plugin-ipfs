@@ -274,7 +274,6 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 				router.WithDescription("List files and subdirectories within a specified parent directory path"),
 				router.WithTags("file-manager"),
 				router.WithSchema(fileManagerDirProvider),
-				router.WithTags("file-manager"),
 				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(dto.FileManagerResponse{})),
 			),
 		),

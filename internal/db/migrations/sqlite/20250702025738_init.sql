@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS ipfs_file_paths (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     deleted_at DATETIME,
     
-    UNIQUE (user_id, cid)
+    UNIQUE (user_id, cid, path)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ipfs_file_paths_user_path ON ipfs_file_paths (user_id, path);
@@ -96,6 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_ipfs_file_paths_user_parent_path ON ipfs_file_pat
 CREATE INDEX IF NOT EXISTS idx_ipfs_file_paths_user_parent_name ON ipfs_file_paths (user_id, parent_path, name);
 CREATE INDEX IF NOT EXISTS idx_ipfs_file_paths_user_directory_depth ON ipfs_file_paths (user_id, is_directory, depth);
 CREATE INDEX IF NOT EXISTS idx_ipfs_file_paths_user_orphan ON ipfs_file_paths (user_id, is_orphan);
+CREATE INDEX IF NOT EXISTS idx_ipfs_file_paths_deleted_at ON ipfs_file_paths (deleted_at) WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_ipfs_unixfs_nodes_block_id ON ipfs_unixfs_nodes (block_id);
 -- +goose StatementEnd
@@ -107,6 +108,7 @@ DROP INDEX IF EXISTS idx_ipfs_blocks_cid_last_announcement;
 DROP INDEX IF EXISTS idx_ipfs_blocks_ready;
 DROP INDEX IF EXISTS ipfs_idx_linked_blocks_unique;
 DROP INDEX IF EXISTS idx_ipfs_unixfs_nodes_block_id;
+DROP INDEX IF EXISTS idx_ipfs_file_paths_deleted_at;
 DROP INDEX IF EXISTS idx_ipfs_pins_created_at;
 
 DROP TABLE IF EXISTS ipfs_pins;
