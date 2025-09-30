@@ -23,12 +23,12 @@ import (
 
 // PinServiceDefault implements the IPFSPinService interface
 type PinServiceDefault struct {
-	ctx           core.Context
-	db            *gorm.DB
-	logger        *core.Logger
-	workflow      core.WorkflowService
-	ipfs          *protocol.Protocol
-	pinSvc        core.PinService
+	ctx            core.Context
+	db             *gorm.DB
+	logger         *core.Logger
+	workflow       core.WorkflowService
+	ipfs           *protocol.Protocol
+	pinSvc         core.PinService
 	fileManagerSvc pluginCore.FileManagerService
 }
 
@@ -52,10 +52,13 @@ func NewPinService() (core.Service, []core.ContextBuilderOption, error) {
 				return fmt.Errorf("protocol %s is not of type *protocol.Protocol", internal.ProtocolName)
 			}
 			svc.ipfs = ipfsProto
-			
+
 			// Get file manager service
 			svc.fileManagerSvc = core.GetService[pluginCore.FileManagerService](ctx, pluginCore.FILE_MANAGER_SERVICE)
-			
+			if svc.fileManagerSvc == nil {
+				return fmt.Errorf("file manager service (FILE_MANAGER_SERVICE) is not registered")
+			}
+
 			return nil
 		}),
 	)
@@ -258,7 +261,7 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 			zap.String("request_id", requestID.String()))
 		return err
 	}
-	
+
 	if !loaded {
 		return nil
 	}
@@ -269,7 +272,7 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 		if err != nil {
 			return fmt.Errorf("cid cast: %w", err)
 		}
-		
+
 		// Start the unpin workflow
 		_, err = s.workflow.StartWorkflow(ctx, protocol.UnpinOperationName(),
 			core.WithWorkflowStructData(protocol.UnpinWorkflowData{
@@ -278,7 +281,7 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 				UserID:       pin.UserID,
 			}, "json"),
 			core.WithWorkflowUserID(pin.UserID))
-		
+
 		if err != nil {
 			s.logger.Error("Failed to start unpin workflow",
 				zap.Error(err),
@@ -287,29 +290,26 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 				zap.Uint("user_id", pin.UserID))
 			return fmt.Errorf("failed to start unpin workflow: %w", err)
 		}
-		
-		s.logger.Debug("Started unpin workflow", 
-			zap.String("request_id", requestID.String()), 
-			zap.Stringer("cid", c), 
+
+		s.logger.Debug("Started unpin workflow",
+			zap.String("request_id", requestID.String()),
+			zap.Stringer("cid", c),
 			zap.Uint("user_id", pin.UserID))
 	} else {
 		// Clean up file paths when pin is deleted but not unpinned
-		fileManagerSvc := core.GetService[pluginCore.FileManagerService](s.ctx, pluginCore.FILE_MANAGER_SERVICE)
-		if fileManagerSvc != nil {
-			if err := fileManagerSvc.DeleteFilePathSmart(ctx, pin.UserID, pin.CID); err != nil {
-				s.logger.Error("Failed to delete file paths smartly",
-					zap.Error(err),
-					zap.String("request_id", requestID.String()),
-					zap.Uint("user_id", pin.UserID))
-				// Don't fail the whole operation for path cleanup failure
-			}
+		if err = s.fileManagerSvc.DeleteFilePathSmart(ctx, pin.UserID, pin.CID); err != nil {
+			s.logger.Error("Failed to delete file paths smartly",
+				zap.Error(err),
+				zap.String("request_id", requestID.String()),
+				zap.Uint("user_id", pin.UserID))
+			// Don't fail the whole operation for path cleanup failure
 		}
-		
+
 		s.logger.Debug("Deleted pin record, other pins still reference CID",
 			zap.String("request_id", requestID.String()),
 			zap.Uint("user_id", pin.UserID))
 	}
-	
+
 	return nil
 }
 
@@ -326,15 +326,15 @@ func (s *PinServiceDefault) checkDAGCompletion(ctx context.Context, pin *pluginD
 	if len(relatedCIDs) > 0 {
 		// Add the current pin's CID to the list
 		allCIDs := append(relatedCIDs, pin.CID)
-		
+
 		// Trigger path recomputation for all related CIDs
 		err = s.recomputePaths(ctx, pin.UserID, allCIDs)
 		if err != nil {
 			return fmt.Errorf("failed to recompute paths: %w", err)
 		}
-		
-		s.logger.Debug("DAG completion detected, paths recomputed", 
-			zap.Uint("user_id", pin.UserID), 
+
+		s.logger.Debug("DAG completion detected, paths recomputed",
+			zap.Uint("user_id", pin.UserID),
 			zap.Int("related_cids_count", len(relatedCIDs)))
 	}
 
@@ -345,7 +345,7 @@ func (s *PinServiceDefault) checkDAGCompletion(ctx context.Context, pin *pluginD
 // Performs a shallow one-hop traversal to find parent and child CIDs only
 func (s *PinServiceDefault) getRelatedCIDs(ctx context.Context, userID uint, cidBytes []byte) ([][]byte, error) {
 	var relatedCIDs [][]byte
-	
+
 	// Find all linked blocks where the given CID is either a parent or child
 	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
 		// Use a single query with joins to find all related CIDs where the input CID appears as either parent or child
@@ -366,43 +366,43 @@ func (s *PinServiceDefault) getRelatedCIDs(ctx context.Context, userID uint, cid
 				WHERE child_block.cid = ?
 			) related_blocks ON related_blocks.block_id = ib.id
 		`
-		
+
 		var blocks []pluginDb.IPFSBlock
 		err := g.WithContext(ctx).Raw(query, cidBytes, cidBytes).Scan(&blocks).Error
 		if err != nil && err != gorm.ErrRecordNotFound {
 			_ = g.AddError(fmt.Errorf("failed to find related blocks: %w", err))
 			return g
 		}
-		
+
 		// Extract CIDs from the blocks
 		for _, block := range blocks {
 			relatedCIDs = append(relatedCIDs, block.CID)
 		}
-		
+
 		// Filter to only include CIDs that are pinned by the same user with a single IN query
 		if len(relatedCIDs) > 0 {
 			var pinnedCIDs [][]byte
-			
+
 			err = g.WithContext(ctx).
 				Model(&pluginDb.IPFSPin{}).
 				Where("user_id = ? AND cid IN ?", userID, relatedCIDs).
 				Pluck("cid", &pinnedCIDs).Error
-				
+
 			if err != nil && err != gorm.ErrRecordNotFound {
 				_ = g.AddError(fmt.Errorf("failed to filter pinned CIDs: %w", err))
 				return g
 			}
-			
+
 			relatedCIDs = pinnedCIDs
 		}
-		
+
 		return g
 	})
-	
+
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return relatedCIDs, nil
 }
 
@@ -418,31 +418,31 @@ func (s *PinServiceDefault) recomputePaths(ctx context.Context, userID uint, cid
 		}
 		cidStrings = append(cidStrings, c.String())
 	}
-	
+
 	// If no valid CIDs, nothing to do
 	if len(cidStrings) == 0 {
 		return nil
 	}
-	
+
 	// Start a file path workflow to recompute paths for all related CIDs
 	// This must be done before deleting existing paths to ensure atomicity
-	_, err := s.workflow.StartWorkflow(ctx, protocol.FilePathOperationName(), 
+	_, err := s.workflow.StartWorkflow(ctx, protocol.FilePathOperationName(),
 		core.WithWorkflowStructData(protocol.PinWorkflowData{
 			Cids: cidStrings,
 		}, "json"),
 		core.WithWorkflowUserID(userID))
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to start file path workflow: %w", err)
 	}
-	
+
 	// Only after successful workflow start, delete existing file paths for these CIDs
 	err = db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
 		for _, cidBytes := range cids {
 			err := g.WithContext(ctx).
 				Where("user_id = ? AND cid = ?", userID, cidBytes).
 				Delete(&pluginDb.FilePath{}).Error
-				
+
 			if err != nil {
 				_ = g.AddError(fmt.Errorf("failed to delete file path: %w", err))
 				return g
@@ -450,11 +450,11 @@ func (s *PinServiceDefault) recomputePaths(ctx context.Context, userID uint, cid
 		}
 		return g
 	})
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to delete existing file paths: %w", err)
 	}
-	
+
 	return nil
 }
 

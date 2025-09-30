@@ -1,12 +1,15 @@
 package util
 
 import (
+	"errors"
 	"strings"
+
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/require"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	"gorm.io/gorm"
 	"testing"
 )
 
@@ -37,12 +40,16 @@ func CreateTestBlockAndNode(t *testing.T, ctx coreTesting.TestContext, cid cid.C
 	var block *pluginDb.IPFSBlock
 	err := ctx.DB().Where("cid = ?", cid.Bytes()).First(&block).Error
 	if err != nil {
-		block = &pluginDb.IPFSBlock{
-			CID:  cid.Bytes(),
-			Size: uint64(blockSize),
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			block = &pluginDb.IPFSBlock{
+				CID:  cid.Bytes(),
+				Size: uint64(blockSize),
+			}
+			err = ctx.DB().Create(block).Error
+			require.NoError(t, err)
+		} else {
+			require.NoError(t, err)
 		}
-		err = ctx.DB().Create(block).Error
-		require.NoError(t, err)
 	}
 
 	// Create the UnixFS node
@@ -62,12 +69,16 @@ func CreateTestBlockAndNode(t *testing.T, ctx coreTesting.TestContext, cid cid.C
 		var childBlock *pluginDb.IPFSBlock
 		err = ctx.DB().Where("cid = ?", childCID.Bytes()).First(&childBlock).Error
 		if err != nil {
-			childBlock = &pluginDb.IPFSBlock{
-				CID:  childCID.Bytes(),
-				Size: 0, // Size will be updated when child block is properly created
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				childBlock = &pluginDb.IPFSBlock{
+					CID:  childCID.Bytes(),
+					Size: 0, // Size will be updated when child block is properly created
+				}
+				err = ctx.DB().Create(childBlock).Error
+				require.NoError(t, err)
+			} else {
+				require.NoError(t, err)
 			}
-			err = ctx.DB().Create(childBlock).Error
-			require.NoError(t, err)
 		}
 
 		// Create the link record
