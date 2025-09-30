@@ -5,9 +5,8 @@ import (
 	"testing"
 
 	"github.com/ipfs/go-cid"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal/db/models"
+	"gorm.io/gorm"
 )
 
 var (
@@ -16,17 +15,17 @@ var (
 )
 
 func createTestRequest(t *testing.T, cid cid.Cid, userID *uint) *models.Request {
-	hashBytes := cid.Hash()
-
 	req := &models.Request{
-		Operation: protocol.FilePathOperationName(),
-		Protocol:  internal.ProtocolName,
-		Status:    models.RequestStatusPending,
-		Hash:      hashBytes,
+		Model:  gorm.Model{ID: 1},
+		Status: models.RequestStatusProcessing,
 	}
+
+	req.Hash = cid.Hash()
+
 	if userID != nil {
 		req.UserID = userID
 	}
+
 	return req
 }
 

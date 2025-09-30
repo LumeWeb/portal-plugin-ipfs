@@ -342,82 +342,58 @@ func (s *PinServiceDefault) checkDAGCompletion(ctx context.Context, pin *pluginD
 }
 
 // getRelatedCIDs finds CIDs that share blocks with the given CID for the same user
+// Performs a shallow one-hop traversal to find parent and child CIDs only
 func (s *PinServiceDefault) getRelatedCIDs(ctx context.Context, userID uint, cidBytes []byte) ([][]byte, error) {
 	var relatedCIDs [][]byte
 	
 	// Find all linked blocks where the given CID is either a parent or child
 	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		var linkedBlocks []pluginDb.IPFSLinkedBlock
-		
-		// First, find all linked blocks where our CID is a parent
-		err := g.WithContext(ctx).
-			Where("parent_id IN (SELECT id FROM ipfs_blocks WHERE cid = ?)", cidBytes).
-			Find(&linkedBlocks).Error
-			
-		if err != nil && err != gorm.ErrRecordNotFound {
-			_ = g.AddError(fmt.Errorf("failed to find linked blocks as parent: %w", err))
-			return g
-		}
-		
-		// Collect child CIDs from these relationships
-		for _, link := range linkedBlocks {
-			var childBlock pluginDb.IPFSBlock
-			err := g.WithContext(ctx).Where("id = ?", link.ChildID).First(&childBlock).Error
-			if err != nil && err != gorm.ErrRecordNotFound {
-				_ = g.AddError(fmt.Errorf("failed to get child block: %w", err))
-				return g
-			}
-			if err == nil {
-				relatedCIDs = append(relatedCIDs, childBlock.CID)
-			}
-		}
-		
-		// Reset linkedBlocks for the next query
-		linkedBlocks = nil
-		
-		// Then, find all linked blocks where our CID is a child
-		err = g.WithContext(ctx).
-			Where("child_id IN (SELECT id FROM ipfs_blocks WHERE cid = ?)", cidBytes).
-			Find(&linkedBlocks).Error
-			
-		if err != nil && err != gorm.ErrRecordNotFound {
-			_ = g.AddError(fmt.Errorf("failed to find linked blocks as child: %w", err))
-			return g
-		}
-		
-		// Collect parent CIDs from these relationships
-		for _, link := range linkedBlocks {
-			var parentBlock pluginDb.IPFSBlock
-			err := g.WithContext(ctx).Where("id = ?", link.ParentID).First(&parentBlock).Error
-			if err != nil && err != gorm.ErrRecordNotFound {
-				_ = g.AddError(fmt.Errorf("failed to get parent block: %w", err))
-				return g
-			}
-			if err == nil {
-				relatedCIDs = append(relatedCIDs, parentBlock.CID)
-			}
-		}
-		
-		// Filter to only include CIDs that are pinned by the same user
-		if len(relatedCIDs) > 0 {
-			var filteredCIDs [][]byte
-			for _, relatedCID := range relatedCIDs {
-				var count int64
-				err := g.WithContext(ctx).
-					Model(&pluginDb.IPFSPin{}).
-					Where("user_id = ? AND cid = ?", userID, relatedCID).
-					Count(&count).Error
-					
-				if err != nil && err != gorm.ErrRecordNotFound {
-					_ = g.AddError(fmt.Errorf("failed to check if CID is pinned by user: %w", err))
-					return g
-				}
+		// Use a single query with joins to find all related CIDs where the input CID appears as either parent or child
+		query := `
+			SELECT DISTINCT ib.cid
+			FROM ipfs_blocks ib
+			JOIN (
+				SELECT ilb.child_id as block_id
+				FROM ipfs_linked_blocks ilb
+				JOIN ipfs_blocks parent_block ON parent_block.id = ilb.parent_id
+				WHERE parent_block.cid = ?
 				
-				if count > 0 {
-					filteredCIDs = append(filteredCIDs, relatedCID)
-				}
+				UNION
+				
+				SELECT ilb.parent_id as block_id
+				FROM ipfs_linked_blocks ilb
+				JOIN ipfs_blocks child_block ON child_block.id = ilb.child_id
+				WHERE child_block.cid = ?
+			) related_blocks ON related_blocks.block_id = ib.id
+		`
+		
+		var blocks []pluginDb.IPFSBlock
+		err := g.WithContext(ctx).Raw(query, cidBytes, cidBytes).Scan(&blocks).Error
+		if err != nil && err != gorm.ErrRecordNotFound {
+			_ = g.AddError(fmt.Errorf("failed to find related blocks: %w", err))
+			return g
+		}
+		
+		// Extract CIDs from the blocks
+		for _, block := range blocks {
+			relatedCIDs = append(relatedCIDs, block.CID)
+		}
+		
+		// Filter to only include CIDs that are pinned by the same user with a single IN query
+		if len(relatedCIDs) > 0 {
+			var pinnedCIDs [][]byte
+			
+			err = g.WithContext(ctx).
+				Model(&pluginDb.IPFSPin{}).
+				Where("user_id = ? AND cid IN ?", userID, relatedCIDs).
+				Pluck("cid", &pinnedCIDs).Error
+				
+			if err != nil && err != gorm.ErrRecordNotFound {
+				_ = g.AddError(fmt.Errorf("failed to filter pinned CIDs: %w", err))
+				return g
 			}
-			relatedCIDs = filteredCIDs
+			
+			relatedCIDs = pinnedCIDs
 		}
 		
 		return g
@@ -432,8 +408,36 @@ func (s *PinServiceDefault) getRelatedCIDs(ctx context.Context, userID uint, cid
 
 // recomputePaths triggers path recomputation for a set of related CIDs
 func (s *PinServiceDefault) recomputePaths(ctx context.Context, userID uint, cids [][]byte) error {
-	// Delete existing file paths for these CIDs
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
+	// First convert CID bytes to CID strings
+	var cidStrings []string
+	for _, cidBytes := range cids {
+		c, err := cid.Cast(cidBytes)
+		if err != nil {
+			s.logger.Warn("Failed to cast CID during path recomputation", zap.Error(err), zap.Binary("cid", cidBytes))
+			continue
+		}
+		cidStrings = append(cidStrings, c.String())
+	}
+	
+	// If no valid CIDs, nothing to do
+	if len(cidStrings) == 0 {
+		return nil
+	}
+	
+	// Start a file path workflow to recompute paths for all related CIDs
+	// This must be done before deleting existing paths to ensure atomicity
+	_, err := s.workflow.StartWorkflow(ctx, protocol.FilePathOperationName(), 
+		core.WithWorkflowStructData(protocol.PinWorkflowData{
+			Cids: cidStrings,
+		}, "json"),
+		core.WithWorkflowUserID(userID))
+	
+	if err != nil {
+		return fmt.Errorf("failed to start file path workflow: %w", err)
+	}
+	
+	// Only after successful workflow start, delete existing file paths for these CIDs
+	err = db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
 		for _, cidBytes := range cids {
 			err := g.WithContext(ctx).
 				Where("user_id = ? AND cid = ?", userID, cidBytes).
@@ -449,28 +453,6 @@ func (s *PinServiceDefault) recomputePaths(ctx context.Context, userID uint, cid
 	
 	if err != nil {
 		return fmt.Errorf("failed to delete existing file paths: %w", err)
-	}
-	
-	// Convert CID bytes to CID strings for the workflow
-	var cidStrings []string
-	for _, cidBytes := range cids {
-		c, err := cid.Cast(cidBytes)
-		if err != nil {
-			s.logger.Warn("Failed to cast CID during path recomputation", zap.Error(err), zap.Binary("cid", cidBytes))
-			continue
-		}
-		cidStrings = append(cidStrings, c.String())
-	}
-	
-	// Start a file path workflow to recompute paths for all related CIDs
-	_, err = s.workflow.StartWorkflow(ctx, protocol.FilePathOperationName(), 
-		core.WithWorkflowStructData(protocol.PinWorkflowData{
-			Cids: cidStrings,
-		}, "json"),
-		core.WithWorkflowUserID(userID))
-	
-	if err != nil {
-		return fmt.Errorf("failed to start file path workflow: %w", err)
 	}
 	
 	return nil

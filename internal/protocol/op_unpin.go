@@ -45,9 +45,22 @@ type UnpinOperationHandler struct {
 }
 
 func (h *UnpinOperationHandler) ValidateRequest(_ context.Context, req *models.Request) error {
-	if len(req.Hash) == 0 {
+	// Check for nil or empty hash
+	if req == nil || req.Hash == nil || len(req.Hash) == 0 {
 		return fmt.Errorf("hash is required")
 	}
+
+	// Check for valid user ID
+	if req.UserID == nil || *req.UserID == 0 {
+		return fmt.Errorf("user ID is required")
+	}
+
+	// Try to parse the CID to validate it
+	_, err := cid.Parse(req.Hash)
+	if err != nil {
+		return fmt.Errorf("invalid cid")
+	}
+
 	return nil
 }
 
@@ -81,7 +94,7 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 	// Validate DAG integrity before unpinning
 	h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhaseValidatingDAGBefore, 1)
 
-	if err := h.ValidateDAGIntegrityBeforeUnpin(ctx, c, userID); err != nil {
+	if err := h.ValidateDAGIntegrityBeforeUnpin(ctx, _db, c, userID); err != nil {
 		h.Logger().Error("DAG integrity validation failed before unpin",
 			zap.Stringer("cid", c),
 			zap.Uint("user_id", userID),
@@ -207,6 +220,16 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 			zap.Stringer("cid", c),
 			zap.Uint("user_id", userID))
 
+		// Final validation to ensure system consistency
+		if err := h.ValidateSystemConsistency(ctx, c, userID); err != nil {
+			h.Logger().Error("System consistency validation failed",
+				zap.Stringer("cid", c),
+				zap.Uint("user_id", userID),
+				zap.Error(err))
+			_ = tx.AddError(fmt.Errorf("system consistency validation failed: %w", err))
+			return tx
+		}
+
 		return tx
 	})
 
@@ -217,21 +240,12 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 	// Validate DAG integrity after unpinning
 	h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhaseValidatingDAGAfter, 7)
 
-	if err := h.ValidateDAGIntegrityAfterUnpin(ctx, c, userID); err != nil {
+	if err := h.ValidateDAGIntegrityAfterUnpin(ctx, _db, c, userID); err != nil {
 		h.Logger().Error("DAG integrity validation failed after unpin",
 			zap.Stringer("cid", c),
 			zap.Uint("user_id", userID),
 			zap.Error(err))
 		return fmt.Errorf("DAG integrity validation failed after unpin: %w", err)
-	}
-
-	// Final validation to ensure system consistency
-	if err := h.ValidateSystemConsistency(ctx, c, userID); err != nil {
-		h.Logger().Error("System consistency validation failed",
-			zap.Stringer("cid", c),
-			zap.Uint("user_id", userID),
-			zap.Error(err))
-		return fmt.Errorf("system consistency validation failed: %w", err)
 	}
 
 	h.Logger().Info("DAG integrity validation completed successfully",
@@ -243,6 +257,7 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 
 // DAGDependencyAnalysis represents the results of dependency analysis
 type DAGDependencyAnalysis struct {
+	CID                 string   // The CID being analyzed
 	DependentPins       []string // CIDs of pins that depend on this block
 	ParentBlocks        []string // CIDs of parent blocks in the DAG
 	ChildBlocks         []string // CIDs of child blocks in the DAG
@@ -268,7 +283,12 @@ type DAGValidationResult struct {
 
 // AnalyzeDAGDependencies analyzes which other pins depend on the given CID
 func (h *UnpinOperationHandler) AnalyzeDAGDependencies(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) (*DAGDependencyAnalysis, error) {
+	h.Logger().Debug("Starting DAG dependency analysis",
+		zap.Stringer("target_cid", c),
+		zap.Uint("user_id", userID))
+
 	analysis := &DAGDependencyAnalysis{
+		CID:           c.String(),
 		DependentPins: make([]string, 0),
 		ParentBlocks:  make([]string, 0),
 		ChildBlocks:   make([]string, 0),
@@ -276,14 +296,53 @@ func (h *UnpinOperationHandler) AnalyzeDAGDependencies(ctx context.Context, tx *
 
 	blockSvc := core.GetService[pluginCore.BlockService](h.Context(), pluginCore.BLOCK_SERVICE)
 	if blockSvc == nil {
+		h.Logger().Error("Block service not available during DAG dependency analysis")
 		return nil, fmt.Errorf("block service not available")
 	}
 
 	// Get all pins for this user to check dependencies
 	allPins, err := h.GetAllUserPins(ctx, tx, userID)
 	if err != nil {
+		h.Logger().Error("Failed to get user pins during DAG dependency analysis",
+			zap.Uint("user_id", userID),
+			zap.Error(err))
 		return nil, fmt.Errorf("failed to get user pins: %w", err)
 	}
+
+	h.Logger().Debug("Found user pins for DAG dependency analysis",
+		zap.Uint("user_id", userID),
+		zap.Int("pin_count", len(allPins)))
+
+	// Create a map of pinned CIDs for quick lookup
+	pinnedCIDs := make(map[string]bool)
+	for _, pin := range allPins {
+		pinCID, err := cid.Cast(pin.CID)
+		if err != nil {
+			h.Logger().Warn("Failed to cast pin CID during dependency analysis",
+				zap.Binary("cid_bytes", pin.CID),
+				zap.Error(err))
+			continue
+		}
+		pinnedCIDs[pinCID.String()] = true
+	}
+
+	// Get parent and child relationships for the target CID
+	parents, children, err := h.GetBlockRelationships(ctx, tx, blockSvc, c, userID)
+	if err != nil {
+		h.Logger().Error("Failed to get block relationships",
+			zap.Stringer("cid", c),
+			zap.Uint("user_id", userID),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to get block relationships: %w", err)
+	}
+
+	h.Logger().Debug("Block relationships found",
+		zap.Stringer("cid", c),
+		zap.Int("parent_count", len(parents)),
+		zap.Int("child_count", len(children)))
+
+	analysis.ParentBlocks = parents
+	analysis.ChildBlocks = children
 
 	// For each pin, check if it depends on the block we're about to unpin
 	for _, pin := range allPins {
@@ -315,18 +374,17 @@ func (h *UnpinOperationHandler) AnalyzeDAGDependencies(ctx context.Context, tx *
 		}
 	}
 
-	// Get parent and child relationships for the target CID
-	parents, children, err := h.GetBlockRelationships(ctx, tx, blockSvc, c)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get block relationships: %w", err)
-	}
-
-	analysis.ParentBlocks = parents
-	analysis.ChildBlocks = children
-
 	// Determine if unpinning would break the structure
-	// If there are dependent pins, unpinning would break the structure
+	// A structure would be broken if:
+	// 1. There are dependent pins (other pins that reference this CID)
 	analysis.WouldBreakStructure = len(analysis.DependentPins) > 0
+
+	h.Logger().Debug("DAG dependency analysis completed",
+		zap.Stringer("cid", c),
+		zap.Uint("user_id", userID),
+		zap.Strings("dependent_pins", analysis.DependentPins),
+		zap.Strings("child_blocks", analysis.ChildBlocks),
+		zap.Bool("would_break_structure", analysis.WouldBreakStructure))
 
 	return analysis, nil
 }
@@ -345,60 +403,174 @@ func (h *UnpinOperationHandler) GetAllUserPins(ctx context.Context, tx *gorm.DB,
 
 // DoesPinDependOnCID checks if a pin depends on a specific CID in its DAG structure
 func (h *UnpinOperationHandler) DoesPinDependOnCID(ctx context.Context, blockSvc pluginCore.BlockService, pinCID cid.Cid, targetCID cid.Cid) (bool, error) {
+	h.Logger().Debug("Starting pin dependency check",
+		zap.Stringer("pin_cid", pinCID),
+		zap.Stringer("target_cid", targetCID))
+
+	if blockSvc == nil {
+		h.Logger().Error("Block service is nil during pin dependency check",
+			zap.Stringer("pin_cid", pinCID),
+			zap.Stringer("target_cid", targetCID))
+		return false, fmt.Errorf("block service is nil")
+	}
+
+	// A pin cannot depend on itself
+	if pinCID.Equals(targetCID) {
+		h.Logger().Debug("Pin CID equals target CID, no dependency",
+			zap.Stringer("pin_cid", pinCID))
+		return false, nil
+	}
+
 	// Get the metadata for the pin's root block
+	h.Logger().Debug("Getting root block metadata for pin dependency check",
+		zap.Stringer("pin_cid", pinCID),
+		zap.Stringer("target_cid", targetCID))
+
 	rootMeta, err := blockSvc.GetBlockMeta(ctx, pinCID)
 	if err != nil {
+		h.Logger().Error("Failed to get root block metadata during pin dependency check",
+			zap.Stringer("pin_cid", pinCID),
+			zap.Stringer("target_cid", targetCID),
+			zap.Error(err))
 		return false, err
 	}
 
+	h.Logger().Debug("Got root block metadata",
+		zap.Stringer("pin_cid", pinCID),
+		zap.Stringer("target_cid", targetCID),
+		zap.Bool("is_nil", rootMeta == nil))
+
 	if rootMeta == nil {
+		h.Logger().Debug("Root metadata is nil, no dependency",
+			zap.Stringer("pin_cid", pinCID),
+			zap.Stringer("target_cid", targetCID))
 		return false, nil
 	}
 
 	// Recursively check if any block in this pin's DAG references the target CID
-	return h.CheckDAGForCID(ctx, blockSvc, pinCID, targetCID, make(map[string]bool))
+	h.Logger().Debug("Starting recursive DAG check for pin dependency",
+		zap.Stringer("pin_cid", pinCID),
+		zap.Stringer("target_cid", targetCID))
+
+	result, err := h.CheckDAGForCID(ctx, blockSvc, pinCID, targetCID, make(map[string]bool))
+	h.Logger().Debug("Recursive DAG check result",
+		zap.Stringer("pin_cid", pinCID),
+		zap.Stringer("target_cid", targetCID),
+		zap.Bool("depends", result),
+		zap.Error(err))
+
+	return result, err
 }
 
 // CheckDAGForCID recursively traverses a DAG to see if it contains a specific CID
 func (h *UnpinOperationHandler) CheckDAGForCID(ctx context.Context, blockSvc pluginCore.BlockService, currentCID cid.Cid, targetCID cid.Cid, visited map[string]bool) (bool, error) {
+	h.Logger().Debug("Starting DAG traversal check",
+		zap.Stringer("current_cid", currentCID),
+		zap.Stringer("target_cid", targetCID),
+		zap.Int("visited_count", len(visited)))
+
+	if blockSvc == nil {
+		h.Logger().Error("Block service is nil during DAG traversal check",
+			zap.Stringer("current_cid", currentCID),
+			zap.Stringer("target_cid", targetCID))
+		return false, fmt.Errorf("block service is nil")
+	}
+
 	// If we've already visited this CID, skip to prevent infinite loops
 	cidStr := currentCID.String()
 	if visited[cidStr] {
+		h.Logger().Debug("CID already visited, skipping",
+			zap.String("cid", cidStr),
+			zap.Stringer("target_cid", targetCID))
 		return false, nil
 	}
 	visited[cidStr] = true
 
+	h.Logger().Debug("Checking if current CID matches target CID",
+		zap.Stringer("current_cid", currentCID),
+		zap.Stringer("target_cid", targetCID),
+		zap.Bool("equals", currentCID.Equals(targetCID)))
+
 	// If current CID matches target CID, we found a dependency
 	if currentCID.Equals(targetCID) {
+		h.Logger().Debug("Found dependency - current CID matches target CID",
+			zap.Stringer("current_cid", currentCID))
 		return true, nil
 	}
 
 	// Get metadata for the current block
+	h.Logger().Debug("Getting block metadata for DAG traversal",
+		zap.Stringer("current_cid", currentCID),
+		zap.Stringer("target_cid", targetCID))
+
 	meta, err := blockSvc.GetBlockMeta(ctx, currentCID)
 	if err != nil {
+		h.Logger().Error("Failed to get block metadata during DAG traversal",
+			zap.Stringer("current_cid", currentCID),
+			zap.Stringer("target_cid", targetCID),
+			zap.Error(err))
 		return false, err
 	}
 
+	h.Logger().Debug("Got block metadata",
+		zap.Stringer("current_cid", currentCID),
+		zap.Stringer("target_cid", targetCID),
+		zap.Bool("is_nil", meta == nil),
+		zap.Int("child_count", len(lo.FromPtrOr(meta, pluginDb.UnixFSNode{}).ChildCID)))
+
 	if meta == nil || len(meta.ChildCID) == 0 {
+		h.Logger().Debug("No children found, no dependency",
+			zap.Stringer("current_cid", currentCID),
+			zap.Stringer("target_cid", targetCID))
 		return false, nil
 	}
 
 	// Check each child
+	h.Logger().Debug("Checking children for dependency",
+		zap.Stringer("current_cid", currentCID),
+		zap.Stringer("target_cid", targetCID),
+		zap.Int("child_count", len(meta.ChildCID)))
+
 	for _, childCID := range meta.ChildCID {
+		h.Logger().Debug("Checking child CID for dependency",
+			zap.Stringer("current_cid", currentCID),
+			zap.Stringer("target_cid", targetCID),
+			zap.Stringer("child_cid", childCID))
+
 		found, err := h.CheckDAGForCID(ctx, blockSvc, childCID, targetCID, visited)
 		if err != nil {
+			h.Logger().Error("Error during recursive child check",
+				zap.Stringer("current_cid", currentCID),
+				zap.Stringer("target_cid", targetCID),
+				zap.Stringer("child_cid", childCID),
+				zap.Error(err))
 			return false, err
 		}
+
+		h.Logger().Debug("Recursive child check result",
+			zap.Stringer("current_cid", currentCID),
+			zap.Stringer("target_cid", targetCID),
+			zap.Stringer("child_cid", childCID),
+			zap.Bool("found", found))
+
 		if found {
+			h.Logger().Debug("Dependency found in child",
+				zap.Stringer("current_cid", currentCID),
+				zap.Stringer("target_cid", targetCID),
+				zap.Stringer("child_cid", childCID))
 			return true, nil
 		}
 	}
+
+	h.Logger().Debug("No dependency found in DAG traversal",
+		zap.Stringer("current_cid", currentCID),
+		zap.Stringer("target_cid", targetCID))
 
 	return false, nil
 }
 
 // GetBlockRelationships retrieves parent and child relationships for a CID
-func (h *UnpinOperationHandler) GetBlockRelationships(ctx context.Context, tx *gorm.DB, blockSvc pluginCore.BlockService, c cid.Cid) (parents []string, children []string, err error) {
+func (h *UnpinOperationHandler) GetBlockRelationships(ctx context.Context, tx *gorm.DB, blockSvc pluginCore.BlockService, c cid.Cid, userID uint) (parents []string, children []string, err error) {
 	// Get metadata for the block
 	meta, err := blockSvc.GetBlockMeta(ctx, c)
 	if err != nil {
@@ -425,21 +597,44 @@ func (h *UnpinOperationHandler) GetBlockRelationships(ctx context.Context, tx *g
 		return nil, nil, err
 	}
 
-	// Collect parent CIDs
+	// If no linked blocks found, that's okay - just return empty arrays
+	if err == gorm.ErrRecordNotFound {
+		return make([]string, 0), make([]string, 0), nil
+	}
+
+	// Collect parent CIDs that are pinned by the same user
 	parents = make([]string, 0, len(linkedBlocks))
 	for _, link := range linkedBlocks {
 		var parentBlock pluginDb.IPFSBlock
 		err := tx.WithContext(ctx).Where("id = ?", link.ParentID).First(&parentBlock).Error
-		if err != nil && err != gorm.ErrRecordNotFound {
-			h.Logger().Warn("Failed to get parent block", zap.Error(err))
+		if err != nil {
+			if err != gorm.ErrRecordNotFound {
+				h.Logger().Warn("Failed to get parent block", zap.Error(err))
+			}
 			continue
 		}
+
 		parentCID, err := cid.Cast(parentBlock.CID)
 		if err != nil {
 			h.Logger().Warn("Failed to cast parent CID", zap.Error(err))
 			continue
 		}
-		parents = append(parents, parentCID.String())
+
+		// Check if this parent CID is pinned by the same user
+		var pinCount int64
+		err = tx.WithContext(ctx).
+			Model(&pluginDb.IPFSPin{}).
+			Where("user_id = ? AND cid = ?", userID, parentBlock.CID).
+			Count(&pinCount).Error
+		if err != nil {
+			h.Logger().Warn("Failed to check if parent is pinned by user", zap.Error(err))
+			continue
+		}
+
+		// Only include parent if it's pinned by the same user
+		if pinCount > 0 {
+			parents = append(parents, parentCID.String())
+		}
 	}
 
 	return parents, children, nil
@@ -487,6 +682,11 @@ func (h *UnpinOperationHandler) AnalyzePathDependencies(ctx context.Context, tx 
 		OrphanCandidates:  make([]string, 0),
 	}
 
+	// Validate input CID
+	if c == cid.Undef {
+		return nil, fmt.Errorf("CID is undefined")
+	}
+
 	fileManagerSvc := core.GetService[pluginCore.FileManagerService](h.Context(), pluginCore.FILE_MANAGER_SERVICE)
 	if fileManagerSvc == nil {
 		return nil, fmt.Errorf("file manager service not available")
@@ -506,9 +706,9 @@ func (h *UnpinOperationHandler) AnalyzePathDependencies(ctx context.Context, tx 
 	}
 
 	// Check if this path is shared with other pins
-	shared, err := h.IsPathShared(ctx, tx, c, userID)
+	shared, err := h.IsCIDShared(ctx, tx, c, userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check if path is shared: %w", err)
+		return nil, fmt.Errorf("failed to check if CID is shared: %w", err)
 	}
 
 	if shared {
@@ -544,33 +744,65 @@ func (h *UnpinOperationHandler) AnalyzePathDependencies(ctx context.Context, tx 
 	return analysis, nil
 }
 
+// IsCIDShared checks if the same CID is pinned multiple times by the same user
+func (h *UnpinOperationHandler) IsCIDShared(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) (bool, error) {
+	var pinCount int64
+	err := tx.WithContext(ctx).
+		Model(&pluginDb.IPFSPin{}).
+		Where("user_id = ? AND cid = ?", userID, c.Bytes()).
+		Count(&pinCount).Error
+	if err != nil {
+		return false, fmt.Errorf("failed to count pins for CID: %w", err)
+	}
+
+	// If there are multiple pins for the same CID, it's shared
+	return pinCount > 1, nil
+}
+
+// IsDirectoryShared checks if a directory contains multiple different pins
+func (h *UnpinOperationHandler) IsDirectoryShared(ctx context.Context, tx *gorm.DB, dirPath string, userID uint) (bool, error) {
+	// Count how many pins reference this directory path
+	var pinCount int64
+	err := tx.WithContext(ctx).
+		Model(&pluginDb.IPFSPin{}).
+		Joins("JOIN ipfs_file_paths ifp ON ipfs_pins.user_id = ifp.user_id AND ipfs_pins.cid = ifp.cid").
+		Where("ipfs_pins.user_id = ? AND ifp.parent_path = ?", userID, dirPath).
+		Count(&pinCount).Error
+
+	if err != nil {
+		return false, fmt.Errorf("failed to count pins referencing directory: %w", err)
+	}
+
+	// If more than one pin references this directory, it's shared
+	return pinCount > 1, nil
+}
+
 // IsPathShared checks if a path is shared by multiple pins for the same user
 func (h *UnpinOperationHandler) IsPathShared(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) (bool, error) {
-	// Get all pins for this user
-	allPins, err := h.GetAllUserPins(ctx, tx, userID)
+	// First check if the CID itself is shared (duplicate pins)
+	shared, err := h.IsCIDShared(ctx, tx, c, userID)
 	if err != nil {
-		return false, fmt.Errorf("failed to get user pins: %w", err)
+		return false, err
 	}
 
-	// Count how many pins have the same CID as the target
-	pinCount := 0
-	for _, pin := range allPins {
-		pinCID, err := cid.Cast(pin.CID)
-		if err != nil {
-			h.Logger().Warn("Failed to cast pin CID during shared path analysis",
-				zap.Binary("cid_bytes", pin.CID),
-				zap.Error(err))
-			continue
-		}
-
-		// Count pins that match the target CID
-		if pinCID.Equals(c) {
-			pinCount++
-		}
+	if shared {
+		return true, nil
 	}
 
-	// If there's more than one pin with the same CID, the path is shared
-	return pinCount > 1, nil
+	// If no duplicate pins, check if the directory structure is shared
+	// Get the file path for this CID
+	var targetPath pluginDb.FilePath
+	err = tx.WithContext(ctx).Where("user_id = ? AND cid = ?", userID, c.Bytes()).First(&targetPath).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// If no file path exists for this CID, it's not shared
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get target file path: %w", err)
+	}
+
+	// Check if the directory containing this file is shared
+	return h.IsDirectoryShared(ctx, tx, targetPath.ParentPath, userID)
 }
 
 // GetAffectedPaths retrieves all file paths that would be affected by unpinning a specific path
@@ -641,27 +873,6 @@ func (h *UnpinOperationHandler) GetSharedDirectories(ctx context.Context, tx *go
 	return sharedDirs, nil
 }
 
-// IsDirectoryShared checks if a directory path is shared by multiple pins
-func (h *UnpinOperationHandler) IsDirectoryShared(ctx context.Context, tx *gorm.DB, dirPath string, userID uint) (bool, error) {
-
-	// Count how many pins reference this directory path
-	var pinCount int64
-	err := tx.WithContext(ctx).
-		Model(&pluginDb.IPFSPin{}).
-		Joins("JOIN ipfs_file_paths ifp ON ipfs_pins.user_id = ifp.user_id AND ipfs_pins.cid = ifp.cid").
-		Where("ipfs_pins.user_id = ? AND ifp.parent_path = ?", userID, dirPath).
-		Count(&pinCount).Error
-
-	if err != nil {
-		return false, fmt.Errorf("failed to count pins referencing directory: %w", err)
-	}
-
-	
-
-	// If more than one pin references this directory, it's shared
-	return pinCount > 1, nil
-}
-
 // GetOrphanCandidates identifies CIDs that might become orphans when a path is removed
 func (h *UnpinOperationHandler) GetOrphanCandidates(ctx context.Context, tx *gorm.DB, targetPath string, userID uint) ([]string, error) {
 	var orphanCandidates []string
@@ -715,6 +926,10 @@ func (h *UnpinOperationHandler) WouldBreakDirectoryStructure(path pluginDb.FileP
 
 // HandlePathCascadingEffects manages the cascading effects of unpinning on file paths
 func (h *UnpinOperationHandler) HandlePathCascadingEffects(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint, analysis *PathDependencyAnalysis) error {
+	if analysis == nil {
+		return fmt.Errorf("path dependency analysis cannot be nil")
+	}
+
 	fileManagerSvc := core.GetService[pluginCore.FileManagerService](h.Context(), pluginCore.FILE_MANAGER_SERVICE)
 	if fileManagerSvc == nil {
 		return fmt.Errorf("file manager service not available")
@@ -759,59 +974,27 @@ func (h *UnpinOperationHandler) HandlePathCascadingEffects(ctx context.Context, 
 }
 
 // UpdatePathsToOrphan moves orphaned pins to root level path structure and marks them as orphans
-func (h *UnpinOperationHandler) UpdatePathsToOrphan(ctx context.Context, fileManagerSvc pluginCore.FileManagerService, c cid.Cid, userID uint) error {
-	// Get all file paths for this CID and user
-	var paths []pluginDb.FilePath
-	_db := h.Context().DB()
-
-	err := _db.WithContext(ctx).
-		Where("user_id = ? AND cid = ?", userID, c.Bytes()).
-		Find(&paths).Error
-	if err != nil && err != gorm.ErrRecordNotFound {
-		return fmt.Errorf("failed to get file paths: %w", err)
+func (h *UnpinOperationHandler) UpdatePathsToOrphan(ctx context.Context, c cid.Cid, userID uint) error {
+	// Check for service availability before proceeding
+	fileManagerSvc := core.GetService[pluginCore.FileManagerService](h.Context(), pluginCore.FILE_MANAGER_SERVICE)
+	if fileManagerSvc == nil {
+		return fmt.Errorf("file manager service not available")
 	}
 
-	// Update each path to be an orphan at root level
-	for _, path := range paths {
-		// Move to root level with CID as name
-		rootPath := "/" + c.String()
-
-		err := _db.WithContext(ctx).
-			Model(&pluginDb.FilePath{}).
-			Where("id = ?", path.ID).
-			Updates(map[string]interface{}{
-				"path":         rootPath,
-				"parent_path":  "",
-				"name":         c.String(),
-				"depth":        0,
-				"is_directory": false,
-				"is_orphan":    true,
-			}).Error
-		if err != nil {
-			h.Logger().Error("Failed to update file path to orphan status",
-				zap.Stringer("cid", c),
-				zap.Uint("user_id", userID),
-				zap.String("path", path.Path),
-				zap.Error(err))
-			return err
-		}
-
-		h.Logger().Debug("Updated file path to orphan status",
-			zap.Stringer("cid", c),
-			zap.Uint("user_id", userID),
-			zap.String("old_path", path.Path),
-			zap.String("new_path", rootPath))
-	}
-
-	return nil
+	return h.updatePathsToOrphanWithDB(ctx, h.Context().DB(), c, userID)
 }
 
 // UpdatePathsToOrphanWithTx moves orphaned pins to root level path structure and marks them as orphans using a transaction
 func (h *UnpinOperationHandler) UpdatePathsToOrphanWithTx(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) error {
+	return h.updatePathsToOrphanWithDB(ctx, tx, c, userID)
+}
+
+// updatePathsToOrphanWithDB contains the shared logic for updating paths to orphan status
+func (h *UnpinOperationHandler) updatePathsToOrphanWithDB(ctx context.Context, db *gorm.DB, c cid.Cid, userID uint) error {
 	// Get all file paths for this CID and user
 	var paths []pluginDb.FilePath
 
-	err := tx.WithContext(ctx).
+	err := db.WithContext(ctx).
 		Where("user_id = ? AND cid = ?", userID, c.Bytes()).
 		Find(&paths).Error
 	if err != nil && err != gorm.ErrRecordNotFound {
@@ -823,7 +1006,7 @@ func (h *UnpinOperationHandler) UpdatePathsToOrphanWithTx(ctx context.Context, t
 		// Move to root level with CID as name
 		rootPath := "/" + c.String()
 
-		err := tx.WithContext(ctx).
+		err := db.WithContext(ctx).
 			Model(&pluginDb.FilePath{}).
 			Where("id = ?", path.ID).
 			Updates(map[string]interface{}{
@@ -914,7 +1097,7 @@ func (h *UnpinOperationHandler) Cleanup(_ context.Context, _ *models.Request) er
 }
 
 // ValidateDAGIntegrityBeforeUnpin validates the DAG structure before unpinning
-func (h *UnpinOperationHandler) ValidateDAGIntegrityBeforeUnpin(ctx context.Context, c cid.Cid, userID uint) error {
+func (h *UnpinOperationHandler) ValidateDAGIntegrityBeforeUnpin(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) error {
 	blockSvc := core.GetService[pluginCore.BlockService](h.Context(), pluginCore.BLOCK_SERVICE)
 	if blockSvc == nil {
 		return fmt.Errorf("block service not available")
@@ -926,8 +1109,21 @@ func (h *UnpinOperationHandler) ValidateDAGIntegrityBeforeUnpin(ctx context.Cont
 		return fmt.Errorf("target block does not exist: %w", err)
 	}
 
+	// Check if this CID is actually pinned by the user
+	var pinCount int64
+	err = tx.WithContext(ctx).
+		Model(&pluginDb.IPFSPin{}).
+		Where("user_id = ? AND cid = ?", userID, c.Bytes()).
+		Count(&pinCount).Error
+	if err != nil {
+		return fmt.Errorf("failed to check pin existence: %w", err)
+	}
+	if pinCount == 0 {
+		return fmt.Errorf("not found")
+	}
+
 	// Validate the entire DAG structure for this user
-	result, err := h.ValidateUserDAGStructure(ctx, userID)
+	result, err := h.ValidateUserDAGStructure(ctx, tx, userID)
 	if err != nil {
 		return fmt.Errorf("failed to validate DAG structure: %w", err)
 	}
@@ -944,9 +1140,9 @@ func (h *UnpinOperationHandler) ValidateDAGIntegrityBeforeUnpin(ctx context.Cont
 }
 
 // ValidateDAGIntegrityAfterUnpin validates the DAG structure after unpinning
-func (h *UnpinOperationHandler) ValidateDAGIntegrityAfterUnpin(ctx context.Context, c cid.Cid, userID uint) error {
+func (h *UnpinOperationHandler) ValidateDAGIntegrityAfterUnpin(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) error {
 	// Validate the entire DAG structure for this user after unpinning
-	result, err := h.ValidateUserDAGStructure(ctx, userID)
+	result, err := h.ValidateUserDAGStructure(ctx, tx, userID)
 	if err != nil {
 		return fmt.Errorf("failed to validate DAG structure after unpin: %w", err)
 	}
@@ -963,7 +1159,7 @@ func (h *UnpinOperationHandler) ValidateDAGIntegrityAfterUnpin(ctx context.Conte
 }
 
 // ValidateUserDAGStructure validates the entire DAG structure for a user
-func (h *UnpinOperationHandler) ValidateUserDAGStructure(ctx context.Context, userID uint) (*DAGValidationResult, error) {
+func (h *UnpinOperationHandler) ValidateUserDAGStructure(ctx context.Context, tx *gorm.DB, userID uint) (*DAGValidationResult, error) {
 	result := &DAGValidationResult{
 		IsValid:        true,
 		MissingBlocks:  make([]string, 0),
@@ -976,7 +1172,7 @@ func (h *UnpinOperationHandler) ValidateUserDAGStructure(ctx context.Context, us
 	}
 
 	// Get all pins for this user
-	pins, err := h.GetAllUserPins(ctx, h.Context().DB(), userID)
+	pins, err := h.GetAllUserPins(ctx, tx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user pins: %w", err)
 	}
@@ -994,8 +1190,8 @@ func (h *UnpinOperationHandler) ValidateUserDAGStructure(ctx context.Context, us
 		pinnedCIDs[pinCID.String()] = true
 	}
 
-	// Validate each pin's DAG structure
-	processedBlocks := make(map[string]bool)
+	// Collect all pin CIDs for batch traversal
+	var pinCIDs []cid.Cid
 	for _, pin := range pins {
 		pinCID, err := cid.Cast(pin.CID)
 		if err != nil {
@@ -1004,24 +1200,25 @@ func (h *UnpinOperationHandler) ValidateUserDAGStructure(ctx context.Context, us
 				zap.Error(err))
 			continue
 		}
-
-		// Validate this pin's DAG
-		missing, cycle, err := h.ValidateDAG(ctx, blockSvc, pinCID, pinnedCIDs, processedBlocks)
-		if err != nil {
-			result.IsValid = false
-			result.ErrorMessage = fmt.Sprintf("failed to validate DAG for pin %s: %v", pinCID.String(), err)
-			return result, nil
-		}
-
-		if cycle {
-			result.IsValid = false
-			result.CycleDetected = true
-			result.ErrorMessage = fmt.Sprintf("cycle detected in DAG for pin %s", pinCID.String())
-			return result, nil
-		}
-
-		result.MissingBlocks = append(result.MissingBlocks, missing...)
+		pinCIDs = append(pinCIDs, pinCID)
 	}
+
+	// Perform batched DAG validation
+	missing, cycle, err := h.ValidateAllPins(ctx, blockSvc, pinCIDs, pinnedCIDs)
+	if err != nil {
+		result.IsValid = false
+		result.ErrorMessage = fmt.Sprintf("failed to validate DAGs for pins: %v", err)
+		return result, nil
+	}
+
+	if cycle {
+		result.IsValid = false
+		result.CycleDetected = true
+		result.ErrorMessage = "cycle detected in DAG structure"
+		return result, nil
+	}
+
+	result.MissingBlocks = missing
 
 	// If there are missing blocks, the DAG is invalid
 	if len(result.MissingBlocks) > 0 {
@@ -1069,6 +1266,31 @@ func (h *UnpinOperationHandler) ValidateDAG(ctx context.Context, blockSvc plugin
 
 		// Recursively validate child DAG
 		missing, cycle, err := h.ValidateDAG(ctx, blockSvc, childCID, pinnedCIDs, processedBlocks)
+		if err != nil {
+			return nil, false, err
+		}
+
+		if cycle {
+			cycleDetected = true
+			break
+		}
+
+		missingBlocks = append(missingBlocks, missing...)
+	}
+
+	return missingBlocks, cycleDetected, nil
+}
+
+// ValidateAllPins performs batched validation of all pins for a user
+func (h *UnpinOperationHandler) ValidateAllPins(ctx context.Context, blockSvc pluginCore.BlockService, pinCIDs []cid.Cid, pinnedCIDs map[string]bool) ([]string, bool, error) {
+	processedBlocks := make(map[string]bool)
+	var missingBlocks []string
+	cycleDetected := false
+
+	// Validate all pins in a single traversal
+	for _, pinCID := range pinCIDs {
+		// Validate this pin's DAG
+		missing, cycle, err := h.ValidateDAG(ctx, blockSvc, pinCID, pinnedCIDs, processedBlocks)
 		if err != nil {
 			return nil, false, err
 		}

@@ -2,10 +2,11 @@ package tests
 
 import (
 	"context"
+	"testing"
 
 	"github.com/ipfs/go-cid"
-	confmap "github.com/knadh/koanf/providers/confmap"
-	koanf "github.com/knadh/koanf/v2"
+	"github.com/knadh/koanf/providers/confmap"
+	"github.com/knadh/koanf/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -15,15 +16,13 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/block"
-	filemanager "go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	coreMocks "go.lumeweb.com/portal/core/testing/mocks"
 	"go.lumeweb.com/portal/db/models"
 	"gorm.io/gorm"
-
-	"testing"
 )
 
 var TestOptions = coreTesting.CombineOptions(
@@ -83,9 +82,9 @@ func TestFilePathOperationHandler_Execute_WithValidUnixFSDirectory(t *testing.T)
 		// Mock the workflow service to return pin workflow data
 		workflowSvc := core.GetService[*coreMocks.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
 
-		// Create workflow data with the CIDs
+		// Create workflow data with only the root CID
 		pinWorkflowData := &protocol.PinWorkflowData{
-			Cids: []string{testCID.String(), childCID1.String(), childCID2.String()},
+			Cids: []string{testCID.String()},
 		}
 
 		// Create a koanf instance and populate it with our test data
