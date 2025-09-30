@@ -16,7 +16,7 @@ type FileManagerService interface {
 	ID() string
 
 	// ListFiles retrieves a paginated and filtered list of files for display
-	ListFiles(ctx context.Context, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*db.FilePath, int64, error)
+	ListFiles(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*db.FilePath, int64, error)
 
 	// ListDirectoryContents lists files and directories in a specific parent path
 	ListDirectoryContents(ctx context.Context, userID uint, parentPath string) ([]*db.FilePath, error)

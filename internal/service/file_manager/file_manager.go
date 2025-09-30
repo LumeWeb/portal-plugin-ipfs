@@ -46,13 +46,13 @@ func (s *FileManagerServiceDefault) ID() string {
 }
 
 // ListFiles retrieves a paginated and filtered list of files using the path table
-func (s *FileManagerServiceDefault) ListFiles(ctx context.Context, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.FilePath, int64, error) {
+func (s *FileManagerServiceDefault) ListFiles(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.FilePath, int64, error) {
 	var paths []*pluginDb.FilePath
 	var total int64
 
 	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
 		// Construct the query for file paths
-		query := g.WithContext(ctx).Model(&pluginDb.FilePath{})
+		query := g.WithContext(ctx).Model(&pluginDb.FilePath{}).Where("user_id = ?", userID)
 
 		// Apply filters
 		query = queryutil.ApplyFilters(query, filters, nil)
@@ -81,12 +81,14 @@ func (s *FileManagerServiceDefault) ListFiles(ctx context.Context, filters []que
 	if err != nil {
 		s.logger.Error("Failed to list files",
 			zap.Error(err),
+			zap.Uint("user_id", userID),
 			zap.Any("filters", filters),
 			zap.Any("pagination", pagination))
 		return nil, 0, err
 	}
 
 	s.logger.Debug("Listed files",
+		zap.Uint("user_id", userID),
 		zap.Int("count", len(paths)),
 		zap.Int64("total", total))
 	return paths, total, nil
