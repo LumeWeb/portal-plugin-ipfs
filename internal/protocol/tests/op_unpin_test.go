@@ -81,8 +81,7 @@ func createTestFilePath(t *testing.T, ctx coreTesting.TestContext, userID uint, 
 	return filePath
 }
 
-// Test analyzeDAGDependencies method
-func TestUnpinOperationHandler_AnalyzeDAGDependencies(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_BasicDependency(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -91,31 +90,30 @@ func TestUnpinOperationHandler_AnalyzeDAGDependencies(t *testing.T) {
 
 		userID := uint(123)
 		targetCID := util.GenerateTestCID(t, "target data")
-		dependentCID := util.GenerateTestCID(t, "dependent data")
+		childCID := util.GenerateTestCID(t, "child data")
 		independentCID := util.GenerateTestCID(t, "independent data")
 
 		// Create blocks and nodes
-		_, _ = util.CreateTestBlockAndNode(t, ctx, targetCID, "target.txt", 0, 1024, []cid.Cid{})
-		_, _ = util.CreateTestBlockAndNode(t, ctx, dependentCID, "dependent.txt", 0, 512, []cid.Cid{targetCID})
+		_, _ = util.CreateTestBlockAndNode(t, ctx, targetCID, "target.txt", 0, 1024, []cid.Cid{childCID})
+		_, _ = util.CreateTestBlockAndNode(t, ctx, childCID, "child.txt", 0, 512, []cid.Cid{})
 		_, _ = util.CreateTestBlockAndNode(t, ctx, independentCID, "independent.txt", 0, 256, []cid.Cid{})
 
 		// Create pins
 		createTestPin(t, ctx, userID, targetCID)
-		createTestPin(t, ctx, userID, dependentCID)
+		createTestPin(t, ctx, userID, childCID)
 		createTestPin(t, ctx, userID, independentCID)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), targetCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), targetCID, userID)
 
 		// Assert
 		require.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		assert.True(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 1)
-		assert.Contains(tb, analysis.DependentPins, dependentCID.String())
-		assert.Len(tb, analysis.ChildBlocks, 0)
-		assert.Len(tb, analysis.ParentBlocks, 1)
-		assert.Contains(tb, analysis.ParentBlocks, dependentCID.String())
+		assert.True(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 1)
+		assert.Contains(tb, analysis.RootLevelCandidates, childCID.String())
+		assert.Len(tb, analysis.AllChildren, 1)
+		assert.Contains(tb, analysis.AllChildren, childCID.String())
 	}, UnpinTestOptions)
 }
 
@@ -281,7 +279,7 @@ func TestUnpinOperationHandler_InvalidContextScenarios(t *testing.T) {
 		// Test with cancelled context
 		cancelledCtx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err := handler.AnalyzeDAGDependencies(cancelledCtx, ctx.DB(), testCID, userID)
+		_, err := handler.AnalyzeUnpinImpact(cancelledCtx, ctx.DB(), testCID, userID)
 		assert.Error(tb, err)
 		assert.True(tb, errors.Is(err, context.Canceled))
 
@@ -289,7 +287,7 @@ func TestUnpinOperationHandler_InvalidContextScenarios(t *testing.T) {
 		timeoutCtx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 		defer cancel()
 		time.Sleep(1 * time.Millisecond) // Ensure timeout
-		_, err = handler.AnalyzeDAGDependencies(timeoutCtx, ctx.DB(), testCID, userID)
+		_, err = handler.AnalyzeUnpinImpact(timeoutCtx, ctx.DB(), testCID, userID)
 		assert.Error(tb, err)
 		assert.True(tb, errors.Is(err, context.DeadlineExceeded))
 	}, UnpinTestOptions)
@@ -315,8 +313,7 @@ func TestUnpinOperationHandler_InvalidServiceScenarios(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-// Test analyzeDAGDependencies with no dependencies
-func TestUnpinOperationHandler_AnalyzeDAGDependencies_NoDependencies(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_NoDependencies(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -339,15 +336,14 @@ func TestUnpinOperationHandler_AnalyzeDAGDependencies_NoDependencies(t *testing.
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), targetCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), targetCID, userID)
 
 		// Assert
 		require.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		assert.False(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 0)
-		assert.Len(tb, analysis.ChildBlocks, 0)
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		assert.False(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 0)
+		assert.Len(tb, analysis.AllChildren, 0)
 	}, UnpinTestOptions)
 }
 
@@ -528,41 +524,6 @@ func TestUnpinOperationHandler_GetBlockRelationships(t *testing.T) {
 		assert.Len(tb, parents, 1)
 		assert.Contains(tb, parents, parentCID.String())
 		assert.Len(tb, children, 0)
-	}, UnpinTestOptions)
-}
-
-// Test promotePinsToOrphan method
-func TestUnpinOperationHandler_PromotePinsToOrphan(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Arrange
-		handler := &protocol.UnpinOperationHandler{
-			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
-		}
-
-		userID := uint(123)
-		pinCID := util.GenerateTestCID(t, "pin data")
-
-		// Create pin and file path
-		createTestPin(t, ctx, userID, pinCID)
-		filePath := createTestFilePath(t, ctx, userID, pinCID, "/test/path/file.txt", "file.txt", false)
-
-		fileManagerSvc := core.GetService[pluginCore.FileManagerService](ctx, pluginCore.FILE_MANAGER_SERVICE)
-		require.NotNil(tb, fileManagerSvc)
-
-		dependentPins := []string{pinCID.String()}
-
-		// Act
-		err := handler.PromotePinsToOrphan(context.Background(), ctx.DB(), dependentPins, userID)
-
-		// Assert
-		require.NoError(tb, err)
-
-		// Verify file path was updated to orphan status
-		var updatedPath pluginDb.FilePath
-		result := ctx.DB().Where("id = ?", filePath.ID).First(&updatedPath)
-		require.NoError(tb, result.Error)
-		assert.True(tb, updatedPath.IsOrphan)
-		assert.Equal(tb, "/"+pinCID.String(), updatedPath.Path)
 	}, UnpinTestOptions)
 }
 
@@ -749,78 +710,8 @@ func TestUnpinOperationHandler_WouldBreakDirectoryStructure(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-// Test handlePathCascadingEffects method
-func TestUnpinOperationHandler_HandlePathCascadingEffects(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Arrange
-		handler := &protocol.UnpinOperationHandler{
-			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
-		}
-
-		userID := uint(123)
-		targetCID := util.GenerateTestCID(t, "target data")
-		orphanCID := util.GenerateTestCID(t, "orphan data")
-
-		// Create file paths
-		createTestFilePath(t, ctx, userID, targetCID, "/dir/file1.txt", "file1.txt", false)
-		orphanPath := createTestFilePath(t, ctx, userID, orphanCID, "/dir/subdir/file2.txt", "file2.txt", false)
-
-		// Create pin only for targetCID (orphanCID will become orphan)
-		createTestPin(t, ctx, userID, targetCID)
-
-		analysis := &protocol.PathDependencyAnalysis{
-			OrphanCandidates: []string{orphanCID.String()},
-		}
-
-		// Act
-		err := handler.HandlePathCascadingEffects(context.Background(), ctx.DB(), targetCID, userID, analysis)
-
-		// Assert
-		require.NoError(tb, err)
-
-		// Verify orphan candidate was promoted to orphan status
-		var updatedPath pluginDb.FilePath
-		result := ctx.DB().Where("id = ?", orphanPath.ID).First(&updatedPath)
-		require.NoError(tb, result.Error)
-		assert.True(tb, updatedPath.IsOrphan)
-		assert.Equal(tb, "/"+orphanCID.String(), updatedPath.Path)
-	}, UnpinTestOptions)
-}
-
-// Test updatePathsToOrphan method
-func TestUnpinOperationHandler_UpdatePathsToOrphan(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Arrange
-		handler := &protocol.UnpinOperationHandler{
-			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
-		}
-
-		userID := uint(123)
-		fileCID := util.GenerateTestCID(t, "file data")
-
-		originalPath := createTestFilePath(t, ctx, userID, fileCID, "/dir/subdir/file.txt", "file.txt", false)
-
-		fileManagerSvc := core.GetService[pluginCore.FileManagerService](ctx, pluginCore.FILE_MANAGER_SERVICE)
-		require.NotNil(tb, fileManagerSvc)
-
-		// Act
-		err := handler.UpdatePathsToOrphan(context.Background(), fileCID, userID)
-
-		// Assert
-		require.NoError(tb, err)
-
-		// Verify path was updated to orphan status
-		var updatedPath pluginDb.FilePath
-		result := ctx.DB().Where("id = ?", originalPath.ID).First(&updatedPath)
-		require.NoError(tb, result.Error)
-		assert.True(tb, updatedPath.IsOrphan)
-		assert.Equal(tb, "/"+fileCID.String(), updatedPath.Path)
-		assert.Equal(tb, fileCID.String(), updatedPath.Name)
-	}, UnpinTestOptions)
-}
-
-// Test updatePathsToOrphanWithTx method
-func TestUnpinOperationHandler_UpdatePathsToOrphanWithTx(t *testing.T) {
+// Test updatePathsToRootLevelVisibilityWithTx method
+func TestUnpinOperationHandler_UpdatePathsToRootLevelVisibilityWithTx(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -833,12 +724,12 @@ func TestUnpinOperationHandler_UpdatePathsToOrphanWithTx(t *testing.T) {
 		originalPath := createTestFilePath(t, ctx, userID, fileCID, "/dir/subdir/file.txt", "file.txt", false)
 
 		// Act
-		err := handler.UpdatePathsToOrphanWithTx(context.Background(), ctx.DB(), fileCID, userID)
+		err := handler.UpdatePathsToRootLevelVisibilityWithTx(context.Background(), ctx.DB(), fileCID, userID)
 
 		// Assert
 		require.NoError(tb, err)
 
-		// Verify path was updated to orphan status
+		// Verify path was updated to root level visibility status
 		var updatedPath pluginDb.FilePath
 		result := ctx.DB().Where("id = ?", originalPath.ID).First(&updatedPath)
 		require.NoError(tb, result.Error)
@@ -965,8 +856,8 @@ func TestUnpinOperationHandler_ValidateDAG(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-// Test validateOrphanPromotion method
-func TestUnpinOperationHandler_ValidateOrphanPromotion(t *testing.T) {
+// Test validateRootLevelVisibilityPromotion method
+func TestUnpinOperationHandler_ValidateRootLevelVisibilityPromotion(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -976,17 +867,17 @@ func TestUnpinOperationHandler_ValidateOrphanPromotion(t *testing.T) {
 		userID := uint(123)
 		pinCID := util.GenerateTestCID(t, "pin data")
 
-		// Create orphaned file path
+		// Create root level visible file path
 		filePath := createTestFilePath(t, ctx, userID, pinCID, "/"+pinCID.String(), pinCID.String(), false)
 
-		// Manually update to orphan status
+		// Manually update to root level visible status
 		err := ctx.DB().Model(&pluginDb.FilePath{}).Where("id = ?", filePath.ID).Update("is_orphan", true).Error
 		require.NoError(t, err)
 
 		dependentPins := []string{pinCID.String()}
 
 		// Act
-		err = handler.ValidateOrphanPromotion(context.Background(), dependentPins, userID)
+		err = handler.ValidateRootLevelVisibilityPromotion(context.Background(), dependentPins, userID)
 
 		// Assert
 		require.NoError(tb, err)
@@ -1114,8 +1005,7 @@ func TestUnpinOperationHandler_Cleanup(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-// Test analyzeDAGDependencies with invalid CID
-func TestUnpinOperationHandler_AnalyzeDAGDependencies_InvalidCID(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_InvalidCID(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -1129,7 +1019,7 @@ func TestUnpinOperationHandler_AnalyzeDAGDependencies_InvalidCID(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), invalidCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), invalidCID, userID)
 
 		// Assert
 		assert.Error(tb, err)
@@ -1137,8 +1027,7 @@ func TestUnpinOperationHandler_AnalyzeDAGDependencies_InvalidCID(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-// Test analyzeDAGDependencies with database error
-func TestUnpinOperationHandler_AnalyzeDAGDependencies_DBError(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_DBError(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -1158,7 +1047,7 @@ func TestUnpinOperationHandler_AnalyzeDAGDependencies_DBError(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), targetCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), targetCID, userID)
 
 		// Assert
 		assert.Error(tb, err)
@@ -1277,8 +1166,8 @@ func TestUnpinOperationHandler_GetBlockRelationships_TransactionFailure(t *testi
 	}, UnpinTestOptions)
 }
 
-// Test promotePinsToOrphan with empty dependent pins
-func TestUnpinOperationHandler_PromotePinsToOrphan_EmptyPins(t *testing.T) {
+// Test promotePinsToRootLevelVisibility with empty dependent pins
+func TestUnpinOperationHandler_PromotePinsToRootLevelVisibility_EmptyPins(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -1289,7 +1178,7 @@ func TestUnpinOperationHandler_PromotePinsToOrphan_EmptyPins(t *testing.T) {
 		dependentPins := []string{}
 
 		// Act
-		err := handler.PromotePinsToOrphan(context.Background(), ctx.DB(), dependentPins, userID)
+		err := handler.PromotePinsToRootLevelVisibility(context.Background(), ctx.DB(), dependentPins, userID)
 
 		// Assert
 		assert.NoError(tb, err)
@@ -1469,8 +1358,8 @@ func TestUnpinOperationHandler_HandlePathCascadingEffects_NilAnalysis(t *testing
 	}, UnpinTestOptions)
 }
 
-// Test updatePathsToOrphanWithTx with transaction failure
-func TestUnpinOperationHandler_UpdatePathsToOrphanWithTx_TransactionFailure(t *testing.T) {
+// Test updatePathsToRootLevelVisibilityWithTx with transaction failure
+func TestUnpinOperationHandler_UpdatePathsToRootLevelVisibilityWithTx_TransactionFailure(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -1487,7 +1376,7 @@ func TestUnpinOperationHandler_UpdatePathsToOrphanWithTx_TransactionFailure(t *t
 		require.NoError(tb, err)
 
 		// Act
-		err = handler.UpdatePathsToOrphanWithTx(context.Background(), ctx.DB(), fileCID, userID)
+		err = handler.UpdatePathsToRootLevelVisibilityWithTx(context.Background(), ctx.DB(), fileCID, userID)
 
 		// Assert
 		assert.Error(tb, err)
@@ -1595,8 +1484,8 @@ func TestUnpinOperationHandler_ValidateDAG_MissingBlocks(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-// Test validateOrphanPromotion with empty dependent pins
-func TestUnpinOperationHandler_ValidateOrphanPromotion_EmptyPins(t *testing.T) {
+// Test validateRootLevelVisibilityPromotion with empty dependent pins
+func TestUnpinOperationHandler_ValidateRootLevelVisibilityPromotion_EmptyPins(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -1607,7 +1496,7 @@ func TestUnpinOperationHandler_ValidateOrphanPromotion_EmptyPins(t *testing.T) {
 		dependentPins := []string{}
 
 		// Act
-		err := handler.ValidateOrphanPromotion(context.Background(), dependentPins, userID)
+		err := handler.ValidateRootLevelVisibilityPromotion(context.Background(), dependentPins, userID)
 
 		// Assert
 		assert.NoError(tb, err)
@@ -1718,7 +1607,7 @@ func TestUnpinOperationHandler_ComplexDependencyChain(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), cidD, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), cidA, userID)
 
 		// Assert
 		assert.NoError(tb, err)
@@ -1748,7 +1637,7 @@ func TestUnpinOperationHandler_RollbackScenario(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Act - This should fail due to closed connection
-		err = handler.UpdatePathsToOrphanWithTx(context.Background(), ctx.DB(), fileCID, userID)
+		err = handler.UpdatePathsToRootLevelVisibilityWithTx(context.Background(), ctx.DB(), fileCID, userID)
 
 		// Assert
 		assert.Error(tb, err)
@@ -1786,7 +1675,7 @@ func TestUnpinOperationHandler_SystemStateAfterFailedUnpin(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Act - This should fail
-		err = handler.UpdatePathsToOrphanWithTx(context.Background(), ctx.DB(), targetCID, userID)
+		err = handler.UpdatePathsToRootLevelVisibilityWithTx(context.Background(), ctx.DB(), targetCID, userID)
 
 		// Assert
 		assert.Error(tb, err)
@@ -1807,7 +1696,7 @@ func TestUnpinOperationHandler_SystemStateAfterFailedUnpin(t *testing.T) {
 }
 
 // Test single file unpin scenarios
-func TestUnpinOperationHandler_SingleFileUnpin(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_SingleFile(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -1826,16 +1715,15 @@ func TestUnpinOperationHandler_SingleFileUnpin(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), fileCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), fileCID, userID)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// A single file should not break structure since it has no dependencies
-		assert.False(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 0)
-		assert.Len(tb, analysis.ChildBlocks, 0)
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		// A single file should not create orphans since it has no children
+		assert.False(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 0)
+		assert.Len(tb, analysis.AllChildren, 0)
 
 		// Verify the file path still exists but is not orphaned yet
 		var unchangedPath pluginDb.FilePath
@@ -1845,7 +1733,7 @@ func TestUnpinOperationHandler_SingleFileUnpin(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-func TestUnpinOperationHandler_SingleFileInDirectory(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_SingleFileInDirectory(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -1872,15 +1760,14 @@ func TestUnpinOperationHandler_SingleFileInDirectory(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), fileCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), fileCID, userID)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		assert.False(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 0)
-		assert.Len(tb, analysis.ChildBlocks, 0)
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		assert.False(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 0)
+		assert.Len(tb, analysis.AllChildren, 0)
 
 		// Verify the file path still exists but is not orphaned yet
 		var unchangedPath pluginDb.FilePath
@@ -1890,7 +1777,7 @@ func TestUnpinOperationHandler_SingleFileInDirectory(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-func TestUnpinOperationHandler_SingleFileWithMultipleReferences(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_SingleFileWithMultipleReferences(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -1920,20 +1807,17 @@ func TestUnpinOperationHandler_SingleFileWithMultipleReferences(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), fileCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), fileCID, userID)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// Should break structure because dependent.txt depends on this file
-		assert.True(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 1)
-		assert.Contains(tb, analysis.DependentPins, dependentCID.String())
-		assert.Len(tb, analysis.ChildBlocks, 0)
-		assert.Len(tb, analysis.ParentBlocks, 1)
-		assert.Contains(tb, analysis.ParentBlocks, dependentCID.String())
+		// Should not create orphans because this file has no children
+		assert.False(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 0)
+		assert.Len(tb, analysis.AllChildren, 0)
 
-		// Verify the file paths still exist but are not orphaned yet
+		// Verify the file paths still exist but are not root level visible yet
 		var unchangedPath1 pluginDb.FilePath
 		result := ctx.DB().Where("id = ?", filePath1.ID).First(&unchangedPath1)
 		assert.NoError(tb, result.Error)
@@ -1946,7 +1830,7 @@ func TestUnpinOperationHandler_SingleFileWithMultipleReferences(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-func TestUnpinOperationHandler_SingleFileOnlyContentInDirectory(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_SingleFileOnlyContentInDirectory(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -1972,16 +1856,14 @@ func TestUnpinOperationHandler_SingleFileOnlyContentInDirectory(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), fileCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), fileCID, userID)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		assert.False(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 0)
-		assert.Len(tb, analysis.ChildBlocks, 0)
-		assert.Len(tb, analysis.ParentBlocks, 1)
-		assert.Contains(tb, analysis.ParentBlocks, dirCID.String())
+		assert.False(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 0)
+		assert.Len(tb, analysis.AllChildren, 0)
 
 		// Verify the file path still exists but is not orphaned yet
 		var unchangedPath pluginDb.FilePath
@@ -1998,7 +1880,7 @@ func TestUnpinOperationHandler_SingleFileOnlyContentInDirectory(t *testing.T) {
 }
 
 // Test directory unpin scenarios
-func TestUnpinOperationHandler_EmptyDirectoryUnpin(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_EmptyDirectory(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -2019,18 +1901,17 @@ func TestUnpinOperationHandler_EmptyDirectoryUnpin(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), dirCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), dirCID, userID)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// Empty directory should not break structure
-		assert.False(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 0)
-		assert.Len(tb, analysis.ChildBlocks, 0)
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		// Empty directory should not create orphans
+		assert.False(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 0)
+		assert.Len(tb, analysis.AllChildren, 0)
 
-		// Verify the directory path still exists but is not orphaned yet
+		// Verify the directory path still exists but is not root level visible yet
 		var unchangedPath pluginDb.FilePath
 		result := ctx.DB().Where("id = ?", dirPath.ID).First(&unchangedPath)
 		assert.NoError(tb, result.Error)
@@ -2038,7 +1919,7 @@ func TestUnpinOperationHandler_EmptyDirectoryUnpin(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-func TestUnpinOperationHandler_DirectoryWithMultipleFiles(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_DirectoryWithMultipleFiles(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -2073,22 +1954,21 @@ func TestUnpinOperationHandler_DirectoryWithMultipleFiles(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), dirCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), dirCID, userID)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// Directory with files should break structure if files are pinned
-		assert.True(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 3)
-		assert.Contains(tb, analysis.DependentPins, file1CID.String())
-		assert.Contains(tb, analysis.DependentPins, file2CID.String())
-		assert.Contains(tb, analysis.DependentPins, file3CID.String())
-		assert.Len(tb, analysis.ChildBlocks, 3)
-		assert.Contains(tb, analysis.ChildBlocks, file1CID.String())
-		assert.Contains(tb, analysis.ChildBlocks, file2CID.String())
-		assert.Contains(tb, analysis.ChildBlocks, file3CID.String())
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		// Directory unpin should create orphans because its contents are pinned by this user
+		assert.True(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 3)
+		assert.Contains(tb, analysis.RootLevelCandidates, file1CID.String())
+		assert.Contains(tb, analysis.RootLevelCandidates, file2CID.String())
+		assert.Contains(tb, analysis.RootLevelCandidates, file3CID.String())
+		assert.Len(tb, analysis.AllChildren, 3)
+		assert.Contains(tb, analysis.AllChildren, file1CID.String())
+		assert.Contains(tb, analysis.AllChildren, file2CID.String())
+		assert.Contains(tb, analysis.AllChildren, file3CID.String())
 
 		// Verify paths still exist but are not orphaned yet
 		var unchangedDirPath pluginDb.FilePath
@@ -2113,7 +1993,7 @@ func TestUnpinOperationHandler_DirectoryWithMultipleFiles(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-func TestUnpinOperationHandler_DirectoryWithNestedSubdirectories(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_DirectoryWithNestedSubdirectories(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -2148,20 +2028,19 @@ func TestUnpinOperationHandler_DirectoryWithNestedSubdirectories(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), rootDirCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), rootDirCID, userID)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// Directory with nested structure should break structure
-		assert.True(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 3)
-		assert.Contains(tb, analysis.DependentPins, subDir1CID.String())
-		assert.Contains(tb, analysis.DependentPins, subDir2CID.String())
-		assert.Contains(tb, analysis.DependentPins, fileCID.String())
-		assert.Len(tb, analysis.ChildBlocks, 1)
-		assert.Contains(tb, analysis.ChildBlocks, subDir1CID.String())
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		// Directory unpin should create orphans because its contents are pinned by this user
+		assert.True(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 3)
+		assert.Contains(tb, analysis.RootLevelCandidates, subDir1CID.String())
+		assert.Contains(tb, analysis.RootLevelCandidates, subDir2CID.String())
+		assert.Contains(tb, analysis.RootLevelCandidates, fileCID.String())
+		assert.Len(tb, analysis.AllChildren, 1)
+		assert.Contains(tb, analysis.AllChildren, subDir1CID.String())
 
 		// Verify paths still exist but are not orphaned yet
 		var unchangedRootDirPath pluginDb.FilePath
@@ -2186,7 +2065,7 @@ func TestUnpinOperationHandler_DirectoryWithNestedSubdirectories(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-func TestUnpinOperationHandler_DirectoryWithMixedContent(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_DirectoryWithMixedContent(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -2217,20 +2096,19 @@ func TestUnpinOperationHandler_DirectoryWithMixedContent(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), dirCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), dirCID, userID)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// Directory with mixed content should break structure
-		assert.True(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 2)
-		assert.Contains(tb, analysis.DependentPins, fileCID.String())
-		assert.Contains(tb, analysis.DependentPins, subDirCID.String())
-		assert.Len(tb, analysis.ChildBlocks, 2)
-		assert.Contains(tb, analysis.ChildBlocks, fileCID.String())
-		assert.Contains(tb, analysis.ChildBlocks, subDirCID.String())
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		// Directory unpin should create orphans because its contents are pinned by this user
+		assert.True(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 2)
+		assert.Contains(tb, analysis.RootLevelCandidates, fileCID.String())
+		assert.Contains(tb, analysis.RootLevelCandidates, subDirCID.String())
+		assert.Len(tb, analysis.AllChildren, 2)
+		assert.Contains(tb, analysis.AllChildren, fileCID.String())
+		assert.Contains(tb, analysis.AllChildren, subDirCID.String())
 
 		// Verify paths still exist but are not orphaned yet
 		var unchangedDirPath pluginDb.FilePath
@@ -2251,7 +2129,7 @@ func TestUnpinOperationHandler_DirectoryWithMixedContent(t *testing.T) {
 }
 
 // Test shared path scenarios
-func TestUnpinOperationHandler_SharedFileAcrossMultipleUsers(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_SharedFileAcrossMultipleUsers(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -2277,16 +2155,15 @@ func TestUnpinOperationHandler_SharedFileAcrossMultipleUsers(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act - Unpin for user1
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), fileCID, userID1)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), fileCID, userID1)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// Should not break structure because user2 still has it pinned
-		assert.False(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 0)
-		assert.Len(tb, analysis.ChildBlocks, 0)
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		// Should not create orphans because this is a standalone file with no children
+		assert.False(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 0)
+		assert.Len(tb, analysis.AllChildren, 0)
 
 		// Verify user1's path still exists but is not orphaned yet
 		var unchangedPath1 pluginDb.FilePath
@@ -2302,7 +2179,7 @@ func TestUnpinOperationHandler_SharedFileAcrossMultipleUsers(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-func TestUnpinOperationHandler_DirectoryWithSharedFiles(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_DirectoryWithSharedFiles(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -2313,6 +2190,13 @@ func TestUnpinOperationHandler_DirectoryWithSharedFiles(t *testing.T) {
 		dirCID := util.GenerateTestCID(t, "directory data")
 		sharedFileCID := util.GenerateTestCID(t, "shared file data")
 		privateFileCID := util.GenerateTestCID(t, "private file data")
+
+		// Create blocks for the files
+		_, _ = util.CreateTestBlockAndNode(t, ctx, sharedFileCID, "shared.txt", 0, 512, []cid.Cid{})
+		_, _ = util.CreateTestBlockAndNode(t, ctx, privateFileCID, "private.txt", 0, 256, []cid.Cid{})
+
+		// Create directory block containing both shared and private files
+		_, _ = util.CreateTestBlockAndNode(t, ctx, dirCID, "sharedcontent", 1, 1024, []cid.Cid{sharedFileCID, privateFileCID})
 
 		// Create directory containing both shared and private files
 		dirPath := createTestFilePath(t, ctx, userID, dirCID, "/sharedcontent", "sharedcontent", true)
@@ -2326,24 +2210,27 @@ func TestUnpinOperationHandler_DirectoryWithSharedFiles(t *testing.T) {
 		otherUserID := uint(456)
 		createTestPin(t, ctx, otherUserID, sharedFileCID)
 
+		// Pin both files for the user
+		createTestPin(t, ctx, userID, sharedFileCID)
+		createTestPin(t, ctx, userID, privateFileCID)
+
 		blockSvc := core.GetService[pluginCore.BlockService](ctx, pluginCore.BLOCK_SERVICE)
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), dirCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), dirCID, userID)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// Directory should break structure because private file is pinned only by this user
-		assert.True(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 2)
-		assert.Contains(tb, analysis.DependentPins, sharedFileCID.String())
-		assert.Contains(tb, analysis.DependentPins, privateFileCID.String())
-		assert.Len(tb, analysis.ChildBlocks, 2)
-		assert.Contains(tb, analysis.ChildBlocks, sharedFileCID.String())
-		assert.Contains(tb, analysis.ChildBlocks, privateFileCID.String())
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		// Directory unpin should create orphans because both files are pinned by this user
+		assert.True(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 2)
+		assert.Contains(tb, analysis.RootLevelCandidates, sharedFileCID.String())
+		assert.Contains(tb, analysis.RootLevelCandidates, privateFileCID.String())
+		assert.Len(tb, analysis.AllChildren, 2)
+		assert.Contains(tb, analysis.AllChildren, sharedFileCID.String())
+		assert.Contains(tb, analysis.AllChildren, privateFileCID.String())
 
 		// Verify paths still exist but are not orphaned yet
 		var unchangedDirPath pluginDb.FilePath
@@ -2363,7 +2250,7 @@ func TestUnpinOperationHandler_DirectoryWithSharedFiles(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-func TestUnpinOperationHandler_FromSharedDirectoryStructure(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_FromSharedDirectoryStructure(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -2393,18 +2280,17 @@ func TestUnpinOperationHandler_FromSharedDirectoryStructure(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act - Unpin directory for user1
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), dirCID, userID1)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), dirCID, userID1)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// Should break structure because file is pinned by user1
-		assert.True(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 1)
-		assert.Contains(tb, analysis.DependentPins, fileCID.String())
-		assert.Len(tb, analysis.ChildBlocks, 1)
-		assert.Contains(tb, analysis.ChildBlocks, fileCID.String())
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		// Directory unpin should create orphans because its contents are pinned by this user
+		assert.True(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 1)
+		assert.Contains(tb, analysis.RootLevelCandidates, fileCID.String())
+		assert.Len(tb, analysis.AllChildren, 1)
+		assert.Contains(tb, analysis.AllChildren, fileCID.String())
 
 		// Verify paths still exist but are not orphaned yet
 		var unchangedDirPath1 pluginDb.FilePath
@@ -2424,7 +2310,7 @@ func TestUnpinOperationHandler_FromSharedDirectoryStructure(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-func TestUnpinOperationHandler_MultiplePinsSameCID(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_MultiplePinsSameCID(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -2449,16 +2335,15 @@ func TestUnpinOperationHandler_MultiplePinsSameCID(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), fileCID, userID)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), fileCID, userID)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// Should not break structure because there are still pins remaining
-		assert.False(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 0)
-		assert.Len(tb, analysis.ChildBlocks, 0)
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		// Should not create orphans because this is a standalone file with no children
+		assert.False(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 0)
+		assert.Len(tb, analysis.AllChildren, 0)
 
 		// Verify the file path still exists but is not orphaned yet
 		var unchangedPath pluginDb.FilePath
@@ -2468,7 +2353,7 @@ func TestUnpinOperationHandler_MultiplePinsSameCID(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-func TestUnpinOperationHandler_ComplexSharedDirectoryHierarchies(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_ComplexSharedDirectoryHierarchies(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -2520,24 +2405,26 @@ func TestUnpinOperationHandler_ComplexSharedDirectoryHierarchies(t *testing.T) {
 
 		createTestPin(t, ctx, userID3, sharedFileCID)
 
+		// Create file path for user3 as well
+		createTestFilePath(t, ctx, userID3, sharedFileCID, "/shared.txt", "shared.txt", false)
+
 		blockSvc := core.GetService[pluginCore.BlockService](ctx, pluginCore.BLOCK_SERVICE)
 		require.NotNil(tb, blockSvc)
 
 		// Act - Unpin the root directory for user1
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), rootDirCID, userID1)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), rootDirCID, userID1)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// Should break structure because user1's files are pinned only by user1
-		assert.True(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 3)
-		assert.Contains(tb, analysis.DependentPins, subDirCID.String())
-		assert.Contains(tb, analysis.DependentPins, user1FileCID.String())
-		assert.Contains(tb, analysis.DependentPins, sharedFileCID.String())
-		assert.Len(tb, analysis.ChildBlocks, 1)
-		assert.Contains(tb, analysis.ChildBlocks, subDirCID.String())
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		// Directory unpin should create orphans because its contents are pinned by this user
+		assert.True(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 3)
+		assert.Contains(tb, analysis.RootLevelCandidates, subDirCID.String())
+		assert.Contains(tb, analysis.RootLevelCandidates, user1FileCID.String())
+		assert.Contains(tb, analysis.RootLevelCandidates, sharedFileCID.String())
+		assert.Len(tb, analysis.AllChildren, 1)
+		assert.Contains(tb, analysis.AllChildren, subDirCID.String())
 
 		// Verify paths still exist but are not orphaned yet
 		var unchangedRootDirPath1 pluginDb.FilePath
@@ -2590,7 +2477,7 @@ func TestUnpinOperationHandler_ComplexSharedDirectoryHierarchies(t *testing.T) {
 }
 
 // Test mixed scenarios
-func TestUnpinOperationHandler_FileBothInDirectoryAndShared(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_FileBothInDirectoryAndShared(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -2621,16 +2508,15 @@ func TestUnpinOperationHandler_FileBothInDirectoryAndShared(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), fileCID, userID1)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), fileCID, userID1)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// Should not break structure because file is shared with user2
-		assert.False(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 0)
-		assert.Len(tb, analysis.ChildBlocks, 0)
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		// Should not create orphans because this is a standalone file with no children
+		assert.False(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 0)
+		assert.Len(tb, analysis.AllChildren, 0)
 
 		// Verify paths still exist but are not orphaned yet
 		var unchangedDirPath pluginDb.FilePath
@@ -2650,7 +2536,7 @@ func TestUnpinOperationHandler_FileBothInDirectoryAndShared(t *testing.T) {
 	}, UnpinTestOptions)
 }
 
-func TestUnpinOperationHandler_DirectoryWithSharedAndNonSharedContent(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_DirectoryWithSharedAndNonSharedContent(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -2690,20 +2576,19 @@ func TestUnpinOperationHandler_DirectoryWithSharedAndNonSharedContent(t *testing
 		require.NotNil(tb, blockSvc)
 
 		// Act
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), dirCID, userID1)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), dirCID, userID1)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// Should break structure because private file is pinned only by user1
-		assert.True(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 2)
-		assert.Contains(tb, analysis.DependentPins, sharedFileCID.String())
-		assert.Contains(tb, analysis.DependentPins, privateFileCID.String())
-		assert.Len(tb, analysis.ChildBlocks, 2)
-		assert.Contains(tb, analysis.ChildBlocks, sharedFileCID.String())
-		assert.Contains(tb, analysis.ChildBlocks, privateFileCID.String())
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		// Directory unpin should create orphans because its contents are pinned by this user
+		assert.True(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 2)
+		assert.Contains(tb, analysis.RootLevelCandidates, sharedFileCID.String())
+		assert.Contains(tb, analysis.RootLevelCandidates, privateFileCID.String())
+		assert.Len(tb, analysis.AllChildren, 2)
+		assert.Contains(tb, analysis.AllChildren, sharedFileCID.String())
+		assert.Contains(tb, analysis.AllChildren, privateFileCID.String())
 
 		// Verify paths still exist but are not orphaned yet
 		var unchangedDirPath pluginDb.FilePath
@@ -2729,7 +2614,7 @@ func TestUnpinOperationHandler_DirectoryWithSharedAndNonSharedContent(t *testing
 	}, UnpinTestOptions)
 }
 
-func TestUnpinOperationHandler_NestedSharedDirectoryStructures(t *testing.T) {
+func TestUnpinOperationHandler_AnalyzeUnpinImpact_NestedSharedDirectoryStructures(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		handler := &protocol.UnpinOperationHandler{
@@ -2784,21 +2669,20 @@ func TestUnpinOperationHandler_NestedSharedDirectoryStructures(t *testing.T) {
 		require.NotNil(tb, blockSvc)
 
 		// Act - Unpin root directory for user1
-		analysis, err := handler.AnalyzeDAGDependencies(context.Background(), ctx.DB(), rootCID, userID1)
+		analysis, err := handler.AnalyzeUnpinImpact(context.Background(), ctx.DB(), rootCID, userID1)
 
 		// Assert
 		assert.NoError(tb, err)
 		assert.NotNil(tb, analysis)
-		// Should break structure because private file is pinned only by user1
-		assert.True(tb, analysis.WouldBreakStructure)
-		assert.Len(tb, analysis.DependentPins, 4)
-		assert.Contains(tb, analysis.DependentPins, dir1CID.String())
-		assert.Contains(tb, analysis.DependentPins, dir2CID.String())
-		assert.Contains(tb, analysis.DependentPins, sharedFileCID.String())
-		assert.Contains(tb, analysis.DependentPins, privateFileCID.String())
-		assert.Len(tb, analysis.ChildBlocks, 1)
-		assert.Contains(tb, analysis.ChildBlocks, dir1CID.String())
-		assert.Len(tb, analysis.ParentBlocks, 0)
+		// Directory unpin should create orphans because its contents are pinned by this user
+		assert.True(tb, analysis.WouldCreateOrphans)
+		assert.Len(tb, analysis.RootLevelCandidates, 4)
+		assert.Contains(tb, analysis.RootLevelCandidates, dir1CID.String())
+		assert.Contains(tb, analysis.RootLevelCandidates, dir2CID.String())
+		assert.Contains(tb, analysis.RootLevelCandidates, sharedFileCID.String())
+		assert.Contains(tb, analysis.RootLevelCandidates, privateFileCID.String())
+		assert.Len(tb, analysis.AllChildren, 1)
+		assert.Contains(tb, analysis.AllChildren, dir1CID.String())
 
 		// Verify user1's paths still exist but are not orphaned yet
 		var unchangedRootPath1 pluginDb.FilePath

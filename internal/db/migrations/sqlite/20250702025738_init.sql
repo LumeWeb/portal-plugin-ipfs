@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS ipfs_file_paths (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     deleted_at DATETIME,
     
-    UNIQUE (user_id, cid, path)
+    UNIQUE (user_id, cid, path, deleted_at)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ipfs_file_paths_user_path ON ipfs_file_paths (user_id, path);
