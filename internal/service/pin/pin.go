@@ -424,13 +424,20 @@ func (s *PinServiceDefault) recomputePaths(ctx context.Context, userID uint, cid
 		return nil
 	}
 
+	// Parse the first CID for the storage hash
+	firstCID, err := cid.Parse(cidStrings[0])
+	if err != nil {
+		return fmt.Errorf("failed to parse first CID: %w", err)
+	}
+
 	// Start a file path workflow to recompute paths for all related CIDs
 	// This must be done before deleting existing paths to ensure atomicity
-	_, err := s.workflow.StartWorkflow(ctx, protocol.FilePathOperationName(),
+	_, err = s.workflow.StartWorkflow(ctx, protocol.FilePathOperationName(),
 		core.WithWorkflowStructData(protocol.PinWorkflowData{
 			Cids: cidStrings,
 		}, "json"),
-		core.WithWorkflowUserID(userID))
+		core.WithWorkflowUserID(userID),
+		core.WithWorkflowStorageHash(internal.NewIPFSHash(firstCID)))
 
 	if err != nil {
 		return fmt.Errorf("failed to start file path workflow: %w", err)
