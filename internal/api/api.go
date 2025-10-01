@@ -887,10 +887,20 @@ func getCARUploadHash(upload io.ReadCloser, tus core.TusHandler, ctx core.Contex
 }
 
 func (a *API) convertFilePathToManagerItem(path *pluginDb.FilePath) dto.FileManagerItem {
-	c, err := cid.Parse(path.CID)
+	c, err := cid.Cast(path.CID)
 	if err != nil {
-		a.logger.Error("Failed to parse CID for file path", zap.Error(err), zap.String("path", path.Path))
-		return dto.FileManagerItem{}
+		a.logger.Error("Failed to cast CID for file path", zap.Error(err), zap.String("path", path.Path))
+		return dto.FileManagerItem{
+			Path:        path.Path,
+			Name:        path.Name,
+			Type:        path.Type,
+			Size:        uint64(path.Size),
+			IsDirectory: path.IsDirectory,
+			Depth:       path.Depth,
+			Created:     path.CreatedAt,
+			Updated:     path.UpdatedAt,
+			CID:         "",
+		}
 	}
 	return dto.FileManagerItem{
 		Path:        path.Path,
