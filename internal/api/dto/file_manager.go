@@ -41,12 +41,20 @@ func (f FileManagerFilter) ToModel() (FileManagerFilter, error) {
 
 // ValidateFileManagerPath validates that a path is properly formatted for file operations
 func ValidateFileManagerPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", fmt.Errorf("path is required")
 	}
 
 	if !strings.HasPrefix(path, "/") {
 		return "", fmt.Errorf("path must start with '/'")
+	}
+
+	segments := strings.Split(path, "/")
+	for _, segment := range segments {
+		if segment == "." || segment == ".." {
+			return "", fmt.Errorf("path cannot contain '.' or '..' segments")
+		}
 	}
 
 	return path, nil
