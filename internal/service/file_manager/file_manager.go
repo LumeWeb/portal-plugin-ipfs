@@ -131,6 +131,11 @@ func (s *FileManagerServiceDefault) GetBreadcrumbs(ctx context.Context, userID u
 		return nil, fmt.Errorf("path must start with '/'")
 	}
 	
+	// Special case for root path - return empty breadcrumbs
+	if path == pluginDb.RootPath {
+		return []*pluginDb.FilePath{}, nil
+	}
+	
 	// Check if path exists for the given user
 	var existingPath pluginDb.FilePath
 	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
