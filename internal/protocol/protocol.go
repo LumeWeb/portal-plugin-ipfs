@@ -90,6 +90,17 @@ func (p Protocol) Workflows() []core.WorkflowDefinition {
 		p.newPinChildBlockWorkflow(),
 		p.newUploadWorkflow(),
 		p.newTUSUploadWorkflow(),
+		p.newFilePathWorkflow(),
+	}
+}
+
+func (p Protocol) newFilePathWorkflow() core.WorkflowDefinition {
+	return core.WorkflowDefinition{
+		Name:                 FilePathOperationName(),
+		AutoTriggerFirstStep: true,
+		Steps: []core.OperationStep{
+			p.newRetryStep(FilePathOperationName()),
+		},
 	}
 }
 

@@ -419,5 +419,5 @@ func NewFilePathOperation(ctx core.Context) core.Operation {
 }
 
 func FilePathOperationName() string {
-	return "ipfs.file.path"
+	return FILE_PATH_WORKFLOW
 }
