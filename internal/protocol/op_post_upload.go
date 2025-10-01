@@ -3,7 +3,8 @@ package protocol
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
+	"io"
+
 	"github.com/ipfs/go-cid"
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
@@ -11,7 +12,6 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.uber.org/zap"
-	"io"
 )
 
 // PostUploadOperationHandler handles post-upload processing
@@ -47,26 +47,39 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	}(upload)
 
 	// Process the upload
-	cids, err := ProcessCar(h.Context(), upload)
+	allCids, rootCids, err := ProcessCar(h.Context(), upload)
 	if err != nil {
 		return fmt.Errorf("failed to process CIDs from upload: %w", err)
 	}
 
-	err = core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE).ProcessCIDs(ctx, cids, lo.FromPtrOr(req.UserID, 0))
+	userID := lo.FromPtrOr(req.UserID, 0)
+	uploadSvc := core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE)
+	
+	// Process all CIDs to create upload and core pin records
+	err = uploadSvc.ProcessUpload(ctx, allCids, userID)
 	if err != nil {
 		return fmt.Errorf("failed to process upload: %w", err)
 	}
 
-	// Prepare workflow data for publish operation; reuse existing PinRequestID if available
-	existing := &PinWorkflowData{}
-	_ = h.StructuredWorkflowData(req.ID, existing) // ignore error if none
-	pinID := existing.PinRequestID
-	if pinID == uuid.Nil {
-		pinID = uuid.New()
+	// Fix any UnixFS metadata gaps before proceeding
+	store := h.Protocol().(*Protocol).GetMetadataStore()
+	if store != nil {
+		err = store.ProcessMissingUnixFSNames(allCids)
+		if err != nil {
+			h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
+		}
 	}
+	
+	// Create IPFS pin record for the root CID
+	ipfsPin, err := uploadSvc.CreateRootPin(ctx, rootCids[0], userID)
+	if err != nil {
+		return fmt.Errorf("failed to create root pin: %w", err)
+	}
+
+	// Prepare workflow data using the request ID from the created IPFS pin
 	workflowData := &PinWorkflowData{
-		PinRequestID: pinID,
-		Cids:         lo.Map(cids, func(item cid.Cid, _ int) string { return item.String() }),
+		PinRequestID: ipfsPin.RequestID.ToUUID(),
+		Cids:         lo.Map(rootCids, func(item cid.Cid, _ int) string { return item.String() }),
 	}
 
 	err = h.UpdateWorkflowDataStruct(req.ID, workflowData)
@@ -74,7 +87,14 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		return fmt.Errorf("failed to update workflow data: %w", err)
 	}
 
-	h.Logger().Debug("Processed CAR file", zap.Int("num_cids", len(cids)))
+	// Validate DAG completion and update workflow data with related CIDs
+	err = ValidateDAGCompletionAndUpdateWorkflow(ctx, h, req.ID, ipfsPin, workflowData)
+	if err != nil {
+		h.Logger().Error("Failed to validate DAG completion and update workflow", zap.Error(err))
+		// Don't fail the whole operation for DAG validation failure
+	}
+
+	h.Logger().Debug("Processed CAR file", zap.Int("num_cids", len(allCids)), zap.Int("num_roots", len(rootCids)))
 
 	return nil
 }

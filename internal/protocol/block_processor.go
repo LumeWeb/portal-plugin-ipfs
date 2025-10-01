@@ -64,7 +64,7 @@ func NewBlockProcessor(coreCtx core.Context, proto *Protocol, logger *core.Logge
 		processedNodes: make(map[string]*internal.NodeInfo),
 		proto:          proto,
 		logger:         logger,
-		wp:             workerpool.New(10), // Initialize worker pool
+		wp:             workerpool.New(1), // Initialize worker pool
 		numShards:      numShards,
 		mu:             make([]sync.RWMutex, numShards),
 		ctx:            ctx,
@@ -153,14 +153,14 @@ func (bp *BlockProcessor) handleError(err error) {
 }
 
 // ProcessCar processes a CAR file.
-func ProcessCar(ctx core.Context, r io.Reader) ([]cid.Cid, error) {
+func ProcessCar(ctx core.Context, r io.Reader) ([]cid.Cid, []cid.Cid, error) {
 	protoInterface := core.GetProtocol(internal.ProtocolName)
 	if protoInterface == nil {
-		return nil, fmt.Errorf("protocol %s not found", internal.ProtocolName)
+		return nil, nil, fmt.Errorf("protocol %s not found", internal.ProtocolName)
 	}
 	proto, ok := protoInterface.(*Protocol)
 	if !ok {
-		return nil, fmt.Errorf("protocol %s has unexpected type", internal.ProtocolName)
+		return nil, nil, fmt.Errorf("protocol %s has unexpected type", internal.ProtocolName)
 	}
 	logger := ctx.Logger()
 
@@ -169,17 +169,17 @@ func ProcessCar(ctx core.Context, r io.Reader) ([]cid.Cid, error) {
 	cr, err := car.NewBlockReader(r)
 	if err != nil {
 		logger.Error("Failed to create block reader", zap.Error(err))
-		return nil, fmt.Errorf("failed to create block reader: %w", err)
+		return nil, nil, fmt.Errorf("failed to create block reader: %w", err)
 	}
 
 	rootCIDs := cr.Roots
 	if len(rootCIDs) == 0 {
-		return nil, fmt.Errorf("CAR file contains no root CIDs")
+		return nil, nil, fmt.Errorf("CAR file contains no root CIDs")
 	}
 
 	bp := NewBlockProcessor(ctx, proto, logger, rootCIDs)
 	if bp == nil {
-		return nil, fmt.Errorf("failed to create block processor")
+		return nil, nil, fmt.Errorf("failed to create block processor")
 	}
 	defer bp.release()
 
@@ -190,12 +190,12 @@ func ProcessCar(ctx core.Context, r io.Reader) ([]cid.Cid, error) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("failed to read block: %w", err)
+			return nil, nil, fmt.Errorf("failed to read block: %w", err)
 		}
 
 		if err := bp.queueBlock(block, cid.Undef); err != nil {
 			if !isContextCanceled(err) {
-				return nil, fmt.Errorf("failed to queue block: %w", err)
+				return nil, nil, fmt.Errorf("failed to queue block: %w", err)
 			}
 			break
 		}
@@ -206,10 +206,10 @@ func ProcessCar(ctx core.Context, r io.Reader) ([]cid.Cid, error) {
 	// Wait for all blocks to be processed
 	bp.wp.StopWait()
 	if err := bp.ctx.Err(); err != nil {
-		return nil, fmt.Errorf("block processing failed: %w", err)
+		return nil, nil, fmt.Errorf("block processing failed: %w", err)
 	}
 
-	return processedCIDs, nil
+	return processedCIDs, rootCIDs, nil
 }
 
 // release releases the resources used by the BlockProcessor.

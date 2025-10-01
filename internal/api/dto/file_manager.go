@@ -84,6 +84,7 @@ type FileManagerItem struct {
 	Created     time.Time `json:"created"`
 	Updated     time.Time `json:"updated"`
 	CID         string    `json:"cid"`
+	Unpinnable  bool      `json:"unpinnable"`
 }
 
 // FileManagerListRequest represents the request for listing files

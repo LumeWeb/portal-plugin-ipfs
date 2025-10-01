@@ -50,12 +50,15 @@ func (s *FileManagerServiceDefault) ListFiles(ctx context.Context, userID uint, 
 	var paths []*pluginDb.FilePath
 	var total int64
 
+	// Process filters to handle hierarchical parent_path filtering
+	processedFilters := s.processHierarchicalFilters(filters)
+
 	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
 		// Construct the query for file paths
 		query := g.WithContext(ctx).Model(&pluginDb.FilePath{}).Where("user_id = ?", userID)
 
-		// Apply filters
-		query = queryutil.ApplyFilters(query, filters, nil)
+		// Apply filters using queryutil
+		query = queryutil.ApplyFilters(query, processedFilters, nil)
 
 		// Apply sort
 		query = queryutil.ApplySort(query, sort)
@@ -126,16 +129,16 @@ func (s *FileManagerServiceDefault) GetBreadcrumbs(ctx context.Context, userID u
 	if path == "" {
 		return nil, fmt.Errorf("path cannot be empty")
 	}
-	
+
 	if !strings.HasPrefix(path, "/") {
 		return nil, fmt.Errorf("path must start with '/'")
 	}
-	
+
 	// Special case for root path - return empty breadcrumbs
 	if path == pluginDb.RootPath {
 		return []*pluginDb.FilePath{}, nil
 	}
-	
+
 	// Check if path exists for the given user
 	var existingPath pluginDb.FilePath
 	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
@@ -194,7 +197,29 @@ func (s *FileManagerServiceDefault) GetBreadcrumbs(ctx context.Context, userID u
 
 // CreateFilePath creates a new file path entry
 func (s *FileManagerServiceDefault) CreateFilePath(ctx context.Context, path *pluginDb.FilePath) error {
+	// Check if a file path entry already exists for the same user_id, cid, and path
+	var existingPath pluginDb.FilePath
 	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
+		return g.WithContext(ctx).
+			Where("user_id = ? AND cid = ? AND path = ?", path.UserID, path.CID, path.Path).
+			First(&existingPath)
+	})
+
+	// If an entry exists, return nil without creating a duplicate
+	if err == nil {
+		return nil
+	}
+
+	// If the error is not a "record not found" error, return the database error
+	if err != gorm.ErrRecordNotFound {
+		s.logger.Error("Failed to check for existing file path",
+			zap.Error(err),
+			zap.Any("path", path))
+		return err
+	}
+
+	// If no entry exists, proceed with the normal creation logic
+	err = db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
 		return g.WithContext(ctx).Create(path)
 	})
 
@@ -280,6 +305,48 @@ func (s *FileManagerServiceDefault) GetOrphanedPaths(ctx context.Context) ([]*pl
 	}
 
 	return orphanedPaths, nil
+}
+
+// processHierarchicalFilters handles special parent_path filtering logic
+func (s *FileManagerServiceDefault) processHierarchicalFilters(filters []queryutil.CrudFilter) []queryutil.CrudFilter {
+	// Find parent_path filter if it exists
+	parentPathFilter := queryutil.DeepFindFilter(filters, "parent_path")
+	if parentPathFilter == nil {
+		return filters
+	}
+
+	// Get the parent path value
+	parentPathValue, ok := parentPathFilter.GetValue().(string)
+	if !ok {
+		return filters
+	}
+
+	// Create new hierarchical filter based on the parent path value
+	var hierarchicalFilter queryutil.CrudFilter
+	if parentPathValue == pluginDb.RootPath {
+		// For root path, match all direct children (parent_path = "/")
+		hierarchicalFilter = queryutil.Equal("parent_path", pluginDb.RootPath)
+	} else {
+		// For other paths, match exact path or subpaths
+		// Example: for "/documents", match:
+		// 1. Files with parent_path="/documents" (direct children)
+		// 2. Files with parent_path starting with "/documents/" (descendants)
+		hierarchicalFilter = queryutil.Or(
+			queryutil.Equal("parent_path", parentPathValue),
+			queryutil.NewLogicalFilter("parent_path", queryutil.OpStartswiths, parentPathValue),
+		)
+	}
+
+	// Remove the original parent_path filter and add the new hierarchical filter
+	var processedFilters []queryutil.CrudFilter
+	for _, f := range filters {
+		if f.GetField() != "parent_path" {
+			processedFilters = append(processedFilters, f)
+		}
+	}
+	processedFilters = append(processedFilters, hierarchicalFilter)
+
+	return processedFilters
 }
 
 // HealthCheck implements core.HealthChecker interface

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"github.com/ipfs/go-cid"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/types"
@@ -31,6 +32,13 @@ type IPFSPinService interface {
 
 	// UpdatePinStatus updates the job's state.
 	UpdatePinStatus(ctx context.Context, requestID types.BinaryUUID, status db.PinningStatus, info datatypes.JSON) error
+
+	// ValidateDAGCompletion checks if a new pin completes a DAG structure
+	// and returns related CIDs that need path recomputation.
+	ValidateDAGCompletion(ctx context.Context, pin *db.IPFSPin) ([][]byte, error)
+
+	// GetPinByCIDAndUser retrieves a pin by CID and user ID
+	GetPinByCIDAndUser(ctx context.Context, c cid.Cid, userID uint) (*db.IPFSPin, error)
 
 	core.Service
 }

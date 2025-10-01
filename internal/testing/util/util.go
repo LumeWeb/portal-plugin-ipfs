@@ -16,7 +16,7 @@ import (
 // CalculateParentPath computes the parent directory path for a given file path
 func CalculateParentPath(path string) string {
 	if path == "/" || path == "" {
-		return ""
+		return "/"  // Root path should return "/", not empty string
 	}
 	lastSlash := strings.LastIndex(path, "/")
 	if lastSlash > 0 {

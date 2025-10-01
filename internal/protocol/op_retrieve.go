@@ -3,6 +3,8 @@ package protocol
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	"github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/go-cid"
 	"github.com/labstack/gommon/log"
@@ -17,7 +19,6 @@ import (
 	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/db/types"
 	"go.uber.org/zap"
-	"strings"
 )
 
 // RetrieveOperationHandler handles fetching content from the IPFS network
@@ -79,6 +80,15 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		return !item.Equals(c)
 	})
 
+	// Fix any UnixFS metadata gaps before proceeding with child block processing
+	_store := proto.GetMetadataStore()
+	if _store != nil {
+		err = _store.ProcessMissingUnixFSNames(cids)
+		if err != nil {
+			h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
+		}
+	}
+
 	workflowData.Cids = lo.Map(childCids, func(item cid.Cid, index int) string {
 		return item.String()
 	})
@@ -87,18 +97,50 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 	if err != nil {
 		return err
 	}
-
-	// If we have child blocks, trigger the child pinning workflow
+	
 	if len(childCids) > 0 {
-		for _, childCid := range lo.Map(childCids, func(item cid.Cid, index int) string {
-			return item.String()
-		}) {
-			_, err = h.StartWorkflow(PIN_CHILD_BLOCK_WORKFLOW, core.WithWorkflowStructData(PinChildBlockWorkflowData{Cid: childCid}, ""))
+		uploadSvc := core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE)
+
+		for _, childCid := range childCids {
+			// Pin each child block
+			_, err = proto.GetNode().GetBlock(ctx, childCid)
 			if err != nil {
-				return fmt.Errorf("failed to start child blocks pin workflow: %w", err)
+				h.Logger().Error("Failed to pin child block", zap.Stringer("cid", childCid), zap.Error(err))
+				// Continue with other child blocks even if one fails
+				continue
+			}
+
+			// Update UnixFS metadata for the child block
+			block, err := proto.GetNode().GetBlock(ctx, childCid)
+			if err == nil {
+				// Only proceed if we successfully got the block
+				pinnedBlock := pluginCore.PinnedBlock{
+					Cid:  childCid,
+					Node: block,
+					Size: uint64(len(block.RawData())),
+				}
+
+				// Extract UnixFS metadata using the shared function
+				unixFSNode, err := store.ExtractNodeMetadata(pinnedBlock)
+				if err == nil {
+					err = _store.UpdateUnixFSMetadata(childCid, unixFSNode)
+					if err != nil {
+						h.Logger().Warn("Failed to update UnixFS metadata for child block",
+							zap.Stringer("cid", childCid),
+							zap.Error(err))
+					}
+				}
+			}
+
+			// Pinning individual child blocks, so we only need to create upload and core pin records
+			// IPFS pin records should NOT be created for child blocks
+			err = uploadSvc.ProcessUpload(ctx, []cid.Cid{childCid}, lo.FromPtrOr(req.UserID, 0))
+			if err != nil {
+				h.Logger().Error("Failed to process child block pin", zap.Stringer("cid", childCid), zap.Error(err))
+				// Continue with other child blocks even if one fails
+				continue
 			}
 		}
-
 	}
 
 	return nil
@@ -131,14 +173,6 @@ func NewRetrieveOperation(ctx core.Context) core.Operation {
 
 func isRecoverableNodeError(err error) bool {
 	return !strings.Contains(err.Error(), "protobuf:")
-}
-
-func calculateTotalFileSize(ctx core.Context, ipfs *Protocol, hash []byte, cidType uint64) (uint64, error) {
-	_, err := internal.CIDFromHash(hash, cidType)
-	if err != nil {
-		return 0, fmt.Errorf("failed to cast hash to CID: %w", err)
-	}
-	return 0, err
 }
 
 func collectDAGCids(ctx core.Context, ipfs *Protocol, c cid.Cid) ([]cid.Cid, error) {

@@ -59,7 +59,7 @@ func createTestFilePath(t *testing.T, ctx coreTesting.TestContext, userID uint, 
 	// Calculate parent path and depth
 	parentPath := util.CalculateParentPath(path)
 	depth := 0
-	if parentPath != "" {
+	if parentPath != pluginDb.RootPath {
 		depth = len(strings.Split(strings.Trim(parentPath, "/"), "/"))
 	}
 

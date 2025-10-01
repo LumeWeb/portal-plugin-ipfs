@@ -8,7 +8,6 @@ import (
 	"log"
 	"path/filepath"
 
-	"github.com/google/uuid"
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/go-cid"
 	levelds "github.com/ipfs/go-ds-leveldb"
@@ -36,10 +35,6 @@ var _ core.ProtocolGetPinHandler = (*Protocol)(nil)
 var _ core.ProtocolPinHandler = (*pinHandler)(nil)
 
 // Helper functions for operation names
-func pinChildrenOperationName() string {
-	return core.OperationName(internal.ProtocolName, "pin", "children")
-}
-
 func confirmOperationName() string {
 	return core.OperationName(internal.ProtocolName, "confirm")
 }
@@ -87,20 +82,8 @@ func (p Protocol) PinHandler() core.ProtocolPinHandler {
 func (p Protocol) Workflows() []core.WorkflowDefinition {
 	return []core.WorkflowDefinition{
 		p.newPinWorkflow(),
-		p.newPinChildBlockWorkflow(),
 		p.newUploadWorkflow(),
 		p.newTUSUploadWorkflow(),
-		p.newFilePathWorkflow(),
-	}
-}
-
-func (p Protocol) newFilePathWorkflow() core.WorkflowDefinition {
-	return core.WorkflowDefinition{
-		Name:                 FilePathOperationName(),
-		AutoTriggerFirstStep: true,
-		Steps: []core.OperationStep{
-			p.newRetryStep(FilePathOperationName()),
-		},
 	}
 }
 
@@ -129,15 +112,6 @@ func (p Protocol) newPinWorkflow() core.WorkflowDefinition {
 	}
 }
 
-func (p Protocol) newPinChildBlockWorkflow() core.WorkflowDefinition {
-	return core.WorkflowDefinition{
-		Name:                 PIN_CHILD_BLOCK_WORKFLOW,
-		AutoTriggerFirstStep: true,
-		Steps: append([]core.OperationStep{
-			p.newRetryStep(pinChildrenOperationName()),
-		}, p.publishWorkflowSteps()...),
-	}
-}
 
 func (p Protocol) newUploadWorkflow() core.WorkflowDefinition {
 	return core.WorkflowDefinition{
@@ -145,6 +119,7 @@ func (p Protocol) newUploadWorkflow() core.WorkflowDefinition {
 		AutoTriggerFirstStep: true,
 		Steps: []core.OperationStep{
 			p.newRetryStep(core.PostUploadOperationName(p.Name())),
+			p.newRetryStep(FilePathOperationName()),
 		},
 	}
 }
@@ -155,6 +130,7 @@ func (p Protocol) newTUSUploadWorkflow() core.WorkflowDefinition {
 		AutoTriggerFirstStep: true,
 		Steps: append([]core.OperationStep{
 			p.newRetryStep(core.TUSUploadOperationName(p.Name())),
+			p.newRetryStep(FilePathOperationName()),
 		}, p.publishWorkflowSteps()...),
 	}
 }
@@ -182,7 +158,6 @@ func (p Protocol) Operations() []core.Operation {
 		NewStoreOperation(p.ctx),
 		NewPublishOperation(p.ctx),
 		NewConfirmOperation(p.ctx),
-		NewPinChildBlocksOperation(p.ctx),
 		NewPostUploadOperation(p.ctx),
 		NewFilePathOperation(p.ctx),
 		service.NewTUSOperationHandler(p.ctx, p, func(ctx context.Context, helper core.OperationHelper, request *models.Request, tsReq *models.TUSRequest) error {
@@ -203,15 +178,37 @@ func (p Protocol) Operations() []core.Operation {
 			}(reader)
 
 			// Process the upload
-			cids, err := ProcessCar(helper.Context(), reader)
+			allCids, rootCids, err := ProcessCar(helper.Context(), reader)
 			if err != nil {
 				return fmt.Errorf("failed to process upload: %w", err)
 			}
 
-			// Prepare workflow data for publish operation
+			// Process all CIDs to create upload and core pin records
+			uploadSvc := core.GetService[pluginCore.UploadService](helper.Context(), pluginCore.UPLOAD_SERVICE)
+			err = uploadSvc.ProcessUpload(ctx, allCids, lo.FromPtrOr(request.UserID, 0))
+			if err != nil {
+				return fmt.Errorf("failed to process upload: %w", err)
+			}
+
+			// Fix any UnixFS metadata gaps before proceeding
+			_store := p.GetMetadataStore()
+			if _store != nil {
+				err = _store.ProcessMissingUnixFSNames(allCids)
+				if err != nil {
+					helper.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
+				}
+			}
+
+			// Create IPFS pin record for the root CID
+			ipfsPin, err := uploadSvc.CreateRootPin(ctx, rootCids[0], lo.FromPtrOr(request.UserID, 0))
+			if err != nil {
+				return fmt.Errorf("failed to create root pin: %w", err)
+			}
+
+			// Prepare workflow data for publish operation and file path step using only root CIDs
 			workflowData := &PinWorkflowData{
-				PinRequestID: uuid.New(),
-				Cids:         lo.Map(cids, func(item cid.Cid, index int) string { return item.String() }),
+				PinRequestID: ipfsPin.RequestID.ToUUID(),
+				Cids:         lo.Map(rootCids, func(item cid.Cid, index int) string { return item.String() }),
 			}
 
 			err = helper.UpdateWorkflowDataStruct(request.ID, workflowData)
@@ -219,9 +216,11 @@ func (p Protocol) Operations() []core.Operation {
 				return fmt.Errorf("failed to update workflow data: %w", err)
 			}
 
-			err = core.GetService[pluginCore.UploadService](helper.Context(), pluginCore.UPLOAD_SERVICE).ProcessCIDs(ctx, cids, lo.FromPtrOr(request.UserID, 0))
+			// Validate DAG completion and update workflow data with related CIDs
+			err = ValidateDAGCompletionAndUpdateWorkflow(ctx, helper, request.ID, ipfsPin, workflowData)
 			if err != nil {
-				return fmt.Errorf("failed to process upload: %w", err)
+				helper.Logger().Error("Failed to validate DAG completion and update workflow", zap.Error(err))
+				// Don't fail the whole operation for DAG validation failure
 			}
 
 			return nil

@@ -34,8 +34,10 @@ var TestOptions = coreTesting.CombineOptions(
 
 func createTestFilePath(t *testing.T, ctx coreTesting.TestContext, userID uint, testCID cid.Cid, path, name string, isDirectory bool) *pluginDb.FilePath {
 	// Calculate parent path
-	parentPath := pluginDb.RootPath
-	if path != pluginDb.RootPath && path != "" {
+	var parentPath string
+	if path == pluginDb.RootPath || path == "" {
+		parentPath = pluginDb.RootPath
+	} else {
 		// Find the last slash to get the parent directory
 		lastSlash := strings.LastIndex(path, "/")
 		if lastSlash > 0 {
