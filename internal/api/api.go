@@ -593,8 +593,9 @@ func (a *API) listDirectoryContents(c echo.Context) error {
 				return nil, 0, fmt.Errorf("parent_path must be a string")
 			}
 
+			// Normalize empty parent_path to root path
 			if parentPath == "" {
-				return nil, 0, fmt.Errorf("parent_path is required")
+				parentPath = pluginDb.RootPath
 			}
 
 			paths, err := a.fileManagerService.ListDirectoryContents(reqCtx, user, parentPath)
@@ -888,7 +889,7 @@ func getCARUploadHash(upload io.ReadCloser, tus core.TusHandler, ctx core.Contex
 func (a *API) convertFilePathToManagerItem(path *pluginDb.FilePath) dto.FileManagerItem {
 	c, err := cid.Parse(path.CID)
 	if err != nil {
-		// In a real implementation, we might want to handle this error more gracefully
+		a.logger.Error("Failed to parse CID for file path", zap.Error(err), zap.String("path", path.Path))
 		return dto.FileManagerItem{}
 	}
 	return dto.FileManagerItem{
