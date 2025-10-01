@@ -598,6 +598,13 @@ func (a *API) listDirectoryContents(c echo.Context) error {
 				parentPath = pluginDb.RootPath
 			}
 
+			// Validate the normalized/received path
+			if v, err := dto.ValidateFileManagerPath(parentPath); err != nil {
+				return nil, 0, err
+			} else {
+				parentPath = v
+			}
+
 			paths, err := a.fileManagerService.ListDirectoryContents(reqCtx, user, parentPath)
 			if err != nil {
 				return nil, 0, err

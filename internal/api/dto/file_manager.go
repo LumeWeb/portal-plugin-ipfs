@@ -50,8 +50,21 @@ func ValidateFileManagerPath(path string) (string, error) {
 		return "", fmt.Errorf("path must start with '/'")
 	}
 
+	// Collapse repeated slashes
+	for strings.Contains(path, "//") {
+		path = strings.ReplaceAll(path, "//", "/")
+	}
+
 	segments := strings.Split(path, "/")
-	for _, segment := range segments {
+	for i, segment := range segments {
+		// Allow empty segment only at the beginning (leading slash) or end (trailing slash)
+		if segment == "" {
+			if i == 0 || i == len(segments)-1 {
+				continue
+			}
+			// Empty interior segments are not allowed
+			return "", fmt.Errorf("path cannot contain empty segments")
+		}
 		if segment == "." || segment == ".." {
 			return "", fmt.Errorf("path cannot contain '.' or '..' segments")
 		}
