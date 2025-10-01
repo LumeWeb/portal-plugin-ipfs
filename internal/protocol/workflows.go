@@ -9,6 +9,7 @@ const (
 	PIN_CHILD_BLOCK_WORKFLOW = "ipfs.network.pin.children"
 	UPLOAD_WORKFLOW          = "ipfs.upload"
 	TUS_UPLOAD_WORKFLOW      = "ipfs.tus.upload"
+	FILE_PATH_WORKFLOW       = "ipfs.file.path"
 )
 
 type PinWorkflowData struct {
