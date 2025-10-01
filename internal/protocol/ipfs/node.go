@@ -9,7 +9,6 @@ import (
 	"net"
 	"time"
 
-	"github.com/ipfs/boxo/exchange/offline"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -27,6 +26,7 @@ import (
 	"github.com/ipfs/boxo/bitswap/network/bsnet"
 	"github.com/ipfs/boxo/blockservice"
 	"github.com/ipfs/boxo/blockstore"
+	"github.com/ipfs/boxo/exchange"
 	"github.com/ipfs/boxo/ipld/merkledag"
 	blocks "github.com/ipfs/go-block-format"
 	format "github.com/ipfs/go-ipld-format"
@@ -42,6 +42,30 @@ import (
 )
 
 var cachedAnnouncementAddresses []multiaddr.Multiaddr
+
+// NopExchange wraps an exchange.Interface and disables NotifyNewBlocks.
+// This prevents the node from announcing new blocks to the network,
+// because we want to selectively control when blocks are announced,
+// thus we make NotifyNewBlocks a no-op.
+type NopExchange struct {
+	exchange.Interface
+}
+
+func (n *NopExchange) GetBlock(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+	return n.Interface.GetBlock(ctx, c)
+}
+
+func (n *NopExchange) GetBlocks(ctx context.Context, cids []cid.Cid) (<-chan blocks.Block, error) {
+	return n.Interface.GetBlocks(ctx, cids)
+}
+
+func (n *NopExchange) NotifyNewBlocks(ctx context.Context, blocks ...blocks.Block) error {
+	return nil
+}
+
+func (n *NopExchange) Close() error {
+	return n.Interface.Close()
+}
 
 // A Node is a minimal IPFS node
 type Node struct {
@@ -275,10 +299,12 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	}
 
 	bitswapNet := bsnet.NewFromIpfsHost(node)
-
 	_bitswap := bitswap.New(ctx, bitswapNet, frt, bs, bitswapOpts...)
-
-	blockServ := blockservice.New(bs, offline.Exchange(bs))
+	
+	// Wrap the bitswap exchange with NopExchange to disable automatic block announcements
+	nopExchange := &NopExchange{_bitswap}
+	
+	blockServ := blockservice.New(bs, nopExchange)
 	dagService := merkledag.NewDAGService(blockServ)
 
 	for _, p := range cfg.Peers {

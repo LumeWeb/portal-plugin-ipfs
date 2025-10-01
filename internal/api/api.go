@@ -461,6 +461,7 @@ func (a *API) addPin(c echo.Context) error {
 	}, "json"),
 		core.WithWorkflowSourceIP(c.RealIP()),
 		core.WithWorkflowUserID(user),
+		core.WithWorkflowProtocol(internal.ProtocolName),
 		core.WithWorkflowStorageHash(internal.NewIPFSHash(cid.MustParse(_pin.CID))),
 	)
 	if err != nil {
@@ -574,6 +575,22 @@ func (a *API) deletePin(c echo.Context) error {
 func (a *API) listFiles(c echo.Context) error {
 	return a.handleFileManagerRequest(c, "list files", func(ctx httputil.RequestContext, reqCtx context.Context, user uint) (queryutil.EntityFunc[*pluginDb.FilePath], error) {
 		return func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.FilePath, int64, error) {
+			// Apply special handling for parent_path filter in the API layer
+			// This ensures hierarchical filtering works end-to-end
+			for i, filter := range filters {
+				if filter.GetField() == "parent_path" {
+					if val, ok := filter.GetValue().(string); ok {
+						// Validate and normalize the parent path
+						validPath, err := dto.ValidateFileManagerPath(val)
+						if err != nil {
+							return nil, 0, fmt.Errorf("invalid parent_path: %w", err)
+						}
+						// Update the filter with the validated path
+						filters[i] = queryutil.NewLogicalFilter("parent_path", filter.GetOperator(), validPath)
+					}
+				}
+			}
+
 			return a.fileManagerService.ListFiles(reqCtx, user, filters, sorts, pagination)
 		}, nil
 	})
@@ -893,7 +910,7 @@ func getCARUploadHash(upload io.ReadCloser, tus core.TusHandler, ctx core.Contex
 	return internal.NewIPFSHash(cids[0]), nil
 }
 
-func (a *API) convertFilePathToManagerItem(path *pluginDb.FilePath) dto.FileManagerItem {
+func (a *API) convertFilePathToManagerItem(path *pluginDb.FilePath, userID uint) dto.FileManagerItem {
 	c, err := cid.Cast(path.CID)
 	if err != nil {
 		a.logger.Error("Failed to cast CID for file path", zap.Error(err), zap.String("path", path.Path))
@@ -907,8 +924,22 @@ func (a *API) convertFilePathToManagerItem(path *pluginDb.FilePath) dto.FileMana
 			Created:     path.CreatedAt,
 			Updated:     path.UpdatedAt,
 			CID:         "",
+			Unpinnable:  true, // Default to unpinnable if CID is invalid
 		}
 	}
+
+	// Check if this file has an associated IPFS pin
+	// If there's no IPFS pin, it's unpinnable (true) - can't be unpinned via pinner API
+	// If there is an IPFS pin, it's pinnable (false) - can be unpinned via pinner API
+	unpinnable := true // Default to unpinnable (safer)
+	pin, err := a.pinService.GetPinByCIDAndUser(context.Background(), c, userID)
+	if err != nil && err != gorm.ErrRecordNotFound {
+		a.logger.Error("Failed to check IPFS pin status", zap.Error(err), zap.Stringer("cid", c), zap.Uint("user_id", userID))
+	} else if pin != nil {
+		// There's an IPFS pin, so it can be unpinned via pinner API
+		unpinnable = false
+	}
+
 	return dto.FileManagerItem{
 		Path:        path.Path,
 		Name:        path.Name,
@@ -919,6 +950,7 @@ func (a *API) convertFilePathToManagerItem(path *pluginDb.FilePath) dto.FileMana
 		Created:     path.CreatedAt,
 		Updated:     path.UpdatedAt,
 		CID:         c.String(),
+		Unpinnable:  unpinnable,
 	}
 }
 
@@ -952,7 +984,9 @@ func (a *API) handleFileManagerRequest(
 		c.Request(),
 		"files",
 		service,
-		a.convertFilePathToManagerItem,
+		func(path *pluginDb.FilePath) dto.FileManagerItem {
+			return a.convertFilePathToManagerItem(path, user)
+		},
 	)
 }
 

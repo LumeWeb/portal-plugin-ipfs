@@ -69,7 +69,7 @@ func (s *MetadataStoreDefault) Pin(b pluginCore.PinnedBlock) error {
 		}
 
 		// Process UnixFS metadata if applicable
-		unixfsNode, err := extractNodeMetadata(b)
+		unixfsNode, err := ExtractNodeMetadata(b)
 		if err == nil {
 			unixfsNode.BlockID = parentBlock.ID
 
@@ -81,7 +81,7 @@ func (s *MetadataStoreDefault) Pin(b pluginCore.PinnedBlock) error {
 			}
 
 			if existingNode.Name == "" {
-				name, err := s.resolveNameFromParent(b.Cid, tx)
+				name, err := s.resolveNameFromParentWithBlock(b.Cid, &parentBlock, tx)
 				if err == nil {
 					unixfsNode.Name = name
 					s.logger.Debug("Resolved name on the fly", zap.String("name", name), zap.Stringer("cid", b.Cid))
@@ -157,33 +157,38 @@ func (s *MetadataStoreDefault) Pin(b pluginCore.PinnedBlock) error {
 	})
 }
 
-func (s *MetadataStoreDefault) resolveNameFromParent(childCid cid.Cid, tx *gorm.DB) (string, error) {
+func (s *MetadataStoreDefault) resolveNameFromParentWithBlock(childCid cid.Cid, childBlock *pluginDb.IPFSBlock, tx *gorm.DB) (string, error) {
+	// Find the linked block relationship using the child block ID
 	var link pluginDb.IPFSLinkedBlock
-	if err := tx.Where("child_id = ?", childCid.Bytes()).First(&link).Error; err != nil {
+	if err := tx.Where("child_id = ?", childBlock.ID).First(&link).Error; err != nil {
 		return "", fmt.Errorf("no parent found for node: %w", err)
 	}
 
+	// Get the parent block
 	var parentBlock pluginDb.IPFSBlock
 	if err := tx.First(&parentBlock, link.ParentID).Error; err != nil {
 		return "", fmt.Errorf("failed to find parent block: %w", err)
 	}
 
+	// Parse the parent CID
 	parentCid, err := cid.Parse(parentBlock.CID)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse parent CID: %w", err)
 	}
 
+	// Get the parent block data
 	block, err := s.proto.GetNode().GetBlock(s.ctx, parentCid)
-
 	if err != nil {
 		return "", fmt.Errorf("failed to get parent block: %w", err)
 	}
 
+	// Decode the parent block
 	ipldNode, err := encoding.DecodeBlock(s.ctx, block)
 	if err != nil {
 		return "", fmt.Errorf("failed to decode parent block: %w", err)
 	}
 
+	// Find the link name that matches the child CID
 	for _, link := range ipldNode.Links() {
 		if link.Cid.Equals(childCid) {
 			return link.Name, nil
@@ -191,6 +196,16 @@ func (s *MetadataStoreDefault) resolveNameFromParent(childCid cid.Cid, tx *gorm.
 	}
 
 	return "", fmt.Errorf("name not found in parent links")
+}
+
+func (s *MetadataStoreDefault) resolveNameFromParent(childCid cid.Cid, tx *gorm.DB) (string, error) {
+	// First find the child block ID
+	var childBlock pluginDb.IPFSBlock
+	if err := tx.Where("cid = ?", childCid.Bytes()).First(&childBlock).Error; err != nil {
+		return "", fmt.Errorf("failed to find child block: %w", err)
+	}
+
+	return s.resolveNameFromParentWithBlock(childCid, &childBlock, tx)
 }
 
 func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
@@ -503,7 +518,7 @@ func (s *MetadataStoreDefault) ProcessMissingUnixFSNames(cids []cid.Cid) error {
 				return tx // Name already exists, skip
 			}
 
-			name, err := s.resolveNameFromParent(c, tx)
+			name, err := s.resolveNameFromParentWithBlock(c, &block, tx)
 			if err != nil {
 				s.logger.Warn("Failed to resolve name for CID, skipping", zap.Stringer("cid", c), zap.Error(err))
 				return tx // Failed to resolve, skip
@@ -588,7 +603,7 @@ func NewMetadataStore(ctx core.Context, proto ProtoNode) *MetadataStoreDefault {
 	}
 }
 
-func extractNodeMetadata(block pluginCore.PinnedBlock) (*pluginDb.UnixFSNode, error) {
+func ExtractNodeMetadata(block pluginCore.PinnedBlock) (*pluginDb.UnixFSNode, error) {
 	analyzedNode, err := internal.AnalyzeNode(context.Background(), block.Node)
 	if err != nil {
 		return nil, err
@@ -614,7 +629,11 @@ func extractNodeMetadata(block pluginCore.PinnedBlock) (*pluginDb.UnixFSNode, er
 	}
 
 	if analyzedNode.UnixFSType == unixfs.TFile && analyzedNode.UnixFSBlockSizes != nil && len(analyzedNode.UnixFSBlockSizes) > 0 {
-		metadata.BlockSize = int64(analyzedNode.UnixFSBlockSizes[0])
+		var totalSize int64
+		for _, size := range analyzedNode.UnixFSBlockSizes {
+			totalSize += int64(size)
+		}
+		metadata.BlockSize = totalSize
 	}
 
 	metadata.ChildCID = datatypes.NewJSONSlice(lo.Map(block.Links, func(c cid.Cid, _ int) cid.Cid {

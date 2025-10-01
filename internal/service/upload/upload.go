@@ -79,58 +79,64 @@ func (s *UploadServiceDefault) HandleUpload(ctx context.Context, reader io.ReadS
 	return roots[0], uploadId, nil
 }
 
-func (s *UploadServiceDefault) ProcessCIDs(ctx context.Context, cids []cid.Cid, userId uint) error {
+func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid, userId uint) error {
 	if len(cids) == 0 {
 		return fmt.Errorf("no CIDs provided")
 	}
 
-	for _, _cid := range cids {
-		size, err := s.ipfs.(*protocol.Protocol).GetMetadataStore().Size(_cid)
+	// Create upload records and core pin records for ALL CIDs (both roots and children)
+	for _, c := range cids {
+		// Get size for this CID
+		size, err := s.ipfs.(*protocol.Protocol).GetMetadataStore().Size(c)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to get size for CID %s: %w", c.String(), err)
 		}
 
+		// Create upload record for this CID
 		uploadMeta := &models.Upload{
 			UserID:   userId,
 			Protocol: s.ipfs.Name(),
-			Hash:     _cid.Hash(),
-			CIDType:  _cid.Type(),
+			Hash:     c.Hash(),
+			CIDType:  c.Type(),
 			Size:     size,
 		}
 
-		// Create the upload record
 		err = s.coreUpload.SaveUpload(ctx, uploadMeta)
 		if err != nil {
-			return fmt.Errorf("failed to save upload record: %w", err)
+			return fmt.Errorf("failed to save upload record for CID %s: %w", c.String(), err)
 		}
 
+		// Create core pin record for this CID
 		pinMeta := &models.Pin{
 			UploadID: uploadMeta.ID,
 			UserID:   uploadMeta.UserID,
 		}
 
-		// Create the core pin record
 		_, err = s.corePin.CreatePin(ctx, pinMeta, nil)
 		if err != nil {
-			return fmt.Errorf("failed to create pin record: %w", err)
-		}
-
-		// Create the IPFS pin record
-		_, err = s.pin.AddPin(ctx, &pluginDb.IPFSPin{
-			UserID:    userId,
-			CID:       _cid.Bytes(),
-			Name:      "",
-			Origins:   nil,
-			Meta:      nil,
-			Delegates: nil,
-			Info:      nil,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create IPFS pin record: %w", err)
+			return fmt.Errorf("failed to create pin record for CID %s: %w", c.String(), err)
 		}
 	}
 
 	return nil
+}
+
+func (s *UploadServiceDefault) CreateRootPin(ctx context.Context, c cid.Cid, userId uint) (*pluginDb.IPFSPin, error) {
+	// Create IPFS pin record for the root CID and return it
+	ipfsPin, err := s.pin.AddPin(ctx, &pluginDb.IPFSPin{
+		UserID:    userId,
+		CID:       c.Bytes(),
+		Name:      "",
+		Origins:   nil,
+		Meta:      nil,
+		Delegates: nil,
+		Info:      nil,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create IPFS pin record: %w", err)
+	}
+
+	return ipfsPin, nil
 }
 
 func (s *UploadServiceDefault) ID() string {

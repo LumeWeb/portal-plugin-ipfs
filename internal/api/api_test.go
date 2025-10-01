@@ -94,9 +94,7 @@ func setAuthHeader(req *http.Request, token string) {
 func createTestFilePath(t *testing.T, ctx coreTesting.TestContext, userID uint, testCID cid.Cid, path, name string, isDirectory bool) *pluginDb.FilePath {
 	// Calculate parent path
 	parentPath := util.CalculateParentPath(path)
-	if parentPath == "" {
-		parentPath = pluginDb.RootPath
-	}
+	// CalculateParentPath now returns "/" for root, so no need to override empty string
 
 	// Calculate depth
 	depth := 0

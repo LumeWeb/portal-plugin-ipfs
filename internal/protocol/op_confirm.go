@@ -11,6 +11,7 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/db/types"
+	"go.uber.org/zap"
 )
 
 // ConfirmOperationHandler verifies all CIDs are ready before completing
@@ -37,7 +38,7 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 	proto := h.Protocol().(*Protocol)
 	store := proto.GetMetadataStore()
 
-	cidList := make([]cid.Cid, 0)
+	var cidList []cid.Cid
 
 	for _, cidStr := range workflowData.Cids {
 		c, err := cid.Parse(cidStr)
@@ -54,16 +55,45 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 		cidList = append(cidList, c)
 	}
 
+	// Process all CIDs to create upload/core pin records for all CIDs
 	if len(cidList) > 0 {
-		err = core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE).ProcessCIDs(ctx, cidList, lo.FromPtrOr(req.UserID, 0))
+		uploadSvc := core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE)
+		err := uploadSvc.ProcessUpload(ctx, cidList, lo.FromPtrOr(req.UserID, 0))
 		if err != nil {
 			return fmt.Errorf("failed to process upload: %w", err)
+		}
+
+		// Fix any UnixFS metadata gaps before proceeding
+		err = store.ProcessMissingUnixFSNames(cidList)
+		if err != nil {
+			h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
+		}
+
+		// Create IPFS pin record for the root CID (first CID in the list)
+		_, err = uploadSvc.CreateRootPin(ctx, cidList[0], lo.FromPtrOr(req.UserID, 0))
+		if err != nil {
+			return fmt.Errorf("failed to create root pin: %w", err)
 		}
 	}
 
 	err = pinSvc.UpdatePinStatus(ctx, types.FromUUID(workflowData.PinRequestID), db.PinningStatusPinned, nil)
 	if err != nil {
 		return fmt.Errorf("failed to update pin status: %w", err)
+	}
+
+	// Get the pin record for DAG validation
+	pin, err := pinSvc.GetPinByRequestID(ctx, types.FromUUID(workflowData.PinRequestID))
+	if err != nil {
+		h.Logger().Error("Failed to get pin record for DAG validation", zap.Error(err))
+		// Don't fail the whole operation for this
+		return nil
+	}
+
+	// Validate DAG completion and update workflow data with related CIDs
+	err = ValidateDAGCompletionAndUpdateWorkflow(ctx, h, req.ID, pin, &workflowData)
+	if err != nil {
+		h.Logger().Error("Failed to validate DAG completion and update workflow", zap.Error(err))
+		// Don't fail the whole operation for DAG validation failure
 	}
 
 	return nil
