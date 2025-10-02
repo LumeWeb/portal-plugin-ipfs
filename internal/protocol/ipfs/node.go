@@ -51,20 +51,8 @@ type NopExchange struct {
 	exchange.Interface
 }
 
-func (n *NopExchange) GetBlock(ctx context.Context, c cid.Cid) (blocks.Block, error) {
-	return n.Interface.GetBlock(ctx, c)
-}
-
-func (n *NopExchange) GetBlocks(ctx context.Context, cids []cid.Cid) (<-chan blocks.Block, error) {
-	return n.Interface.GetBlocks(ctx, cids)
-}
-
 func (n *NopExchange) NotifyNewBlocks(ctx context.Context, blocks ...blocks.Block) error {
 	return nil
-}
-
-func (n *NopExchange) Close() error {
-	return n.Interface.Close()
 }
 
 // A Node is a minimal IPFS node

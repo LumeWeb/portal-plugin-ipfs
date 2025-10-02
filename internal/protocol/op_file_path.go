@@ -577,9 +577,6 @@ func (h *FilePathOperationHandler) walkDAGForTotalSize(ctx context.Context, c ci
 	}
 	visited[cidStr] = true
 
-	// Create a virtual read context to avoid downloading actual block data
-	virtualCtx := store.VirtualReadOption(ctx, true)
-
 	// Get metadata store to retrieve block information
 	metadataStore := core.GetProtocol(internal.ProtocolName).(*Protocol).GetMetadataStore()
 	if metadataStore == nil {
@@ -593,7 +590,7 @@ func (h *FilePathOperationHandler) walkDAGForTotalSize(ctx context.Context, c ci
 		// If we can't get the size from metadata store, try to get it from blockstore
 		proto := core.GetProtocol(internal.ProtocolName).(*Protocol)
 		blockstore := proto.GetNode().GetBlockstore()
-		blockSize, blockErr := blockstore.GetSize(virtualCtx, c)
+		blockSize, blockErr := blockstore.GetSize(ctx, c)
 		if blockErr != nil {
 			return 0, fmt.Errorf("failed to get size for CID %s from both metadata store and blockstore: %w", c.String(), err)
 		}
@@ -610,7 +607,7 @@ func (h *FilePathOperationHandler) walkDAGForTotalSize(ctx context.Context, c ci
 
 	// Recursively walk children
 	for _, child := range children {
-		childSize, err := h.walkDAGForTotalSize(virtualCtx, child, visited)
+		childSize, err := h.walkDAGForTotalSize(ctx, child, visited)
 		if err != nil {
 			// Log error but continue with other children
 			h.Logger().Warn("Failed to get size for child block in DAG walk",
