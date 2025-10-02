@@ -105,48 +105,38 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 			return fmt.Errorf("upload service not available")
 		}
 
+		// Prepare all child blocks and metadata first
+		var validChildCids []cid.Cid
 		for _, childCid := range childCids {
-			// Pin each child block
 			block, err := proto.GetNode().GetBlock(ctx, childCid)
 			if err != nil {
-				h.Logger().Error("Failed to pin child block", zap.Stringer("cid", childCid), zap.Error(err))
-				// Continue with other child blocks even if one fails
+				h.Logger().Error("Failed to fetch child block", zap.Stringer("cid", childCid), zap.Error(err))
 				continue
 			}
 
-			// Update UnixFS metadata for the child block
-			{
-				// Only proceed if we successfully got the block
+			// Update UnixFS metadata
+			if _store != nil {
 				pinnedBlock := pluginCore.PinnedBlock{
 					Cid:  childCid,
 					Node: block,
 					Size: uint64(len(block.RawData())),
 				}
-
-				// Extract UnixFS metadata using the shared function
 				unixFSNode, err := store.ExtractNodeMetadata(pinnedBlock)
 				if err == nil {
-					if _store != nil {
-						err = _store.UpdateUnixFSMetadata(childCid, unixFSNode)
-						if err != nil {
-							h.Logger().Warn("Failed to update UnixFS metadata for child block",
-								zap.Stringer("cid", childCid),
-								zap.Error(err))
-						}
-					} else {
-						h.Logger().Warn("Metadata store is nil, skipping UnixFS metadata update",
-							zap.Stringer("cid", childCid))
+					if err := _store.UpdateUnixFSMetadata(childCid, unixFSNode); err != nil {
+						h.Logger().Warn("Failed to update UnixFS metadata", zap.Stringer("cid", childCid), zap.Error(err))
 					}
 				}
 			}
 
-			// Pinning individual child blocks, so we only need to create upload and core pin records
-			// IPFS pin records should NOT be created for child blocks
-			err = uploadSvc.ProcessUpload(ctx, []cid.Cid{childCid}, lo.FromPtrOr(req.UserID, 0))
+			validChildCids = append(validChildCids, childCid)
+		}
+
+		// Batch process all valid child CIDs
+		if len(validChildCids) > 0 {
+			err = uploadSvc.ProcessUpload(ctx, validChildCids, lo.FromPtrOr(req.UserID, 0))
 			if err != nil {
-				h.Logger().Error("Failed to process child block pin", zap.Stringer("cid", childCid), zap.Error(err))
-				// Continue with other child blocks even if one fails
-				continue
+				h.Logger().Error("Failed to batch process child blocks", zap.Error(err))
 			}
 		}
 	}
