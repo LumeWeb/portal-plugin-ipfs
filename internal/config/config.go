@@ -1,13 +1,13 @@
 package config
 
 import (
+	"time"
+
 	"github.com/libp2p/go-libp2p/core/peer"
 	"go.lumeweb.com/portal/config"
-	"time"
 )
 
 // var _ config.Validator = (*ProtocolConfig)(nil)
-var _ config.Defaults = (*ProtocolConfig)(nil)
 var _ config.Defaults = (*BlockStore)(nil)
 var _ config.Defaults = (*IPFSProvider)(nil)
 
@@ -26,23 +26,6 @@ var bootstrapPeers = []IPFSPeer{
 	mustParsePeer("/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt"),
 	mustParsePeer("/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ"),
 	mustParsePeer("/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ"),
-}
-
-type ProtocolConfig struct {
-	ListenAddresses         []string     `config:"listen_addresses"`
-	Peers                   []IPFSPeer   `config:"peers"`
-	BootstrapPeers          []IPFSPeer   `config:"bootstrap_peers"`
-	Provider                IPFSProvider `config:"provider"`
-	BlockStore              BlockStore   `config:"blockstore"`
-	LogLevel                string       `config:"log_level"`
-	AutoScaleResourceLimits bool         `config:"auto_scale_resource_limits"`
-}
-
-func (c ProtocolConfig) Defaults() map[string]any {
-	return map[string]any{
-		"ListenAddresses": []string{"/ip4/0.0.0.0/tcp/4001"},
-		"BootstrapPeers":  bootstrapPeers,
-	}
 }
 
 type (

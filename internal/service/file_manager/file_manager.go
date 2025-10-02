@@ -438,6 +438,34 @@ func (s *FileManagerServiceDefault) DeleteFilePathSmart(ctx context.Context, use
 	return nil
 }
 
+// UpdateFilePath updates an existing file path entry
+func (s *FileManagerServiceDefault) UpdateFilePath(ctx context.Context, path *pluginDb.FilePath) error {
+	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
+		return g.WithContext(ctx).
+			Model(&pluginDb.FilePath{}).
+			Where("user_id = ? AND cid = ? AND path = ?", path.UserID, path.CID, path.Path).
+			Updates(&pluginDb.FilePath{
+				Name:        path.Name,
+				Type:        path.Type,
+				Size:        path.Size,
+				IsDirectory: path.IsDirectory,
+				IsOrphan:    path.IsOrphan,
+				ParentPath:  path.ParentPath,
+				Depth:       path.Depth,
+			})
+	})
+
+	if err != nil {
+		s.logger.Error("Failed to update file path",
+			zap.Error(err),
+			zap.Uint("user_id", path.UserID),
+			zap.String("path", path.Path))
+		return err
+	}
+
+	return nil
+}
+
 // DeleteFilePath deletes all file path entries for a specific CID and user
 // This is a force delete that doesn't check for shared references
 func (s *FileManagerServiceDefault) DeleteFilePath(ctx context.Context, userID uint, cid []byte) error {

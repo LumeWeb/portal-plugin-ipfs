@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ipfs/go-cid"
 	"github.com/samber/lo"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"go.lumeweb.com/queryutil"
@@ -23,9 +24,19 @@ func (p *IPFSPinParser) ParseFilters() ([]filter.CrudFilter, error) {
 	var crudFilters []filter.CrudFilter
 
 	if len(p.filter.CIDs) > 0 {
-		crudFilters = append(crudFilters, filter.FieldIn("cid", lo.Map(p.filter.CIDs, func(item string, _ int) any {
-			return any(item)
-		})...))
+		// First validate all CIDs can be parsed
+		for _, cidStr := range p.filter.CIDs {
+			if _, err := cid.Parse(cidStr); err != nil {
+				return nil, fmt.Errorf("failed to parse CID %s: %w", cidStr, err)
+			}
+		}
+
+		// Parse CID strings to CID objects and convert to bytes for database comparison
+		cidBytes := lo.Map(p.filter.CIDs, func(cidStr string, _ int) any {
+			cidObj, _ := cid.Parse(cidStr)
+			return cidObj.Bytes()
+		})
+		crudFilters = append(crudFilters, filter.FieldIn("cid", cidBytes...))
 	}
 
 	if p.filter.Name != "" {

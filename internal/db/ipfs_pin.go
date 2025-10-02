@@ -3,6 +3,8 @@ package db
 import (
 	"fmt"
 
+	"github.com/ipfs/go-cid"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal/db/types"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -54,7 +56,7 @@ func (pin *IPFSPin) BeforeCreate(_ *gorm.DB) error {
 	return nil
 }
 
-// BeforeSave hook to validate status
+// BeforeSave hook to validate status and normalize CID
 func (pin *IPFSPin) BeforeSave(_ *gorm.DB) error {
 	// Set default status if not provided
 	if pin.Status == "" {
@@ -64,5 +66,17 @@ func (pin *IPFSPin) BeforeSave(_ *gorm.DB) error {
 	if _, ok := validStatuses[pin.Status]; !ok {
 		return fmt.Errorf("invalid status: %s", pin.Status)
 	}
+
+	// Normalize CID if provided
+	if len(pin.CID) > 0 {
+		cidObj, err := cid.Cast(pin.CID)
+		if err != nil {
+			return fmt.Errorf("failed to parse CID: %w", err)
+		}
+
+		normalizedCid := encoding.NormalizeCid(cidObj)
+		pin.CID = normalizedCid.Bytes()
+	}
+
 	return nil
 }

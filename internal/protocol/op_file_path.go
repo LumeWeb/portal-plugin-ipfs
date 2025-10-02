@@ -16,12 +16,10 @@ import (
 )
 
 const (
-	FilePathPhaseStarting          = "starting"
-	FilePathPhaseProcessingCIDs    = "processing_cids"
-	FilePathPhaseComputingPaths    = "computing_paths"
-	FilePathPhaseHandlingOrphans   = "handling_orphans"
-	FilePathPhaseValidatingResults = "validating_results"
-	FilePathPhaseCompleted         = "completed"
+	FilePathPhaseStarting       = "starting"
+	FilePathPhaseProcessing     = "processing"
+	FilePathPhaseValidation     = "validation"
+	FilePathPhaseCompleted      = "completed"
 )
 
 // FilePathWorkflowData represents the workflow data for file path operations
@@ -67,16 +65,18 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 		return fmt.Errorf("invalid or missing user ID")
 	}
 
+	allCIDs := pinWorkflowData.Cids
+
 	// Initialize workflow data with progress tracking
 	workflowData := FilePathWorkflowData{
 		RequestID:       strconv.FormatUint(uint64(req.ID), 10),
-		CIDs:            pinWorkflowData.Cids,
+		CIDs:            allCIDs,
 		UserID:          userID,
 		CurrentPhase:    FilePathPhaseStarting,
 		CompletedPhases: 0,
-		TotalPhases:     5, // Total number of major phases
+		TotalPhases:     3, // Total number of major phases
 		ProcessedCIDs:   0,
-		TotalCIDs:       len(pinWorkflowData.Cids),
+		TotalCIDs:       len(allCIDs),
 	}
 
 	err = h.UpdateWorkflowDataStruct(req.ID, workflowData)
@@ -87,8 +87,8 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 	fileManagerSvc := core.GetService[pluginCore.FileManagerService](h.Context(), pluginCore.FILE_MANAGER_SERVICE)
 	blockSvc := core.GetService[pluginCore.BlockService](h.Context(), pluginCore.BLOCK_SERVICE)
 
-	// Phase 1: Processing CIDs
-	h.updateWorkflowPhase(req.ID, &workflowData, FilePathPhaseProcessingCIDs, 1)
+	// Phase 1: Processing
+	h.updateWorkflowPhase(req.ID, &workflowData, FilePathPhaseProcessing, 1)
 
 	// Prune existing file paths for related CIDs before recomputing
 	if len(workflowData.RelatedCIDs) > 0 {
@@ -99,38 +99,34 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 		}
 	}
 
-	// Process each CID in the workflow data
+	// Collect all UnixFS metadata first
+	unixfsMetas := make(map[string]*db.UnixFSNode)
+	failedCIDs := make(map[string]bool)
+	orphanCIDs := make(map[string]bool)
+
 	for i, cidStr := range workflowData.CIDs {
 		c, err := cid.Parse(cidStr)
 		if err != nil {
 			h.Logger().Error("Failed to parse CID", zap.String("cid", cidStr), zap.Error(err))
+			failedCIDs[cidStr] = true
 			continue
 		}
 
 		// Get block metadata to extract UnixFS info
 		unixfsMeta, err := blockSvc.GetBlockMeta(ctx, c)
 		if err != nil {
-			// If we can't get block metadata, create an orphan entry
-			h.createOrphanEntry(ctx, fileManagerSvc, userID, c, nil)
 			h.Logger().Error("Failed to get block metadata", zap.Stringer("cid", c), zap.Error(err))
+			orphanCIDs[cidStr] = true
 			continue
 		}
 
 		if unixfsMeta == nil || (unixfsMeta.Name == "" && len(unixfsMeta.ChildCID) == 0) {
-			// Create orphan entry for incomplete metadata
-			h.createOrphanEntry(ctx, fileManagerSvc, userID, c, nil)
-			h.Logger().Warn("Incomplete UnixFS metadata, creating orphan entry", zap.Stringer("cid", c))
+			h.Logger().Warn("Incomplete UnixFS metadata", zap.Stringer("cid", c))
+			orphanCIDs[cidStr] = true
 			continue
 		}
 
-		// Compute and store file paths
-		err = h.computeAndStoreFilePaths(ctx, fileManagerSvc, unixfsMeta, userID, c)
-		if err != nil {
-			// Create orphan entry on path computation failure
-			h.createOrphanEntry(ctx, fileManagerSvc, userID, c, nil)
-			h.Logger().Error("Failed to compute and store file paths", zap.Stringer("cid", c), zap.Error(err))
-			continue
-		}
+		unixfsMetas[cidStr] = unixfsMeta
 
 		// Update processed CIDs count
 		workflowData.ProcessedCIDs = i + 1
@@ -140,26 +136,70 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 		}
 	}
 
-	// Phase 2: Computing paths (this happens within computeAndStoreFilePaths)
-	h.updateWorkflowPhase(req.ID, &workflowData, FilePathPhaseComputingPaths, 2)
+	// Create a set of all child CIDs to filter out non-root CIDs
+	childCIDSet := make(map[string]bool)
+	for _, meta := range unixfsMetas {
+		for _, childCID := range meta.ChildCID {
+			childCIDSet[childCID.String()] = true
+		}
+	}
 
-	// Phase 3: Handling orphans (this happens automatically when metadata is incomplete)
-	h.updateWorkflowPhase(req.ID, &workflowData, FilePathPhaseHandlingOrphans, 3)
+	// Filter to only root CIDs (CIDs that are not children of other CIDs)
+	rootCIDMetas := make(map[string]*db.UnixFSNode)
+	for cidStr, meta := range unixfsMetas {
+		if !childCIDSet[cidStr] {
+			rootCIDMetas[cidStr] = meta
+		}
+	}
 
-	// Phase 4: Validating results
-	h.updateWorkflowPhase(req.ID, &workflowData, FilePathPhaseValidatingResults, 4)
+	// Create a map to track processed CIDs and avoid cycles
+	processed := make(map[string]bool)
 
-	// Validate that file paths were created successfully for the processed CIDs
+	// Process only root CID metadata
+	for cidStr, unixfsMeta := range rootCIDMetas {
+		c, err := cid.Parse(cidStr)
+		if err != nil {
+			h.Logger().Error("Failed to parse CID during processing", zap.String("cid", cidStr), zap.Error(err))
+			orphanCIDs[cidStr] = true
+			continue
+		}
+
+		// Compute and store file paths
+		err = h.computeAndStoreFilePaths(ctx, fileManagerSvc, unixfsMeta, userID, c, processed)
+		if err != nil {
+			h.Logger().Error("Failed to compute and store file paths", zap.Stringer("cid", c), zap.Error(err))
+			orphanCIDs[cidStr] = true
+			continue
+		}
+	}
+
+	// Phase 2: Process orphans
+	h.updateWorkflowPhase(req.ID, &workflowData, FilePathPhaseValidation, 2)
+
+	// Process orphan entries
+	for cidStr := range orphanCIDs {
+		c, err := cid.Parse(cidStr)
+		if err != nil {
+			h.Logger().Error("Failed to parse CID for orphan processing", zap.String("cid", cidStr), zap.Error(err))
+			continue
+		}
+
+		// Create orphan entry
+		h.createOrphanEntry(ctx, fileManagerSvc, userID, c, unixfsMetas[cidStr])
+	}
+
+	// Phase 3: Completed
+	h.updateWorkflowPhase(req.ID, &workflowData, FilePathPhaseCompleted, 3)
+
+	// Validate that file paths were created successfully
 	var filePathCount int64
 	var expectedCIDs [][]byte
 
 	// Convert processed CIDs to byte slices for database query
-	for _, cidStr := range workflowData.CIDs {
-		if cidStr != "" {
-			c, err := cid.Parse(cidStr)
-			if err == nil {
-				expectedCIDs = append(expectedCIDs, c.Bytes())
-			}
+	for cidStr := range processed {
+		c, err := cid.Parse(cidStr)
+		if err == nil {
+			expectedCIDs = append(expectedCIDs, c.Bytes())
 		}
 	}
 
@@ -177,7 +217,7 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 		if filePathCount == 0 {
 			h.Logger().Warn("No file paths created for processed CIDs",
 				zap.Uint("user_id", userID),
-				zap.Int("processed_cids", workflowData.ProcessedCIDs),
+				zap.Int("processed_cids", len(processed)),
 				zap.Strings("cids", workflowData.CIDs))
 		}
 	} else {
@@ -194,22 +234,16 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 
 	h.Logger().Debug("File path operation completed",
 		zap.Uint("user_id", userID),
-		zap.Int("processed_cids", workflowData.ProcessedCIDs),
+		zap.Int("processed_cids", len(processed)),
 		zap.Int("total_cids", workflowData.TotalCIDs),
 		zap.Int64("file_paths_created", filePathCount))
-
-	// Phase 5: Completed
-	h.updateWorkflowPhase(req.ID, &workflowData, FilePathPhaseCompleted, 5)
 
 	return nil
 }
 
-func (h *FilePathOperationHandler) computeAndStoreFilePaths(ctx context.Context, fileManagerSvc pluginCore.FileManagerService, unixfsMeta *db.UnixFSNode, userID uint, rootCID cid.Cid) error {
-	// Create a map to track processed CIDs and avoid cycles
-	processed := make(map[string]bool)
-
+func (h *FilePathOperationHandler) computeAndStoreFilePaths(ctx context.Context, fileManagerSvc pluginCore.FileManagerService, unixfsMeta *db.UnixFSNode, userID uint, rootCID cid.Cid, processed map[string]bool) error {
 	// Start recursive path computation from the root
-	size, err := h.ComputePathsRecursive(ctx, fileManagerSvc, unixfsMeta, userID, rootCID, "", 0, processed, false)
+	size, err := h.ComputePathsRecursive(ctx, fileManagerSvc, unixfsMeta, userID, rootCID, "/", 0, processed, false)
 	if err != nil {
 		return err
 	}
@@ -306,7 +340,7 @@ func (h *FilePathOperationHandler) CreateOrphanEntriesForPins(ctx context.Contex
 	return nil
 }
 
-func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fileManagerSvc pluginCore.FileManagerService, unixfsMeta *db.UnixFSNode, userID uint, currentCID cid.Cid, parentPath string, depth int, processed map[string]bool, isOrphan bool) (uint64, error) {
+func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fileManagerSvc pluginCore.FileManagerService, currentNodeMeta *db.UnixFSNode, userID uint, currentCID cid.Cid, parentPath string, depth int, processed map[string]bool, isOrphan bool) (uint64, error) {
 	cidStr := currentCID.String()
 
 	// Check if we've already processed this CID to avoid cycles
@@ -318,29 +352,66 @@ func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fi
 	// Determine the path for this node
 	var currentPath string
 	var effectiveParentPath string
-	if parentPath == "" {
-		// Root node - use the name from UnixFS or default to CID
-		if unixfsMeta.Name != "" {
-			currentPath = "/" + unixfsMeta.Name
+
+	// For root nodes, parentPath is "/"
+	if depth == 0 {
+		if currentNodeMeta.Name != "" {
+			currentPath = "/" + currentNodeMeta.Name
 		} else {
 			currentPath = "/" + cidStr
 		}
-		// Root-level items should have parent_path = "/", not empty string
 		effectiveParentPath = "/"
 	} else {
-		// Child node - append to parent path
-		currentPath = parentPath + "/" + unixfsMeta.Name
+		// For child nodes, append to parent path
+		currentPath = parentPath + "/" + currentNodeMeta.Name
 		effectiveParentPath = parentPath
 	}
 
 	// Initialize size with this node's block size
-	totalSize := uint64(unixfsMeta.BlockSize)
+	totalSize := uint64(currentNodeMeta.BlockSize)
+
+	// Create file path entry for the current node first
+	filePath := &db.FilePath{
+		UserID:      userID,
+		CID:         currentCID.Bytes(),
+		Path:        currentPath,
+		Name:        currentNodeMeta.Name,
+		Type:        currentNodeMeta.Type,
+		Size:        int64(currentNodeMeta.BlockSize), // Start with just this block's size
+		IsDirectory: currentNodeMeta.Type == 1,        // Type 1 = directory
+		IsOrphan:    isOrphan,
+		ParentPath:  effectiveParentPath,
+		Depth:       depth,
+	}
+
+	// If this is a directory and name is empty, set name to CID string
+	if filePath.IsDirectory && filePath.Name == "" {
+		filePath.Name = currentCID.String()
+	}
+
+	// Store the file path for the current node
+	err := fileManagerSvc.CreateFilePath(ctx, filePath)
+	if err != nil {
+		h.Logger().Error("Failed to create file path",
+			zap.String("path", currentPath),
+			zap.Stringer("cid", currentCID),
+			zap.Error(err))
+		return 0, fmt.Errorf("failed to create file path for %s: %w", currentPath, err)
+	}
+
+	h.Logger().Debug("Created file path entry",
+		zap.String("path", currentPath),
+		zap.String("name", currentNodeMeta.Name),
+		zap.Bool("is_directory", filePath.IsDirectory),
+		zap.Bool("is_orphan", filePath.IsOrphan),
+		zap.Int("depth", depth),
+		zap.Uint64("size", uint64(currentNodeMeta.BlockSize)))
 
 	// If this is a directory and has children, process them recursively
-	if unixfsMeta.Type == 1 && len(unixfsMeta.ChildCID) > 0 {
+	if currentNodeMeta.Type == 1 && len(currentNodeMeta.ChildCID) > 0 {
 		blockSvc := core.GetService[pluginCore.BlockService](h.Context(), pluginCore.BLOCK_SERVICE)
 
-		for _, childCID := range unixfsMeta.ChildCID {
+		for _, childCID := range currentNodeMeta.ChildCID {
 			// Get metadata for the child
 			childMeta, err := blockSvc.GetBlockMeta(ctx, childCID)
 			if err != nil {
@@ -366,44 +437,18 @@ func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fi
 			// Add child size to total directory size
 			totalSize += childSize
 		}
-	}
 
-	// Create file path entry with calculated total size for directories
-	filePath := &db.FilePath{
-		UserID:      userID,
-		CID:         currentCID.Bytes(),
-		Path:        currentPath,
-		Name:        unixfsMeta.Name,
-		Type:        unixfsMeta.Type,
-		Size:        int64(totalSize),     // Use calculated size
-		IsDirectory: unixfsMeta.Type == 1, // Type 1 = directory
-		IsOrphan:    isOrphan,
-		ParentPath:  effectiveParentPath,
-		Depth:       depth,
+		// Update the directory entry with the total accumulated size
+		filePath.Size = int64(totalSize)
+		err = fileManagerSvc.UpdateFilePath(ctx, filePath)
+		if err != nil {
+			h.Logger().Error("Failed to update directory size",
+				zap.String("path", currentPath),
+				zap.Stringer("cid", currentCID),
+				zap.Uint64("total_size", totalSize),
+				zap.Error(err))
+		}
 	}
-
-	// If this is a directory and name is empty, set name to CID string
-	if filePath.IsDirectory && filePath.Name == "" {
-		filePath.Name = currentCID.String()
-	}
-
-	// Store the file path
-	err := fileManagerSvc.CreateFilePath(ctx, filePath)
-	if err != nil {
-		h.Logger().Error("Failed to create file path",
-			zap.String("path", currentPath),
-			zap.Stringer("cid", currentCID),
-			zap.Error(err))
-		return 0, fmt.Errorf("failed to create file path for %s: %w", currentPath, err)
-	}
-
-	h.Logger().Debug("Created file path entry",
-		zap.String("path", currentPath),
-		zap.String("name", unixfsMeta.Name),
-		zap.Bool("is_directory", filePath.IsDirectory),
-		zap.Bool("is_orphan", filePath.IsOrphan),
-		zap.Int("depth", depth),
-		zap.Uint64("size", totalSize))
 
 	return totalSize, nil
 }

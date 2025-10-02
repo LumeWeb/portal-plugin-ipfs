@@ -89,7 +89,9 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		}
 	}
 
-	workflowData.Cids = lo.Map(childCids, func(item cid.Cid, index int) string {
+	// Include both parent and child CIDs in the workflow data
+	allCids := append([]cid.Cid{c}, childCids...)
+	workflowData.Cids = lo.Map(allCids, func(item cid.Cid, index int) string {
 		return item.String()
 	})
 
@@ -97,7 +99,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 	if err != nil {
 		return err
 	}
-	
+
 	if len(childCids) > 0 {
 		uploadSvc := core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE)
 		if uploadSvc == nil {
@@ -121,7 +123,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 					Node: block,
 					Size: uint64(len(block.RawData())),
 				}
-				unixFSNode, err := store.ExtractNodeMetadata(pinnedBlock)
+				unixFSNode, err := store.ExtractNodeMetadata(h.Logger(), pinnedBlock)
 				if err == nil {
 					if err := _store.UpdateUnixFSMetadata(childCid, unixFSNode); err != nil {
 						h.Logger().Warn("Failed to update UnixFS metadata", zap.Stringer("cid", childCid), zap.Error(err))
@@ -138,7 +140,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 			if req.UserID == nil || *req.UserID == 0 {
 				return fmt.Errorf("user ID is required")
 			}
-			
+
 			err = uploadSvc.ProcessUpload(ctx, validChildCids, *req.UserID)
 			if err != nil {
 				h.Logger().Error("Failed to batch process child blocks", zap.Error(err))

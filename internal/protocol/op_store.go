@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"fmt"
+
 	"github.com/ipfs/go-cid"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/core"
@@ -45,15 +46,8 @@ func (h *StoreOperationHandler) Execute(ctx context.Context, req *models.Request
 				continue
 			}
 		}
-	} else {
-		// Store operation marks content as pinned in the metadata store (backward compatibility)
-		hash := h.StorageHash(req)
-		_cid, err := internal.CIDFromStorageHash(hash)
-		if err != nil {
-			return err
-		}
-		return h.Protocol().(*Protocol).GetMetadataStore().MarkBlockReady(_cid, true)
 	}
+	
 	return nil
 }
 

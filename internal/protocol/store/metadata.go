@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/ipfs/boxo/ipld/unixfs"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
@@ -20,7 +22,6 @@ import (
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"time"
 )
 
 var _ pluginCore.MetadataStore = (*MetadataStoreDefault)(nil)
@@ -69,8 +70,10 @@ func (s *MetadataStoreDefault) Pin(b pluginCore.PinnedBlock) error {
 		}
 
 		// Process UnixFS metadata if applicable
-		unixfsNode, err := ExtractNodeMetadata(b)
+		s.logger.Debug("Extracting UnixFS metadata", zap.Stringer("cid", b.Cid))
+		unixfsNode, err := ExtractNodeMetadata(s.logger, b)
 		if err == nil {
+			s.logger.Debug("UnixFS metadata extracted successfully", zap.Stringer("cid", b.Cid), zap.Any("metadata", unixfsNode))
 			unixfsNode.BlockID = parentBlock.ID
 
 			// Attempt to resolve the name immediately
@@ -81,6 +84,7 @@ func (s *MetadataStoreDefault) Pin(b pluginCore.PinnedBlock) error {
 			}
 
 			if existingNode.Name == "" {
+				s.logger.Debug("Attempting to resolve name from parent", zap.Stringer("cid", b.Cid))
 				name, err := s.resolveNameFromParentWithBlock(b.Cid, &parentBlock, tx)
 				if err == nil {
 					unixfsNode.Name = name
@@ -90,6 +94,7 @@ func (s *MetadataStoreDefault) Pin(b pluginCore.PinnedBlock) error {
 				}
 			} else {
 				unixfsNode.Name = existingNode.Name // Preserve existing name
+				s.logger.Debug("Using existing name", zap.String("name", unixfsNode.Name), zap.Stringer("cid", b.Cid))
 			}
 
 			if err = db.RetryableTransaction(s.ctx, tx, func(tx *gorm.DB) *gorm.DB {
@@ -107,9 +112,12 @@ func (s *MetadataStoreDefault) Pin(b pluginCore.PinnedBlock) error {
 				_ = tx.AddError(fmt.Errorf("failed to insert/update UnixFS node: %w", err))
 				return tx
 			}
+		} else {
+			s.logger.Debug("Block is not a UnixFS node", zap.Stringer("cid", b.Cid), zap.Error(err))
 		}
 
 		// Process links
+		s.logger.Debug("Processing links", zap.Stringer("cid", b.Cid), zap.Int("link_count", len(b.Links)))
 		for i, link := range b.Links {
 			link = encoding.NormalizeCid(link)
 			var childBlock pluginDb.IPFSBlock
@@ -153,53 +161,115 @@ func (s *MetadataStoreDefault) Pin(b pluginCore.PinnedBlock) error {
 			}
 		}
 
+		s.logger.Debug("Block pinning completed", zap.Stringer("cid", b.Cid))
 		return tx
 	})
 }
 
 func (s *MetadataStoreDefault) resolveNameFromParentWithBlock(childCid cid.Cid, childBlock *pluginDb.IPFSBlock, tx *gorm.DB) (string, error) {
+	childCid = encoding.NormalizeCid(childCid)
+
+	s.logger.Debug("Resolving name from parent",
+		zap.Stringer("child_cid", childCid),
+		zap.Uint("child_block_id", childBlock.ID))
+
 	// Find the linked block relationship using the child block ID
 	var link pluginDb.IPFSLinkedBlock
 	if err := tx.Where("child_id = ?", childBlock.ID).First(&link).Error; err != nil {
+		s.logger.Debug("No parent found for node",
+			zap.Stringer("child_cid", childCid),
+			zap.Error(err))
 		return "", fmt.Errorf("no parent found for node: %w", err)
 	}
+
+	s.logger.Debug("Found parent link",
+		zap.Stringer("child_cid", childCid),
+		zap.Uint("parent_id", link.ParentID),
+		zap.Uint("child_id", link.ChildID),
+		zap.Int("link_index", link.LinkIndex))
 
 	// Get the parent block
 	var parentBlock pluginDb.IPFSBlock
 	if err := tx.First(&parentBlock, link.ParentID).Error; err != nil {
+		s.logger.Debug("Failed to find parent block",
+			zap.Stringer("child_cid", childCid),
+			zap.Uint("parent_id", link.ParentID),
+			zap.Error(err))
 		return "", fmt.Errorf("failed to find parent block: %w", err)
 	}
 
 	// Parse the parent CID
 	parentCid, err := cid.Parse(parentBlock.CID)
 	if err != nil {
+		s.logger.Debug("Failed to parse parent CID",
+			zap.Stringer("child_cid", childCid),
+			zap.Error(err))
 		return "", fmt.Errorf("failed to parse parent CID: %w", err)
 	}
+
+	s.logger.Debug("Successfully parsed parent CID",
+		zap.Stringer("child_cid", childCid),
+		zap.Stringer("parent_cid", parentCid))
 
 	// Get the parent block data
 	block, err := s.proto.GetNode().GetBlock(s.ctx, parentCid)
 	if err != nil {
+		s.logger.Debug("Failed to get parent block",
+			zap.Stringer("child_cid", childCid),
+			zap.Stringer("parent_cid", parentCid),
+			zap.Error(err))
 		return "", fmt.Errorf("failed to get parent block: %w", err)
 	}
+
+	s.logger.Debug("Successfully retrieved parent block",
+		zap.Stringer("child_cid", childCid),
+		zap.Stringer("parent_cid", parentCid))
 
 	// Decode the parent block
 	ipldNode, err := encoding.DecodeBlock(s.ctx, block)
 	if err != nil {
+		s.logger.Debug("Failed to decode parent block",
+			zap.Stringer("child_cid", childCid),
+			zap.Stringer("parent_cid", parentCid),
+			zap.Error(err))
 		return "", fmt.Errorf("failed to decode parent block: %w", err)
 	}
 
+	s.logger.Debug("Successfully decoded parent block",
+		zap.Stringer("child_cid", childCid),
+		zap.Stringer("parent_cid", parentCid))
+
 	// Find the link name that matches the child CID
-	for _, link := range ipldNode.Links() {
-		if link.Cid.Equals(childCid) {
-			return link.Name, nil
+	s.logger.Debug("Searching for child CID in parent links",
+		zap.Stringer("child_cid", childCid),
+		zap.Stringer("parent_cid", parentCid),
+		zap.Int("parent_link_count", len(ipldNode.Links())))
+
+	for _, _link := range ipldNode.Links() {
+		_cid := encoding.NormalizeCid(_link.Cid)
+		s.logger.Debug("Checking link",
+			zap.Stringer("parent_cid", parentCid),
+			zap.Stringer("link_cid", _link.Cid),
+			zap.String("link_name", _link.Name))
+
+		if _cid.Equals(childCid) {
+			s.logger.Debug("Found matching link name",
+				zap.Stringer("child_cid", _cid),
+				zap.String("name", _link.Name))
+			return _link.Name, nil
 		}
 	}
+
+	s.logger.Debug("Name not found in parent links",
+		zap.Stringer("child_cid", childCid),
+		zap.Stringer("parent_cid", parentCid))
 
 	return "", fmt.Errorf("name not found in parent links")
 }
 
 func (s *MetadataStoreDefault) resolveNameFromParent(childCid cid.Cid, tx *gorm.DB) (string, error) {
 	// First find the child block ID
+	childCid = encoding.NormalizeCid(childCid)
 	var childBlock pluginDb.IPFSBlock
 	if err := tx.Where("cid = ?", childCid.Bytes()).First(&childBlock).Error; err != nil {
 		return "", fmt.Errorf("failed to find child block: %w", err)
@@ -603,42 +673,65 @@ func NewMetadataStore(ctx core.Context, proto ProtoNode) *MetadataStoreDefault {
 	}
 }
 
-func ExtractNodeMetadata(block pluginCore.PinnedBlock) (*pluginDb.UnixFSNode, error) {
+func ExtractNodeMetadata(clogger *core.Logger, block pluginCore.PinnedBlock) (*pluginDb.UnixFSNode, error) {
+	logger := clogger.Named("unixfs-extraction")
+
+	logger.Debug("Starting UnixFS node analysis", zap.Stringer("cid", block.Cid))
 	analyzedNode, err := internal.AnalyzeNode(context.Background(), block.Node)
 	if err != nil {
+		logger.Debug("Failed to analyze node", zap.Stringer("cid", block.Cid), zap.Error(err))
 		return nil, err
 	}
 
 	if !analyzedNode.IsUnixFS {
+		logger.Debug("Node is not a UnixFS node", zap.Stringer("cid", block.Cid))
 		return nil, fmt.Errorf("node is not a UnixFS node")
 	}
+
+	logger.Debug("Node is a UnixFS node", zap.Stringer("cid", block.Cid), zap.String("type", analyzedNode.UnixFSType.String()))
 
 	metadata := &pluginDb.UnixFSNode{}
 
 	switch analyzedNode.UnixFSType {
 	case unixfs.TFile:
 		metadata.Type = 2
+		logger.Debug("Processing UnixFS file", zap.Stringer("cid", block.Cid))
 	case unixfs.TDirectory:
 		metadata.Type = 1
+		logger.Debug("Processing UnixFS directory", zap.Stringer("cid", block.Cid))
 	case unixfs.TSymlink:
 		metadata.Type = 4
+		logger.Debug("Processing UnixFS symlink", zap.Stringer("cid", block.Cid))
 	case unixfs.THAMTShard:
 		metadata.Type = 5
+		logger.Debug("Processing UnixFS HAMT shard", zap.Stringer("cid", block.Cid))
 	default:
+		logger.Debug("Unsupported UnixFS type", zap.Stringer("cid", block.Cid), zap.String("type", analyzedNode.UnixFSType.String()))
 		return nil, fmt.Errorf("unsupported UnixFS type: %d", analyzedNode.UnixFSType)
 	}
 
-	if analyzedNode.UnixFSType == unixfs.TFile && analyzedNode.UnixFSBlockSizes != nil && len(analyzedNode.UnixFSBlockSizes) > 0 {
-		var totalSize int64
-		for _, size := range analyzedNode.UnixFSBlockSizes {
-			totalSize += int64(size)
+	if analyzedNode.UnixFSType == unixfs.TFile {
+		if analyzedNode.UnixFSBlockSizes != nil && len(analyzedNode.UnixFSBlockSizes) > 0 {
+			logger.Debug("Processing file block sizes", zap.Stringer("cid", block.Cid), zap.Int("block_count", len(analyzedNode.UnixFSBlockSizes)))
+			var totalSize int64
+			for _, size := range analyzedNode.UnixFSBlockSizes {
+				totalSize += int64(size)
+			}
+			metadata.BlockSize = totalSize
+			logger.Debug("File block size calculated", zap.Stringer("cid", block.Cid), zap.Int64("total_size", totalSize))
+		} else {
+			metadata.BlockSize = int64(analyzedNode.BlockSize)
+			logger.Debug("File block size set from raw data", zap.Stringer("cid", block.Cid), zap.Int64("block_size", metadata.BlockSize))
 		}
-		metadata.BlockSize = totalSize
 	}
 
-	metadata.ChildCID = datatypes.NewJSONSlice(lo.Map(block.Links, func(c cid.Cid, _ int) cid.Cid {
-		return encoding.NormalizeCid(c)
+	logger.Debug("Processing child CIDs", zap.Stringer("cid", block.Cid), zap.Int("child_count", len(block.Links)))
+	metadata.ChildCID = datatypes.NewJSONSlice(lo.Map(analyzedNode.Links, func(l *format.Link, _ int) cid.Cid {
+		normalized := encoding.NormalizeCid(l.Cid)
+		logger.Debug("Processing child link", zap.Stringer("parent_cid", block.Cid), zap.Stringer("child_cid", normalized), zap.String("link_name", l.Name))
+		return normalized
 	}))
 
+	logger.Debug("UnixFS metadata extraction completed", zap.Stringer("cid", block.Cid), zap.Any("metadata", metadata))
 	return metadata, nil
 }
