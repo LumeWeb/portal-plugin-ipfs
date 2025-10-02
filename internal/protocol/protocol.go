@@ -190,7 +190,12 @@ func (p Protocol) Operations() []core.Operation {
 				return fmt.Errorf("upload service not available")
 			}
 			
-			err = uploadSvc.ProcessUpload(ctx, allCids, lo.FromPtrOr(request.UserID, 0))
+			// Validate user ID before processing
+			if request.UserID == nil || *request.UserID == 0 {
+				return fmt.Errorf("user ID is required")
+			}
+			
+			err = uploadSvc.ProcessUpload(ctx, allCids, *request.UserID)
 			if err != nil {
 				return fmt.Errorf("failed to process upload: %w", err)
 			}

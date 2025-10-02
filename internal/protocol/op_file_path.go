@@ -411,10 +411,12 @@ func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fi
 
 // pruneRelatedPaths deletes existing file paths for related CIDs
 func (h *FilePathOperationHandler) pruneRelatedPaths(ctx context.Context, fileManagerSvc pluginCore.FileManagerService, userID uint, relatedCIDs []string) error {
+	var errors []error
 	for _, cidStr := range relatedCIDs {
 		c, err := cid.Parse(cidStr)
 		if err != nil {
 			h.Logger().Warn("Failed to parse related CID for pruning", zap.String("cid", cidStr), zap.Error(err))
+			errors = append(errors, fmt.Errorf("failed to parse CID %s: %w", cidStr, err))
 			continue
 		}
 
@@ -423,8 +425,12 @@ func (h *FilePathOperationHandler) pruneRelatedPaths(ctx context.Context, fileMa
 			h.Logger().Error("Failed to delete file path for related CID",
 				zap.String("cid", cidStr),
 				zap.Error(err))
-			// Continue with other CIDs even if one fails
+			errors = append(errors, fmt.Errorf("failed to delete file path for CID %s: %w", cidStr, err))
 		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("failed to prune related paths: %w", errors[0]) // Return first error for simplicity
 	}
 
 	return nil
