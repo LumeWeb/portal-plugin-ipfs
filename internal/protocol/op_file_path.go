@@ -508,25 +508,35 @@ func (h *FilePathOperationHandler) Cleanup(_ context.Context, _ *models.Request)
 // enrichOrphanEntryFromBlockstore tries to get basic block info from blockstore
 // when UnixFS metadata is not available, to set proper file size
 func (h *FilePathOperationHandler) enrichOrphanEntryFromBlockstore(ctx context.Context, c cid.Cid, filePath *db.FilePath) {
-	// Create a virtual read context to avoid downloading actual block data
-	virtualCtx := store.VirtualReadOption(ctx, true)
+	// Try to get basic block metadata from blockstore using metadata-only APIs
+	proto := core.GetProtocol(internal.ProtocolName).(*Protocol)
+	blockstore := proto.GetNode().GetBlockstore()
 
-	// Try to get basic block metadata from blockstore
-	block, err := core.GetProtocol(internal.ProtocolName).(*Protocol).GetNode().GetBlock(virtualCtx, c)
+	// First check if the block exists
+	has, err := blockstore.Has(ctx, c)
+	if err != nil || !has {
+		h.Logger().Debug("Block not found in blockstore for orphan enrichment",
+			zap.Stringer("cid", c),
+			zap.Error(err))
+		return
+	}
+
+	// Get the size of the block without downloading its data
+	size, err := blockstore.GetSize(ctx, c)
 	if err != nil {
-		h.Logger().Debug("Failed to get block from blockstore for orphan enrichment",
+		h.Logger().Debug("Failed to get block size from blockstore for orphan enrichment",
 			zap.Stringer("cid", c),
 			zap.Error(err))
 		return
 	}
 
 	// Update file path with basic block information
-	filePath.Size = int64(len(block.RawData()))
+	filePath.Size = int64(size)
 	filePath.Type = 0            // Default to file type since we don't have UnixFS info
 	filePath.IsDirectory = false // Default to file since we don't have UnixFS info
 
 	// Try to walk the DAG to get the total file size
-	totalSize, err := h.walkDAGForTotalSize(virtualCtx, c, make(map[string]bool))
+	totalSize, err := h.walkDAGForTotalSize(ctx, c, make(map[string]bool))
 	if err == nil && totalSize > 0 {
 		filePath.Size = int64(totalSize)
 		h.Logger().Debug("Successfully calculated total DAG size for orphan entry",
@@ -572,6 +582,10 @@ func (h *FilePathOperationHandler) walkDAGForTotalSize(ctx context.Context, c ci
 
 	// Get metadata store to retrieve block information
 	metadataStore := core.GetProtocol(internal.ProtocolName).(*Protocol).GetMetadataStore()
+	if metadataStore == nil {
+		h.Logger().Error("Metadata store not available")
+		return 0, fmt.Errorf("metadata store not available")
+	}
 
 	// Get size of current block
 	size, err := metadataStore.Size(c)
