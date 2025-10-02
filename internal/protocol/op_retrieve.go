@@ -134,7 +134,12 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 
 		// Batch process all valid child CIDs
 		if len(validChildCids) > 0 {
-			err = uploadSvc.ProcessUpload(ctx, validChildCids, lo.FromPtrOr(req.UserID, 0))
+			// Validate user ID before processing
+			if req.UserID == nil || *req.UserID == 0 {
+				return fmt.Errorf("user ID is required")
+			}
+			
+			err = uploadSvc.ProcessUpload(ctx, validChildCids, *req.UserID)
 			if err != nil {
 				h.Logger().Error("Failed to batch process child blocks", zap.Error(err))
 			}
