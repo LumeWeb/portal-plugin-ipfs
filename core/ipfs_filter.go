@@ -25,19 +25,16 @@ func (p *IPFSPinParser) ParseFilters() ([]filter.CrudFilter, error) {
 	var crudFilters []filter.CrudFilter
 
 	if len(p.filter.CIDs) > 0 {
-		// First validate all CIDs can be parsed
-		for _, cidStr := range p.filter.CIDs {
-			if _, err := cid.Parse(cidStr); err != nil {
+		// Parse, validate, normalize to V1, and convert to bytes for database comparison
+		cidBytes := make([]any, len(p.filter.CIDs))
+		for i, cidStr := range p.filter.CIDs {
+			cidObj, err := cid.Parse(cidStr)
+			if err != nil {
 				return nil, fmt.Errorf("failed to parse CID %s: %w", cidStr, err)
 			}
-		}
-
-		// Parse CID strings to CID objects, normalize to V1, and convert to bytes for database comparison
-		cidBytes := lo.Map(p.filter.CIDs, func(cidStr string, _ int) any {
-			cidObj, _ := cid.Parse(cidStr)
 			normalizedCid := encoding.NormalizeCid(cidObj)
-			return normalizedCid.Bytes()
-		})
+			cidBytes[i] = normalizedCid.Bytes()
+		}
 		crudFilters = append(crudFilters, filter.FieldIn("cid", cidBytes...))
 	}
 
