@@ -591,11 +591,13 @@ func (h *FilePathOperationHandler) walkDAGForTotalSize(ctx context.Context, c ci
 	size, err := metadataStore.Size(c)
 	if err != nil {
 		// If we can't get the size from metadata store, try to get it from blockstore
-		block, blockErr := core.GetProtocol(internal.ProtocolName).(*Protocol).GetNode().GetBlock(virtualCtx, c)
+		proto := core.GetProtocol(internal.ProtocolName).(*Protocol)
+		blockstore := proto.GetNode().GetBlockstore()
+		blockSize, blockErr := blockstore.GetSize(virtualCtx, c)
 		if blockErr != nil {
 			return 0, fmt.Errorf("failed to get size for CID %s from both metadata store and blockstore: %w", c.String(), err)
 		}
-		size = uint64(len(block.RawData()))
+		size = uint64(blockSize)
 	}
 
 	totalSize := size

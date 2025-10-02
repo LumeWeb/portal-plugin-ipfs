@@ -107,7 +107,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 
 		for _, childCid := range childCids {
 			// Pin each child block
-			_, err = proto.GetNode().GetBlock(ctx, childCid)
+			block, err := proto.GetNode().GetBlock(ctx, childCid)
 			if err != nil {
 				h.Logger().Error("Failed to pin child block", zap.Stringer("cid", childCid), zap.Error(err))
 				// Continue with other child blocks even if one fails
@@ -115,8 +115,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 			}
 
 			// Update UnixFS metadata for the child block
-			block, err := proto.GetNode().GetBlock(ctx, childCid)
-			if err == nil {
+			{
 				// Only proceed if we successfully got the block
 				pinnedBlock := pluginCore.PinnedBlock{
 					Cid:  childCid,
