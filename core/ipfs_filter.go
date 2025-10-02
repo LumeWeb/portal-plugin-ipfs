@@ -7,6 +7,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/samber/lo"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
 )
@@ -31,10 +32,11 @@ func (p *IPFSPinParser) ParseFilters() ([]filter.CrudFilter, error) {
 			}
 		}
 
-		// Parse CID strings to CID objects and convert to bytes for database comparison
+		// Parse CID strings to CID objects, normalize to V1, and convert to bytes for database comparison
 		cidBytes := lo.Map(p.filter.CIDs, func(cidStr string, _ int) any {
 			cidObj, _ := cid.Parse(cidStr)
-			return cidObj.Bytes()
+			normalizedCid := encoding.NormalizeCid(cidObj)
+			return normalizedCid.Bytes()
 		})
 		crudFilters = append(crudFilters, filter.FieldIn("cid", cidBytes...))
 	}

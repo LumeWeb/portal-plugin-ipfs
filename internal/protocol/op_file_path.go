@@ -353,17 +353,23 @@ func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fi
 	var currentPath string
 	var effectiveParentPath string
 
+	// Compute fallback name before constructing paths
+	nodeName := currentNodeMeta.Name
+	if nodeName == "" {
+		nodeName = cidStr
+	}
+
 	// For root nodes, parentPath is "/"
 	if depth == 0 {
-		if currentNodeMeta.Name != "" {
-			currentPath = "/" + currentNodeMeta.Name
-		} else {
-			currentPath = "/" + cidStr
-		}
+		currentPath = "/" + nodeName
 		effectiveParentPath = "/"
 	} else {
 		// For child nodes, append to parent path
-		currentPath = parentPath + "/" + currentNodeMeta.Name
+		if parentPath == "/" {
+			currentPath = "/" + nodeName
+		} else {
+			currentPath = parentPath + "/" + nodeName
+		}
 		effectiveParentPath = parentPath
 	}
 
@@ -375,18 +381,13 @@ func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fi
 		UserID:      userID,
 		CID:         currentCID.Bytes(),
 		Path:        currentPath,
-		Name:        currentNodeMeta.Name,
+		Name:        nodeName,
 		Type:        currentNodeMeta.Type,
 		Size:        int64(currentNodeMeta.BlockSize), // Start with just this block's size
 		IsDirectory: currentNodeMeta.Type == 1,        // Type 1 = directory
 		IsOrphan:    isOrphan,
 		ParentPath:  effectiveParentPath,
 		Depth:       depth,
-	}
-
-	// If this is a directory and name is empty, set name to CID string
-	if filePath.IsDirectory && filePath.Name == "" {
-		filePath.Name = currentCID.String()
 	}
 
 	// Store the file path for the current node
@@ -401,7 +402,7 @@ func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fi
 
 	h.Logger().Debug("Created file path entry",
 		zap.String("path", currentPath),
-		zap.String("name", currentNodeMeta.Name),
+		zap.String("name", nodeName),
 		zap.Bool("is_directory", filePath.IsDirectory),
 		zap.Bool("is_orphan", filePath.IsOrphan),
 		zap.Int("depth", depth),
