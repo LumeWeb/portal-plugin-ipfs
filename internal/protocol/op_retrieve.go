@@ -100,6 +100,10 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 	
 	if len(childCids) > 0 {
 		uploadSvc := core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE)
+		if uploadSvc == nil {
+			h.Logger().Error("Upload service not available")
+			return fmt.Errorf("upload service not available")
+		}
 
 		for _, childCid := range childCids {
 			// Pin each child block
@@ -123,11 +127,16 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 				// Extract UnixFS metadata using the shared function
 				unixFSNode, err := store.ExtractNodeMetadata(pinnedBlock)
 				if err == nil {
-					err = _store.UpdateUnixFSMetadata(childCid, unixFSNode)
-					if err != nil {
-						h.Logger().Warn("Failed to update UnixFS metadata for child block",
-							zap.Stringer("cid", childCid),
-							zap.Error(err))
+					if _store != nil {
+						err = _store.UpdateUnixFSMetadata(childCid, unixFSNode)
+						if err != nil {
+							h.Logger().Warn("Failed to update UnixFS metadata for child block",
+								zap.Stringer("cid", childCid),
+								zap.Error(err))
+						}
+					} else {
+						h.Logger().Warn("Metadata store is nil, skipping UnixFS metadata update",
+							zap.Stringer("cid", childCid))
 					}
 				}
 			}

@@ -185,6 +185,11 @@ func (p Protocol) Operations() []core.Operation {
 
 			// Process all CIDs to create upload and core pin records
 			uploadSvc := core.GetService[pluginCore.UploadService](helper.Context(), pluginCore.UPLOAD_SERVICE)
+			if uploadSvc == nil {
+				helper.Logger().Error("Upload service not available")
+				return fmt.Errorf("upload service not available")
+			}
+			
 			err = uploadSvc.ProcessUpload(ctx, allCids, lo.FromPtrOr(request.UserID, 0))
 			if err != nil {
 				return fmt.Errorf("failed to process upload: %w", err)

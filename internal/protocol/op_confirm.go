@@ -58,6 +58,11 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 	// Process all CIDs to create upload/core pin records for all CIDs
 	if len(cidList) > 0 {
 		uploadSvc := core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE)
+		if uploadSvc == nil {
+			h.Logger().Error("Upload service not available")
+			return fmt.Errorf("upload service not available")
+		}
+		
 		err := uploadSvc.ProcessUpload(ctx, cidList, lo.FromPtrOr(req.UserID, 0))
 		if err != nil {
 			return fmt.Errorf("failed to process upload: %w", err)
