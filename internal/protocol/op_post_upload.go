@@ -54,12 +54,12 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 
 	userID := lo.FromPtrOr(req.UserID, 0)
 	uploadSvc := core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE)
-	
+
 	if uploadSvc == nil {
 		h.Logger().Error("Upload service not available")
 		return fmt.Errorf("upload service not available")
 	}
-	
+
 	// Process all CIDs to create upload and core pin records
 	err = uploadSvc.ProcessUpload(ctx, allCids, userID)
 	if err != nil {
@@ -74,13 +74,7 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 			h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
 		}
 	}
-	
-	// Create IPFS pin record for the root CID
-	if uploadSvc == nil {
-		h.Logger().Error("Upload service not available when creating root pin")
-		return fmt.Errorf("upload service not available when creating root pin")
-	}
-	
+
 	ipfsPin, err := uploadSvc.CreateRootPin(ctx, rootCids[0], userID)
 	if err != nil {
 		return fmt.Errorf("failed to create root pin: %w", err)

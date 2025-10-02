@@ -37,6 +37,9 @@ type FileManagerService interface {
 	// DeleteFilePathsByUserID deletes all file path entries for a user
 	DeleteFilePathsByUserID(ctx context.Context, userID uint) error
 
+	// UpdateFilePath updates an existing file path entry
+	UpdateFilePath(ctx context.Context, path *db.FilePath) error
+
 	// ValidatePathCompleteness checks if all pins have corresponding file paths
 	ValidatePathCompleteness(ctx context.Context) (bool, error)
 

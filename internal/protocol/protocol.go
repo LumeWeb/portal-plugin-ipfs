@@ -112,7 +112,6 @@ func (p Protocol) newPinWorkflow() core.WorkflowDefinition {
 	}
 }
 
-
 func (p Protocol) newUploadWorkflow() core.WorkflowDefinition {
 	return core.WorkflowDefinition{
 		Name:                 UPLOAD_WORKFLOW,
@@ -189,12 +188,12 @@ func (p Protocol) Operations() []core.Operation {
 				helper.Logger().Error("Upload service not available")
 				return fmt.Errorf("upload service not available")
 			}
-			
+
 			// Validate user ID before processing
 			if request.UserID == nil || *request.UserID == 0 {
 				return fmt.Errorf("user ID is required")
 			}
-			
+
 			err = uploadSvc.ProcessUpload(ctx, allCids, *request.UserID)
 			if err != nil {
 				return fmt.Errorf("failed to process upload: %w", err)
@@ -304,7 +303,7 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 			if err != nil {
 				log.Fatal("failed to open leveldb datastore", zap.Error(err))
 			}
-			level := mapLogLevel(ctx.Config().Config().Core.Log.Level)
+			level := mapLogLevel(cfg.LogLevel)
 
 			if cfg.LogLevel != "" {
 				level = mapLogLevel(cfg.LogLevel)
