@@ -125,6 +125,10 @@ func (n *Node) DagService() format.DAGService {
 	return n.dagService
 }
 
+func (n *Node) GetBlockstore() blockstore.Blockstore {
+	return n.blockService.Blockstore()
+}
+
 // PeerID returns the peer ID of the node
 func (n *Node) PeerID() peer.ID {
 	return n.frt.Host().ID()
