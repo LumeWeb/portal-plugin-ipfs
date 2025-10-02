@@ -74,7 +74,7 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 		UserID:          userID,
 		CurrentPhase:    FilePathPhaseStarting,
 		CompletedPhases: 0,
-		TotalPhases:     3, // Total number of major phases
+		TotalPhases:     4, // Total number of major phases
 		ProcessedCIDs:   0,
 		TotalCIDs:       len(allCIDs),
 	}
