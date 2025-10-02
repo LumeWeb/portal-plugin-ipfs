@@ -674,12 +674,13 @@ func (h *FilePathOperationHandler) walkDAGForTotalSize(ctx context.Context, c ci
 }
 
 func NewFilePathOperation(ctx core.Context) core.Operation {
-	return core.NewOperation(
+	return core.NewNamedOperation(
 		FilePathOperationName(),
 		"", // No global type for file path
 		&FilePathOperationHandler{
 			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
 		},
+		"Update File System",
 	)
 }
 
