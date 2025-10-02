@@ -444,14 +444,14 @@ func (s *FileManagerServiceDefault) UpdateFilePath(ctx context.Context, path *pl
 		return g.WithContext(ctx).
 			Model(&pluginDb.FilePath{}).
 			Where("user_id = ? AND cid = ? AND path = ?", path.UserID, path.CID, path.Path).
-			Updates(&pluginDb.FilePath{
-				Name:        path.Name,
-				Type:        path.Type,
-				Size:        path.Size,
-				IsDirectory: path.IsDirectory,
-				IsOrphan:    path.IsOrphan,
-				ParentPath:  path.ParentPath,
-				Depth:       path.Depth,
+			Updates(map[string]interface{}{
+				"name":         path.Name,
+				"type":         path.Type,
+				"size":         path.Size,
+				"is_directory": path.IsDirectory,
+				"is_orphan":    path.IsOrphan,
+				"parent_path":  path.ParentPath,
+				"depth":        path.Depth,
 			})
 	})
 
