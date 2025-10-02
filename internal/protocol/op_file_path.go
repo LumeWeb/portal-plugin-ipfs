@@ -10,7 +10,6 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.uber.org/zap"
@@ -214,12 +213,12 @@ func (h *FilePathOperationHandler) computeAndStoreFilePaths(ctx context.Context,
 	if err != nil {
 		return err
 	}
-	
+
 	// Log the total size of the root
 	h.Logger().Debug("Total size calculated for root CID",
 		zap.Stringer("cid", rootCID),
 		zap.Uint64("size", size))
-	
+
 	return nil
 }
 
@@ -363,7 +362,7 @@ func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fi
 					zap.Error(err))
 				continue
 			}
-			
+
 			// Add child size to total directory size
 			totalSize += childSize
 		}
@@ -376,7 +375,7 @@ func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fi
 		Path:        currentPath,
 		Name:        unixfsMeta.Name,
 		Type:        unixfsMeta.Type,
-		Size:        int64(totalSize), // Use calculated size
+		Size:        int64(totalSize),     // Use calculated size
 		IsDirectory: unixfsMeta.Type == 1, // Type 1 = directory
 		IsOrphan:    isOrphan,
 		ParentPath:  effectiveParentPath,
