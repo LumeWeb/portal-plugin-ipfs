@@ -116,11 +116,12 @@ func (h *ConfirmOperationHandler) Cleanup(_ context.Context, _ *models.Request) 
 }
 
 func NewConfirmOperation(ctx core.Context) core.Operation {
-	return core.NewOperation(
+	return core.NewNamedOperation(
 		confirmOperationName(),
 		"", // No global type for confirm
 		&ConfirmOperationHandler{
 			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
 		},
+		"Complete Pin",
 	)
 }
