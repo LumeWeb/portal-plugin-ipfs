@@ -1,5 +1,4 @@
 -- +goose Up
--- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS ipfs_pins (
     id INTEGER PRIMARY KEY AUTO_INCREMENT,
     request_id BINARY(16) UNIQUE,
@@ -98,14 +97,11 @@ CREATE TABLE IF NOT EXISTS ipfs_file_paths (
     KEY (user_id, is_orphan),
     KEY idx_ipfs_file_paths_deleted_at (deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
--- +goose StatementEnd
 
 -- +goose Down
--- +goose StatementBegin
 DROP TABLE IF EXISTS ipfs_linked_blocks;
 DROP TABLE IF EXISTS ipfs_unixfs_nodes;
 DROP TABLE IF EXISTS ipfs_file_paths;
 DROP TABLE IF EXISTS ipfs_pins;
 DROP TABLE IF EXISTS ipfs_requests;
 DROP TABLE IF EXISTS ipfs_blocks;
--- +goose StatementEnd
