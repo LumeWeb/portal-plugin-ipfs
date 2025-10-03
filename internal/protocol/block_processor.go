@@ -92,12 +92,12 @@ func (bp *BlockProcessor) queueBlock(block blocks.Block, parentCid cid.Cid) erro
 
 		bp.wp.Submit(func() {
 			err := bp.processBlock(bp.ctx, job)
-			job.reset()
-			blockJobPool.Put(job) // Release the blockJob back to the pool
 			if err != nil {
 				bp.logger.Error("Block processing failed", zap.Error(err), zap.String("CID", job.Block.Cid().String()))
 				bp.handleError(err) // Just log the error, don't cancel context
 			}
+			job.reset()
+			blockJobPool.Put(job) // Release the blockJob back to the pool
 		})
 		return nil
 	}
