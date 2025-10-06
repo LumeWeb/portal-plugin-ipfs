@@ -355,13 +355,8 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 	}
 
 	// IPFS content addressing routes
-	ipfsContentGroup, err := apiGroup.Group("/ipfs")
-	if err != nil {
-		return fmt.Errorf("failed to create ipfs content group: %w", err)
-	}
-
 	ipfsContentRoutes := router.DefineRoutes(
-		router.NewRoute(http.MethodGet, "/:cid", a.handleIPFSGet,
+		router.NewRoute(http.MethodGet, "/ipfs/:cid", a.handleIPFSGet,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Get IPFS content"),
@@ -371,7 +366,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 				// Raw response, so no JSON content
 			),
 		),
-		router.NewRoute(http.MethodHead, "/:cid", a.handleIPFSGet,
+		router.NewRoute(http.MethodHead, "/ipfs/:cid", a.handleIPFSGet,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Check IPFS content existence"),
@@ -382,7 +377,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		),
 	)
 
-	if err = router.RegisterRoutes(ipfsContentGroup, accessSvc, a.Subdomain(), ipfsContentRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
+	if err = router.RegisterRoutes(r, accessSvc, a.Subdomain(), ipfsContentRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register ipfs content routes: %w", err)
 	}
 
