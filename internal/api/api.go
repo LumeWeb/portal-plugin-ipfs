@@ -375,6 +375,14 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 				router.WithPathParam("cid", "The CID of the content.", ""),
 			),
 		),
+		router.NewRoute(http.MethodOptions, "/ipfs/:cid", a.handleIPFSOptions,
+			router.WithSwagger(
+				router.WithSummary("IPFS content OPTIONS"),
+				router.WithDescription("OPTIONS endpoint for IPFS content. CORS preflight requests are handled by middleware; this handler serves as a fallback for non-preflight OPTIONS requests."),
+				router.WithTags("ipfs"),
+				router.WithPathParam("cid", "The CID of the content.", ""),
+			),
+		),
 	)
 
 	if err = router.RegisterRoutes(r, accessSvc, a.Subdomain(), ipfsContentRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
@@ -836,6 +844,17 @@ func (a *API) handleGetInfo(c echo.Context) error {
 	}
 
 	return httputil.EncodeResponse(ctx, &nodeInfo, &dto.InfoResponse{})
+}
+
+// handleIPFSOptions is a dummy handler for OPTIONS requests to IPFS content routes.
+// It's expected that CORS middleware will handle the response before this handler is reached.
+func (a *API) handleIPFSOptions(c echo.Context) error {
+	// This handler should ideally not be reached for CORS preflight requests
+	// because the CORS middleware should handle them and write the response.
+	// If it is reached, it means the CORS middleware didn't handle the request,
+	// or it's a non-preflight OPTIONS request.
+	// Returning 204 No Content is standard for OPTIONS if not handled by CORS.
+	return c.NoContent(http.StatusNoContent)
 }
 
 func createCARReader(data io.Reader) (io.Reader, error) {
