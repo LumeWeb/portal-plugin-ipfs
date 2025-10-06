@@ -39,11 +39,12 @@ require (
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20250929152847-5c490637a2be
 	go.lumeweb.com/portal-router v0.6.7
 	go.lumeweb.com/queryutil v0.3.14
-	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20251006121743-89fbf7868c68
+	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20251006195845-bdabdaab6773
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/datatypes v1.2.7
+	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.31.0
 )
 
@@ -311,7 +312,6 @@ require (
 	google.golang.org/grpc v1.73.0 // indirect
 	google.golang.org/protobuf v1.36.7 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gorm.io/driver/mysql v1.6.0 // indirect
 	gorm.io/driver/postgres v1.6.0 // indirect
 	gorm.io/driver/sqlite v1.6.0 // indirect
 	gorm.io/driver/sqlserver v1.6.0 // indirect
