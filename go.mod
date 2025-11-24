@@ -40,7 +40,7 @@ require (
 	go.lumeweb.com/portal-router v0.6.8
 	go.lumeweb.com/queryutil v0.3.14
 	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20251007105956-9515ed1f2355
-	go.uber.org/zap v1.27.0
+	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/datatypes v1.2.7
