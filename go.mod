@@ -24,7 +24,7 @@ require (
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/labstack/gommon v0.4.2
 	github.com/libp2p/go-libp2p v0.45.0
-	github.com/libp2p/go-libp2p-kad-dht v0.35.1
+	github.com/libp2p/go-libp2p-kad-dht v0.36.0
 	github.com/mitchellh/copystructure v1.2.0
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/multiformats/go-multicodec v0.10.0
