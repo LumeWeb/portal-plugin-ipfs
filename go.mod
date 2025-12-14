@@ -323,4 +323,4 @@ require (
 	modernc.org/sqlite v1.38.0 // indirect
 )
 
-replace github.com/go-viper/mapstructure/v2 => github.com/LumeWeb/mapstructure/v2 v2.0.0-20241213212524-92525f5828be
+replace github.com/go-viper/mapstructure/v2 => github.com/LumeWeb/mapstructure/v2 v2.0.0-20241118124956-8101c0bc3534
