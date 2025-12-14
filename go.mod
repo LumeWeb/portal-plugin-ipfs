@@ -33,7 +33,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tus/tusd/v2 v2.8.0
 	go.lumeweb.com/httputil v0.5.3
-	go.lumeweb.com/portal v0.4.2-0.20251002203221-bfed4eefec04
+	go.lumeweb.com/portal v0.4.2-0.20251213161244-e7dc66f2aea1
 	go.lumeweb.com/portal-middleware v0.3.3
 	go.lumeweb.com/portal-plugin-core v0.0.0-20250901040103-722b9278443b
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20250929152847-5c490637a2be
@@ -250,7 +250,7 @@ require (
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/shirou/gopsutil/v3 v3.24.5 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
-	github.com/spf13/afero v1.14.0 // indirect
+	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.9.2 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/syndtr/goleveldb v1.0.0 // indirect
@@ -264,13 +264,13 @@ require (
 	github.com/whyrusleeping/go-keyspace v0.0.0-20160322163242-5b898ac5add1 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
-	github.com/wneessen/go-mail v0.7.1 // indirect
+	github.com/wneessen/go-mail v0.7.2 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.etcd.io/etcd/api/v3 v3.6.4 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.6.4 // indirect
 	go.etcd.io/etcd/client/v3 v3.6.4 // indirect
-	go.lumeweb.com/configmanager v0.3.20 // indirect
+	go.lumeweb.com/configmanager v0.3.21 // indirect
 	go.lumeweb.com/event/v2 v2.1.0 // indirect
 	go.lumeweb.com/gswagger v0.20.10 // indirect
 	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20250922174307-2f5de9e6503c // indirect
