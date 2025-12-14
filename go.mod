@@ -35,7 +35,7 @@ require (
 	go.lumeweb.com/httputil v0.5.3
 	go.lumeweb.com/portal v0.4.2-0.20251214231549-c346cb4ace88
 	go.lumeweb.com/portal-middleware v0.3.3
-	go.lumeweb.com/portal-plugin-core v0.0.0-20250901040103-722b9278443b
+	go.lumeweb.com/portal-plugin-core v0.0.0-20251213020130-9d424965fad2
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20250929152847-5c490637a2be
 	go.lumeweb.com/portal-router v0.6.8
 	go.lumeweb.com/queryutil v0.3.15
@@ -274,7 +274,7 @@ require (
 	go.lumeweb.com/event/v2 v2.1.0 // indirect
 	go.lumeweb.com/gswagger v0.20.10 // indirect
 	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20250922174307-2f5de9e6503c // indirect
-	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20250901035555-d0898ae91f80 // indirect
+	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20251002232245-a7ec646aadd4 // indirect
 	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20250922174307-2f5de9e6503c // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.38.0 // indirect
