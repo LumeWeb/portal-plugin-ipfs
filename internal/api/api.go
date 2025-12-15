@@ -805,7 +805,7 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	}
 
 	// Emit download completion event only after successful write
-	quota.EmitDownloadCompleted(a.ctx, upload.ID, uint64(n), ip)
+	quota.EmitDownloadCompleted(a.ctx, upload.ID, uint64(n), ip, &userID)
 	return nil
 }
 

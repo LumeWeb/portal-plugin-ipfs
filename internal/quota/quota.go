@@ -68,13 +68,18 @@ func EmitUploadCompleted(ctx core.Context, userID *uint, uploadID uint, bytes ui
 }
 
 // EmitDownloadCompleted emits a download completed event for quota tracking
-func EmitDownloadCompleted(ctx core.Context, uploadID uint, bytes uint64, ip string) {
-	ctx.FireAsync(event.EVENT_DOWNLOAD_COMPLETED, event.NewDownloadCompletedEvent(uploadID, bytes, ip))
+func EmitDownloadCompleted(ctx core.Context, uploadID uint, bytes uint64, ip string, userID *uint) {
+	ctx.FireAsync(event.EVENT_DOWNLOAD_COMPLETED, event.NewDownloadCompletedEvent(uploadID, bytes, ip, userID))
 }
 
 // EmitStorageObjectPinned emits a storage object pinned event for quota tracking
 func EmitStorageObjectPinned(ctx core.Context, pin *models.Pin, ip string) {
 	ctx.FireAsync(event.EVENT_STORAGE_OBJECT_PINNED, event.NewStorageObjectPinnedEvent(pin, ip))
+}
+
+// EmitStorageObjectUnpinned emits a storage object unpinned event for quota tracking
+func EmitStorageObjectUnpinned(ctx core.Context, pin *models.Pin, ip string) {
+	ctx.FireAsync(event.EVENT_STORAGE_OBJECT_UNPINNED, event.NewStorageObjectUnpinnedEvent(pin, ip))
 }
 
 // ValidateUploadQuota checks upload quota and returns an error if exceeded

@@ -11,6 +11,8 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
 	"go.lumeweb.com/portal/db/models"
@@ -19,14 +21,14 @@ import (
 )
 
 const (
-	UnpinPhaseStarting                        = "starting"
-	UnpinPhaseValidatingDAGBefore             = "validating_dag_before"
-	UnpinPhaseAnalyzingDAGDependencies        = "analyzing_dag_dependencies"
+	UnpinPhaseStarting                       = "starting"
+	UnpinPhaseValidatingDAGBefore            = "validating_dag_before"
+	UnpinPhaseAnalyzingDAGDependencies       = "analyzing_dag_dependencies"
 	UnpinPhasePromotingToRootLevelVisibility = "promoting_to_root_level_visibility"
-	UnpinPhaseAnalyzingPathDependencies       = "analyzing_path_dependencies"
-	UnpinPhaseHandlingPathCascadingEffects    = "handling_path_cascading_effects"
-	UnpinPhaseUnpinning                       = "unpinning"
-	UnpinPhaseValidatingDAGAfter              = "validating_dag_after"
+	UnpinPhaseAnalyzingPathDependencies      = "analyzing_path_dependencies"
+	UnpinPhaseHandlingPathCascadingEffects   = "handling_path_cascading_effects"
+	UnpinPhaseUnpinning                      = "unpinning"
+	UnpinPhaseValidatingDAGAfter             = "validating_dag_after"
 )
 
 // UnpinWorkflowData represents the workflow data for unpin operations
@@ -212,6 +214,18 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 			return tx
 		}
 
+		// Set client IP in context for quota tracking
+		ctx = store.ClientIPOption(ctx, req.SourceIP)
+
+		// Get the core pin before deleting it for event emission
+		corePin, err := pinSvc.GetPinByHash(internal.NewIPFSHash(c), userID)
+		if err != nil {
+			h.Logger().Warn("Failed to get core pin for unpin event",
+				zap.Error(err),
+				zap.Stringer("cid", c),
+				zap.Uint("user_id", userID))
+		}
+
 		err = pinSvc.DeletePinByHash(internal.NewIPFSHash(c), userID)
 		if err != nil {
 			h.Logger().Error("Failed to unpin CID",
@@ -220,6 +234,11 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 				zap.Error(err))
 			_ = tx.AddError(fmt.Errorf("failed to unpin CID: %w", err))
 			return tx
+		}
+
+		// Emit storage object unpinned event for quota tracking
+		if corePin != nil {
+			quota.EmitStorageObjectUnpinned(h.Context(), corePin, req.SourceIP)
 		}
 
 		h.Logger().Debug("Unpinned CID successfully",
@@ -283,18 +302,18 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 // don't matter for structure breaking. The goal is to identify which children need to be promoted
 // to root-level paths in the file UI so users can still access them even after the parent is unpinned.
 type UnpinImpactAnalysis struct {
-	TargetCID             string   // The CID being analyzed for unpinning
-	WouldCreateOrphans    bool     // True if unpinning this CID would require promoting child files to root-level visibility
-	RootLevelCandidates   []string // Child CIDs that are pinned by the user and need to be promoted to root-level visibility
-	AllChildren           []string // All child CIDs of the target CID (for informational purposes)
+	TargetCID           string   // The CID being analyzed for unpinning
+	WouldCreateOrphans  bool     // True if unpinning this CID would require promoting child files to root-level visibility
+	RootLevelCandidates []string // Child CIDs that are pinned by the user and need to be promoted to root-level visibility
+	AllChildren         []string // All child CIDs of the target CID (for informational purposes)
 }
 
 // PathDependencyAnalysis represents the results of file path dependency analysis
 type PathDependencyAnalysis struct {
-	AffectedPaths        []string // Paths that would be affected by unpinning
-	WouldBreakPaths      bool     // Whether unpinning would break path structures
-	SharedDirectories    []string // Directories shared by multiple pins
-	RootLevelCandidates  []string // CIDs that need to be promoted to root-level visibility
+	AffectedPaths       []string // Paths that would be affected by unpinning
+	WouldBreakPaths     bool     // Whether unpinning would break path structures
+	SharedDirectories   []string // Directories shared by multiple pins
+	RootLevelCandidates []string // CIDs that need to be promoted to root-level visibility
 }
 
 // DAGValidationResult represents the results of DAG integrity validation
@@ -395,7 +414,7 @@ func (h *UnpinOperationHandler) findPinnedChildBlocks(ctx context.Context, tx *g
 
 	// Use a map to track visited CIDs to prevent infinite loops
 	visited := make(map[string]bool)
-	
+
 	// Find all pinned descendants recursively
 	pinnedDescendants, err := h.findPinnedDescendants(ctx, tx, blockSvc, c, userID, visited)
 	if err != nil {
@@ -408,7 +427,7 @@ func (h *UnpinOperationHandler) findPinnedChildBlocks(ctx context.Context, tx *g
 // findPinnedDescendants recursively finds all descendant CIDs that are pinned by the user
 func (h *UnpinOperationHandler) findPinnedDescendants(ctx context.Context, tx *gorm.DB, blockSvc pluginCore.BlockService, currentCID cid.Cid, userID uint, visited map[string]bool) ([]string, error) {
 	cidStr := currentCID.String()
-	
+
 	// If we've already visited this CID, skip to prevent infinite loops
 	if visited[cidStr] {
 		return []string{}, nil
@@ -752,8 +771,8 @@ func (h *UnpinOperationHandler) PromotePinsToRootLevelVisibility(ctx context.Con
 // AnalyzePathDependencies analyzes file path dependencies for the given CID
 func (h *UnpinOperationHandler) AnalyzePathDependencies(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) (*PathDependencyAnalysis, error) {
 	analysis := &PathDependencyAnalysis{
-		AffectedPaths:        make([]string, 0),
-		SharedDirectories:    make([]string, 0),
+		AffectedPaths:       make([]string, 0),
+		SharedDirectories:   make([]string, 0),
 		RootLevelCandidates: make([]string, 0),
 	}
 

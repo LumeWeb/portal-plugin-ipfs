@@ -60,6 +60,9 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		return fmt.Errorf("upload service not available")
 	}
 
+	// Set client IP in context for quota tracking
+	ctx = store.ClientIPOption(ctx, req.SourceIP)
+
 	// Process all CIDs to create upload and core pin records
 	err = uploadSvc.ProcessUpload(ctx, allCids, userID)
 	if err != nil {

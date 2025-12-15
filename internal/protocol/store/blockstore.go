@@ -110,7 +110,7 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 	}
 
 	// Emit download completion event - anonymous (nil userID)
-	quota.EmitDownloadCompleted(bs.ctx, 0, uint64(len(block.RawData())), clientIP)
+	quota.EmitDownloadCompleted(bs.ctx, 0, uint64(len(block.RawData())), clientIP, nil)
 
 	return block, nil
 }

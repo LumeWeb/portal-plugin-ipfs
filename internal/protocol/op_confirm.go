@@ -63,6 +63,9 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 			return fmt.Errorf("upload service not available")
 		}
 		
+	// Set client IP in context for quota tracking
+		ctx = store.ClientIPOption(ctx, req.SourceIP)
+
 		err := uploadSvc.ProcessUpload(ctx, cidList, lo.FromPtrOr(req.UserID, 0))
 		if err != nil {
 			return fmt.Errorf("failed to process upload: %w", err)

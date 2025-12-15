@@ -146,10 +146,14 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 			UserID:   uploadMeta.UserID,
 		}
 
-		_, err = s.corePin.CreatePin(ctx, pinMeta, nil)
+		createdPin, err := s.corePin.CreatePin(ctx, pinMeta, nil)
 		if err != nil {
 			return fmt.Errorf("failed to create pin record for CID %s: %w", c.String(), err)
 		}
+
+		// Emit storage object pinned event for quota tracking
+		clientIP := store.GetClientIP(ctx)
+		quota.EmitStorageObjectPinned(s.ctx, createdPin, clientIP)
 
 		// Emit upload completion event for quota tracking
 		// Get client IP from context using the shared helper
