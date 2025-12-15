@@ -2,6 +2,7 @@ package filemanager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -21,6 +22,11 @@ type FileManagerServiceDefault struct {
 	db     *gorm.DB
 	logger *core.Logger
 }
+
+// Predefined errors
+var (
+	ErrDuplicateFilePath = errors.New("file path already exists")
+)
 
 // Ensure FileManagerServiceDefault implements the interface
 var _ pluginCore.FileManagerService = (*FileManagerServiceDefault)(nil)
@@ -205,9 +211,9 @@ func (s *FileManagerServiceDefault) CreateFilePath(ctx context.Context, path *pl
 			First(&existingPath)
 	})
 
-	// If an entry exists, return nil without creating a duplicate
+	// If an entry exists, return an error indicating duplicate path
 	if err == nil {
-		return nil
+		return ErrDuplicateFilePath
 	}
 
 	// If the error is not a "record not found" error, return the database error

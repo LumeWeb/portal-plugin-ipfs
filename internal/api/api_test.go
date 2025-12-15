@@ -5,27 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	"github.com/google/uuid"
-	"github.com/ipfs/go-cid"
-	"github.com/samber/lo"
-	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
-	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/service/block"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/service/upload"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
-	"go.lumeweb.com/portal/db/models"
-	"go.lumeweb.com/portal/service"
-	"go.lumeweb.com/queryutil"
-
-	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -34,54 +13,190 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/ipfs/boxo/ipld/merkledag"
 	blocks "github.com/ipfs/go-block-format"
+	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
 	"github.com/ipld/go-car/v2/blockstore"
 	"github.com/multiformats/go-multicodec"
 	"github.com/multiformats/go-multihash"
-
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/mock"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	coreMocks "go.lumeweb.com/portal/core/testing/mocks"
+	"go.lumeweb.com/portal/db/models"
+	"go.lumeweb.com/portal/db/types"
+	"go.lumeweb.com/queryutil"
+	"go.lumeweb.com/queryutil/filter"
+	"gorm.io/gorm"
 )
 
-var TestOptions = coreTesting.CombineOptions(
-	coreTesting.WithStatefulMockRenterService(),
-	coreTesting.WithServiceFactory(core.CRON_SERVICE, service.NewCronService),
-	coreTesting.WithServiceFactory(core.UPLOAD_SERVICE, service.NewMetadataService),
-	coreTesting.WithServiceFactory(core.PIN_SERVICE, service.NewPinService),
-	coreTesting.WithServiceFactory(core.REQUEST_SERVICE, service.NewRequestService),
-	coreTesting.WithServiceFactory(core.WORKFLOW_SERVICE, service.NewWorkflowCoordinator),
-	coreTesting.WithServiceFactory(core.USER_SERVICE, service.NewUserService),
-	coreTesting.WithServiceFactory(core.AUTH_SERVICE, service.NewAuthService),
-	coreTesting.WithServiceFactory(core.STORAGE_SERVICE, service.NewStorageService),
-	coreTesting.WithServiceFactory(pluginCore.FILE_MANAGER_SERVICE, filemanager.NewFileManagerService),
-	coreTesting.WithServiceFactory(pluginCore.PIN_SERVICE, pin.NewPinService),
-	coreTesting.WithServiceFactory(pluginCore.BLOCK_SERVICE, block.NewBlockService),
-	coreTesting.WithServiceFactory(pluginCore.UPLOAD_SERVICE, upload.NewUploadService),
-	coreTesting.WithAPI(internal.ProtocolName, NewAPI),
-	coreTesting.WithAPIID(internal.ProtocolName),
-	coreTesting.WithProtocol(internal.ProtocolName, protocol.NewProtocol),
-	coreTesting.WithProtocolConfig(internal.ProtocolName, config.ProtocolConfig{}),
-	coreTesting.WithSQLitePluginMigrations(
-		internal.ProtocolName, migrations.GetSQLite(),
-	),
-	coreTesting.WithCron(),
-)
+func TestMain(m *testing.M) {
+	coreTesting.WithOptions(m,
+		coreTesting.WithMockServiceFactory(pluginCore.FILE_MANAGER_SERVICE, mocks.NewMockFileManagerService),
+		coreTesting.WithMockServiceFactory(pluginCore.PIN_SERVICE, mocks.NewMockIPFSPinService),
+		coreTesting.WithMockServiceFactory(pluginCore.BLOCK_SERVICE, mocks.NewMockBlockService),
+		coreTesting.WithMockServiceFactory(pluginCore.UPLOAD_SERVICE, mocks.NewMockUploadService),
+		coreTesting.WithHTTPService(),
+		coreTesting.WithPlugins(),
+		coreTesting.WithAPI(internal.ProtocolName, NewAPI),
+		coreTesting.WithAPIID(internal.ProtocolName),
+
+		util.GetProtocolMock(),
+		coreTesting.WithProtocolConfig(internal.ProtocolName, config.ProtocolConfig{}),
+	)
+}
+
+// mockHelper provides common mock setup functions for tests
+type mockHelper struct {
+	ctx coreTesting.TestContext
+	t   *testing.T
+}
+
+func newMockHelper(t *testing.T, ctx coreTesting.TestContext) *mockHelper {
+	return &mockHelper{
+		ctx: ctx,
+		t:   t,
+	}
+}
+
+// createMockIPFSPin creates a standardized IPFSPin mock object
+func createMockIPFSPin(userID uint, testCID cid.Cid, pinID types.BinaryUUID, status pluginDb.PinningStatus) *pluginDb.IPFSPin {
+	return &pluginDb.IPFSPin{
+		RequestID: pinID,
+		UserID:    userID,
+		CID:       testCID.Bytes(),
+		Name:      "test",
+		Status:    status,
+		Origins:   nil,
+		Meta:      nil,
+		Delegates: nil,
+		Info:      nil,
+	}
+}
+
+// createMockUnixFSNode creates a standardized UnixFSNode mock object
+func createMockUnixFSNode(testCID cid.Cid) *pluginDb.UnixFSNode {
+	return &pluginDb.UnixFSNode{
+		Name:      "test",
+		Type:      2,
+		BlockSize: 1024,
+		ChildCID:  []cid.Cid{testCID},
+	}
+}
+
+// SetupPinServiceMocks configures common pin service mock expectations
+func (m *mockHelper) SetupPinServiceMocks(userID uint, testCID cid.Cid, pinID types.BinaryUUID) *mocks.MockIPFSPinService {
+	mockPinService := core.GetService[*mocks.MockIPFSPinService](m.ctx, pluginCore.PIN_SERVICE)
+
+	// Setup AddPin expectation
+	mockPinService.EXPECT().AddPin(mock.Anything, mock.AnythingOfType("*db.IPFSPin")).Return(createMockIPFSPin(userID, testCID, pinID, pluginDb.PinningStatusQueued), nil).Maybe()
+
+	// Setup GetPinByRequestID expectation
+	mockPinService.EXPECT().GetPinByRequestID(mock.Anything, pinID).Return(createMockIPFSPin(userID, testCID, pinID, pluginDb.PinningStatusPinned), nil).Maybe()
+
+	// Setup ListPins expectation
+	mockPinService.EXPECT().ListPins(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.IPFSPin{createMockIPFSPin(userID, testCID, pinID, pluginDb.PinningStatusPinned)}, int64(1), nil).Maybe()
+
+	// Setup DeletePin expectation
+	mockPinService.EXPECT().DeletePin(mock.Anything, pinID).Return(nil).Maybe()
+
+	// Setup ReplacePin expectation
+	mockPinService.EXPECT().ReplacePin(mock.Anything, mock.AnythingOfType("uint"), mock.AnythingOfType("string"), pinID, mock.AnythingOfType("*db.IPFSPin")).Return(createMockIPFSPin(userID, testCID, pinID, pluginDb.PinningStatusPinned), nil).Maybe()
+
+	// Setup GetPinByCIDAndUser expectation
+	mockPinService.EXPECT().GetPinByCIDAndUser(mock.Anything, mock.AnythingOfType("cid.Cid"), userID).Return(createMockIPFSPin(userID, testCID, pinID, pluginDb.PinningStatusPinned), nil).Maybe()
+
+	return mockPinService
+}
+
+// SetupBlockServiceMocks configures common block service mock expectations
+func (m *mockHelper) SetupBlockServiceMocks(testCID cid.Cid) *mocks.MockBlockService {
+	mockBlockService := core.GetService[*mocks.MockBlockService](m.ctx, pluginCore.BLOCK_SERVICE)
+
+	mockBlockService.EXPECT().GetBlockMeta(mock.Anything, testCID).Return(createMockUnixFSNode(testCID), nil).Maybe()
+
+	mockBlockService.EXPECT().GetBlockMetaBatch(mock.Anything, mock.AnythingOfType("[]cid.Cid")).Return(map[string]*pluginDb.UnixFSNode{
+		testCID.String(): createMockUnixFSNode(testCID),
+	}, nil).Maybe()
+
+	return mockBlockService
+}
+
+// SetupUploadServiceMocks configures common upload service mock expectations
+func (m *mockHelper) SetupUploadServiceMocks(expectedCID cid.Cid) *mocks.MockUploadService {
+	mockUploadService := core.GetService[*mocks.MockUploadService](m.ctx, pluginCore.UPLOAD_SERVICE)
+
+	mockUploadService.EXPECT().HandleUpload(mock.Anything, mock.Anything, mock.AnythingOfType("uint")).Return(expectedCID, "", nil).Maybe()
+
+	return mockUploadService
+}
+
+// SetupFileManagerServiceMocks configures file manager service
+func (m *mockHelper) SetupFileManagerServiceMocks() *mocks.MockFileManagerService {
+	mockFileManagerService := core.GetService[*mocks.MockFileManagerService](m.ctx, pluginCore.FILE_MANAGER_SERVICE)
+
+	return mockFileManagerService
+}
+
+// SetupWorkflowServiceMock configures workflow service mock for tests that need pin workflows
+func (m *mockHelper) SetupWorkflowServiceMock() {
+	// Setup core.WorkflowService mock using the higher-level helper
+	mockWorkflowService := core.GetService[*coreTesting.MockWorkflowService](m.ctx, core.WORKFLOW_SERVICE)
+	// StartWorkflow is called with: context, workflowName, and 5 workflow options = 6 total workflow options
+	mockWorkflowService.ExpectStartWorkflowWithExactArgs("ipfs.network.pin", (*models.Request)(nil), nil, 5)
+}
+
+// SetupUploadWorkflowServiceMock configures workflow service mock for tests that need upload workflows
+func (m *mockHelper) SetupUploadWorkflowServiceMock() {
+	// Setup core.WorkflowService mock using the higher-level helper
+	mockWorkflowService := core.GetService[*coreTesting.MockWorkflowService](m.ctx, core.WORKFLOW_SERVICE)
+	// StartWorkflow is called with: context, workflowName, and 5 workflow options = 6 total workflow options
+	mockWorkflowService.ExpectStartWorkflowWithExactArgs("ipfs.upload", (*models.Request)(nil), nil, 5)
+}
+
+// SetupAllCommonMocks configures all common service mocks for basic test scenarios
+func (m *mockHelper) SetupAllCommonMocks(userID uint, testCID cid.Cid, pinID types.BinaryUUID) {
+	m.SetupPinServiceMocks(userID, testCID, pinID)
+	m.SetupBlockServiceMocks(testCID)
+	m.SetupFileManagerServiceMocks()
+}
+
+// SetupAuthenticatedTest creates a test user, logs them in, and sets up common mocks
+func (m *mockHelper) SetupAuthenticatedTest() (string, uint, cid.Cid, types.BinaryUUID) {
+	token, userID := createTestUserAndLogin(m.ctx)
+	testCID := cid.MustParse("bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4")
+	pinID := types.NewBinUUID()
+
+	m.SetupAllCommonMocks(userID, testCID, pinID)
+
+	return token, userID, testCID, pinID
+}
+
+// SetupAuthenticatedTestWithCID creates a test user, logs them in, and sets up mocks with custom CID
+func (m *mockHelper) SetupAuthenticatedTestWithCID(testCID cid.Cid) (string, uint) {
+	token, userID := createTestUserAndLogin(m.ctx)
+	pinID := types.NewBinUUID()
+
+	m.SetupAllCommonMocks(userID, testCID, pinID)
+
+	return token, userID
+}
 
 func createTestUserAndLogin(ctx coreTesting.TestContext) (string, uint) {
-	userSvc := core.GetService[core.UserService](ctx, core.USER_SERVICE)
-	authSvc := core.GetService[core.AuthService](ctx, core.AUTH_SERVICE)
-
-	user, err := userSvc.CreateAccount("test@example.com", "example", false)
+	mockAuth := core.GetService[*coreTesting.MockAuthService](ctx, core.AUTH_SERVICE)
+	token, user, err := mockAuth.CreateAndLoginUser("test@example.com", "example")
 	if err != nil {
-		ctx.T().Fatalf("failed to create test user: %v", err)
-	}
-
-	token, _, err := authSvc.LoginPassword("test@example.com", "example", "127.0.0.1", false)
-	if err != nil {
-		ctx.T().Fatalf("failed to login test user: %v", err)
+		ctx.T().Fatalf("failed to create and login test user: %v", err)
 	}
 
 	return token, user.ID
@@ -91,20 +206,70 @@ func setAuthHeader(req *http.Request, token string) {
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 }
 
-func createTestFilePath(t *testing.T, ctx coreTesting.TestContext, userID uint, testCID cid.Cid, path, name string, isDirectory bool) *pluginDb.FilePath {
-	// Calculate parent path
-	parentPath := util.CalculateParentPath(path)
-	// CalculateParentPath now returns "/" for root, so no need to override empty string
+// makeAuthenticatedRequest creates and executes an authenticated API request, returning the response
+func (m *mockHelper) makeAuthenticatedRequest(method, url string, token string, body []byte) *httptest.ResponseRecorder {
+	req := m.ctx.NewAPIRequest(method, url, body)
+	setAuthHeader(req, token)
+	rec := httptest.NewRecorder()
+	m.ctx.Router().ServeHTTP(rec, req)
+	return rec
+}
 
-	// Calculate depth
+// assertJSONResponse is a helper to assert JSON response structure
+func (m *mockHelper) assertJSONResponse(t *testing.T, rec *httptest.ResponseRecorder, expectedStatus int, target interface{}) {
+	assert.Equal(t, expectedStatus, rec.Code)
+	err := json.Unmarshal(rec.Body.Bytes(), target)
+	assert.NoError(t, err)
+}
+
+// createTestFileDataSet creates a standardized set of test file paths for common scenarios
+func createTestFileDataSet(userID uint, testCID1, testCID2, testCID3 cid.Cid) []*pluginDb.FilePath {
+	return []*pluginDb.FilePath{
+		createMockFilePath(userID, testCID1, "/file1.txt", "file1.txt", false),
+		createMockFilePath(userID, testCID2, "/file2.txt", "file2.txt", false),
+		createMockFilePath(userID, testCID3, "/file3.txt", "file3.txt", false),
+	}
+}
+
+// createTestDirectoryDataSet creates a standardized set of test file paths with directories
+func createTestDirectoryDataSet(userID uint, testCID1, testCID2, testCID3 cid.Cid) []*pluginDb.FilePath {
+	return []*pluginDb.FilePath{
+		createMockFilePath(userID, testCID1, "/file1.txt", "file1.txt", false),
+		createMockFilePath(userID, testCID2, "/test_dir", "test_dir", true),
+		createMockFilePath(userID, testCID3, "/test_dir/file2.txt", "file2.txt", false),
+	}
+}
+
+// createBreadcrumbsDataSet creates a standardized set of test file paths for breadcrumb tests
+func createBreadcrumbsDataSet(userID uint, testCID1, testCID2, testCID3 cid.Cid) []*pluginDb.FilePath {
+	return []*pluginDb.FilePath{
+		createMockFilePath(userID, testCID1, "/test_dir", "test_dir", true),
+		createMockFilePath(userID, testCID2, "/test_dir/subdir", "subdir", true),
+		createMockFilePath(userID, testCID3, "/test_dir/subdir/file.txt", "file.txt", false),
+	}
+}
+
+// setupMultiplePinServiceMocks configures pin service mocks for multiple CIDs
+func (m *mockHelper) setupMultiplePinServiceMocks(userID uint, testCIDs []cid.Cid) {
+	mockPinService := core.GetService[*mocks.MockIPFSPinService](m.ctx, pluginCore.PIN_SERVICE)
+
+	for _, testCID := range testCIDs {
+		pinID := types.NewBinUUID()
+		mockPinService.EXPECT().GetPinByCIDAndUser(mock.Anything, mock.AnythingOfType("cid.Cid"), userID).Return(
+			createMockIPFSPin(userID, testCID, pinID, pluginDb.PinningStatusPinned), nil).Maybe()
+	}
+}
+
+func createMockFilePath(userID uint, testCID cid.Cid, path, name string, isDirectory bool) *pluginDb.FilePath {
+	parentPath := util.CalculateParentPath(path)
+
 	depth := 0
 	if path != "/" {
-		// Count the number of path segments
 		segments := strings.Split(strings.Trim(path, "/"), "/")
 		depth = len(segments)
 	}
 
-	filePath := &pluginDb.FilePath{
+	return &pluginDb.FilePath{
 		UserID:      userID,
 		CID:         testCID.Bytes(),
 		Path:        path,
@@ -116,10 +281,6 @@ func createTestFilePath(t *testing.T, ctx coreTesting.TestContext, userID uint, 
 		ParentPath:  parentPath,
 		Depth:       depth,
 	}
-
-	err := ctx.DB().Create(filePath).Error
-	require.NoError(t, err)
-	return filePath
 }
 
 type pinTestHelper struct {
@@ -129,523 +290,24 @@ type pinTestHelper struct {
 }
 
 func setupPinTest(t *testing.T, ctx coreTesting.TestContext) *pinTestHelper {
-	token, _ := createTestUserAndLogin(ctx)
-
-	// Create Pin
-	reqBody := `{"cid":"bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4","name":"test"}`
-	req := ctx.NewAPIRequest(http.MethodPost, "/pins", []byte(reqBody))
-	setAuthHeader(req, token)
-	rec := httptest.NewRecorder()
-	ctx.Router().ServeHTTP(rec, req)
-
-	var pinResp dto.PinStatusResponse
-	body, err := io.ReadAll(rec.Result().Body)
-	if err != nil {
-		t.Fatalf("Failed to read response body: %v", err)
-	}
-
-	err = json.Unmarshal(body, &pinResp)
-	if err != nil {
-		t.Fatalf("Failed to unmarshal response: %v", err)
-	}
-
-	// Wait for workflow completion
-	wfTest := coreTesting.NewWorkflowTest(ctx)
-	_cid := cid.MustParse("bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4")
-	wfTest.WaitForWorkflowInstance(protocol.PIN_WORKFLOW, core.RequestFilter{Hash: _cid.Hash(), Status: lo.ToPtr(models.RequestStatusCompleted)}, 1*time.Hour)
+	helper := newMockHelper(t, ctx)
+	token, _, testCID, pinID := helper.SetupAuthenticatedTest()
 
 	return &pinTestHelper{
 		token: token,
-		pinID: pinResp.RequestID,
-		cid:   _cid,
+		pinID: pinID.String(),
+		cid:   testCID,
 	}
 }
 
-func TestAPI_listPins(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		helper := setupPinTest(t, ctx)
-
-		// Make HTTP request
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/pins", nil)
-		setAuthHeader(req, helper.token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var response dto.PinResultsResponse
-		err := json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.NotEmpty(t, response.Results)
-	}, TestOptions)
-}
-
-func TestAPI_addPin(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token, _ := createTestUserAndLogin(ctx)
-
-		// Make HTTP request
-		reqBody := `{"cid":"bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4","name":"test"}`
-		req := ctx.NewAPIRequest(http.MethodPost, "/api/pins", []byte(reqBody))
-		setAuthHeader(req, token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusAccepted, rec.Code)
-		var response dto.PinStatusResponse
-		err := json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.NotPanics(t, func() {
-			uuid.MustParse(response.RequestID)
-		})
-	}, TestOptions)
-}
-
-func TestAPI_getPin(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		helper := setupPinTest(t, ctx)
-
-		// Make HTTP request
-		req := ctx.NewAPIRequest(http.MethodGet, fmt.Sprintf("/api/pins/%s", helper.pinID), nil)
-		setAuthHeader(req, helper.token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var response dto.PinStatusResponse
-		err := json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.NotPanics(t, func() {
-			uuid.MustParse(response.RequestID)
-		})
-	}, TestOptions)
-}
-
-func TestAPI_replacePin(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		helper := setupPinTest(t, ctx)
-
-		// Make HTTP request
-		reqBody := `{"cid":"bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4","name":"test"}`
-		req := ctx.NewAPIRequest(http.MethodPost, fmt.Sprintf("/api/pins/%s", helper.pinID), []byte(reqBody))
-		setAuthHeader(req, helper.token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusAccepted, rec.Code)
-		var response dto.PinStatusResponse
-		err := json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.NotPanics(t, func() {
-			uuid.MustParse(response.RequestID)
-		})
-	}, TestOptions)
-}
-
-func TestAPI_deletePin(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		helper := setupPinTest(t, ctx)
-
-		// Make HTTP request
-		req := ctx.NewAPIRequest(http.MethodDelete, fmt.Sprintf("/api/pins/%s", helper.pinID), nil)
-		setAuthHeader(req, helper.token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusAccepted, rec.Code)
-	}, TestOptions)
-}
-
-func TestAPI_listFiles(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token, userID := createTestUserAndLogin(ctx)
-
-		// Create test file paths
-		testCID1 := util.GenerateTestCID(t, "test data 1")
-		testCID2 := util.GenerateTestCID(t, "test data 2")
-
-		createTestFilePath(t, ctx, userID, testCID1, "/file1.txt", "file1.txt", false)
-		createTestFilePath(t, ctx, userID, testCID2, "/file2.txt", "file2.txt", false)
-
-		// Make HTTP request
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files", nil)
-		setAuthHeader(req, token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var response queryutil.Response[[]dto.FileManagerItem]
-		err := json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(2), response.Total)
-		assert.Len(t, response.Data, 2)
-
-		// Verify response structure
-		for _, item := range response.Data {
-			assert.NotEmpty(t, item.Path)
-			assert.NotEmpty(t, item.Name)
-			assert.IsType(t, uint64(0), item.Size)
-			assert.IsType(t, false, item.IsDirectory)
-			assert.IsType(t, 0, item.Depth)
-			assert.IsType(t, time.Time{}, item.Created)
-			assert.IsType(t, time.Time{}, item.Updated)
-		}
-	}, TestOptions)
-}
-
-func TestAPI_listFiles_Unauthorized(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Make HTTP request without auth
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files", nil)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusUnauthorized, rec.Code)
-	}, TestOptions)
-}
-
-func TestAPI_listFiles_EmptyResults(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token, _ := createTestUserAndLogin(ctx)
-
-		// Make HTTP request with no data
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files", nil)
-		setAuthHeader(req, token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var response queryutil.Response[[]dto.FileManagerItem]
-		err := json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(0), response.Total)
-		assert.Empty(t, response.Data)
-	}, TestOptions)
-}
-
-func TestAPI_listFiles_WithFilters(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token, userID := createTestUserAndLogin(ctx)
-
-		// Create test file paths
-		testCID1 := util.GenerateTestCID(t, "test data 1")
-		testCID2 := util.GenerateTestCID(t, "test data 2")
-		testCID3 := util.GenerateTestCID(t, "test data 3")
-
-		createTestFilePath(t, ctx, userID, testCID1, "/file1.txt", "file1.txt", false)
-		createTestFilePath(t, ctx, userID, testCID2, "/test_dir", "test_dir", true)
-		createTestFilePath(t, ctx, userID, testCID3, "/file2.txt", "file2.txt", false)
-
-		// Test name filter with proper bracket notation
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[name][eq]=file1.txt", nil)
-		setAuthHeader(req, token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var response queryutil.Response[[]dto.FileManagerItem]
-		err := json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(1), response.Total)
-		assert.Len(t, response.Data, 1)
-		assert.Equal(t, "file1.txt", response.Data[0].Name)
-
-		// Test is_directory filter with proper bracket notation
-		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[is_directory][eq]=true", nil)
-		setAuthHeader(req, token)
-		rec = httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		err = json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(1), response.Total)
-		assert.Len(t, response.Data, 1)
-		assert.True(t, response.Data[0].IsDirectory)
-		assert.Equal(t, "test_dir", response.Data[0].Name)
-
-		// Test contains operator for name
-		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[name][contains]=file", nil)
-		setAuthHeader(req, token)
-		rec = httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		err = json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(2), response.Total)
-		assert.Len(t, response.Data, 2)
-
-		// Test OR operator with nested filters
-		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[or][0][name][eq]=file1.txt&filters[or][1][is_directory][eq]=true", nil)
-		setAuthHeader(req, token)
-		rec = httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		err = json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(2), response.Total)
-		assert.Len(t, response.Data, 2)
-
-		// Test AND operator with multiple conditions
-		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?filters[and][0][name][contains]=file&filters[and][1][is_directory][eq]=false", nil)
-		setAuthHeader(req, token)
-		rec = httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		err = json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(2), response.Total)
-		assert.Len(t, response.Data, 2)
-		for _, result := range response.Data {
-			assert.Contains(t, result.Name, "file")
-			assert.False(t, result.IsDirectory)
-		}
-	}, TestOptions)
-}
-
-func TestAPI_listFiles_Pagination(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token, userID := createTestUserAndLogin(ctx)
-
-		// Create test file paths
-		testCID1 := util.GenerateTestCID(t, "test data 1")
-		testCID2 := util.GenerateTestCID(t, "test data 2")
-		testCID3 := util.GenerateTestCID(t, "test data 3")
-
-		createTestFilePath(t, ctx, userID, testCID1, "/file1.txt", "file1.txt", false)
-		createTestFilePath(t, ctx, userID, testCID2, "/file2.txt", "file2.txt", false)
-		createTestFilePath(t, ctx, userID, testCID3, "/file3.txt", "file3.txt", false)
-
-		// Test pagination with _start and _end parameters (first 2 items)
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files?_start=0&_end=2", nil)
-		setAuthHeader(req, token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var response queryutil.Response[[]dto.FileManagerItem]
-		err := json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(3), response.Total)
-		assert.Len(t, response.Data, 2)
-
-		// Test pagination with offset (items 1-2, skipping first item)
-		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?_start=1&_end=3", nil)
-		setAuthHeader(req, token)
-		rec = httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		err = json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(3), response.Total)
-		assert.Len(t, response.Data, 2)
-
-		// Test single item pagination
-		req = ctx.NewAPIRequest(http.MethodGet, "/api/files?_start=0&_end=1", nil)
-		setAuthHeader(req, token)
-		rec = httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		err = json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(3), response.Total)
-		assert.Len(t, response.Data, 1)
-	}, TestOptions)
-}
-
-func TestAPI_listDirectoryContents(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token, userID := createTestUserAndLogin(ctx)
-
-		// Create test file paths
-		testCID1 := util.GenerateTestCID(t, "test data 1")
-		testCID2 := util.GenerateTestCID(t, "test data 2")
-		testCID3 := util.GenerateTestCID(t, "test data 3")
-
-		createTestFilePath(t, ctx, userID, testCID1, "/file1.txt", "file1.txt", false)
-		createTestFilePath(t, ctx, userID, testCID2, "/test_dir", "test_dir", true)
-		createTestFilePath(t, ctx, userID, testCID3, "/test_dir/file2.txt", "file2.txt", false)
-
-		// Make HTTP request to list root directory
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?filters[parent_path][eq]=/", nil)
-		setAuthHeader(req, token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var response queryutil.Response[[]dto.FileManagerItem]
-		err := json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(2), response.Total)
-		assert.Len(t, response.Data, 2)
-
-		// Verify directories come first
-		assert.True(t, response.Data[0].IsDirectory)
-		assert.False(t, response.Data[1].IsDirectory)
-		assert.Equal(t, "test_dir", response.Data[0].Name)
-		assert.Equal(t, "file1.txt", response.Data[1].Name)
-	}, TestOptions)
-}
-
-func TestAPI_listDirectoryContents_Unauthorized(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Make HTTP request without auth
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?filters[parent_path][eq]=/", nil)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusUnauthorized, rec.Code)
-	}, TestOptions)
-}
-
-func TestAPI_listDirectoryContents_EmptyDirectory(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token, _ := createTestUserAndLogin(ctx)
-
-		// Make HTTP request to empty directory
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?filters[parent_path][eq]=/empty", nil)
-		setAuthHeader(req, token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var response queryutil.Response[[]dto.FileManagerItem]
-		err := json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(0), response.Total)
-		assert.Empty(t, response.Data)
-	}, TestOptions)
-}
-
-func TestAPI_listDirectoryContents_NonExistentUser(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token, _ := createTestUserAndLogin(ctx)
-
-		// Make HTTP request with different user ID
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/directory?filters[parent_path][eq]=/", nil)
-		setAuthHeader(req, token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response (should be empty but not error)
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var response queryutil.Response[[]dto.FileManagerItem]
-		err := json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(0), response.Total)
-	}, TestOptions)
-}
-
-func TestAPI_getBreadcrumbs(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token, userID := createTestUserAndLogin(ctx)
-
-		// Create test file paths for breadcrumb hierarchy
-		testCID1 := util.GenerateTestCID(t, "test data 1")
-		testCID2 := util.GenerateTestCID(t, "test data 2")
-		testCID3 := util.GenerateTestCID(t, "test data 3")
-
-		createTestFilePath(t, ctx, userID, testCID1, "/test_dir", "test_dir", true)
-		createTestFilePath(t, ctx, userID, testCID2, "/test_dir/subdir", "subdir", true)
-		createTestFilePath(t, ctx, userID, testCID3, "/test_dir/subdir/file.txt", "file.txt", false)
-
-		// Make HTTP request
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?filters[path][eq]=/test_dir/subdir/file.txt", nil)
-		setAuthHeader(req, token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var response queryutil.Response[[]dto.FileManagerItem]
-		err := json.Unmarshal(rec.Body.Bytes(), &response)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(3), response.Total)
-		assert.Len(t, response.Data, 3)
-
-		// Verify breadcrumb order (should be ordered by depth)
-		assert.Equal(t, "/test_dir", response.Data[0].Path)
-		assert.Equal(t, "/test_dir/subdir", response.Data[1].Path)
-		assert.Equal(t, "/test_dir/subdir/file.txt", response.Data[2].Path)
-	}, TestOptions)
-}
-
-func TestAPI_getBreadcrumbs_Unauthorized(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Make HTTP request without auth
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?filters[path][eq]=/test", nil)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusUnauthorized, rec.Code)
-	}, TestOptions)
-}
-
-func TestAPI_getBreadcrumbs_InvalidPath(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token, _ := createTestUserAndLogin(ctx)
-
-		// Make HTTP request with empty path
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?filters[path][eq]=", nil)
-		setAuthHeader(req, token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-		// Make HTTP request with path without leading slash
-		req = ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?filters[path][eq]=test/file.txt", nil)
-		setAuthHeader(req, token)
-		rec = httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusBadRequest, rec.Code)
-	}, TestOptions)
-}
-
-func TestAPI_getBreadcrumbs_PathNotFound(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token, _ := createTestUserAndLogin(ctx)
-
-		// Make HTTP request with non-existent path
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/files/breadcrumbs?filters[path][eq]=/nonexistent/file.txt", nil)
-		setAuthHeader(req, token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
-
-		// Verify response
-		assert.Equal(t, http.StatusNotFound, rec.Code)
-	}, TestOptions)
-}
-
 func createTestCAR(t *testing.T) ([]byte, cid.Cid) {
-	// Create a simple CAR file with one block containing "test file content"
 	content := []byte("test file content")
 
-	// Create a CID for our content
 	pref := cid.Prefix{
 		Version:  1,
 		Codec:    uint64(multicodec.Raw),
 		MhType:   multihash.SHA2_256,
-		MhLength: -1, // default length
+		MhLength: -1,
 	}
 
 	c, err := pref.Sum(content)
@@ -653,7 +315,6 @@ func createTestCAR(t *testing.T) ([]byte, cid.Cid) {
 		t.Fatalf("failed to create CID: %v", err)
 	}
 
-	// Create temp file for CAR
 	tmpFile, err := os.CreateTemp("", "test-car-*.car")
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
@@ -661,13 +322,11 @@ func createTestCAR(t *testing.T) ([]byte, cid.Cid) {
 	defer os.Remove(tmpFile.Name())
 	defer tmpFile.Close()
 
-	// Create CAR writer with our actual root CID
 	cdest, err := blockstore.OpenReadWrite(tmpFile.Name(), []cid.Cid{c}, car.WriteAsCarV1(true))
 	if err != nil {
 		t.Fatalf("failed to create CAR writer: %v", err)
 	}
 
-	// Write our block
 	blk, err := blocks.NewBlockWithCid(content, c)
 	if err != nil {
 		t.Fatalf("failed to create block: %v", err)
@@ -677,12 +336,10 @@ func createTestCAR(t *testing.T) ([]byte, cid.Cid) {
 		t.Fatalf("failed to write block: %v", err)
 	}
 
-	// Finalize the CAR
 	if err := cdest.Finalize(); err != nil {
 		t.Fatalf("failed to finalize CAR: %v", err)
 	}
 
-	// Read the temp file back into memory for the test
 	carData, err := os.ReadFile(tmpFile.Name())
 	if err != nil {
 		t.Fatalf("failed to read temp CAR file: %v", err)
@@ -691,14 +348,459 @@ func createTestCAR(t *testing.T) ([]byte, cid.Cid) {
 	return carData, c
 }
 
+func TestAPI_listPins(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, _, _, _ := helper.SetupAuthenticatedTest()
+
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/pins", token, nil)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var response dto.PinResultsResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, response.Results)
+	})
+}
+
+func TestAPI_addPin(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		helper.SetupWorkflowServiceMock()
+		token, _, _, _ := helper.SetupAuthenticatedTest()
+
+		reqBody := `{"cid":"bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4","name":"test"}`
+		rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/pins", token, []byte(reqBody))
+
+		assert.Equal(t, http.StatusAccepted, rec.Code)
+		var response dto.PinStatusResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.NotPanics(t, func() {
+			uuid.MustParse(response.RequestID)
+		})
+	})
+}
+
+func TestAPI_getPin(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, _, _, pinID := helper.SetupAuthenticatedTest()
+
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/api/pins/%s", pinID.String()), token, nil)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var response dto.PinStatusResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.NotPanics(t, func() {
+			uuid.MustParse(response.RequestID)
+		})
+	})
+}
+
+func TestAPI_replacePin(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		helper.SetupWorkflowServiceMock()
+		token, _, _, pinID := helper.SetupAuthenticatedTest()
+
+		reqBody := `{"cid":"bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4","name":"test"}`
+		rec := helper.makeAuthenticatedRequest(http.MethodPost, fmt.Sprintf("/api/pins/%s", pinID.String()), token, []byte(reqBody))
+
+		assert.Equal(t, http.StatusAccepted, rec.Code)
+		var response dto.PinStatusResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+		assert.NotPanics(t, func() {
+			uuid.MustParse(response.RequestID)
+		})
+	})
+}
+
+func TestAPI_deletePin(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, _, _, pinID := helper.SetupAuthenticatedTest()
+
+		rec := helper.makeAuthenticatedRequest(http.MethodDelete, fmt.Sprintf("/api/pins/%s", pinID.String()), token, nil)
+
+		assert.Equal(t, http.StatusAccepted, rec.Code)
+	})
+}
+
+func TestAPI_listFiles(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, userID := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "test data"))
+
+		testCID1 := util.GenerateTestCID(t, "test data 1")
+		testCID2 := util.GenerateTestCID(t, "test data 2")
+
+		// Create mock file paths using helper
+		mockFilePaths := []*pluginDb.FilePath{
+			createMockFilePath(userID, testCID1, "/file1.txt", "file1.txt", false),
+			createMockFilePath(userID, testCID2, "/file2.txt", "file2.txt", false),
+		}
+
+		// Setup file manager service mock to return our test data
+		mockFileManagerService := helper.SetupFileManagerServiceMocks()
+		mockFileManagerService.EXPECT().ListFiles(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return(mockFilePaths, int64(2), nil)
+
+		// Setup pin service mock for multiple CIDs
+		helper.setupMultiplePinServiceMocks(userID, []cid.Cid{testCID1, testCID2})
+
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/files", token, nil)
+
+		var response queryutil.Response[[]dto.FileManagerItem]
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+
+		assert.Equal(t, int64(2), response.Total)
+		assert.Len(t, response.Data, 2)
+
+		for _, item := range response.Data {
+			assert.NotEmpty(t, item.Path)
+			assert.NotEmpty(t, item.Name)
+			assert.IsType(t, uint64(0), item.Size)
+			assert.IsType(t, false, item.IsDirectory)
+			assert.IsType(t, 0, item.Depth)
+			assert.IsType(t, time.Time{}, item.Created)
+			assert.IsType(t, time.Time{}, item.Updated)
+		}
+	})
+}
+
+func TestAPI_listFiles_Unauthorized(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/files", nil)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+}
+
+func TestAPI_listFiles_EmptyResults(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, userID := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "test data"))
+
+		// Setup file manager service mock to return empty results
+		mockFileManagerService := helper.SetupFileManagerServiceMocks()
+		mockFileManagerService.EXPECT().ListFiles(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.FilePath{}, int64(0), nil)
+
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/files", token, nil)
+
+		var response queryutil.Response[[]dto.FileManagerItem]
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+		assert.Equal(t, int64(0), response.Total)
+		assert.Empty(t, response.Data)
+	})
+}
+
+func TestAPI_listFiles_WithFilters(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, userID := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "test data"))
+
+		testCID1 := util.GenerateTestCID(t, "test data 1")
+		testCID2 := util.GenerateTestCID(t, "test data 2")
+		testCID3 := util.GenerateTestCID(t, "test data 3")
+
+		// Create mock file paths using helper
+		mockFilePaths := createTestDirectoryDataSet(userID, testCID1, testCID2, testCID3)
+
+		// Setup file manager service mock to return filtered results for each request
+		mockFileManagerService := helper.SetupFileManagerServiceMocks()
+
+		// Setup pin service mock for multiple CIDs
+		helper.setupMultiplePinServiceMocks(userID, []cid.Cid{testCID1, testCID2, testCID3})
+
+		// Setup expectations for each filtered request
+		mockFileManagerService.EXPECT().ListFiles(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.FilePath{mockFilePaths[0]}, int64(1), nil).Times(1)
+		mockFileManagerService.EXPECT().ListFiles(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.FilePath{mockFilePaths[1]}, int64(1), nil).Times(1)
+		mockFileManagerService.EXPECT().ListFiles(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.FilePath{mockFilePaths[0], mockFilePaths[2]}, int64(2), nil).Times(1)
+		mockFileManagerService.EXPECT().ListFiles(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.FilePath{mockFilePaths[0], mockFilePaths[1]}, int64(2), nil).Times(1)
+		mockFileManagerService.EXPECT().ListFiles(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.FilePath{mockFilePaths[0], mockFilePaths[2]}, int64(2), nil).Times(1)
+
+		// Test filter by name = file1.txt
+		url, err := queryutil.BuildURL("/api/files", nil, nil, filter.Equal("name", "file1.txt"))
+		assert.NoError(t, err)
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+		var response queryutil.Response[[]dto.FileManagerItem]
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+		assert.Equal(t, int64(1), response.Total)
+		assert.Len(t, response.Data, 1)
+		assert.Equal(t, "file1.txt", response.Data[0].Name)
+
+		// Test filter by is_directory = true
+		url, err = queryutil.BuildURL("/api/files", nil, nil, filter.Equal("is_directory", true))
+		assert.NoError(t, err)
+		rec = helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+		assert.Equal(t, int64(1), response.Total)
+		assert.Len(t, response.Data, 1)
+		assert.True(t, response.Data[0].IsDirectory)
+		assert.Equal(t, "test_dir", response.Data[0].Name)
+
+		// Test filter by name contains "file"
+		url, err = queryutil.BuildURL("/api/files", nil, nil, filter.Contains("name", "file"))
+		assert.NoError(t, err)
+		rec = helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+		assert.Equal(t, int64(2), response.Total)
+		assert.Len(t, response.Data, 2)
+
+		// Test OR filter
+		url, err = queryutil.BuildURL("/api/files", nil, nil, filter.Or(
+			filter.Equal("name", "file1.txt"),
+			filter.Equal("is_directory", true),
+		))
+		assert.NoError(t, err)
+		rec = helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+		assert.Equal(t, int64(2), response.Total)
+		assert.Len(t, response.Data, 2)
+
+		// Test AND filter
+		url, err = queryutil.BuildURL("/api/files", nil, nil, filter.And(
+			filter.Contains("name", "file"),
+			filter.Equal("is_directory", false),
+		))
+		assert.NoError(t, err)
+		rec = helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+		assert.Equal(t, int64(2), response.Total)
+		assert.Len(t, response.Data, 2)
+		for _, result := range response.Data {
+			assert.Contains(t, result.Name, "file")
+			assert.False(t, result.IsDirectory)
+		}
+	})
+}
+
+func TestAPI_listFiles_Pagination(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, userID := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "test data"))
+
+		testCID1 := util.GenerateTestCID(t, "test data 1")
+		testCID2 := util.GenerateTestCID(t, "test data 2")
+		testCID3 := util.GenerateTestCID(t, "test data 3")
+
+		// Create mock file paths using helper
+		mockFilePaths := createTestFileDataSet(userID, testCID1, testCID2, testCID3)
+
+		// Setup file manager service mock to return paginated results for each request
+		mockFileManagerService := helper.SetupFileManagerServiceMocks()
+
+		// Setup pin service mock for multiple CIDs
+		helper.setupMultiplePinServiceMocks(userID, []cid.Cid{testCID1, testCID2, testCID3})
+
+		// Setup expectations for each paginated request
+		mockFileManagerService.EXPECT().ListFiles(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.FilePath{mockFilePaths[0], mockFilePaths[1]}, int64(3), nil).Times(1)
+		mockFileManagerService.EXPECT().ListFiles(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.FilePath{mockFilePaths[1], mockFilePaths[2]}, int64(3), nil).Times(1)
+		mockFileManagerService.EXPECT().ListFiles(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.FilePath{mockFilePaths[0]}, int64(3), nil).Times(1)
+
+		// Test first page: _start=0&_end=2
+		pagination, err := filter.NewPagination(0, 2)
+		assert.NoError(t, err)
+		url, err := queryutil.BuildURL("/api/files", nil, &pagination)
+		assert.NoError(t, err)
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+		var response queryutil.Response[[]dto.FileManagerItem]
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+		assert.Equal(t, int64(3), response.Total)
+		assert.Len(t, response.Data, 2)
+
+		// Test second page: _start=1&_end=3
+		pagination, err = filter.NewPagination(1, 2)
+		assert.NoError(t, err)
+		url, err = queryutil.BuildURL("/api/files", nil, &pagination)
+		assert.NoError(t, err)
+		rec = helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+		assert.Equal(t, int64(3), response.Total)
+		assert.Len(t, response.Data, 2)
+
+		// Test single item: _start=0&_end=1
+		pagination, err = filter.NewPagination(0, 1)
+		assert.NoError(t, err)
+		url, err = queryutil.BuildURL("/api/files", nil, &pagination)
+		assert.NoError(t, err)
+		rec = helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+		assert.Equal(t, int64(3), response.Total)
+		assert.Len(t, response.Data, 1)
+	})
+}
+
+func TestAPI_listDirectoryContents(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, userID := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "test data"))
+
+		testCID1 := util.GenerateTestCID(t, "test data 1")
+		testCID2 := util.GenerateTestCID(t, "test data 2")
+		testCID3 := util.GenerateTestCID(t, "test data 3")
+
+		// Create mock file paths using helper
+		mockFilePaths := createTestDirectoryDataSet(userID, testCID1, testCID2, testCID3)
+
+		// Setup file manager service mock to return only root directory contents
+		mockFileManagerService := helper.SetupFileManagerServiceMocks()
+		mockFileManagerService.EXPECT().ListDirectoryContents(mock.Anything, userID, mock.Anything).Return([]*pluginDb.FilePath{mockFilePaths[1], mockFilePaths[0]}, nil)
+
+		url, err := queryutil.BuildURL("/api/files/directory", nil, nil, filter.Equal("parent_path", "/"))
+		assert.NoError(t, err)
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+
+		var response queryutil.Response[[]dto.FileManagerItem]
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+
+		assert.Equal(t, int64(2), response.Total)
+		assert.Len(t, response.Data, 2)
+
+		assert.True(t, response.Data[0].IsDirectory)
+		assert.False(t, response.Data[1].IsDirectory)
+		assert.Equal(t, "test_dir", response.Data[0].Name)
+		assert.Equal(t, "file1.txt", response.Data[1].Name)
+	})
+}
+
+func TestAPI_listDirectoryContents_Unauthorized(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		url, err := queryutil.BuildURL("/api/files/directory", nil, nil, filter.Equal("parent_path", "/"))
+		assert.NoError(t, err)
+		req := ctx.NewAPIRequest(http.MethodGet, url, nil)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+}
+
+func TestAPI_listDirectoryContents_EmptyDirectory(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, userID := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "test data"))
+
+		// Setup file manager service mock to return empty results
+		mockFileManagerService := helper.SetupFileManagerServiceMocks()
+		mockFileManagerService.EXPECT().ListDirectoryContents(mock.Anything, userID, mock.Anything).Return([]*pluginDb.FilePath{}, nil)
+
+		url, err := queryutil.BuildURL("/api/files/directory", nil, nil, filter.Equal("parent_path", "/empty"))
+		assert.NoError(t, err)
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+
+		var response queryutil.Response[[]dto.FileManagerItem]
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+		assert.Equal(t, int64(0), response.Total)
+		assert.Empty(t, response.Data)
+	})
+}
+
+func TestAPI_listDirectoryContents_NonExistentUser(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, userID := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "test data"))
+
+		// Setup file manager service mock to return empty results
+		mockFileManagerService := helper.SetupFileManagerServiceMocks()
+		mockFileManagerService.EXPECT().ListDirectoryContents(mock.Anything, userID, mock.Anything).Return([]*pluginDb.FilePath{}, nil)
+
+		url, err := queryutil.BuildURL("/api/files/directory", nil, nil, filter.Equal("parent_path", "/"))
+		assert.NoError(t, err)
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+
+		var response queryutil.Response[[]dto.FileManagerItem]
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+		assert.Equal(t, int64(0), response.Total)
+	})
+}
+
+func TestAPI_getBreadcrumbs(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, userID := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "test data"))
+
+		testCID1 := util.GenerateTestCID(t, "test data 1")
+		testCID2 := util.GenerateTestCID(t, "test data 2")
+		testCID3 := util.GenerateTestCID(t, "test data 3")
+
+		// Create mock file paths using helper
+		mockFilePaths := createBreadcrumbsDataSet(userID, testCID1, testCID2, testCID3)
+
+		// Setup file manager service mock to return our test data
+		mockFileManagerService := helper.SetupFileManagerServiceMocks()
+		mockFileManagerService.EXPECT().GetBreadcrumbs(mock.Anything, userID, mock.Anything).Return(mockFilePaths, nil)
+
+		url, err := queryutil.BuildURL("/api/files/breadcrumbs", nil, nil, filter.Equal("path", "/test_dir/subdir/file.txt"))
+		assert.NoError(t, err)
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+
+		var response queryutil.Response[[]dto.FileManagerItem]
+		helper.assertJSONResponse(t, rec, http.StatusOK, &response)
+
+		assert.Equal(t, int64(3), response.Total)
+		assert.Len(t, response.Data, 3)
+
+		assert.Equal(t, "/test_dir", response.Data[0].Path)
+		assert.Equal(t, "/test_dir/subdir", response.Data[1].Path)
+		assert.Equal(t, "/test_dir/subdir/file.txt", response.Data[2].Path)
+	})
+}
+
+func TestAPI_getBreadcrumbs_Unauthorized(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		url, err := queryutil.BuildURL("/api/files/breadcrumbs", nil, nil, filter.Equal("path", "/test"))
+		assert.NoError(t, err)
+		req := ctx.NewAPIRequest(http.MethodGet, url, nil)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+}
+
+func TestAPI_getBreadcrumbs_InvalidPath(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, _ := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "test data"))
+
+		url, err := queryutil.BuildURL("/api/files/breadcrumbs", nil, nil, filter.Equal("path", ""))
+		assert.NoError(t, err)
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+		url, err = queryutil.BuildURL("/api/files/breadcrumbs", nil, nil, filter.Equal("path", "test/file.txt"))
+		assert.NoError(t, err)
+		rec = helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+}
+
+func TestAPI_getBreadcrumbs_PathNotFound(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, userID := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "test data"))
+
+		// Setup file manager service mock to return error for non-existent path
+		mockFileManagerService := helper.SetupFileManagerServiceMocks()
+		mockFileManagerService.EXPECT().GetBreadcrumbs(mock.Anything, userID, "/nonexistent/file.txt").Return([]*pluginDb.FilePath{}, gorm.ErrRecordNotFound)
+
+		url, err := queryutil.BuildURL("/api/files/breadcrumbs", nil, nil, filter.Equal("path", "/nonexistent/file.txt"))
+		assert.NoError(t, err)
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, url, token, nil)
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+}
+
 func TestAPI_handleUpload(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token, _ := createTestUserAndLogin(ctx)
-
-		// Create test CAR file
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, _ := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "test data"))
 		carData, expectedCID := createTestCAR(t)
+		helper.SetupUploadServiceMocks(expectedCID)
+		helper.SetupUploadWorkflowServiceMock()
 
-		// Make HTTP request with CAR file upload
 		body := &bytes.Buffer{}
 		writer := multipart.NewWriter(body)
 		part, _ := writer.CreateFormFile("file", "test.car")
@@ -711,61 +813,49 @@ func TestAPI_handleUpload(t *testing.T) {
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
 
-		// Verify response
 		assert.Equal(t, http.StatusOK, rec.Code)
 
-		// Parse response to get CID
 		var resp dto.PostUploadResponse
 		err := json.Unmarshal(rec.Body.Bytes(), &resp)
 		assert.NoError(t, err)
 		assert.Equal(t, expectedCID.String(), resp.CID)
-	}, TestOptions, coreTesting.WithMockS3())
+	})
 }
 
 func TestAPI_handleGetBlockMeta(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		helper := setupPinTest(t, ctx)
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, _, testCID, _ := helper.SetupAuthenticatedTest()
 
-		// Make HTTP request
-		req := ctx.NewAPIRequest(http.MethodGet, fmt.Sprintf("/api/block/meta/%s", helper.cid.String()), nil)
-		setAuthHeader(req, helper.token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/api/block/meta/%s", testCID.String()), token, nil)
 
-		// Verify response
 		assert.Equal(t, http.StatusOK, rec.Code)
 		var response dto.BlockMetaResponse
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
 
-		// Verify response structure
 		assert.NotNil(t, response)
 		assert.IsType(t, "", response.Name)
 		assert.IsType(t, uint8(0), response.Type)
 		assert.IsType(t, int64(0), response.BlockSize)
 		assert.IsType(t, []string{}, response.ChildCID)
 		assert.True(t, len(response.ChildCID) > 0, "ChildCID should not be empty")
-	}, TestOptions)
+	})
 }
 
 func TestAPI_handleGetBlockMetaBatch(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		helper := setupPinTest(t, ctx)
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, _, testCID, _ := helper.SetupAuthenticatedTest()
 
-		// Make HTTP request
-		reqBody := fmt.Sprintf(`{"cid":["%s"]}`, helper.cid.String())
-		req := ctx.NewAPIRequest(http.MethodPost, "/api/block/meta/batch", []byte(reqBody))
-		setAuthHeader(req, helper.token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
+		reqBody := fmt.Sprintf(`{"cid":["%s"]}`, testCID.String())
+		rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/block/meta/batch", token, []byte(reqBody))
 
-		// Verify response
 		assert.Equal(t, http.StatusOK, rec.Code)
 		var response map[string]*dto.BlockMetaResponse
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
 
-		// Verify response structure
 		assert.NotEmpty(t, response)
 		for cid, meta := range response {
 			assert.NotEmpty(t, cid)
@@ -776,56 +866,70 @@ func TestAPI_handleGetBlockMetaBatch(t *testing.T) {
 			assert.IsType(t, []string{}, meta.ChildCID)
 			assert.True(t, len(meta.ChildCID) > 0, "ChildCID should not be empty")
 		}
-	}, TestOptions)
+	})
 }
 
 func TestAPI_handleGetInfo(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		token, _ := createTestUserAndLogin(ctx)
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, _ := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "test data"))
 
-		// Make HTTP request
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/info", nil)
-		setAuthHeader(req, token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/info", token, nil)
 
-		// Verify response
 		assert.Equal(t, http.StatusOK, rec.Code)
 		var response dto.InfoResponse
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		assert.NoError(t, err)
 
-		// Verify response structure
 		assert.NotEmpty(t, response.PeerID)
 		assert.NotEmpty(t, response.AnnouncementAddresses)
 		assert.NotEmpty(t, response.ConnectionAddresses)
 
-		// Verify announcement addresses format
 		for _, addr := range response.AnnouncementAddresses {
 			assert.Contains(t, addr, "/ip6/")
 			assert.Contains(t, addr, "/tcp/4001")
 		}
 
-		// Verify connection addresses format
 		for _, addr := range response.ConnectionAddresses {
 			assert.Contains(t, addr, "/ip6/")
 			assert.Contains(t, addr, "/tcp/4001/p2p/")
 			assert.Contains(t, addr, response.PeerID)
 		}
-	}, TestOptions)
+	})
 }
 
 func TestAPI_handleIPFSGet(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		helper := setupPinTest(t, ctx)
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, _, testCID, _ := helper.SetupAuthenticatedTest()
 
-		req := ctx.NewAPIRequest(http.MethodGet, fmt.Sprintf("/ipfs/%s", helper.cid.String()), nil)
-		setAuthHeader(req, helper.token)
-		rec := httptest.NewRecorder()
-		ctx.Router().ServeHTTP(rec, req)
+		// Setup IPFS node mock expectations for HasBlock
+		protoMock := core.GetProtocol(internal.ProtocolName).(*mocks.MockProtoNode)
+		mockIPFSNode := protoMock.GetNode().(*mocks.MockIPFSNode)
 
-		// Verify response
+		// Mock HasBlock to return true for the test CID
+		mockIPFSNode.EXPECT().HasBlock(mock.Anything, testCID).Return(true, nil)
+
+		uploadSvc := core.GetService[*coreMocks.MockUploadService](ctx, core.UPLOAD_SERVICE)
+		testUpload := &models.Upload{
+			Model:    gorm.Model{ID: 1},
+			UserID:   1,
+			Hash:     testCID.Hash(),
+			CIDType:  1, // CIDv1
+			MimeType: "application/octet-stream",
+			Protocol: "ipfs",
+			Size:     1024,
+		}
+		uploadSvc.EXPECT().GetUpload(mock.Anything, internal.NewIPFSHash(testCID)).Return(testUpload, nil)
+
+		// Mock GetBlock to return a mock node for the test CID
+		testData := []byte("tornadocash")
+		mockNode := merkledag.NewRawNode(testData)
+		mockIPFSNode.EXPECT().GetBlock(mock.Anything, testCID).Return(mockNode, nil)
+
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/ipfs/%s", testCID.String()), token, nil)
+
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Contains(t, "tornadocash", rec.Body.String())
-	}, TestOptions)
+	})
 }

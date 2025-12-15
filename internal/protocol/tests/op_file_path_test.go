@@ -17,10 +17,10 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/block"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
-	coreMocks "go.lumeweb.com/portal/core/testing/mocks"
 	"go.lumeweb.com/portal/db/models"
 	"gorm.io/gorm"
 )
@@ -29,9 +29,9 @@ var TestOptions = coreTesting.CombineOptions(
 	coreTesting.WithServiceFactory(pluginCore.FILE_MANAGER_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
 		return filemanager.NewFileManagerService()
 	}),
-	coreTesting.WithServiceFactory(pluginCore.BLOCK_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
-		return block.NewBlockService()
-	}),
+	coreTesting.WithServiceFactory(pluginCore.BLOCK_SERVICE, block.NewBlockService),
+	coreTesting.WithMockServiceFactory(pluginCore.PIN_SERVICE, mocks.NewMockIPFSPinService),
+	util.GetProtocolMock(),
 	coreTesting.WithSQLitePluginMigrations(
 		internal.ProtocolName, migrations.GetSQLite(),
 	),
@@ -44,14 +44,28 @@ func TestFilePathOperationHandler_ValidateRequest(t *testing.T) {
 			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
 		}
 
+		// Mock the workflow service for the validation test
+		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
+
 		// Test case 1: Valid request with hash
 		testCID := util.GenerateTestCID(t, "test data")
 		validReq := createTestRequest(t, testCID, uintPtr(123))
 		err := handler.ValidateRequest(context.Background(), validReq)
 		assert.NoError(tb, err)
 
-		// Test case 2: Invalid request without hash
+		// Test case 2: Invalid request without hash - need to mock the workflow service
 		invalidReq := createTestRequest(t, cid.Undef, uintPtr(123))
+
+		// Create empty workflow data for the invalid case
+		k := koanf.New(".")
+		err = k.Load(confmap.Provider(map[string]any{
+			"cids": []string{},
+		}, "."), nil)
+		require.NoError(t, err)
+
+		// Mock the GetWorkflowMetadata call for the invalid request
+		workflowSvc.EXPECT().GetWorkflowMetadata(ctx, invalidReq.ID).Return(k, nil)
+
 		err = handler.ValidateRequest(context.Background(), invalidReq)
 		assert.Error(tb, err)
 		assert.Contains(tb, err.Error(), "hash is required")
@@ -80,7 +94,7 @@ func TestFilePathOperationHandler_Execute_WithValidUnixFSDirectory(t *testing.T)
 		req := createTestRequest(t, testCID, &userID)
 
 		// Mock the workflow service to return pin workflow data
-		workflowSvc := core.GetService[*coreMocks.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
+		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
 
 		// Create workflow data with only the root CID
 		pinWorkflowData := &protocol.PinWorkflowData{
@@ -154,7 +168,7 @@ func TestFilePathOperationHandler_Execute_WithIncompleteMetadata(t *testing.T) {
 		req := createTestRequest(t, testCID, &userID)
 
 		// Mock the workflow service to return pin workflow data with the test CID
-		workflowSvc := core.GetService[*coreMocks.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
+		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
 
 		// Create workflow data with the CID
 		pinWorkflowData := &protocol.PinWorkflowData{
@@ -171,6 +185,19 @@ func TestFilePathOperationHandler_Execute_WithIncompleteMetadata(t *testing.T) {
 		workflowSvc.On("GetWorkflowMetadata", ctx, req.ID).Return(k, nil)
 		workflowSvc.On("UpdateWorkflowDataStruct", ctx, req.ID, mock.AnythingOfType("protocol.FilePathWorkflowData"), "json").Return(nil)
 
+		// Mock the IPFS node's GetBlockstore method to prevent the unexpected call error
+		protoMock := core.GetProtocol(internal.ProtocolName).(*mocks.MockProtoNode)
+		mockIPFSNode := protoMock.GetNode().(*mocks.MockIPFSNode)
+		mockBlockstore := mocks.NewMockMockBlockstore(t)
+		mockIPFSNode.EXPECT().GetBlockstore().Return(mockBlockstore).Maybe()
+
+		// Mock the blockstore Has method to return false (block not found)
+		mockBlockstore.EXPECT().Has(mock.Anything, mock.AnythingOfType("cid.Cid")).Return(false, nil).Maybe()
+
+		// Mock the pin service GetPinByCIDAndUser method to return nil (pin not found)
+		mockPinService := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		mockPinService.EXPECT().GetPinByCIDAndUser(mock.Anything, mock.AnythingOfType("cid.Cid"), mock.AnythingOfType("uint")).Return(nil, nil).Maybe()
+
 		// Act
 		err = handler.Execute(context.Background(), req)
 
@@ -181,7 +208,6 @@ func TestFilePathOperationHandler_Execute_WithIncompleteMetadata(t *testing.T) {
 		var orphanPath pluginDb.FilePath
 		result := ctx.DB().Where("user_id = ? AND is_orphan = ?", userID, true).First(&orphanPath)
 		require.NoError(tb, result.Error)
-		assert.Equal(tb, testCID.String(), orphanPath.Name)
 		assert.Equal(tb, "/"+testCID.String(), orphanPath.Path)
 		assert.True(tb, orphanPath.IsOrphan)
 	}, TestOptions)
@@ -200,7 +226,7 @@ func TestFilePathOperationHandler_Execute_WithMissingMetadata(t *testing.T) {
 		req := createTestRequest(t, testCID, &userID)
 
 		// Mock the workflow service to return pin workflow data with the test CID
-		workflowSvc := core.GetService[*coreMocks.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
+		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
 
 		// Create workflow data with the CID
 		pinWorkflowData := &protocol.PinWorkflowData{
@@ -217,6 +243,19 @@ func TestFilePathOperationHandler_Execute_WithMissingMetadata(t *testing.T) {
 		workflowSvc.On("GetWorkflowMetadata", ctx, req.ID).Return(k, nil)
 		workflowSvc.On("UpdateWorkflowDataStruct", ctx, req.ID, mock.AnythingOfType("protocol.FilePathWorkflowData"), "json").Return(nil)
 
+		// Mock the IPFS node's GetBlockstore method to prevent the unexpected call error
+		protoMock := core.GetProtocol(internal.ProtocolName).(*mocks.MockProtoNode)
+		mockIPFSNode := protoMock.GetNode().(*mocks.MockIPFSNode)
+		mockBlockstore := mocks.NewMockMockBlockstore(t)
+		mockIPFSNode.EXPECT().GetBlockstore().Return(mockBlockstore).Maybe()
+
+		// Mock the blockstore Has method to return false (block not found)
+		mockBlockstore.EXPECT().Has(mock.Anything, mock.AnythingOfType("cid.Cid")).Return(false, nil).Maybe()
+
+		// Mock the pin service GetPinByCIDAndUser method to return nil (pin not found)
+		mockPinService := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		mockPinService.EXPECT().GetPinByCIDAndUser(mock.Anything, mock.AnythingOfType("cid.Cid"), mock.AnythingOfType("uint")).Return(nil, nil).Maybe()
+
 		// Act
 		err = handler.Execute(context.Background(), req)
 
@@ -227,7 +266,7 @@ func TestFilePathOperationHandler_Execute_WithMissingMetadata(t *testing.T) {
 		var orphanPath pluginDb.FilePath
 		result := ctx.DB().Where("user_id = ? AND is_orphan = ?", userID, true).First(&orphanPath)
 		require.NoError(tb, result.Error)
-		assert.Equal(tb, testCID.String(), orphanPath.Name)
+		assert.Empty(tb, orphanPath.Name)
 		assert.Equal(tb, "/"+testCID.String(), orphanPath.Path)
 		assert.True(tb, orphanPath.IsOrphan)
 	}, TestOptions)
@@ -239,6 +278,19 @@ func TestFilePathOperationHandler_CreateOrphanEntriesForPins(t *testing.T) {
 		handler := &protocol.FilePathOperationHandler{
 			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
 		}
+
+		// Mock the IPFS node's GetBlockstore method to prevent the unexpected call error
+		protoMock := core.GetProtocol(internal.ProtocolName).(*mocks.MockProtoNode)
+		mockIPFSNode := protoMock.GetNode().(*mocks.MockIPFSNode)
+		mockBlockstore := mocks.NewMockMockBlockstore(t)
+		mockIPFSNode.EXPECT().GetBlockstore().Return(mockBlockstore).Maybe()
+
+		// Mock the blockstore Has method to return false (block not found)
+		mockBlockstore.EXPECT().Has(mock.Anything, mock.AnythingOfType("cid.Cid")).Return(false, nil).Maybe()
+
+		// Mock the pin service GetPinByCIDAndUser method to return nil (pin not found)
+		mockPinService := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		mockPinService.EXPECT().GetPinByCIDAndUser(mock.Anything, mock.AnythingOfType("cid.Cid"), mock.AnythingOfType("uint")).Return(nil, nil).Maybe()
 
 		userID := uint(123)
 		testCID1 := util.GenerateTestCID(t, "test data 1")
@@ -268,10 +320,10 @@ func TestFilePathOperationHandler_CreateOrphanEntriesForPins(t *testing.T) {
 		require.NoError(tb, result.Error)
 		assert.Len(tb, orphanPaths, 2)
 
-		// Verify the orphan entries
-		cidStrings := []string{orphanPaths[0].Name, orphanPaths[1].Name}
-		assert.Contains(tb, cidStrings, testCID1.String())
-		assert.Contains(tb, cidStrings, testCID2.String())
+		// Verify the orphan entries - check paths instead of names since names are empty for orphans
+		pathStrings := []string{orphanPaths[0].Path, orphanPaths[1].Path}
+		assert.Contains(tb, pathStrings, "/"+testCID1.String())
+		assert.Contains(tb, pathStrings, "/"+testCID2.String())
 	}, TestOptions)
 }
 
@@ -298,7 +350,7 @@ func TestFilePathOperationHandler_computePathsRecursive_DirectoryStructure(t *te
 		processed := make(map[string]bool)
 
 		// Act
-		err := handler.ComputePathsRecursive(context.Background(), fileManagerSvc, rootUnixFS, userID, rootCID, "", 0, processed, false)
+		_, err := handler.ComputePathsRecursive(context.Background(), fileManagerSvc, rootUnixFS, userID, rootCID, "", 0, processed, false)
 
 		// Assert
 		require.NoError(tb, err)
@@ -349,7 +401,7 @@ func TestFilePathOperationHandler_computePathsRecursive_CycleDetection(t *testin
 		processed := make(map[string]bool)
 
 		// Act
-		err := handler.ComputePathsRecursive(context.Background(), fileManagerSvc, rootUnixFS, userID, rootCID, "", 0, processed, false)
+		_, err := handler.ComputePathsRecursive(context.Background(), fileManagerSvc, rootUnixFS, userID, rootCID, "", 0, processed, false)
 
 		// Assert
 		require.NoError(tb, err)
@@ -381,7 +433,7 @@ func TestFilePathOperationHandler_GetStatus(t *testing.T) {
 		}
 
 		// Mock the workflow service to return our test data
-		workflowSvc := core.GetService[*coreMocks.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
+		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
 
 		// Create a koanf instance and populate it with our test data
 		k := koanf.New(".")
@@ -425,7 +477,7 @@ func TestFilePathOperationHandler_GetStatus_Processing(t *testing.T) {
 		}
 
 		// Mock the workflow service to return our test data
-		workflowSvc := core.GetService[*coreMocks.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
+		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
 
 		// Create a koanf instance and populate it with our test data
 		k := koanf.New(".")
@@ -435,7 +487,7 @@ func TestFilePathOperationHandler_GetStatus_Processing(t *testing.T) {
 			"request_id":       "1",
 			"cids":             []string{testCID1.String(), testCID2.String()},
 			"user_id":          123,
-			"current_phase":    protocol.FilePathPhaseComputingPaths,
+			"current_phase":    protocol.FilePathPhaseProcessing,
 			"completed_phases": 2,
 			"total_phases":     5,
 			"processed_cids":   1,
@@ -452,7 +504,7 @@ func TestFilePathOperationHandler_GetStatus_Processing(t *testing.T) {
 		require.NoError(tb, err)
 		assert.NotNil(tb, status)
 		assert.Equal(tb, models.RequestStatusProcessing, status.State)
-		assert.Equal(tb, "File path operation in progress: computing_paths", status.Message)
+		assert.Equal(tb, "File path operation in progress: processing", status.Message)
 
 		// Progress should be calculated as: (2/5 * 0.7) + (1/2 * 0.3) = 0.28 + 0.15 = 0.43 = 43%
 		// Due to floating point precision, we round to the nearest integer

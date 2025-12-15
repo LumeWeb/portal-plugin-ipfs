@@ -2,11 +2,10 @@ template: testify
 template-data:
   unroll-variadic: true
 filename: "Mock{{.InterfaceName}}.go"
+pkgname: "mocks"
+dir: ./internal/testing/mocks
 packages:
   go.lumeweb.com/portal-plugin-ipfs/core:
-    config:
-      dir: ./internal/testing/mocks
-      pkgname: "mocks"
     interfaces:
       Provider: {}
       ReprovideStore: {}
@@ -15,9 +14,13 @@ packages:
       IPFSPinService: {}
       UploadService: {}
       BlockService: {}
-  go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store:
-    config:
-      dir: ./internal/testing/mocks
-      pkgname: "mocks"
+      FileManagerService: {}
+  go.lumeweb.com/portal-plugin-ipfs/internal/protocol:
     interfaces:
-      Blockstore: {}
+      ProtoNode: {}
+  go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs:
+    interfaces:
+      IPFSNode: {}
+  go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store:
+    interfaces:
+      MockBlockstore: {}

@@ -43,6 +43,23 @@ import (
 
 var cachedAnnouncementAddresses []multiaddr.Multiaddr
 
+// IPFSNode defines the interface for IPFS node operations
+type IPFSNode interface {
+	Close() error
+	GetBlock(ctx context.Context, c cid.Cid) (format.Node, error)
+	HasBlock(ctx context.Context, c cid.Cid) (bool, error)
+	AddBlock(ctx context.Context, block blocks.Block) error
+	DagService() format.DAGService
+	GetBlockstore() blockstore.Blockstore
+	PeerID() peer.ID
+	ConnectionAddresses() ([]multiaddr.Multiaddr, error)
+	DelegateAddresses() ([]multiaddr.Multiaddr, error)
+	Peers() []peer.ID
+	AddPeer(addr peer.AddrInfo)
+	Pin(ctx context.Context, root cid.Cid, recursive bool) error
+	TriggerReprovider()
+}
+
 // NopExchange wraps an exchange.Interface and disables NotifyNewBlocks.
 // This prevents the node from announcing new blocks to the network,
 // because we want to selectively control when blocks are announced,
@@ -123,19 +140,7 @@ func (n *Node) PeerID() peer.ID {
 }
 
 func (n *Node) ConnectionAddresses() ([]multiaddr.Multiaddr, error) {
-	annAddrs, err := AnnouncementAddresses()
-	if err != nil {
-		return nil, err
-	}
-
-	connAddrs := make([]multiaddr.Multiaddr, 0, len(annAddrs))
-
-	for _, addr := range annAddrs {
-		fullAddr := addr.Encapsulate(multiaddr.StringCast("/p2p/" + n.PeerID().String()))
-		connAddrs = append(connAddrs, fullAddr)
-	}
-
-	return connAddrs, nil
+	return ConnectionAddresses(n)
 }
 
 // DelegateAddresses returns the multiaddr addresses that can be used as delegates
@@ -290,12 +295,14 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		bitswap.MaxOutstandingBytesPerPeer(1 << 20),
 	}
 
+	bs = &blockstore.ValidatingBlockstore{bs}
+
 	bitswapNet := bsnet.NewFromIpfsHost(node)
 	_bitswap := bitswap.New(ctx, bitswapNet, frt, bs, bitswapOpts...)
-	
+
 	// Wrap the bitswap exchange with NopExchange to disable automatic block announcements
 	nopExchange := &NopExchange{_bitswap}
-	
+
 	blockServ := blockservice.New(bs, nopExchange)
 	dagService := merkledag.NewDAGService(blockServ)
 
@@ -349,6 +356,22 @@ func AnnouncementAddresses() ([]multiaddr.Multiaddr, error) {
 	cachedAnnouncementAddresses = announcementAddrs
 
 	return announcementAddrs, nil
+}
+
+func ConnectionAddresses(node IPFSNode) ([]multiaddr.Multiaddr, error) {
+	annAddrs, err := AnnouncementAddresses()
+	if err != nil {
+		return nil, err
+	}
+
+	connAddrs := make([]multiaddr.Multiaddr, 0, len(annAddrs))
+
+	for _, addr := range annAddrs {
+		fullAddr := addr.Encapsulate(multiaddr.StringCast("/p2p/" + node.PeerID().String()))
+		connAddrs = append(connAddrs, fullAddr)
+	}
+
+	return connAddrs, nil
 }
 
 func isIPv4PrivateRange(addr multiaddr.Multiaddr) bool {

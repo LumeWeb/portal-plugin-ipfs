@@ -1,14 +1,8 @@
-package downloader_test
+package tests
 
 import (
 	"context"
 	"fmt"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store/downloader"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
-	"go.lumeweb.com/portal/core"
-	coreTesting "go.lumeweb.com/portal/core/testing"
-	coreMocks "go.lumeweb.com/portal/core/testing/mocks"
 	"io"
 	"strings"
 	"sync"
@@ -20,16 +14,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-)
-
-var (
-	cfg            = coreTesting.NewConfigBuilder().Build()
-	ipfsTestConfig = coreTesting.CombineOptions(
-		coreTesting.WithMockProtocol(internal.ProtocolName, func(protocol *coreTesting.MockProtocol) {
-			protocol.WithConfig(cfg)
-		}),
-		coreTesting.WithProtocolConfig(internal.ProtocolName, cfg),
-	)
+	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store/downloader"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
+	"go.lumeweb.com/portal/core"
+	coreTesting "go.lumeweb.com/portal/core/testing"
 )
 
 type mockReadCloser struct {
@@ -45,11 +34,7 @@ func TestBlockDownloader(t *testing.T) {
 		// Create a mock MetadataStore
 		mockStore := mocks.NewMockMetadataStore(t)
 
-		// Create a mock StorageService
-		mockStorage := coreMocks.NewMockStorageService(t)
-
-		// Configure the mock context
-		ctx.RegisterService(core.STORAGE_SERVICE, mockStorage)
+		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
 		// Configure the BlockDownloaderDefault
 		bd, err := downloader.NewBlockDownloader(ctx, mockStore, 2)
@@ -63,9 +48,9 @@ func TestBlockDownloader(t *testing.T) {
 		// Mock the BlockExists call
 		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
 
-		// Mock the DownloadObject call - create a new reader for each call
-		mockStorage.EXPECT().DownloadObject(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			RunAndReturn(func(ctx context.Context, protocol core.StorageProtocol, objectHash core.StorageHash, start int64) (io.ReadCloser, error) {
+		// Mock the DownloadObjectWithOptions call - create a new reader for each call
+		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			RunAndReturn(func(ctx context.Context, protocol core.StorageProtocol, objectHash core.StorageHash, opts ...core.StorageOptionFunc) (io.ReadCloser, error) {
 				return &mockReadCloser{Reader: strings.NewReader("test data")}, nil
 			})
 
@@ -88,12 +73,6 @@ func TestBlockDownloader_BlockExistsError(t *testing.T) {
 		// Create a mock MetadataStore
 		mockStore := mocks.NewMockMetadataStore(t)
 
-		// Create a mock StorageService
-		mockStorage := coreMocks.NewMockStorageService(t)
-
-		// Configure the mock context
-		ctx.RegisterService(core.STORAGE_SERVICE, mockStorage)
-
 		// Configure the BlockDownloaderDefault
 		bd, err := downloader.NewBlockDownloader(ctx, mockStore, 2)
 		require.NoError(tb, err)
@@ -115,16 +94,12 @@ func TestBlockDownloader_BlockExistsError(t *testing.T) {
 	}, ipfsTestConfig)
 }
 
-func TestBlockDownloader_DownloadObjectError(t *testing.T) {
+func TestBlockDownloader_DownloadObjectWithOptionsError(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Create a mock MetadataStore
 		mockStore := mocks.NewMockMetadataStore(t)
 
-		// Create a mock StorageService
-		mockStorage := coreMocks.NewMockStorageService(t)
-
-		// Configure the mock context
-		ctx.RegisterService(core.STORAGE_SERVICE, mockStorage)
+		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
 		// Configure the BlockDownloaderDefault
 		bd, err := downloader.NewBlockDownloader(ctx, mockStore, 2)
@@ -138,8 +113,8 @@ func TestBlockDownloader_DownloadObjectError(t *testing.T) {
 		// Mock the BlockExists call
 		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
 
-		// Mock the DownloadObject call to return an error
-		mockStorage.EXPECT().DownloadObject(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		// Mock the DownloadObjectWithOptions call to return an error
+		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(nil, fmt.Errorf("download failed")).Once()
 
 		// Call Get
@@ -156,11 +131,7 @@ func TestBlockDownloader_DownloadWorker_QueueRelated(t *testing.T) {
 		// Create a mock MetadataStore
 		mockStore := mocks.NewMockMetadataStore(t)
 
-		// Create a mock StorageService
-		mockStorage := coreMocks.NewMockStorageService(t)
-
-		// Configure the mock context
-		ctx.RegisterService(core.STORAGE_SERVICE, mockStorage)
+		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
 		// Configure the BlockDownloaderDefault with a single worker
 		bd, err := downloader.NewBlockDownloader(ctx, mockStore, 1)
@@ -174,8 +145,8 @@ func TestBlockDownloader_DownloadWorker_QueueRelated(t *testing.T) {
 		// Mock the BlockExists call
 		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
 
-		// Mock the DownloadObject call
-		mockStorage.EXPECT().DownloadObject(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		// Mock the DownloadObjectWithOptions call
+		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(&mockReadCloser{Reader: strings.NewReader("test data")}, nil).Once()
 
 		// Mock the BlockSiblings and BlockChildren calls
@@ -196,11 +167,7 @@ func TestBlockDownloader_PriorityBehavior(t *testing.T) {
 		// Create a mock MetadataStore
 		mockStore := mocks.NewMockMetadataStore(t)
 
-		// Create a mock StorageService
-		mockStorage := coreMocks.NewMockStorageService(t)
-
-		// Configure the mock context
-		ctx.RegisterService(core.STORAGE_SERVICE, mockStorage)
+		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
 		// Configure the BlockDownloaderDefault with single worker to test ordering
 		bd, err := downloader.NewBlockDownloader(ctx, mockStore, 1)
@@ -219,12 +186,19 @@ func TestBlockDownloader_PriorityBehavior(t *testing.T) {
 		mockStore.EXPECT().BlockExists(cid1).Return(nil).Once()
 		mockStore.EXPECT().BlockExists(cid2).Return(nil).Once()
 
-		// Mock DownloadObject calls in order we expect them to be processed
+		// Mock DownloadObjectWithOptions calls in order we expect them to be processed
 		// (high priority first, then low priority)
-		mockStorage.EXPECT().DownloadObject(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(&mockReadCloser{Reader: strings.NewReader("test2")}, nil).Once()
-		mockStorage.EXPECT().DownloadObject(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(&mockReadCloser{Reader: strings.NewReader("test1")}, nil).Once()
+		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			RunAndReturn(func(ctx context.Context, protocol core.StorageProtocol, objectHash core.StorageHash, opts ...core.StorageOptionFunc) (io.ReadCloser, error) {
+				// Return the correct data for each CID
+				if objectHash.Multihash().String() == cid2.Hash().String() {
+					return &mockReadCloser{Reader: strings.NewReader("test2")}, nil
+				}
+				if objectHash.Multihash().String() == cid1.Hash().String() {
+					return &mockReadCloser{Reader: strings.NewReader("test1")}, nil
+				}
+				return nil, fmt.Errorf("unexpected CID requested")
+			}).Times(2)
 
 		// Mock BlockSiblings and BlockChildren to return empty slices
 		mockStore.EXPECT().BlockSiblings(mock.Anything, 64).Return([]cid.Cid{}, nil)
@@ -269,11 +243,7 @@ func TestBlockDownloader_ConcurrentGet(t *testing.T) {
 		// Create a mock MetadataStore
 		mockStore := mocks.NewMockMetadataStore(t)
 
-		// Create a mock StorageService
-		mockStorage := coreMocks.NewMockStorageService(t)
-
-		// Configure the mock context
-		ctx.RegisterService(core.STORAGE_SERVICE, mockStorage)
+		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
 		numRoutines := 10
 		var wg sync.WaitGroup
@@ -293,9 +263,9 @@ func TestBlockDownloader_ConcurrentGet(t *testing.T) {
 			testData[i].data = data
 		}
 
-		// Mock the DownloadObject call - expect exactly numRoutines calls with different data
-		mockStorage.EXPECT().DownloadObject(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			RunAndReturn(func(ctx context.Context, protocol core.StorageProtocol, objectHash core.StorageHash, start int64) (io.ReadCloser, error) {
+		// Mock the DownloadObjectWithOptions call - expect exactly numRoutines calls with different data
+		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			RunAndReturn(func(ctx context.Context, protocol core.StorageProtocol, objectHash core.StorageHash, opts ...core.StorageOptionFunc) (io.ReadCloser, error) {
 				// Find the matching test data for this CID
 				for _, td := range testData {
 					if objectHash.Multihash().String() == td.cid.Hash().String() {
@@ -337,11 +307,7 @@ func TestBlockDownloader_HashMismatch(t *testing.T) {
 		// Create a mock MetadataStore
 		mockStore := mocks.NewMockMetadataStore(t)
 
-		// Create a mock StorageService
-		mockStorage := coreMocks.NewMockStorageService(t)
-
-		// Configure the mock context
-		ctx.RegisterService(core.STORAGE_SERVICE, mockStorage)
+		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
 		// Configure the BlockDownloaderDefault
 		bd, err := downloader.NewBlockDownloader(ctx, mockStore, 2)
@@ -355,8 +321,8 @@ func TestBlockDownloader_HashMismatch(t *testing.T) {
 		// Mock the BlockExists call
 		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
 
-		// Mock the DownloadObject call to return incorrect data
-		mockStorage.EXPECT().DownloadObject(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		// Mock the DownloadObjectWithOptions call to return incorrect data
+		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(&mockReadCloser{Reader: strings.NewReader("incorrect data")}, nil).Once()
 
 		// Call Get
@@ -372,11 +338,7 @@ func TestBlockDownloader_VerifyError(t *testing.T) {
 		// Create a mock MetadataStore
 		mockStore := mocks.NewMockMetadataStore(t)
 
-		// Create a mock StorageService
-		mockStorage := coreMocks.NewMockStorageService(t)
-
-		// Configure the mock context
-		ctx.RegisterService(core.STORAGE_SERVICE, mockStorage)
+		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
 		// Configure the BlockDownloaderDefault
 		bd, err := downloader.NewBlockDownloader(ctx, mockStore, 2)
@@ -390,8 +352,8 @@ func TestBlockDownloader_VerifyError(t *testing.T) {
 		// Mock the BlockExists call
 		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
 
-		// Mock the DownloadObject call
-		mockStorage.EXPECT().DownloadObject(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		// Mock the DownloadObjectWithOptions call
+		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(&mockReadCloser{Reader: strings.NewReader("test data")}, nil).Once()
 
 		// Call Get
@@ -408,11 +370,7 @@ func TestBlockDownloader_ReadError(t *testing.T) {
 		// Create a mock MetadataStore
 		mockStore := mocks.NewMockMetadataStore(t)
 
-		// Create a mock StorageService
-		mockStorage := coreMocks.NewMockStorageService(t)
-
-		// Configure the mock context
-		ctx.RegisterService(core.STORAGE_SERVICE, mockStorage)
+		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
 		// Configure the BlockDownloaderDefault
 		bd, err := downloader.NewBlockDownloader(ctx, mockStore, 2)
@@ -426,8 +384,8 @@ func TestBlockDownloader_ReadError(t *testing.T) {
 		// Mock the BlockExists call
 		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
 
-		// Mock the DownloadObject call to return a reader that errors
-		mockStorage.EXPECT().DownloadObject(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		// Mock the DownloadObjectWithOptions call to return a reader that errors
+		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(&mockReadCloser{Reader: &errorReader{}}, nil).Once()
 
 		// Call Get
@@ -449,11 +407,7 @@ func TestBlockDownloader_QueueRelated_BlockSiblingsError(t *testing.T) {
 		// Create a mock MetadataStore
 		mockStore := mocks.NewMockMetadataStore(t)
 
-		// Create a mock StorageService
-		mockStorage := coreMocks.NewMockStorageService(t)
-
-		// Configure the mock context
-		ctx.RegisterService(core.STORAGE_SERVICE, mockStorage)
+		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
 		// Configure the BlockDownloaderDefault
 		bd, err := downloader.NewBlockDownloader(ctx, mockStore, 2)
@@ -467,8 +421,8 @@ func TestBlockDownloader_QueueRelated_BlockSiblingsError(t *testing.T) {
 		// Mock the BlockExists call
 		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
 
-		// Mock the DownloadObject call
-		mockStorage.EXPECT().DownloadObject(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		// Mock the DownloadObjectWithOptions call
+		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(&mockReadCloser{Reader: strings.NewReader("test data")}, nil).Once()
 
 		// Mock BlockSiblings to return an error when queueRelated is called
@@ -489,11 +443,7 @@ func TestBlockDownloader_QueueRelated_BlockChildrenError(t *testing.T) {
 		// Create a mock MetadataStore
 		mockStore := mocks.NewMockMetadataStore(t)
 
-		// Create a mock StorageService
-		mockStorage := coreMocks.NewMockStorageService(t)
-
-		// Configure the mock context
-		ctx.RegisterService(core.STORAGE_SERVICE, mockStorage)
+		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
 		// Configure the BlockDownloaderDefault
 		bd, err := downloader.NewBlockDownloader(ctx, mockStore, 2)
@@ -507,8 +457,8 @@ func TestBlockDownloader_QueueRelated_BlockChildrenError(t *testing.T) {
 		// Mock the BlockExists call
 		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
 
-		// Mock the DownloadObject call
-		mockStorage.EXPECT().DownloadObject(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		// Mock the DownloadObjectWithOptions call
+		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(&mockReadCloser{Reader: strings.NewReader("test data")}, nil).Once()
 
 		// Mock BlockSiblings to return empty slice
@@ -532,11 +482,7 @@ func TestBlockDownloader_Get_ContextDone(t *testing.T) {
 		// Create a mock MetadataStore
 		mockStore := mocks.NewMockMetadataStore(t)
 
-		// Create a mock StorageService
-		mockStorage := coreMocks.NewMockStorageService(t)
-
-		// Configure the mock context
-		ctx.RegisterService(core.STORAGE_SERVICE, mockStorage)
+		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
 		// Configure the BlockDownloaderDefault
 		bd, err := downloader.NewBlockDownloader(ctx, mockStore, 2)

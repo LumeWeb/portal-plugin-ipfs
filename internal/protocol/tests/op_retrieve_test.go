@@ -20,6 +20,11 @@ func TestRetrieveOperationHandler_Execute_Integration(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		_cid, _ := cid.Parse(KnownCID)
 
+		// Create test user
+		userSvc := core.GetService[core.UserService](ctx, core.USER_SERVICE)
+		testUser, err := userSvc.CreateAccount("test-retrieve@example.com", "testpassword123", false)
+		require.NoError(tb, err)
+
 		model, err := dto.PinRequest{CID: KnownCID}.ToModel()
 		require.NoError(tb, err)
 
@@ -27,7 +32,6 @@ func TestRetrieveOperationHandler_Execute_Integration(t *testing.T) {
 		// Create a WorkflowTest instance.
 		wfTest := coreTesting.NewWorkflowTest(ctx)
 		wfTest.DisableWorkflow(protocol.PIN_WORKFLOW)
-		wfTest.DisableWorkflow(protocol.PIN_CHILD_BLOCK_WORKFLOW)
 
 		// Act - Add the pin
 		_pin, err := pinService.AddPin(context.Background(), model)
@@ -42,11 +46,12 @@ func TestRetrieveOperationHandler_Execute_Integration(t *testing.T) {
 				PinRequestID: _pin.RequestID.ToUUID(),
 			}, "json"),
 			core.WithWorkflowStorageHash(internal.NewIPFSHash(_cid)),
-			core.WithWorkflowUserID(0),
+			core.WithWorkflowUserID(testUser.ID),
 			core.WithWorkflowSourceIP("127.0.0.1"))
 
 		// Execute the workflow step.
 		wfTest.ExecuteWorkflowStep(req)
+		wfTest.CompleteWorkflowStep(req)
 
 		// Assertions
 		wfTest.AssertOperationSuccess(req)

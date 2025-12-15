@@ -49,7 +49,7 @@ func TestFilePathOperationHandler_ComputePathsRecursive_MultiLevelDirectory(t *t
 		processed := make(map[string]bool)
 
 		// Act
-		err := handler.ComputePathsRecursive(context.Background(), fileManagerSvc, rootUnixFS, userID, rootCID, "", 0, processed, false)
+		_, err := handler.ComputePathsRecursive(context.Background(), fileManagerSvc, rootUnixFS, userID, rootCID, "", 0, processed, false)
 
 		// Assert
 		require.NoError(tb, err)
@@ -76,7 +76,7 @@ func TestFilePathOperationHandler_ComputePathsRecursive_MultiLevelDirectory(t *t
 			"file2.txt",
 		}
 		expectedDirectories := []bool{true, true, true, false, false}
-		expectedParentPaths := []string{"", "/root_dir", "/root_dir/subdir1", "/root_dir/subdir1/subdir2", "/root_dir/subdir1/subdir2"}
+		expectedParentPaths := []string{"/", "/root_dir", "/root_dir/subdir1", "/root_dir/subdir1/subdir2", "/root_dir/subdir1/subdir2"}
 		expectedDepths := []int{0, 1, 2, 3, 3}
 
 		for i, path := range expectedPaths {

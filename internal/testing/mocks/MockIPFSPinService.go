@@ -7,6 +7,7 @@ package mocks
 import (
 	"context"
 
+	"github.com/ipfs/go-cid"
 	mock "github.com/stretchr/testify/mock"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/db/types"
@@ -163,6 +164,80 @@ func (_c *MockIPFSPinService_DeletePin_Call) Return(err error) *MockIPFSPinServi
 }
 
 func (_c *MockIPFSPinService_DeletePin_Call) RunAndReturn(run func(ctx context.Context, requestID types.BinaryUUID) error) *MockIPFSPinService_DeletePin_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetPinByCIDAndUser provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) GetPinByCIDAndUser(ctx context.Context, c cid.Cid, userID uint) (*db.IPFSPin, error) {
+	ret := _mock.Called(ctx, c, userID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetPinByCIDAndUser")
+	}
+
+	var r0 *db.IPFSPin
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, cid.Cid, uint) (*db.IPFSPin, error)); ok {
+		return returnFunc(ctx, c, userID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, cid.Cid, uint) *db.IPFSPin); ok {
+		r0 = returnFunc(ctx, c, userID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.IPFSPin)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, cid.Cid, uint) error); ok {
+		r1 = returnFunc(ctx, c, userID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIPFSPinService_GetPinByCIDAndUser_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetPinByCIDAndUser'
+type MockIPFSPinService_GetPinByCIDAndUser_Call struct {
+	*mock.Call
+}
+
+// GetPinByCIDAndUser is a helper method to define mock.On call
+//   - ctx context.Context
+//   - c cid.Cid
+//   - userID uint
+func (_e *MockIPFSPinService_Expecter) GetPinByCIDAndUser(ctx interface{}, c interface{}, userID interface{}) *MockIPFSPinService_GetPinByCIDAndUser_Call {
+	return &MockIPFSPinService_GetPinByCIDAndUser_Call{Call: _e.mock.On("GetPinByCIDAndUser", ctx, c, userID)}
+}
+
+func (_c *MockIPFSPinService_GetPinByCIDAndUser_Call) Run(run func(ctx context.Context, c cid.Cid, userID uint)) *MockIPFSPinService_GetPinByCIDAndUser_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 cid.Cid
+		if args[1] != nil {
+			arg1 = args[1].(cid.Cid)
+		}
+		var arg2 uint
+		if args[2] != nil {
+			arg2 = args[2].(uint)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_GetPinByCIDAndUser_Call) Return(iPFSPin *db.IPFSPin, err error) *MockIPFSPinService_GetPinByCIDAndUser_Call {
+	_c.Call.Return(iPFSPin, err)
+	return _c
+}
+
+func (_c *MockIPFSPinService_GetPinByCIDAndUser_Call) RunAndReturn(run func(ctx context.Context, c cid.Cid, userID uint) (*db.IPFSPin, error)) *MockIPFSPinService_GetPinByCIDAndUser_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -516,6 +591,74 @@ func (_c *MockIPFSPinService_UpdatePinStatus_Call) Return(err error) *MockIPFSPi
 }
 
 func (_c *MockIPFSPinService_UpdatePinStatus_Call) RunAndReturn(run func(ctx context.Context, requestID types.BinaryUUID, status db.PinningStatus, info datatypes.JSON) error) *MockIPFSPinService_UpdatePinStatus_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ValidateDAGCompletion provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) ValidateDAGCompletion(ctx context.Context, pin *db.IPFSPin) ([][]byte, error) {
+	ret := _mock.Called(ctx, pin)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ValidateDAGCompletion")
+	}
+
+	var r0 [][]byte
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *db.IPFSPin) ([][]byte, error)); ok {
+		return returnFunc(ctx, pin)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *db.IPFSPin) [][]byte); ok {
+		r0 = returnFunc(ctx, pin)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([][]byte)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *db.IPFSPin) error); ok {
+		r1 = returnFunc(ctx, pin)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIPFSPinService_ValidateDAGCompletion_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ValidateDAGCompletion'
+type MockIPFSPinService_ValidateDAGCompletion_Call struct {
+	*mock.Call
+}
+
+// ValidateDAGCompletion is a helper method to define mock.On call
+//   - ctx context.Context
+//   - pin *db.IPFSPin
+func (_e *MockIPFSPinService_Expecter) ValidateDAGCompletion(ctx interface{}, pin interface{}) *MockIPFSPinService_ValidateDAGCompletion_Call {
+	return &MockIPFSPinService_ValidateDAGCompletion_Call{Call: _e.mock.On("ValidateDAGCompletion", ctx, pin)}
+}
+
+func (_c *MockIPFSPinService_ValidateDAGCompletion_Call) Run(run func(ctx context.Context, pin *db.IPFSPin)) *MockIPFSPinService_ValidateDAGCompletion_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *db.IPFSPin
+		if args[1] != nil {
+			arg1 = args[1].(*db.IPFSPin)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_ValidateDAGCompletion_Call) Return(bytess [][]byte, err error) *MockIPFSPinService_ValidateDAGCompletion_Call {
+	_c.Call.Return(bytess, err)
+	return _c
+}
+
+func (_c *MockIPFSPinService_ValidateDAGCompletion_Call) RunAndReturn(run func(ctx context.Context, pin *db.IPFSPin) ([][]byte, error)) *MockIPFSPinService_ValidateDAGCompletion_Call {
 	_c.Call.Return(run)
 	return _c
 }

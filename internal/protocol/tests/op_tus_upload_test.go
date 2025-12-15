@@ -100,10 +100,11 @@ func TestTUSUploadOperationHandler_Execute_Integration(t *testing.T) {
 
 		req := wfTest.GetRequest(tusUpload.RequestID)
 		wfTest.ExecuteWorkflowStep(req)
+		wfTest.CompleteWorkflowStep(req)
 
 		// --- Assertions ---
 		wfTest.AssertOperationSuccess(req)
-		wfTest.AssertOperationStatusMessageContains(req, "Request completed successfully")
+		wfTest.AssertOperationStatusMessageContains(req, "Successfully completed")
 		wfTest.AssertOperationStatusProgress(req, 100)
 	},
 		GetTUSUploadTestOptions()...,

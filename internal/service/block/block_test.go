@@ -2,21 +2,28 @@ package block
 
 import (
 	"context"
+	"testing"
+
 	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
-	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"gorm.io/gorm"
-	"testing"
 )
 
-
+// cidSliceToStrings converts a slice of cid.Cid to a slice of strings
+func cidSliceToStrings(cids []cid.Cid) []string {
+	result := make([]string, len(cids))
+	for i, c := range cids {
+		result[i] = c.String()
+	}
+	return result
+}
 
 var TestOptions = coreTesting.CombineOptions(
 	coreTesting.WithServiceFactory(pluginCore.BLOCK_SERVICE, NewBlockService),
@@ -24,8 +31,6 @@ var TestOptions = coreTesting.CombineOptions(
 		internal.ProtocolName, migrations.GetSQLite(),
 	),
 )
-
-
 
 func TestBlockService_GetBlockMeta(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
@@ -50,12 +55,7 @@ func TestBlockService_GetBlockMeta(t *testing.T) {
 		assert.Equal(tb, expectedNode.Type, meta.Type)
 		assert.Equal(tb, expectedNode.BlockSize, meta.BlockSize)
 
-		// Convert childCIDs to string representation for comparison
-		expectedChildCIDStrings := make([]string, len(childCIDs))
-		for i, c := range childCIDs {
-			expectedChildCIDStrings[i] = c.String()
-		}
-		assert.ElementsMatch(tb, expectedChildCIDStrings, meta.ChildCID)
+		assert.ElementsMatch(tb, cidSliceToStrings(childCIDs), cidSliceToStrings(meta.ChildCID))
 	}, TestOptions)
 }
 
@@ -110,11 +110,7 @@ func TestBlockService_GetBlockMetaBatch(t *testing.T) {
 		assert.Equal(tb, expectedNode1.Name, meta1.Name)
 		assert.Equal(tb, expectedNode1.Type, meta1.Type)
 		assert.Equal(tb, expectedNode1.BlockSize, meta1.BlockSize)
-		expectedChildCIDStrings1 := make([]string, len(childCIDs1))
-		for i, c := range childCIDs1 {
-			expectedChildCIDStrings1[i] = c.String()
-		}
-		assert.ElementsMatch(tb, expectedChildCIDStrings1, meta1.ChildCID)
+		assert.ElementsMatch(tb, cidSliceToStrings(childCIDs1), cidSliceToStrings(meta1.ChildCID))
 
 		// Assert meta for testCID2
 		meta2 := metas[testCID2.String()]
@@ -122,14 +118,9 @@ func TestBlockService_GetBlockMetaBatch(t *testing.T) {
 		assert.Equal(tb, expectedNode2.Name, meta2.Name)
 		assert.Equal(tb, expectedNode2.Type, meta2.Type)
 		assert.Equal(tb, expectedNode2.BlockSize, meta2.BlockSize)
-		expectedChildCIDStrings2 := make([]string, len(childCIDs2))
-		for i, c := range childCIDs2 {
-			expectedChildCIDStrings2[i] = c.String()
-		}
-		assert.ElementsMatch(tb, expectedChildCIDStrings2, meta2.ChildCID)
+		assert.ElementsMatch(tb, cidSliceToStrings(childCIDs2), cidSliceToStrings(meta2.ChildCID))
 	}, TestOptions)
 }
-
 
 func TestBlockService_GetBlockMetaBatch_Mixed(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
@@ -169,11 +160,7 @@ func TestBlockService_GetBlockMetaBatch_Mixed(t *testing.T) {
 		assert.Equal(tb, expectedNode1.Name, meta1.Name)
 		assert.Equal(tb, expectedNode1.Type, meta1.Type)
 		assert.Equal(tb, expectedNode1.BlockSize, meta1.BlockSize)
-		expectedChildCIDStrings1 := make([]string, len(childCIDs1))
-		for i, c := range childCIDs1 {
-			expectedChildCIDStrings1[i] = c.String()
-		}
-		assert.ElementsMatch(tb, expectedChildCIDStrings1, meta1.ChildCID)
+		assert.ElementsMatch(tb, cidSliceToStrings(childCIDs1), cidSliceToStrings(meta1.ChildCID))
 
 		// Assert meta for testCID2
 		meta2 := metas[testCID2.String()]
@@ -181,11 +168,7 @@ func TestBlockService_GetBlockMetaBatch_Mixed(t *testing.T) {
 		assert.Equal(tb, expectedNode2.Name, meta2.Name)
 		assert.Equal(tb, expectedNode2.Type, meta2.Type)
 		assert.Equal(tb, expectedNode2.BlockSize, meta2.BlockSize)
-		expectedChildCIDStrings2 := make([]string, len(childCIDs2))
-		for i, c := range childCIDs2 {
-			expectedChildCIDStrings2[i] = c.String()
-		}
-		assert.ElementsMatch(tb, expectedChildCIDStrings2, meta2.ChildCID)
+		assert.ElementsMatch(tb, cidSliceToStrings(childCIDs2), cidSliceToStrings(meta2.ChildCID))
 
 		// Assert that nonExistentCID is not in the result
 		_, ok := metas[nonExistentCID.String()]

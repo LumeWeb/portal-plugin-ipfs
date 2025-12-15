@@ -10,6 +10,7 @@ import (
 
 	"github.com/ipfs/go-cid"
 	mock "github.com/stretchr/testify/mock"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
 
 // NewMockUploadService creates a new instance of MockUploadService. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -37,6 +38,80 @@ type MockUploadService_Expecter struct {
 
 func (_m *MockUploadService) EXPECT() *MockUploadService_Expecter {
 	return &MockUploadService_Expecter{mock: &_m.Mock}
+}
+
+// CreateRootPin provides a mock function for the type MockUploadService
+func (_mock *MockUploadService) CreateRootPin(ctx context.Context, cid1 cid.Cid, userId uint) (*db.IPFSPin, error) {
+	ret := _mock.Called(ctx, cid1, userId)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CreateRootPin")
+	}
+
+	var r0 *db.IPFSPin
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, cid.Cid, uint) (*db.IPFSPin, error)); ok {
+		return returnFunc(ctx, cid1, userId)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, cid.Cid, uint) *db.IPFSPin); ok {
+		r0 = returnFunc(ctx, cid1, userId)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.IPFSPin)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, cid.Cid, uint) error); ok {
+		r1 = returnFunc(ctx, cid1, userId)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockUploadService_CreateRootPin_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CreateRootPin'
+type MockUploadService_CreateRootPin_Call struct {
+	*mock.Call
+}
+
+// CreateRootPin is a helper method to define mock.On call
+//   - ctx context.Context
+//   - cid1 cid.Cid
+//   - userId uint
+func (_e *MockUploadService_Expecter) CreateRootPin(ctx interface{}, cid1 interface{}, userId interface{}) *MockUploadService_CreateRootPin_Call {
+	return &MockUploadService_CreateRootPin_Call{Call: _e.mock.On("CreateRootPin", ctx, cid1, userId)}
+}
+
+func (_c *MockUploadService_CreateRootPin_Call) Run(run func(ctx context.Context, cid1 cid.Cid, userId uint)) *MockUploadService_CreateRootPin_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 cid.Cid
+		if args[1] != nil {
+			arg1 = args[1].(cid.Cid)
+		}
+		var arg2 uint
+		if args[2] != nil {
+			arg2 = args[2].(uint)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockUploadService_CreateRootPin_Call) Return(iPFSPin *db.IPFSPin, err error) *MockUploadService_CreateRootPin_Call {
+	_c.Call.Return(iPFSPin, err)
+	return _c
+}
+
+func (_c *MockUploadService_CreateRootPin_Call) RunAndReturn(run func(ctx context.Context, cid1 cid.Cid, userId uint) (*db.IPFSPin, error)) *MockUploadService_CreateRootPin_Call {
+	_c.Call.Return(run)
+	return _c
 }
 
 // HandleUpload provides a mock function for the type MockUploadService
@@ -161,12 +236,12 @@ func (_c *MockUploadService_ID_Call) RunAndReturn(run func() string) *MockUpload
 	return _c
 }
 
-// ProcessCIDs provides a mock function for the type MockUploadService
-func (_mock *MockUploadService) ProcessCIDs(ctx context.Context, cids []cid.Cid, userId uint) error {
+// ProcessUpload provides a mock function for the type MockUploadService
+func (_mock *MockUploadService) ProcessUpload(ctx context.Context, cids []cid.Cid, userId uint) error {
 	ret := _mock.Called(ctx, cids, userId)
 
 	if len(ret) == 0 {
-		panic("no return value specified for ProcessCIDs")
+		panic("no return value specified for ProcessUpload")
 	}
 
 	var r0 error
@@ -178,20 +253,20 @@ func (_mock *MockUploadService) ProcessCIDs(ctx context.Context, cids []cid.Cid,
 	return r0
 }
 
-// MockUploadService_ProcessCIDs_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ProcessCIDs'
-type MockUploadService_ProcessCIDs_Call struct {
+// MockUploadService_ProcessUpload_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ProcessUpload'
+type MockUploadService_ProcessUpload_Call struct {
 	*mock.Call
 }
 
-// ProcessCIDs is a helper method to define mock.On call
+// ProcessUpload is a helper method to define mock.On call
 //   - ctx context.Context
 //   - cids []cid.Cid
 //   - userId uint
-func (_e *MockUploadService_Expecter) ProcessCIDs(ctx interface{}, cids interface{}, userId interface{}) *MockUploadService_ProcessCIDs_Call {
-	return &MockUploadService_ProcessCIDs_Call{Call: _e.mock.On("ProcessCIDs", ctx, cids, userId)}
+func (_e *MockUploadService_Expecter) ProcessUpload(ctx interface{}, cids interface{}, userId interface{}) *MockUploadService_ProcessUpload_Call {
+	return &MockUploadService_ProcessUpload_Call{Call: _e.mock.On("ProcessUpload", ctx, cids, userId)}
 }
 
-func (_c *MockUploadService_ProcessCIDs_Call) Run(run func(ctx context.Context, cids []cid.Cid, userId uint)) *MockUploadService_ProcessCIDs_Call {
+func (_c *MockUploadService_ProcessUpload_Call) Run(run func(ctx context.Context, cids []cid.Cid, userId uint)) *MockUploadService_ProcessUpload_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -214,12 +289,12 @@ func (_c *MockUploadService_ProcessCIDs_Call) Run(run func(ctx context.Context, 
 	return _c
 }
 
-func (_c *MockUploadService_ProcessCIDs_Call) Return(err error) *MockUploadService_ProcessCIDs_Call {
+func (_c *MockUploadService_ProcessUpload_Call) Return(err error) *MockUploadService_ProcessUpload_Call {
 	_c.Call.Return(err)
 	return _c
 }
 
-func (_c *MockUploadService_ProcessCIDs_Call) RunAndReturn(run func(ctx context.Context, cids []cid.Cid, userId uint) error) *MockUploadService_ProcessCIDs_Call {
+func (_c *MockUploadService_ProcessUpload_Call) RunAndReturn(run func(ctx context.Context, cids []cid.Cid, userId uint) error) *MockUploadService_ProcessUpload_Call {
 	_c.Call.Return(run)
 	return _c
 }

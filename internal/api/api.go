@@ -58,11 +58,7 @@ type API struct {
 	fileManagerService pluginCore.FileManagerService
 	workflowService    core.WorkflowService
 	tus                core.TusHandler
-	ipfs               ProtoNode
-}
-
-type ProtoNode interface {
-	GetNode() *ipfs.Node
+	ipfs               protocol.ProtoNode
 }
 
 func NewAPI() (core.API, []core.ContextBuilderOption, error) {
@@ -181,7 +177,8 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 
 				return nil
 			})
-			api.ipfs = proto.(ProtoNode)
+
+			api.ipfs = proto.(protocol.ProtoNode)
 
 			return nil
 		}),
@@ -1078,7 +1075,7 @@ func (a *API) handleFileManagerRequest(
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	service, err := serviceFunc(ctx, reqCtx, user)
+	svc, err := serviceFunc(ctx, reqCtx, user)
 	if err != nil {
 		// If error was already handled by the serviceFunc, return nil
 		if errors.Is(err, context.Canceled) {
@@ -1093,7 +1090,7 @@ func (a *API) handleFileManagerRequest(
 		c.Response(),
 		c.Request(),
 		"files",
-		service,
+		svc,
 		func(path *pluginDb.FilePath) dto.FileManagerItem {
 			return a.convertFilePathToManagerItem(path, user)
 		},

@@ -24,7 +24,6 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
-	coreMocks "go.lumeweb.com/portal/core/testing/mocks"
 	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/db/types"
 	"gorm.io/gorm"
@@ -957,7 +956,7 @@ func TestUnpinOperationHandler_GetStatus(t *testing.T) {
 		}
 
 		// Mock the workflow service to return our test data
-		workflowSvc := core.GetService[*coreMocks.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
+		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
 
 		// Create a koanf instance and populate it with our test data
 		k := koanf.New(".")
@@ -1557,7 +1556,7 @@ func TestUnpinOperationHandler_GetStatus_WorkflowError(t *testing.T) {
 			Status: models.RequestStatusProcessing,
 		}
 
-		workflowSvc := core.GetService[*coreMocks.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
+		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
 		workflowSvc.On("GetWorkflowMetadata", ctx, req.ID).Return((*koanf.Koanf)(nil), errors.New("workflow service error"))
 
 		// Act
