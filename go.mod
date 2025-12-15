@@ -33,7 +33,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tus/tusd/v2 v2.8.0
 	go.lumeweb.com/httputil v0.5.3
-	go.lumeweb.com/portal v0.4.2-0.20251215093516-b73033acd892
+	go.lumeweb.com/portal v0.4.2-0.20251215202655-ed4eaea82f18
 	go.lumeweb.com/portal-middleware v0.3.3
 	go.lumeweb.com/portal-plugin-core v0.0.0-20251213020130-9d424965fad2
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20251213101354-739005102118
@@ -81,7 +81,7 @@ require (
 	github.com/boombuler/barcode v1.0.2 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/casbin/casbin/v2 v2.135.0 // indirect
-	github.com/casbin/gorm-adapter/v3 v3.36.0 // indirect
+	github.com/casbin/gorm-adapter/v3 v3.39.0 // indirect
 	github.com/casbin/govaluate v1.8.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
@@ -106,7 +106,7 @@ require (
 	github.com/glebarez/go-sqlite v1.22.0 // indirect
 	github.com/glebarez/sqlite v1.11.0 // indirect
 	github.com/go-chi/chi/v5 v5.2.2 // indirect
-	github.com/go-co-op/gocron/v2 v2.16.3 // indirect
+	github.com/go-co-op/gocron/v2 v2.19.0 // indirect
 	github.com/go-gorm/caches/v4 v4.0.5 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -230,7 +230,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/polydawn/refmt v0.89.0 // indirect
 	github.com/pquerna/otp v1.5.0 // indirect
-	github.com/pressly/goose/v3 v3.24.3 // indirect
+	github.com/pressly/goose/v3 v3.26.0 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
@@ -313,7 +313,7 @@ require (
 	modernc.org/libc v1.66.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.38.0 // indirect
+	modernc.org/sqlite v1.38.2 // indirect
 )
 
 replace github.com/go-viper/mapstructure/v2 => github.com/LumeWeb/mapstructure/v2 v2.0.0-20241213212524-92525f5828be
