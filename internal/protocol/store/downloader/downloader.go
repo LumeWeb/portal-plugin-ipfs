@@ -166,9 +166,9 @@ func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.C
 		return nil, fmt.Errorf("block hash mismatch: expected %s, actual %s", c.Hash().HexString(), h.HexString())
 	}
 
-	// Emit download completion event - anonymous download
-	// uploadID=0 is a sentinel value for anonymous/non-upload-bound downloads
-	// This distinguishes them from user-initiated downloads that have real upload IDs
+	// Emit download completion event for block retrieval
+	// uploadID=0 indicates this download is not associated with a specific upload record
+	// The clientIP is still tracked for quota purposes when available
 	quota.EmitDownloadCompleted(bd.ctx, 0, uint64(len(blockBuf.Bytes())), clientIP)
 
 	return blockBuf.Bytes(), nil

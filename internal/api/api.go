@@ -130,10 +130,14 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 							return
 						}
 
-						// Get client IP - only use if set server-side (not client-supplied)
-						ip := ""
-						// Note: client IP should be extracted from request context, not metadata
-						// to prevent client spoofing for quota/abuse purposes
+						// Get client IP from Echo context
+						echoCtx, ok := service.TusGetEchoContext(hook.Context)
+						var ip string
+						if ok && echoCtx != nil {
+							ip = echoCtx.RealIP()
+						}
+						// Note: client IP is extracted from Echo context to prevent client spoofing
+						// The hook.Context contains the request context with Echo context information
 
 						quota.EmitUploadCompleted(ctx, userID, uint(uploadID), uint64(hook.Upload.Size), ip)
 					}, protocol.TUS_UPLOAD_WORKFLOW,
@@ -775,7 +779,6 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	}
 
 	// Emit download completion event for quota tracking
-	userID = upload.UserID
 
 	// Get client IP
 	ip := c.RealIP()
