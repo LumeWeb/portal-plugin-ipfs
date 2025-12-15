@@ -11,6 +11,8 @@ import (
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 	"io"
 	"sync"
@@ -42,6 +44,7 @@ type (
 		index     int
 		timestamp time.Time
 		log       *core.Logger
+		clientIP  string
 	}
 
 	priorityQueue []*blockResponse
@@ -128,7 +131,7 @@ func (br *blockResponse) block(ctx context.Context, c cid.Cid) (blocks.Block, er
 	return blocks.NewBlockWithCid(br.b, c)
 }
 
-func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.Cid) ([]byte, error) {
+func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.Cid, clientIP string) ([]byte, error) {
 	blockBuf := bytes.NewBuffer(make([]byte, 0, 2<<20))
 
 	bd.log.Debug("Trying to download block", zap.String("CID", c.String()))
@@ -137,17 +140,17 @@ func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.C
 		return nil, fmt.Errorf("failed to download block: %w", err)
 	}
 
+	// Ensure the object is always closed, even on later errors.
+	defer func() {
+		if cerr := object.Close(); cerr != nil {
+			bd.log.Error("failed to close object", zap.Error(cerr))
+		}
+	}()
+
 	_, err = io.Copy(blockBuf, object)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read block: %w", err)
 	}
-
-	defer func(object io.ReadCloser) {
-		err := object.Close()
-		if err != nil {
-			bd.log.Error("failed to close object", zap.Error(err))
-		}
-	}(object)
 
 	// Check if the hash function is supported before verifying
 	mhType := c.Prefix().MhType
@@ -162,6 +165,11 @@ func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.C
 	} else if c.Hash().HexString() != h.HexString() {
 		return nil, fmt.Errorf("block hash mismatch: expected %s, actual %s", c.Hash().HexString(), h.HexString())
 	}
+
+	// Emit download completion event for block retrieval
+	// uploadID=0 indicates this download is not associated with a specific upload record
+	// The clientIP is still tracked for quota purposes when available
+	quota.EmitDownloadCompleted(bd.ctx, 0, uint64(blockBuf.Len()), clientIP)
 
 	return blockBuf.Bytes(), nil
 }
@@ -190,7 +198,9 @@ func (bd *BlockDownloaderDefault) queueRelated(c cid.Cid) {
 			continue
 		}
 
-		if _, ok := bd.queueBlock(sibling, downloadPriorityMedium); ok {
+		// Prefetch downloads use empty client IP to distinguish from user-initiated downloads
+		// This allows quota tracking to differentiate between foreground and background traffic
+		if _, ok := bd.queueBlock(sibling, downloadPriorityMedium, ""); ok {
 			log.Debug("queued sibling", zap.Stringer("sibling", sibling))
 		}
 	}
@@ -202,7 +212,9 @@ func (bd *BlockDownloaderDefault) queueRelated(c cid.Cid) {
 			continue
 		}
 
-		if _, ok := bd.queueBlock(child, downloadPriorityLow); ok {
+		// Prefetch downloads use empty client IP to distinguish from user-initiated downloads
+		// This allows quota tracking to differentiate between foreground and background traffic
+		if _, ok := bd.queueBlock(child, downloadPriorityLow, ""); ok {
 			log.Debug("queued child", zap.Stringer("child", child))
 		}
 	}
@@ -215,7 +227,7 @@ func (bd *BlockDownloaderDefault) doDownloadTask(task *blockResponse, log *zap.L
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	buf, err := bd.downloadBlockData(ctx, task.cid)
+	buf, err := bd.downloadBlockData(ctx, task.cid, task.clientIP)
 	if err != nil {
 		log.Error("failed to download block", zap.Error(err))
 		task.err = err
@@ -254,12 +266,19 @@ func (bd *BlockDownloaderDefault) downloadWorker(n int) {
 	}
 }
 
-func (bd *BlockDownloaderDefault) queueBlock(c cid.Cid, priority downloadPriority) (*blockResponse, bool) {
+func (bd *BlockDownloaderDefault) queueBlock(c cid.Cid, priority downloadPriority, clientIP string) (*blockResponse, bool) {
 	resp, ok := bd.inflight[cidKey(c)]
 	if ok {
 		if resp.priority < priority {
 			resp.priority = priority
-			heap.Fix(bd.queue, resp.index)
+			// Only call heap.Fix if the task is still in the queue (index >= 0)
+			if resp.index >= 0 {
+				heap.Fix(bd.queue, resp.index)
+			}
+		}
+		// Upgrade from anonymous/prefetch to user-initiated download when possible.
+		if resp.clientIP == "" && clientIP != "" {
+			resp.clientIP = clientIP
 		}
 		return resp, false
 	}
@@ -270,8 +289,9 @@ func (bd *BlockDownloaderDefault) queueBlock(c cid.Cid, priority downloadPriorit
 		priority:  priority,
 		timestamp: time.Now(),
 
-		ch:  make(chan struct{}),
-		log: bd.log,
+		ch:       make(chan struct{}),
+		log:      bd.log,
+		clientIP: clientIP,
 	}
 	bd.inflight[cidKey(c)] = resp
 	heap.Push(bd.queue, resp)
@@ -294,10 +314,13 @@ func (bd *BlockDownloaderDefault) Get(ctx context.Context, c cid.Cid) (blocks.Bl
 		return nil, err
 	}
 
+	// Get client IP from context before locking
+	clientIP := store.GetClientIP(ctx)
+
 	bd.mu.Lock()
 
 	bd.log.Debug("queuing block", zap.String("CID", c.String()))
-	resp, _ := bd.queueBlock(c, downloadPriorityMax)
+	resp, _ := bd.queueBlock(c, downloadPriorityMax, clientIP)
 	bd.mu.Unlock()
 	bd.log.Debug("waiting on queued block", zap.String("CID", c.String()))
 	return resp.block(ctx, c)
@@ -318,11 +341,17 @@ func NewBlockDownloader(ctx core.Context, store pluginCore.MetadataStore, worker
 		return nil, fmt.Errorf("protocol not found: %s", internal.ProtocolName)
 	}
 
+	storage := core.GetService[core.StorageService](ctx, core.STORAGE_SERVICE)
+	if storage == nil {
+		return nil, fmt.Errorf("storage service not found: %s", core.STORAGE_SERVICE)
+	}
+
 	bd := &BlockDownloaderDefault{
+		ctx:     ctx,
 		store:   store,
 		proto:   proto,
 		log:     log,
-		storage: ctx.Service(core.STORAGE_SERVICE).(core.StorageService),
+		storage: storage,
 
 		inflight: make(map[string]*blockResponse),
 		queue:    &priorityQueue{},

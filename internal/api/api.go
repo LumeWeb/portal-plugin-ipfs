@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
@@ -27,6 +28,8 @@ import (
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal-router"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
@@ -84,6 +87,18 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 					Protocol: proto,
 					BasePath: TUS_HTTP_ROUTE,
 					CreatedUploadHandler: service.TUSDefaultUploadCreatedHandler(ctx, func(hook handler.HookEvent, uploaderId uint) (core.StorageHash, error) {
+						// Check upload quota if quota service is available
+						// Defensive size validation to prevent negative/invalid values
+						size := hook.Upload.Size
+						if size < 0 {
+							api.logger.Warn("Unexpected negative upload size in TUS hook", zap.Int64("size", size))
+							return nil, core.ErrUploadQuotaExceeded
+						}
+						requestedBytes := uint64(size)
+						if err := quota.ValidateUploadQuota(ctx, uploaderId, requestedBytes); err != nil {
+							api.logger.Error("Failed to check upload quota", zap.Error(err))
+							return nil, err
+						}
 						return nil, nil
 					}, nil),
 					UploadProgressHandler:   service.TUSDefaultUploadProgressHandler(ctx),
@@ -99,6 +114,45 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 						if !validateCARUpload(upload, api.tus, ctx, sproto, hook.Upload.ID, api.logger) {
 							return
 						}
+
+						// Emit upload completion event for quota tracking
+						// Get uploader ID from hook
+						var userID *uint
+						if hook.Upload.MetaData != nil {
+							if uploaderID, exists := hook.Upload.MetaData["uploader_id"]; exists {
+								if uid, err := strconv.ParseUint(uploaderID, 10, 64); err == nil {
+									userIDVal := uint(uid)
+									userID = &userIDVal
+								} else {
+									api.logger.Warn("Failed to parse uploader_id from metadata", zap.String("uploader_id", uploaderID), zap.Error(err))
+									// Keep userID nil and continue; event will be emitted without user binding.
+								}
+							}
+						}
+
+						// Parse upload ID
+						uploadID, err := strconv.ParseUint(hook.Upload.ID, 10, 64)
+						if err != nil {
+							api.logger.Warn("Failed to parse upload ID", zap.String("upload_id", hook.Upload.ID), zap.Error(err))
+							return
+						}
+
+						// Get client IP from Echo context
+						echoCtx, ok := service.TusGetEchoContext(hook.Context)
+						var ip string
+						if ok && echoCtx != nil {
+							ip = echoCtx.RealIP()
+						}
+						// Note: client IP is extracted from Echo context to prevent client spoofing
+						// The hook.Context contains the request context with Echo context information
+
+						// Use defensive size validation for event emission
+						size := hook.Upload.Size
+						if size < 0 {
+							api.logger.Warn("Unexpected negative upload size in TUS completed hook", zap.Int64("size", size))
+							return
+						}
+						quota.EmitUploadCompleted(ctx, userID, uint(uploadID), uint64(size), ip)
 					}, protocol.TUS_UPLOAD_WORKFLOW,
 						func(handlr core.TusHandler, hook handler.HookEvent) (core.StorageHash, error) {
 							upload, err := api.tus.UploadReader(ctx, hook.Upload.ID, sproto, 0)
@@ -666,7 +720,10 @@ func (a *API) handleIPFSGet(c echo.Context) error {
 	}
 	switch model.Format {
 	case "raw":
-		a.handleRawBlockRequest(ctx, model.CID, c.Response(), c.Request())
+		if err := a.handleRawBlockRequest(ctx, model.CID, c.Response(), c.Request(), c); err != nil {
+			// Error response already written inside handleRawBlockRequest.
+			return nil
+		}
 	case "car":
 		// TODO: Implement CAR handling
 		ctx.Response().Header().Set("Content-Type", "application/vnd.ipld.car")
@@ -678,40 +735,78 @@ func (a *API) handleIPFSGet(c echo.Context) error {
 	return nil
 }
 
-func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w http.ResponseWriter, r *http.Request) {
+func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w http.ResponseWriter, r *http.Request, c echo.Context) error {
+	// Create context with client IP for quota tracking
+	reqCtx := ctx.Request().Context()
+	reqCtx = store.ClientIPOption(reqCtx, c.RealIP())
+	// Skip quota check in store since API already validates it
+	reqCtx = store.SkipQuotaCheckOption(reqCtx, true)
+
 	// Check if the block exists before trying to fetch it
-	exists, err := a.ipfs.GetNode().HasBlock(ctx.Request().Context(), _cid)
+	exists, err := a.ipfs.GetNode().HasBlock(reqCtx, _cid)
 	if err != nil {
 		a.logger.Error("Failed to check if block exists", zap.Error(err))
 		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
-		return
+		return apiErr
 	}
 
 	if !exists {
 		apiErr := NewError(ErrKeyBlockNotFound, fmt.Errorf("Block not found: %s", _cid.String()))
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
-		return
+		return apiErr
 	}
 
-	_, err = a.coreUploadService.GetUpload(ctx.Request().Context(), internal.NewIPFSHash(_cid))
+	upload, err := a.coreUploadService.GetUpload(reqCtx, internal.NewIPFSHash(_cid))
 	if err != nil {
 		a.logger.Error("Failed to get upload", zap.Error(err))
 		apiErr := NewError(ErrKeyUploadNotFound, err)
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
-		return
+		return apiErr
 	}
 
-	block, err := a.ipfs.GetNode().GetBlock(ctx.Request().Context(), _cid)
+	if upload == nil {
+		apiErr := NewError(ErrKeyUploadNotFound, fmt.Errorf("upload not found for cid: %s", _cid.String()))
+		_ = ctx.Error(apiErr, apiErr.HttpStatus())
+		return apiErr
+	}
+
+	// Check download quota if quota service is available
+	userID := upload.UserID
+
+	block, err := a.ipfs.GetNode().GetBlock(reqCtx, _cid)
 	if err != nil {
 		a.logger.Error("Failed to get block", zap.Error(err))
 		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
-		return
+		return apiErr
 	}
 
+	// Use actual block size for quota validation and events
+	actualBlockSize := uint64(len(block.RawData()))
+
+	if err := quota.ValidateDownloadQuota(a.ctx, userID, actualBlockSize); err != nil {
+		a.logger.Warn("Download quota validation failed", zap.Uint("user_id", userID), zap.Error(err))
+		apiErr := NewError(ErrKeyDownloadQuotaExceeded, err)
+		_ = ctx.Error(apiErr, http.StatusTooManyRequests)
+		return apiErr
+	}
+
+	// Emit download completion event for quota tracking
+
+	// Get client IP
+	ip := c.RealIP()
+
 	a.setTrustlessHeaders(w, r, _cid.String())
-	_, _ = w.Write(block.RawData())
+	n, err := w.Write(block.RawData())
+	if err != nil {
+		// Don't emit quota event if write failed
+		return err
+	}
+
+	// Emit download completion event only after successful write
+	quota.EmitDownloadCompleted(a.ctx, upload.ID, uint64(n), ip)
+	return nil
 }
 
 func (a API) setTrustlessHeaders(w http.ResponseWriter, r *http.Request, id string) {
