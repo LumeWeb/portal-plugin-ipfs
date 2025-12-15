@@ -119,6 +119,7 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 	}
 
 	// Create upload records and core pin records for ALL CIDs (both roots and children)
+	clientIP := store.GetClientIP(ctx)
 	for _, c := range cids {
 		// Get size for this CID from cached map
 		size, exists := cidSizes[c.String()]
@@ -152,7 +153,9 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 		}
 
 		// Emit storage object pinned event for quota tracking
-		clientIP := store.GetClientIP(ctx)
+		if clientIP == "" {
+			s.ctx.Logger().Warn("Client IP not set in context for quota tracking", zap.String("cid", c.String()))
+		}
 		quota.EmitStorageObjectPinned(s.ctx, createdPin, clientIP)
 
 		// Emit upload completion event for quota tracking
