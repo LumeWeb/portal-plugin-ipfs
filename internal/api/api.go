@@ -110,25 +110,32 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 
 						// Emit upload completion event for quota tracking
 						// Get uploader ID from hook
-						userID := uint(0)
+						var userID *uint
 						if hook.Upload.MetaData != nil {
 							if uploaderID, exists := hook.Upload.MetaData["uploader_id"]; exists {
 								if uid, err := strconv.ParseUint(uploaderID, 10, 64); err == nil {
-									userID = uint(uid)
+									userIDVal := uint(uid)
+									userID = &userIDVal
+								} else {
+									api.logger.Warn("Failed to parse uploader_id from metadata", zap.String("uploader_id", uploaderID), zap.Error(err))
+									return
 								}
 							}
 						}
 
-						// Get client IP
-						ip := ""
-						if hook.Upload.MetaData != nil {
-							if clientIP, exists := hook.Upload.MetaData["client_ip"]; exists {
-								ip = clientIP
-							}
+						// Parse upload ID
+						uploadID, err := strconv.ParseUint(hook.Upload.ID, 10, 64)
+						if err != nil {
+							api.logger.Warn("Failed to parse upload ID", zap.String("upload_id", hook.Upload.ID), zap.Error(err))
+							return
 						}
 
-						uploadID, _ := strconv.ParseUint(hook.Upload.ID, 10, 64)
-						quota.EmitUploadCompleted(ctx, &userID, uint(uploadID), uint64(hook.Upload.Size), ip)
+						// Get client IP - only use if set server-side (not client-supplied)
+						ip := ""
+						// Note: client IP should be extracted from request context, not metadata
+						// to prevent client spoofing for quota/abuse purposes
+
+						quota.EmitUploadCompleted(ctx, userID, uint(uploadID), uint64(hook.Upload.Size), ip)
 					}, protocol.TUS_UPLOAD_WORKFLOW,
 						func(handlr core.TusHandler, hook handler.HookEvent) (core.StorageHash, error) {
 							upload, err := api.tus.UploadReader(ctx, hook.Upload.ID, sproto, 0)

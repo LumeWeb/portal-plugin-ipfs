@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/go-cid"
 	"github.com/labstack/gommon/log"
@@ -12,13 +13,11 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
-	"go.lumeweb.com/portal/db/types"
 	"go.uber.org/zap"
 )
 
@@ -46,22 +45,25 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		return fmt.Errorf("failed to create CID: %w", err)
 	}
 
+	// Get block for quota validation and reuse for downstream processing
+	var block blocks.Block
+	var blockSize uint64
+	
+	protoCfg := h.Context().Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig)
+	getCtx, cancel := context.WithTimeout(ctx, protoCfg.BlockStore.Timeout)
+	defer cancel()
+	
+	proto := h.Protocol().(*Protocol)
+	block, err = proto.GetNode().GetBlock(getCtx, c)
+	if err != nil {
+		return fmt.Errorf("failed to get block: %w", err)
+	}
+	
+	blockSize = uint64(len(block.RawData()))
+	
 	// Check download quota if user ID is available
 	if req.UserID != nil && *req.UserID > 0 {
-		// Get block size for quota validation
-		protoCfg := h.Context().Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig)
-		getCtx, cancel := context.WithTimeout(ctx, protoCfg.BlockStore.Timeout)
-		defer cancel()
-		
-		proto := h.Protocol().(*Protocol)
-		block, err := proto.GetNode().GetBlock(getCtx, c)
-		if err != nil {
-			return fmt.Errorf("failed to get block for quota validation: %w", err)
-		}
-		
-		blockSize := uint64(len(block.RawData()))
-		
-		// Validate download quota
+		// Validate download quota using the already fetched block
 		err = quota.ValidateDownloadQuota(h.Context(), *req.UserID, blockSize)
 		if err != nil {
 			h.Logger().Warn("Download quota exceeded", zap.Uint("user_id", *req.UserID), zap.Uint64("block_size", blockSize), zap.Error(err))
@@ -69,41 +71,17 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		}
 	}
 
-	protoCfg := h.Context().Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig)
-
-	getCtx, cancel := context.WithTimeout(ctx, protoCfg.BlockStore.Timeout)
-	proto := h.Protocol().(*Protocol)
-	_, err = proto.GetNode().GetBlock(getCtx, c)
-	cancel()
-	if err != nil {
-		h.Logger().Error("Failed to get node", zap.Error(err))
-		pinSvc := core.GetService[pluginCore.IPFSPinService](h.Context(), pluginCore.PIN_SERVICE)
-		updateErr := pinSvc.UpdatePinStatus(ctx, types.FromUUID(workflowData.PinRequestID), db.PinningStatusFailed, nil)
-		if updateErr != nil {
-			return updateErr
-		}
-		if isRecoverableNodeError(err) {
-			return fmt.Errorf("failed to store block: %w", err)
-		}
-
-		return nil
-	}
-
 	cids, err := collectDAGCids(h.Context(), proto, c)
 	if err != nil {
 		return fmt.Errorf("failed to collect cids: %w", err)
 	}
 
-	// Fetch the block from the network
-	block, err := h.Protocol().(*Protocol).GetNode().GetBlock(ctx, c)
-	if err != nil {
-		return fmt.Errorf("failed to get block: %w", err)
-	}
-
 	// Emit download completed event for quota tracking
 	if req.UserID != nil && *req.UserID > 0 {
 		blockSize := uint64(len(block.RawData()))
-		quota.EmitDownloadCompleted(h.Context(), req.ID, blockSize, "")
+		// Get client IP from handler context
+		clientIP := store.GetClientIP(h.Context())
+		quota.EmitDownloadCompleted(h.Context(), req.ID, blockSize, clientIP)
 	}
 
 	childCids := lo.Filter(cids, func(item cid.Cid, _ int) bool {

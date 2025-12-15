@@ -44,6 +44,7 @@ type (
 		index     int
 		timestamp time.Time
 		log       *core.Logger
+		clientIP  string
 	}
 
 	priorityQueue []*blockResponse
@@ -130,11 +131,8 @@ func (br *blockResponse) block(ctx context.Context, c cid.Cid) (blocks.Block, er
 	return blocks.NewBlockWithCid(br.b, c)
 }
 
-func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.Cid) ([]byte, error) {
+func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.Cid, clientIP string) ([]byte, error) {
 	blockBuf := bytes.NewBuffer(make([]byte, 0, 2<<20))
-
-	// Get client IP for tracking (may be empty)
-	clientIP := store.GetClientIP(ctx)
 
 	bd.log.Debug("Trying to download block", zap.String("CID", c.String()))
 	object, err := bd.storage.DownloadObjectWithOptions(ctx, bd.proto, internal.NewIPFSHash(c), core.StorageDownloadWithSkipMetadataCheck(true))
@@ -198,7 +196,7 @@ func (bd *BlockDownloaderDefault) queueRelated(c cid.Cid) {
 			continue
 		}
 
-		if _, ok := bd.queueBlock(sibling, downloadPriorityMedium); ok {
+		if _, ok := bd.queueBlock(sibling, downloadPriorityMedium, ""); ok {
 			log.Debug("queued sibling", zap.Stringer("sibling", sibling))
 		}
 	}
@@ -210,7 +208,7 @@ func (bd *BlockDownloaderDefault) queueRelated(c cid.Cid) {
 			continue
 		}
 
-		if _, ok := bd.queueBlock(child, downloadPriorityLow); ok {
+		if _, ok := bd.queueBlock(child, downloadPriorityLow, ""); ok {
 			log.Debug("queued child", zap.Stringer("child", child))
 		}
 	}
@@ -223,7 +221,7 @@ func (bd *BlockDownloaderDefault) doDownloadTask(task *blockResponse, log *zap.L
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	buf, err := bd.downloadBlockData(ctx, task.cid)
+	buf, err := bd.downloadBlockData(ctx, task.cid, task.clientIP)
 	if err != nil {
 		log.Error("failed to download block", zap.Error(err))
 		task.err = err
@@ -262,7 +260,7 @@ func (bd *BlockDownloaderDefault) downloadWorker(n int) {
 	}
 }
 
-func (bd *BlockDownloaderDefault) queueBlock(c cid.Cid, priority downloadPriority) (*blockResponse, bool) {
+func (bd *BlockDownloaderDefault) queueBlock(c cid.Cid, priority downloadPriority, clientIP string) (*blockResponse, bool) {
 	resp, ok := bd.inflight[cidKey(c)]
 	if ok {
 		if resp.priority < priority {
@@ -278,8 +276,9 @@ func (bd *BlockDownloaderDefault) queueBlock(c cid.Cid, priority downloadPriorit
 		priority:  priority,
 		timestamp: time.Now(),
 
-		ch:  make(chan struct{}),
-		log: bd.log,
+		ch:       make(chan struct{}),
+		log:      bd.log,
+		clientIP: clientIP,
 	}
 	bd.inflight[cidKey(c)] = resp
 	heap.Push(bd.queue, resp)
@@ -302,10 +301,13 @@ func (bd *BlockDownloaderDefault) Get(ctx context.Context, c cid.Cid) (blocks.Bl
 		return nil, err
 	}
 
+	// Get client IP from context before locking
+	clientIP := store.GetClientIP(ctx)
+
 	bd.mu.Lock()
 
 	bd.log.Debug("queuing block", zap.String("CID", c.String()))
-	resp, _ := bd.queueBlock(c, downloadPriorityMax)
+	resp, _ := bd.queueBlock(c, downloadPriorityMax, clientIP)
 	bd.mu.Unlock()
 	bd.log.Debug("waiting on queued block", zap.String("CID", c.String()))
 	return resp.block(ctx, c)

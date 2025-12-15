@@ -10,6 +10,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
@@ -97,6 +98,24 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 		totalSize += size
 	}
 
+	// Validate upload quota
+	if totalSize > 0 {
+		result, err := quota.CheckUploadQuota(s.ctx, userId, totalSize)
+		if err != nil {
+			s.ctx.Logger().Warn("Failed to check upload quota", zap.Uint("user_id", userId), zap.Uint64("total_size", totalSize), zap.Error(err))
+			return fmt.Errorf("failed to check upload quota: %w", err)
+		}
+		if result != nil && !result.Allowed {
+			currentUsage := result.Details.CurrentUsage
+			quotaLimit := uint64(0)
+			if result.Details.Limit != nil {
+				quotaLimit = *result.Details.Limit
+			}
+			s.ctx.Logger().Warn("Upload quota exceeded", zap.Uint("user_id", userId), zap.Uint64("total_size", totalSize), zap.Uint64("current_usage", currentUsage), zap.Uint64("quota_limit", quotaLimit))
+			return fmt.Errorf("upload quota exceeded: current usage %d bytes + requested %d bytes would exceed quota limit of %d bytes", currentUsage, totalSize, quotaLimit)
+		}
+	}
+
 	// Create upload records and core pin records for ALL CIDs (both roots and children)
 	for _, c := range cids {
 		// Get size for this CID
@@ -131,15 +150,8 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 		}
 
 		// Emit upload completion event for quota tracking
-		// Get client IP from context if available
-		ip := ""
-		if requestCtx, ok := ctx.Value("request_context").(map[string]interface{}); ok {
-			if clientIP, exists := requestCtx["client_ip"]; exists {
-				if ipStr, ok := clientIP.(string); ok {
-					ip = ipStr
-				}
-			}
-		}
+		// Get client IP from context using the shared helper
+		ip := store.GetClientIP(ctx)
 
 		quota.EmitUploadCompleted(s.ctx, &userId, uploadMeta.ID, size, ip)
 	}
