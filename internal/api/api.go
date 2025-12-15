@@ -611,6 +611,7 @@ func (a *API) replacePin(c echo.Context) error {
 func (a *API) deletePin(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
+	reqCtx = store.ClientIPOption(reqCtx, c.RealIP())
 
 	_uuid, err := uuid.Parse(c.Param("requestid"))
 	if err != nil {

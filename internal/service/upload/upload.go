@@ -156,10 +156,7 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 		quota.EmitStorageObjectPinned(s.ctx, createdPin, clientIP)
 
 		// Emit upload completion event for quota tracking
-		// Get client IP from context using the shared helper
-		ip := store.GetClientIP(ctx)
-
-		quota.EmitUploadCompleted(s.ctx, &userId, uploadMeta.ID, size, ip)
+		quota.EmitUploadCompleted(s.ctx, &userId, uploadMeta.ID, size, clientIP)
 	}
 
 	return nil

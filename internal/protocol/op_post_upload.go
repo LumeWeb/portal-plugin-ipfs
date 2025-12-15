@@ -9,6 +9,7 @@ import (
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.uber.org/zap"
@@ -70,9 +71,9 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	}
 
 	// Fix any UnixFS metadata gaps before proceeding
-	store := h.Protocol().(*Protocol).GetMetadataStore()
-	if store != nil {
-		err = store.ProcessMissingUnixFSNames(allCids)
+	metadataStore := h.Protocol().(*Protocol).GetMetadataStore()
+	if metadataStore != nil {
+		err = metadataStore.ProcessMissingUnixFSNames(allCids)
 		if err != nil {
 			h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
 		}

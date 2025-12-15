@@ -144,9 +144,9 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 			}
 
 			// Set client IP in context for quota tracking
-		ctx = store.ClientIPOption(ctx, req.SourceIP)
+			ctx = store.ClientIPOption(ctx, req.SourceIP)
 
-		err = uploadSvc.ProcessUpload(ctx, validChildCids, *req.UserID)
+			err = uploadSvc.ProcessUpload(ctx, validChildCids, *req.UserID)
 			if err != nil {
 				h.Logger().Error("Failed to batch process child blocks", zap.Error(err))
 			}

@@ -269,7 +269,8 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 		}
 
 		// Get the core pin before deleting it for event emission
-		corePin, err := s.pinSvc.GetPinByHash(internal.NewIPFSHash(c), pin.UserID)
+		hash := internal.NewIPFSHash(c)
+		corePin, err := s.pinSvc.GetPinByHash(hash, pin.UserID)
 		if err != nil {
 			s.logger.Warn("Failed to get core pin for unpin event", 
 				zap.Error(err),
@@ -277,7 +278,7 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 				zap.Uint("user_id", pin.UserID))
 		}
 
-		if err := s.pinSvc.DeletePinByHash(internal.NewIPFSHash(c), pin.UserID); err != nil {
+		if err := s.pinSvc.DeletePinByHash(hash, pin.UserID); err != nil {
 			s.logger.Error("Failed to unpin CID in core",
 				zap.Error(err),
 				zap.Stringer("cid", c),
