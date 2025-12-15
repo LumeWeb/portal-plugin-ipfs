@@ -88,7 +88,14 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 					BasePath: TUS_HTTP_ROUTE,
 					CreatedUploadHandler: service.TUSDefaultUploadCreatedHandler(ctx, func(hook handler.HookEvent, uploaderId uint) (core.StorageHash, error) {
 						// Check upload quota if quota service is available
-						if err := quota.ValidateUploadQuota(ctx, uploaderId, uint64(hook.Upload.Size)); err != nil {
+						// Defensive size validation to prevent negative/invalid values
+						size := hook.Upload.Size
+						if size < 0 {
+							api.logger.Warn("Unexpected negative upload size in TUS hook", zap.Int64("size", size))
+							return nil, core.ErrUploadQuotaExceeded
+						}
+						requestedBytes := uint64(size)
+						if err := quota.ValidateUploadQuota(ctx, uploaderId, requestedBytes); err != nil {
 							api.logger.Error("Failed to check upload quota", zap.Error(err))
 							return nil, err
 						}
@@ -118,7 +125,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 									userID = &userIDVal
 								} else {
 									api.logger.Warn("Failed to parse uploader_id from metadata", zap.String("uploader_id", uploaderID), zap.Error(err))
-									return
+									// Keep userID nil and continue; event will be emitted without user binding.
 								}
 							}
 						}
@@ -139,7 +146,13 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 						// Note: client IP is extracted from Echo context to prevent client spoofing
 						// The hook.Context contains the request context with Echo context information
 
-						quota.EmitUploadCompleted(ctx, userID, uint(uploadID), uint64(hook.Upload.Size), ip)
+						// Use defensive size validation for event emission
+						size := hook.Upload.Size
+						if size < 0 {
+							api.logger.Warn("Unexpected negative upload size in TUS completed hook", zap.Int64("size", size))
+							return
+						}
+						quota.EmitUploadCompleted(ctx, userID, uint(uploadID), uint64(size), ip)
 					}, protocol.TUS_UPLOAD_WORKFLOW,
 						func(handlr core.TusHandler, hook handler.HookEvent) (core.StorageHash, error) {
 							upload, err := api.tus.UploadReader(ctx, hook.Upload.ID, sproto, 0)
@@ -708,7 +721,8 @@ func (a *API) handleIPFSGet(c echo.Context) error {
 	switch model.Format {
 	case "raw":
 		if err := a.handleRawBlockRequest(ctx, model.CID, c.Response(), c.Request(), c); err != nil {
-			return ctx.Error(err, http.StatusInternalServerError)
+			// Error response already written inside handleRawBlockRequest.
+			return nil
 		}
 	case "car":
 		// TODO: Implement CAR handling

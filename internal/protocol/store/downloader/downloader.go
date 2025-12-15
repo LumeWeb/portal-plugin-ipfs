@@ -273,6 +273,10 @@ func (bd *BlockDownloaderDefault) queueBlock(c cid.Cid, priority downloadPriorit
 			resp.priority = priority
 			heap.Fix(bd.queue, resp.index)
 		}
+		// Upgrade from anonymous/prefetch to user-initiated download when possible.
+		if resp.clientIP == "" && clientIP != "" {
+			resp.clientIP = clientIP
+		}
 		return resp, false
 	}
 
