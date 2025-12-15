@@ -611,6 +611,7 @@ func (a *API) replacePin(c echo.Context) error {
 func (a *API) deletePin(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
+	reqCtx = store.ClientIPOption(reqCtx, c.RealIP())
 
 	_uuid, err := uuid.Parse(c.Param("requestid"))
 	if err != nil {
@@ -805,7 +806,7 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	}
 
 	// Emit download completion event only after successful write
-	quota.EmitDownloadCompleted(a.ctx, upload.ID, uint64(n), ip)
+	quota.EmitDownloadCompleted(a.ctx, upload.ID, uint64(n), ip, &userID)
 	return nil
 }
 

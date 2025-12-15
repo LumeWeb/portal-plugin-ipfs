@@ -76,13 +76,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		return fmt.Errorf("failed to collect cids: %w", err)
 	}
 
-	// Emit download completed event for quota tracking
-	if req.UserID != nil && *req.UserID > 0 {
-		blockSize = uint64(len(block.RawData()))
-		// Get client IP from handler context
-		clientIP := store.GetClientIP(h.Context())
-		quota.EmitDownloadCompleted(h.Context(), 0, blockSize, clientIP)
-	}
+
 
 	childCids := lo.Filter(cids, func(item cid.Cid, _ int) bool {
 		return !item.Equals(c)
@@ -148,6 +142,9 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 			if req.UserID == nil || *req.UserID == 0 {
 				return fmt.Errorf("user ID is required")
 			}
+
+			// Set client IP in context for quota tracking
+			ctx = store.ClientIPOption(ctx, req.SourceIP)
 
 			err = uploadSvc.ProcessUpload(ctx, validChildCids, *req.UserID)
 			if err != nil {

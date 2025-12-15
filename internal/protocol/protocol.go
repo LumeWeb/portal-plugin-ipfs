@@ -194,6 +194,9 @@ func (p Protocol) Operations() []core.Operation {
 				return fmt.Errorf("user ID is required")
 			}
 
+			// Set client IP in context for quota tracking
+			ctx = store.ClientIPOption(ctx, request.SourceIP)
+
 			err = uploadSvc.ProcessUpload(ctx, allCids, *request.UserID)
 			if err != nil {
 				return fmt.Errorf("failed to process upload: %w", err)

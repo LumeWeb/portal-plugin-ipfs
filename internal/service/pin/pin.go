@@ -10,6 +10,8 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
 	"go.lumeweb.com/portal/db/types"
@@ -265,12 +267,29 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 		if err != nil {
 			return fmt.Errorf("cid cast: %w", err)
 		}
-		if err := s.pinSvc.DeletePinByHash(internal.NewIPFSHash(c), pin.UserID); err != nil {
+
+		// Get the core pin before deleting it for event emission
+		hash := internal.NewIPFSHash(c)
+		corePin, err := s.pinSvc.GetPinByHash(hash, pin.UserID)
+		if err != nil {
+			s.logger.Warn("Failed to get core pin for unpin event", 
+				zap.Error(err),
+				zap.Stringer("cid", c),
+				zap.Uint("user_id", pin.UserID))
+		}
+
+		if err := s.pinSvc.DeletePinByHash(hash, pin.UserID); err != nil {
 			s.logger.Error("Failed to unpin CID in core",
 				zap.Error(err),
 				zap.Stringer("cid", c),
 				zap.Uint("user_id", pin.UserID))
 			return fmt.Errorf("failed to unpin CID in core: %w", err)
+		}
+
+		// Emit storage object unpinned event for quota tracking
+		if corePin != nil {
+			clientIP := store.GetClientIP(ctx)
+			quota.EmitStorageObjectUnpinned(s.ctx, corePin, clientIP)
 		}
 		
 		// Clean up file paths when no other pins reference this CID

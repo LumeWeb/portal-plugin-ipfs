@@ -8,6 +8,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/db/types"
@@ -36,7 +37,7 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 	pinSvc := core.GetService[pluginCore.IPFSPinService](h.Context(), pluginCore.PIN_SERVICE)
 
 	proto := h.Protocol().(*Protocol)
-	store := proto.GetMetadataStore()
+	metadataStore := proto.GetMetadataStore()
 
 	var cidList []cid.Cid
 
@@ -47,7 +48,7 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 		}
 
 		// Check if block exists and is ready
-		err = store.BlockExists(c)
+		err = metadataStore.BlockExists(c)
 		if err != nil {
 			return fmt.Errorf("block %s not ready: %w", c, err)
 		}
@@ -63,13 +64,16 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 			return fmt.Errorf("upload service not available")
 		}
 		
+	// Set client IP in context for quota tracking
+		ctx = store.ClientIPOption(ctx, req.SourceIP)
+
 		err := uploadSvc.ProcessUpload(ctx, cidList, lo.FromPtrOr(req.UserID, 0))
 		if err != nil {
 			return fmt.Errorf("failed to process upload: %w", err)
 		}
 
 		// Fix any UnixFS metadata gaps before proceeding
-		err = store.ProcessMissingUnixFSNames(cidList)
+		err = metadataStore.ProcessMissingUnixFSNames(cidList)
 		if err != nil {
 			h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
 		}

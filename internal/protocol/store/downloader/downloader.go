@@ -169,7 +169,7 @@ func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.C
 	// Emit download completion event for block retrieval
 	// uploadID=0 indicates this download is not associated with a specific upload record
 	// The clientIP is still tracked for quota purposes when available
-	quota.EmitDownloadCompleted(bd.ctx, 0, uint64(blockBuf.Len()), clientIP)
+	quota.EmitDownloadCompleted(bd.ctx, 0, uint64(blockBuf.Len()), clientIP, nil)
 
 	return blockBuf.Bytes(), nil
 }
