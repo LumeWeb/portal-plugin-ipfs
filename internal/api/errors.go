@@ -11,7 +11,7 @@ import (
 
 // Error keys
 const (
-	Namespace                                 = "ipfs-plugin-api"
+	Namespace                                    = "ipfs-plugin-api"
 	ErrKeyFileUploadFailed     core.ErrorType = "ErrFileUploadFailed"
 	ErrKeyMetadataFetchFailed  core.ErrorType = "ErrMetadataFetchFailed"
 	ErrKeyPinFetchFailed       core.ErrorType = "ErrPinFetchFailed"
@@ -21,6 +21,7 @@ const (
 	ErrKeyBlockNotFound        core.ErrorType = "ErrKeyBlockNotFound"
 	ErrKeyUploadNotFound       core.ErrorType = "ErrKeyUploadNotFound"
 	ErrKeyUnauthorized         core.ErrorType = "ErrKeyUnauthorized"
+	ErrKeyDownloadQuotaExceeded core.ErrorType = "ErrDownloadQuotaExceeded"
 )
 
 var _ router.ResponseError = (*IPFSError)(nil)
@@ -86,27 +87,29 @@ func (e *IPFSError) Unwrap() error {
 func init() {
 	core.MustRegisterNamespace(Namespace)
 	core.MustRegisterDefaultErrorMessages(Namespace, map[core.ErrorType]core.ErrorDefinition{
-		ErrKeyFileUploadFailed:     {Key: ErrKeyFileUploadFailed, Message: "File upload failed due to an internal error."},
-		ErrKeyMetadataFetchFailed:  {Key: ErrKeyMetadataFetchFailed, Message: "Failed to fetch metadata."},
-		ErrKeyPinFetchFailed:       {Key: ErrKeyPinFetchFailed, Message: "Failed to fetch pin."},
-		ErrKeyInvalidUUIDFormat:    {Key: ErrKeyInvalidUUIDFormat, Message: "Invalid UUID format provided: %s"},
-		ErrKeyFileProcessingFailed: {Key: ErrKeyFileProcessingFailed, Message: "Failed to process the file."},
-		ErrKeyCIDParseFailed:       {Key: ErrKeyCIDParseFailed, Message: "Failed to parse CID."},
-		ErrKeyBlockNotFound:        {Key: ErrKeyBlockNotFound, Message: "Block not found."},
-		ErrKeyUploadNotFound:       {Key: ErrKeyUploadNotFound, Message: "Upload not found."},
-		ErrKeyUnauthorized:         {Key: ErrKeyUnauthorized, Message: "Access denied. Please check your credentials and try again."},
+		ErrKeyFileUploadFailed:       {Key: ErrKeyFileUploadFailed, Message: "File upload failed due to an internal error."},
+		ErrKeyMetadataFetchFailed:    {Key: ErrKeyMetadataFetchFailed, Message: "Failed to fetch metadata."},
+		ErrKeyPinFetchFailed:         {Key: ErrKeyPinFetchFailed, Message: "Failed to fetch pin."},
+		ErrKeyInvalidUUIDFormat:      {Key: ErrKeyInvalidUUIDFormat, Message: "Invalid UUID format provided: %s"},
+		ErrKeyFileProcessingFailed:   {Key: ErrKeyFileProcessingFailed, Message: "Failed to process the file."},
+		ErrKeyCIDParseFailed:         {Key: ErrKeyCIDParseFailed, Message: "Failed to parse CID."},
+		ErrKeyBlockNotFound:          {Key: ErrKeyBlockNotFound, Message: "Block not found."},
+		ErrKeyUploadNotFound:         {Key: ErrKeyUploadNotFound, Message: "Upload not found."},
+		ErrKeyUnauthorized:           {Key: ErrKeyUnauthorized, Message: "Access denied. Please check your credentials and try again."},
+		ErrKeyDownloadQuotaExceeded:  {Key: ErrKeyDownloadQuotaExceeded, Message: "Download quota exceeded. Please try again later."},
 	})
 
 	core.MustRegisterErrorCodes(Namespace, map[core.ErrorType]int{
-		ErrKeyFileUploadFailed:     http.StatusInternalServerError,
-		ErrKeyMetadataFetchFailed:  http.StatusInternalServerError,
-		ErrKeyPinFetchFailed:       http.StatusInternalServerError,
-		ErrKeyInvalidUUIDFormat:    http.StatusBadRequest,
-		ErrKeyFileProcessingFailed: http.StatusInternalServerError,
-		ErrKeyCIDParseFailed:       http.StatusBadRequest,
-		ErrKeyBlockNotFound:        http.StatusNotFound,
-		ErrKeyUploadNotFound:       http.StatusNotFound,
-		ErrKeyUnauthorized:         http.StatusUnauthorized,
+		ErrKeyFileUploadFailed:       http.StatusInternalServerError,
+		ErrKeyMetadataFetchFailed:    http.StatusInternalServerError,
+		ErrKeyPinFetchFailed:         http.StatusInternalServerError,
+		ErrKeyInvalidUUIDFormat:      http.StatusBadRequest,
+		ErrKeyFileProcessingFailed:   http.StatusInternalServerError,
+		ErrKeyCIDParseFailed:         http.StatusBadRequest,
+		ErrKeyBlockNotFound:          http.StatusNotFound,
+		ErrKeyUploadNotFound:         http.StatusNotFound,
+		ErrKeyUnauthorized:           http.StatusUnauthorized,
+		ErrKeyDownloadQuotaExceeded:  http.StatusTooManyRequests,
 	})
 }
 

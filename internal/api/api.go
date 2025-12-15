@@ -786,8 +786,8 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	actualBlockSize := uint64(len(block.RawData()))
 
 	if err := quota.ValidateDownloadQuota(a.ctx, userID, actualBlockSize); err != nil {
-		a.logger.Warn("Download quota validation failed", zap.Uint("user_id", userID), zap.String("error", err.Error()))
-		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
+		a.logger.Warn("Download quota validation failed", zap.Uint("user_id", userID), zap.Error(err))
+		apiErr := NewError(ErrKeyDownloadQuotaExceeded, err)
 		_ = ctx.Error(apiErr, http.StatusTooManyRequests)
 		return apiErr
 	}
@@ -797,10 +797,15 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	// Get client IP
 	ip := c.RealIP()
 
-	quota.EmitDownloadCompleted(a.ctx, upload.ID, actualBlockSize, ip)
-
 	a.setTrustlessHeaders(w, r, _cid.String())
-	_, _ = w.Write(block.RawData())
+	n, err := w.Write(block.RawData())
+	if err != nil {
+		// Don't emit quota event if write failed
+		return err
+	}
+
+	// Emit download completion event only after successful write
+	quota.EmitDownloadCompleted(a.ctx, upload.ID, uint64(n), ip)
 	return nil
 }
 

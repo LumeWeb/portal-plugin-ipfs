@@ -140,17 +140,17 @@ func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.C
 		return nil, fmt.Errorf("failed to download block: %w", err)
 	}
 
+	// Ensure the object is always closed, even on later errors.
+	defer func() {
+		if cerr := object.Close(); cerr != nil {
+			bd.log.Error("failed to close object", zap.Error(cerr))
+		}
+	}()
+
 	_, err = io.Copy(blockBuf, object)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read block: %w", err)
 	}
-
-	defer func(object io.ReadCloser) {
-		err := object.Close()
-		if err != nil {
-			bd.log.Error("failed to close object", zap.Error(err))
-		}
-	}(object)
 
 	// Check if the hash function is supported before verifying
 	mhType := c.Prefix().MhType
@@ -169,7 +169,7 @@ func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.C
 	// Emit download completion event for block retrieval
 	// uploadID=0 indicates this download is not associated with a specific upload record
 	// The clientIP is still tracked for quota purposes when available
-	quota.EmitDownloadCompleted(bd.ctx, 0, uint64(len(blockBuf.Bytes())), clientIP)
+	quota.EmitDownloadCompleted(bd.ctx, 0, uint64(blockBuf.Len()), clientIP)
 
 	return blockBuf.Bytes(), nil
 }
@@ -271,7 +271,10 @@ func (bd *BlockDownloaderDefault) queueBlock(c cid.Cid, priority downloadPriorit
 	if ok {
 		if resp.priority < priority {
 			resp.priority = priority
-			heap.Fix(bd.queue, resp.index)
+			// Only call heap.Fix if the task is still in the queue (index >= 0)
+			if resp.index >= 0 {
+				heap.Fix(bd.queue, resp.index)
+			}
 		}
 		// Upgrade from anonymous/prefetch to user-initiated download when possible.
 		if resp.clientIP == "" && clientIP != "" {
