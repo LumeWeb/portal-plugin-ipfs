@@ -703,7 +703,9 @@ func (a *API) handleIPFSGet(c echo.Context) error {
 	}
 	switch model.Format {
 	case "raw":
-		a.handleRawBlockRequest(ctx, model.CID, c.Response(), c.Request(), c)
+		if err := a.handleRawBlockRequest(ctx, model.CID, c.Response(), c.Request(), c); err != nil {
+			return ctx.Error(err, http.StatusInternalServerError)
+		}
 	case "car":
 		// TODO: Implement CAR handling
 		ctx.Response().Header().Set("Content-Type", "application/vnd.ipld.car")
@@ -715,7 +717,7 @@ func (a *API) handleIPFSGet(c echo.Context) error {
 	return nil
 }
 
-func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w http.ResponseWriter, r *http.Request, c echo.Context) {
+func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w http.ResponseWriter, r *http.Request, c echo.Context) error {
 	// Create context with client IP for quota tracking
 	reqCtx := ctx.Request().Context()
 	reqCtx = store.ClientIPOption(reqCtx, c.RealIP())
@@ -728,13 +730,13 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 		a.logger.Error("Failed to check if block exists", zap.Error(err))
 		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
-		return
+		return apiErr
 	}
 
 	if !exists {
 		apiErr := NewError(ErrKeyBlockNotFound, fmt.Errorf("Block not found: %s", _cid.String()))
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
-		return
+		return apiErr
 	}
 
 	upload, err := a.coreUploadService.GetUpload(reqCtx, internal.NewIPFSHash(_cid))
@@ -742,25 +744,34 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 		a.logger.Error("Failed to get upload", zap.Error(err))
 		apiErr := NewError(ErrKeyUploadNotFound, err)
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
-		return
+		return apiErr
+	}
+
+	if upload == nil {
+		apiErr := NewError(ErrKeyUploadNotFound, fmt.Errorf("upload not found for cid: %s", _cid.String()))
+		_ = ctx.Error(apiErr, apiErr.HttpStatus())
+		return apiErr
 	}
 
 	// Check download quota if quota service is available
 	userID := upload.UserID
-
-	if err := quota.ValidateDownloadQuota(a.ctx, userID, uint64(upload.Size)); err != nil {
-		a.logger.Warn("Download quota validation failed", zap.Uint("user_id", userID), zap.String("error", err.Error()))
-		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
-		_ = ctx.Error(apiErr, http.StatusTooManyRequests)
-		return
-	}
 
 	block, err := a.ipfs.GetNode().GetBlock(reqCtx, _cid)
 	if err != nil {
 		a.logger.Error("Failed to get block", zap.Error(err))
 		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
-		return
+		return apiErr
+	}
+
+	// Use actual block size for quota validation and events
+	actualBlockSize := uint64(len(block.RawData()))
+
+	if err := quota.ValidateDownloadQuota(a.ctx, userID, actualBlockSize); err != nil {
+		a.logger.Warn("Download quota validation failed", zap.Uint("user_id", userID), zap.String("error", err.Error()))
+		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
+		_ = ctx.Error(apiErr, http.StatusTooManyRequests)
+		return apiErr
 	}
 
 	// Emit download completion event for quota tracking
@@ -769,10 +780,11 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	// Get client IP
 	ip := c.RealIP()
 
-	quota.EmitDownloadCompleted(a.ctx, upload.ID, uint64(upload.Size), ip)
+	quota.EmitDownloadCompleted(a.ctx, upload.ID, actualBlockSize, ip)
 
 	a.setTrustlessHeaders(w, r, _cid.String())
 	_, _ = w.Write(block.RawData())
+	return nil
 }
 
 func (a API) setTrustlessHeaders(w http.ResponseWriter, r *http.Request, id string) {

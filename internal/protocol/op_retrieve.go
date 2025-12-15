@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/boxo/ipld/merkledag"
+	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/labstack/gommon/log"
 	"github.com/samber/lo"
@@ -48,19 +48,19 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 	// Get block for quota validation and reuse for downstream processing
 	var block blocks.Block
 	var blockSize uint64
-	
+
 	protoCfg := h.Context().Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig)
 	getCtx, cancel := context.WithTimeout(ctx, protoCfg.BlockStore.Timeout)
 	defer cancel()
-	
+
 	proto := h.Protocol().(*Protocol)
 	block, err = proto.GetNode().GetBlock(getCtx, c)
 	if err != nil {
 		return fmt.Errorf("failed to get block: %w", err)
 	}
-	
+
 	blockSize = uint64(len(block.RawData()))
-	
+
 	// Check download quota if user ID is available
 	if req.UserID != nil && *req.UserID > 0 {
 		// Validate download quota using the already fetched block
@@ -78,10 +78,10 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 
 	// Emit download completed event for quota tracking
 	if req.UserID != nil && *req.UserID > 0 {
-		blockSize := uint64(len(block.RawData()))
+		blockSize = uint64(len(block.RawData()))
 		// Get client IP from handler context
 		clientIP := store.GetClientIP(h.Context())
-		quota.EmitDownloadCompleted(h.Context(), req.ID, blockSize, clientIP)
+		quota.EmitDownloadCompleted(h.Context(), 0, blockSize, clientIP)
 	}
 
 	childCids := lo.Filter(cids, func(item cid.Cid, _ int) bool {

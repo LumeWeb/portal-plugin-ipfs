@@ -87,14 +87,16 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 		return fmt.Errorf("no CIDs provided")
 	}
 
-	// Calculate total size for quota check
+	// Calculate total size for quota check and cache CID sizes
 	var totalSize uint64
+	cidSizes := make(map[string]uint64, len(cids))
 	for _, c := range cids {
 		size, err := s.ipfs.(*protocol.Protocol).GetMetadataStore().Size(c)
 		if err != nil {
 			s.ctx.Logger().Warn("Failed to get size for quota check", zap.Stringer("cid", c), zap.Error(err))
 			continue
 		}
+		cidSizes[c.String()] = size
 		totalSize += size
 	}
 
@@ -118,10 +120,10 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 
 	// Create upload records and core pin records for ALL CIDs (both roots and children)
 	for _, c := range cids {
-		// Get size for this CID
-		size, err := s.ipfs.(*protocol.Protocol).GetMetadataStore().Size(c)
-		if err != nil {
-			return fmt.Errorf("failed to get size for CID %s: %w", c.String(), err)
+		// Get size for this CID from cached map
+		size, exists := cidSizes[c.String()]
+		if !exists {
+			return fmt.Errorf("size not found for CID %s in cache", c.String())
 		}
 
 		// Create upload record for this CID
@@ -133,7 +135,7 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 			Size:     size,
 		}
 
-		err = s.coreUpload.SaveUpload(ctx, uploadMeta)
+		err := s.coreUpload.SaveUpload(ctx, uploadMeta)
 		if err != nil {
 			return fmt.Errorf("failed to save upload record for CID %s: %w", c.String(), err)
 		}

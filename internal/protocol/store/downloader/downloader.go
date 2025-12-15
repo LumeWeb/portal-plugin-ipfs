@@ -166,7 +166,9 @@ func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.C
 		return nil, fmt.Errorf("block hash mismatch: expected %s, actual %s", c.Hash().HexString(), h.HexString())
 	}
 
-	// Emit download completion event - anonymous (nil userID)
+	// Emit download completion event - anonymous download
+	// uploadID=0 is a sentinel value for anonymous/non-upload-bound downloads
+	// This distinguishes them from user-initiated downloads that have real upload IDs
 	quota.EmitDownloadCompleted(bd.ctx, 0, uint64(len(blockBuf.Bytes())), clientIP)
 
 	return blockBuf.Bytes(), nil
@@ -196,6 +198,8 @@ func (bd *BlockDownloaderDefault) queueRelated(c cid.Cid) {
 			continue
 		}
 
+		// Prefetch downloads use empty client IP to distinguish from user-initiated downloads
+		// This allows quota tracking to differentiate between foreground and background traffic
 		if _, ok := bd.queueBlock(sibling, downloadPriorityMedium, ""); ok {
 			log.Debug("queued sibling", zap.Stringer("sibling", sibling))
 		}
@@ -208,6 +212,8 @@ func (bd *BlockDownloaderDefault) queueRelated(c cid.Cid) {
 			continue
 		}
 
+		// Prefetch downloads use empty client IP to distinguish from user-initiated downloads
+		// This allows quota tracking to differentiate between foreground and background traffic
 		if _, ok := bd.queueBlock(child, downloadPriorityLow, ""); ok {
 			log.Debug("queued child", zap.Stringer("child", child))
 		}
@@ -328,12 +334,17 @@ func NewBlockDownloader(ctx core.Context, store pluginCore.MetadataStore, worker
 		return nil, fmt.Errorf("protocol not found: %s", internal.ProtocolName)
 	}
 
+	storage := core.GetService[core.StorageService](ctx, core.STORAGE_SERVICE)
+	if storage == nil {
+		return nil, fmt.Errorf("storage service not found: %s", core.STORAGE_SERVICE)
+	}
+
 	bd := &BlockDownloaderDefault{
 		ctx:     ctx,
 		store:   store,
 		proto:   proto,
 		log:     log,
-		storage: core.GetService[core.StorageService](ctx, core.STORAGE_SERVICE),
+		storage: storage,
 
 		inflight: make(map[string]*blockResponse),
 		queue:    &priorityQueue{},
