@@ -853,6 +853,8 @@ go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20250922174307-2f5de9e6503c
 go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20250922174307-2f5de9e6503c/go.mod h1:kBGprau52kN8MFDt8tN4G6D/mzOESayQIcS1tgrIuxY=
 go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20251007105956-9515ed1f2355 h1:gcyQlOVioIU4pZje6R/kdNhLsyWuQM5U1Vt2sikIohA=
 go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20251007105956-9515ed1f2355/go.mod h1:ZikXTSOxS/Cks5JeX0EOaZ4yvwh+hcHcqPzIzQuJNKQ=
+go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20251214214019-d4a4411df207 h1:1ZlIST6GDzLQG41M6pBLTNRVkmhvVJ+gBuWb7/I0U0s=
+go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20251214214019-d4a4411df207/go.mod h1:ZikXTSOxS/Cks5JeX0EOaZ4yvwh+hcHcqPzIzQuJNKQ=
 go.opencensus.io v0.22.1/go.mod h1:Ap50jQcDJrx6rB6VgeeFPtuPIf3wMRvRfrfYDO6+BmA=
 go.opencensus.io v0.22.2/go.mod h1:yxeiOL68Rb0Xd1ddK5vPZ/oVn4vY4Ynel7k9FzqtOIw=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
