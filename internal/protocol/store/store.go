@@ -15,6 +15,8 @@ const (
 	// VirtualReadKey is the context key for the virtual read option
 	VirtualReadKey   ContextKey = "virtualRead"
 	DisableMetaCheck ContextKey = "disableMetaCheck"
+	ClientIPKey      ContextKey = "clientIP"
+	SkipQuotaCheck   ContextKey = "skipQuotaCheck"
 )
 
 // VirtualReadOption sets the virtual read option in the context
@@ -36,6 +38,31 @@ func DisableMetaCheckOption(ctx context.Context, enabled bool) context.Context {
 // isMetaCheckDisabled checks if metadata check is disabled in the context
 func isMetaCheckDisabled(ctx context.Context) bool {
 	value, ok := ctx.Value(DisableMetaCheck).(bool)
+	return ok && value
+}
+
+// ClientIPOption sets client IP in the context
+func ClientIPOption(ctx context.Context, clientIP string) context.Context {
+	return context.WithValue(ctx, ClientIPKey, clientIP)
+}
+
+// GetClientIP retrieves the client IP from the context
+func GetClientIP(ctx context.Context) string {
+	value, ok := ctx.Value(ClientIPKey).(string)
+	if !ok {
+		return ""
+	}
+	return value
+}
+
+// SkipQuotaCheckOption sets the skip quota check option in the context
+func SkipQuotaCheckOption(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, SkipQuotaCheck, enabled)
+}
+
+// IsQuotaCheckSkipped checks if quota check is skipped in the context
+func IsQuotaCheckSkipped(ctx context.Context) bool {
+	value, ok := ctx.Value(SkipQuotaCheck).(bool)
 	return ok && value
 }
 

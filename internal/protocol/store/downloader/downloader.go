@@ -11,6 +11,8 @@ import (
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 	"io"
 	"sync"
@@ -131,6 +133,9 @@ func (br *blockResponse) block(ctx context.Context, c cid.Cid) (blocks.Block, er
 func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.Cid) ([]byte, error) {
 	blockBuf := bytes.NewBuffer(make([]byte, 0, 2<<20))
 
+	// Get client IP for tracking (may be empty)
+	clientIP := store.GetClientIP(ctx)
+
 	bd.log.Debug("Trying to download block", zap.String("CID", c.String()))
 	object, err := bd.storage.DownloadObjectWithOptions(ctx, bd.proto, internal.NewIPFSHash(c), core.StorageDownloadWithSkipMetadataCheck(true))
 	if err != nil {
@@ -162,6 +167,9 @@ func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.C
 	} else if c.Hash().HexString() != h.HexString() {
 		return nil, fmt.Errorf("block hash mismatch: expected %s, actual %s", c.Hash().HexString(), h.HexString())
 	}
+
+	// Emit download completion event - anonymous (nil userID)
+	quota.EmitDownloadCompleted(bd.ctx, 0, uint64(len(blockBuf.Bytes())), clientIP)
 
 	return blockBuf.Bytes(), nil
 }
@@ -319,10 +327,11 @@ func NewBlockDownloader(ctx core.Context, store pluginCore.MetadataStore, worker
 	}
 
 	bd := &BlockDownloaderDefault{
+		ctx:     ctx,
 		store:   store,
 		proto:   proto,
 		log:     log,
-		storage: ctx.Service(core.STORAGE_SERVICE).(core.StorageService),
+		storage: core.GetService[core.StorageService](ctx, core.STORAGE_SERVICE),
 
 		inflight: make(map[string]*blockResponse),
 		queue:    &priorityQueue{},

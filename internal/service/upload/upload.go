@@ -10,8 +10,10 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -84,6 +86,17 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 		return fmt.Errorf("no CIDs provided")
 	}
 
+	// Calculate total size for quota check
+	var totalSize uint64
+	for _, c := range cids {
+		size, err := s.ipfs.(*protocol.Protocol).GetMetadataStore().Size(c)
+		if err != nil {
+			s.ctx.Logger().Warn("Failed to get size for quota check", zap.Stringer("cid", c), zap.Error(err))
+			continue
+		}
+		totalSize += size
+	}
+
 	// Create upload records and core pin records for ALL CIDs (both roots and children)
 	for _, c := range cids {
 		// Get size for this CID
@@ -116,6 +129,19 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 		if err != nil {
 			return fmt.Errorf("failed to create pin record for CID %s: %w", c.String(), err)
 		}
+
+		// Emit upload completion event for quota tracking
+		// Get client IP from context if available
+		ip := ""
+		if requestCtx, ok := ctx.Value("request_context").(map[string]interface{}); ok {
+			if clientIP, exists := requestCtx["client_ip"]; exists {
+				if ipStr, ok := clientIP.(string); ok {
+					ip = ipStr
+				}
+			}
+		}
+
+		quota.EmitUploadCompleted(s.ctx, &userId, uploadMeta.ID, size, ip)
 	}
 
 	return nil

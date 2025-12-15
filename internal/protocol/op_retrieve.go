@@ -15,6 +15,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/db/types"
@@ -45,6 +46,29 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		return fmt.Errorf("failed to create CID: %w", err)
 	}
 
+	// Check download quota if user ID is available
+	if req.UserID != nil && *req.UserID > 0 {
+		// Get block size for quota validation
+		protoCfg := h.Context().Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig)
+		getCtx, cancel := context.WithTimeout(ctx, protoCfg.BlockStore.Timeout)
+		defer cancel()
+		
+		proto := h.Protocol().(*Protocol)
+		block, err := proto.GetNode().GetBlock(getCtx, c)
+		if err != nil {
+			return fmt.Errorf("failed to get block for quota validation: %w", err)
+		}
+		
+		blockSize := uint64(len(block.RawData()))
+		
+		// Validate download quota
+		err = quota.ValidateDownloadQuota(h.Context(), *req.UserID, blockSize)
+		if err != nil {
+			h.Logger().Warn("Download quota exceeded", zap.Uint("user_id", *req.UserID), zap.Uint64("block_size", blockSize), zap.Error(err))
+			return err
+		}
+	}
+
 	protoCfg := h.Context().Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig)
 
 	getCtx, cancel := context.WithTimeout(ctx, protoCfg.BlockStore.Timeout)
@@ -71,9 +95,15 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 	}
 
 	// Fetch the block from the network
-	_, err = h.Protocol().(*Protocol).GetNode().GetBlock(ctx, c)
+	block, err := h.Protocol().(*Protocol).GetNode().GetBlock(ctx, c)
 	if err != nil {
 		return fmt.Errorf("failed to get block: %w", err)
+	}
+
+	// Emit download completed event for quota tracking
+	if req.UserID != nil && *req.UserID > 0 {
+		blockSize := uint64(len(block.RawData()))
+		quota.EmitDownloadCompleted(h.Context(), req.ID, blockSize, "")
 	}
 
 	childCids := lo.Filter(cids, func(item cid.Cid, _ int) bool {

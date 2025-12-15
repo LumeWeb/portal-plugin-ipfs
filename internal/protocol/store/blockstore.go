@@ -12,6 +12,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/service"
 	"go.uber.org/zap"
@@ -21,6 +22,7 @@ import (
 type (
 	// A BlockStore is a blockstore backed by a renterd node.
 	BlockStore struct {
+		ctx core.Context
 		log *core.Logger
 
 		bucket string
@@ -81,8 +83,36 @@ func (bs *BlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
 func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
 	if isVirtualReadEnabled(ctx) {
 		bs.log.Debug("virtual read enabled, fetching block without storing")
+		return bs.downloader.Get(ctx, c)
 	}
-	return bs.downloader.Get(ctx, c)
+
+	// Get client IP for tracking (may be empty)
+	clientIP := GetClientIP(ctx)
+
+	// Get block size for quota validation
+	size, err := bs.metadata.Size(c)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate download quota - always anonymous (nil userID), unless skipped
+	if !IsQuotaCheckSkipped(ctx) {
+		if err := quota.ValidateDownloadQuota(bs.ctx, 0, size); err != nil {
+			bs.log.Debug("download quota validation failed", zap.String("cid", c.String()), zap.Error(err))
+			return nil, err
+		}
+	}
+
+	// Proceed with download
+	block, err := bs.downloader.Get(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+
+	// Emit download completion event - anonymous (nil userID)
+	quota.EmitDownloadCompleted(bs.ctx, 0, uint64(len(block.RawData())), clientIP)
+
+	return block, nil
 }
 
 // GetSize returns the CIDs mapped BlockSize
@@ -248,6 +278,7 @@ func NewBlockStore(ctx core.Context, downloader pluginCore.BlockDownloader, meta
 	}
 
 	return &BlockStore{
+		ctx:        ctx,
 		log:        ctx.Logger(),
 		metadata:   metadata,
 		downloader: downloader,
