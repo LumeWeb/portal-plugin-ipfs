@@ -930,6 +930,6 @@ func TestAPI_handleIPFSGet(t *testing.T) {
 		rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/ipfs/%s", testCID.String()), token, nil)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Contains(t, "tornadocash", rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "tornadocash")
 	})
 }
