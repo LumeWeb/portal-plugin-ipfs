@@ -50,6 +50,7 @@ func TestPostUploadOperationHandler_Execute_Integration(t *testing.T) {
 		// Act
 		// Execute the workflow step.
 		wfTest.ExecuteWorkflowStep(req)
+		wfTest.CompleteWorkflowStep(req)
 
 		// Assert
 		// Assertions

@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -10,16 +11,17 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	filemanager "go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.uber.org/zap"
 )
 
 const (
-	FilePathPhaseStarting       = "starting"
-	FilePathPhaseProcessing     = "processing"
-	FilePathPhaseValidation     = "validation"
-	FilePathPhaseCompleted      = "completed"
+	FilePathPhaseStarting   = "starting"
+	FilePathPhaseProcessing = "processing"
+	FilePathPhaseValidation = "validation"
+	FilePathPhaseCompleted  = "completed"
 )
 
 // FilePathWorkflowData represents the workflow data for file path operations
@@ -300,7 +302,7 @@ func (h *FilePathOperationHandler) createOrphanEntry(ctx context.Context, fileMa
 
 	// Store the orphan file path
 	err := fileManagerSvc.CreateFilePath(ctx, filePath)
-	if err != nil {
+	if err != nil && !errors.Is(err, filemanager.ErrDuplicateFilePath) {
 		h.Logger().Error("Failed to create orphan file path",
 			zap.String("path", filePath.Path),
 			zap.Stringer("cid", c),
@@ -393,11 +395,18 @@ func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fi
 	// Store the file path for the current node
 	err := fileManagerSvc.CreateFilePath(ctx, filePath)
 	if err != nil {
-		h.Logger().Error("Failed to create file path",
-			zap.String("path", currentPath),
-			zap.Stringer("cid", currentCID),
-			zap.Error(err))
-		return 0, fmt.Errorf("failed to create file path for %s: %w", currentPath, err)
+		if errors.Is(err, filemanager.ErrDuplicateFilePath) {
+			// If the file path already exists, just log a debug message and continue
+			h.Logger().Debug("File path already exists, skipping creation",
+				zap.String("path", currentPath),
+				zap.Stringer("cid", currentCID))
+		} else {
+			h.Logger().Error("Failed to create file path",
+				zap.String("path", currentPath),
+				zap.Stringer("cid", currentCID),
+				zap.Error(err))
+			return 0, fmt.Errorf("failed to create file path for %s: %w", currentPath, err)
+		}
 	}
 
 	h.Logger().Debug("Created file path entry",
@@ -560,7 +569,7 @@ func (h *FilePathOperationHandler) Cleanup(_ context.Context, _ *models.Request)
 // when UnixFS metadata is not available, to set proper file size
 func (h *FilePathOperationHandler) enrichOrphanEntryFromBlockstore(ctx context.Context, c cid.Cid, filePath *db.FilePath) {
 	// Try to get basic block metadata from blockstore using metadata-only APIs
-	proto := core.GetProtocol(internal.ProtocolName).(*Protocol)
+	proto := core.GetProtocol(internal.ProtocolName).(ProtoNode)
 	blockstore := proto.GetNode().GetBlockstore()
 
 	// First check if the block exists

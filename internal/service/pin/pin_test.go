@@ -3,23 +3,31 @@ package pin
 import (
 	"context"
 	"fmt"
+	"testing"
+
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	coreMocks "go.lumeweb.com/portal/core/testing/mocks"
 	"go.lumeweb.com/portal/db/types"
 	"go.lumeweb.com/queryutil"
 	"gorm.io/datatypes"
-	"testing"
 )
 
 var TestOptions = coreTesting.CombineOptions(
 	coreTesting.WithServiceFactory(pluginCore.PIN_SERVICE, NewPinService),
+	coreTesting.WithMockServiceFactory(pluginCore.FILE_MANAGER_SERVICE, mocks.NewMockFileManagerService),
+	util.GetProtocolMock(),
+	coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{}),
 	coreTesting.WithSQLitePluginMigrations(
 		internal.ProtocolName, migrations.GetSQLite(),
 	),
@@ -128,7 +136,7 @@ func TestPinService_ListPins(t *testing.T) {
 		require.NoError(tb, result.Error)
 
 		// Act
-		pins, total, err := pinService.ListPins(context.Background(), nil, queryutil.DefaultPagination)
+		pins, total, err := pinService.ListPins(context.Background(), nil, nil, queryutil.DefaultPagination)
 
 		// Assert
 		require.NoError(tb, err)
@@ -165,7 +173,7 @@ func TestPinService_ReplacePin(t *testing.T) {
 		}
 
 		userID := uint(123)
-		userIP := uint(456)
+		userIP := "192.168.1.1"
 
 		// Act
 		replacedPin, err := pinService.ReplacePin(context.Background(), userID, userIP, oldPin.RequestID, newPin)
@@ -191,6 +199,8 @@ func TestPinService_DeletePin(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		pinService := core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		corePinService := core.GetService[*coreMocks.MockPinService](ctx, core.PIN_SERVICE)
+		fileManagerService := core.GetService[*mocks.MockFileManagerService](ctx, pluginCore.FILE_MANAGER_SERVICE)
 
 		// Generate a CID from a test string
 		testString := "test data"
@@ -200,6 +210,12 @@ func TestPinService_DeletePin(t *testing.T) {
 			CID:       testCID.Bytes(),
 			RequestID: types.NewBinUUID(),
 		}
+
+		// Setup mock expectations
+		hash := internal.NewIPFSHash(testCID)
+		corePinService.EXPECT().GetPinByHash(hash, uint(0)).Return(nil, nil).Maybe()
+		corePinService.EXPECT().DeletePinByHash(hash, uint(0)).Return(nil).Maybe()
+		fileManagerService.EXPECT().DeleteFilePathSmart(mock.Anything, uint(0), testCID.Bytes()).Return(nil).Maybe()
 
 		// Add the pin to the database
 		result := ctx.DB().Create(testPin)

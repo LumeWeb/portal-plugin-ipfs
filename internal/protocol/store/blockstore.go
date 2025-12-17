@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"time"
+
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
@@ -16,7 +18,6 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/service"
 	"go.uber.org/zap"
-	"time"
 )
 
 type (
@@ -257,12 +258,6 @@ func (bs *BlockStore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, error) {
 		}
 	}()
 	return ch, nil
-}
-
-// HashOnRead specifies if every read block should be
-// rehashed to make sure it matches its CID.
-func (bs *BlockStore) HashOnRead(enabled bool) {
-	// TODO: implement
 }
 
 // NewBlockStore creates a new blockstore backed by a renterd node

@@ -37,7 +37,7 @@ type (
 )
 
 type ProtoNode interface {
-	GetNode() *ipfs.Node
+	GetNode() ipfs.IPFSNode
 }
 
 // Pin adds a block to the store.

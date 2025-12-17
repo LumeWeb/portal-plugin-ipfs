@@ -19,7 +19,7 @@ func mustParsePeer(s string) IPFSPeer {
 	return NewIPFSPeer(*info)
 }
 
-var bootstrapPeers = []IPFSPeer{
+var BootstrapPeers = []IPFSPeer{
 	mustParsePeer("/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN"),
 	mustParsePeer("/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa"),
 	mustParsePeer("/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb"),

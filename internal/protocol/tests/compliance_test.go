@@ -1,3 +1,5 @@
+//go:build compliance
+
 package tests
 
 import (

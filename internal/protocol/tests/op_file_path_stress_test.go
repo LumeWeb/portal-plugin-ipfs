@@ -21,7 +21,6 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
-	coreMocks "go.lumeweb.com/portal/core/testing/mocks"
 )
 
 func TestFilePathOperationHandler_StressTest_ConcurrentDirectoryCreation(t *testing.T) {
@@ -56,7 +55,7 @@ func TestFilePathOperationHandler_StressTest_ConcurrentDirectoryCreation(t *test
 					// Create a random directory structure with unique seed per goroutine
 					seed := time.Now().UnixNano() + rand.Int63() + int64(userID*1000000) + int64(dirIndex*10000)
 					rng := rand.New(rand.NewSource(seed))
-					
+
 					rootCID, err := createRandomDirectoryStructure(tb, ctx, rng, numFilesPerDir, maxDepth, maxNameLength)
 					if err != nil {
 						errChan <- fmt.Errorf("user %d, dir %d: failed to create directory structure: %w", userID, dirIndex, err)
@@ -67,7 +66,7 @@ func TestFilePathOperationHandler_StressTest_ConcurrentDirectoryCreation(t *test
 					req := createTestRequest(t, rootCID, &userID)
 
 					// Mock the workflow service to return pin workflow data
-					workflowSvc := core.GetService[*coreMocks.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
+					workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
 
 					// Create workflow data with the CIDs
 					pinWorkflowData := &protocol.PinWorkflowData{

@@ -1,23 +1,24 @@
-package store
+package tests
 
 import (
+	"testing"
+
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	coreTesting "go.lumeweb.com/portal/core/testing"
-	"testing"
 )
 
 var (
 	cfg            = coreTesting.NewConfigBuilder().Build()
 	ipfsTestConfig = coreTesting.CombineOptions(
-		coreTesting.WithMockProtocol(internal.ProtocolName, func(protocol *coreTesting.MockProtocol) {
-			protocol.WithConfig(cfg)
-		}),
-		coreTesting.WithProtocolConfig(internal.ProtocolName, cfg),
+
 		coreTesting.WithSQLitePluginMigrations(internal.ProtocolName, migrations.GetSQLite()),
+		util.GetProtocolMock(),
+		coreTesting.WithProtocolConfig(internal.ProtocolName, cfg),
 	)
 )
 

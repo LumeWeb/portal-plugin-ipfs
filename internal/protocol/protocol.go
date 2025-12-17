@@ -39,10 +39,16 @@ func confirmOperationName() string {
 	return core.OperationName(internal.ProtocolName, "confirm")
 }
 
+type ProtoNode interface {
+	core.Protocol
+	core.StorageProtocol
+	GetNode() ipfs.IPFSNode
+}
+
 type Protocol struct {
 	ctx           core.Context
 	db            *gorm.DB
-	node          *ipfs.Node
+	node          ipfs.IPFSNode
 	metadataStore *store.MetadataStoreDefault
 	pin           core.PinService
 	coordinator   core.WorkflowCoordinator
@@ -252,7 +258,7 @@ func (p Protocol) Hash(_ io.Reader, _ uint64) (core.StorageHash, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (p Protocol) GetNode() *ipfs.Node {
+func (p Protocol) GetNode() ipfs.IPFSNode {
 	return p.node
 }
 

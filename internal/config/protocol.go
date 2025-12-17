@@ -20,7 +20,7 @@ type ProtocolConfig struct {
 func (c ProtocolConfig) Defaults() map[string]any {
 	return map[string]any{
 		"ListenAddresses": []string{"/ip4/0.0.0.0/tcp/4001"},
-		"BootstrapPeers":  bootstrapPeers,
+		"BootstrapPeers":  BootstrapPeers,
 	}
 }
 func (l ProtocolConfig) Schema() z.ZogSchema {

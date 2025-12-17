@@ -29,7 +29,7 @@ type PinServiceDefault struct {
 	db             *gorm.DB
 	logger         *core.Logger
 	workflow       core.WorkflowService
-	ipfs           *protocol.Protocol
+	ipfs           protocol.ProtoNode
 	pinSvc         core.PinService
 	fileManagerSvc pluginCore.FileManagerService
 }
@@ -49,7 +49,7 @@ func NewPinService() (core.Service, []core.ContextBuilderOption, error) {
 			svc.workflow = core.GetService[core.WorkflowService](ctx, core.WORKFLOW_SERVICE)
 			svc.pinSvc = core.GetService[core.PinService](ctx, core.PIN_SERVICE)
 			proto := core.GetProtocol(internal.ProtocolName)
-			ipfsProto, ok := proto.(*protocol.Protocol)
+			ipfsProto, ok := proto.(protocol.ProtoNode)
 			if !ok {
 				return fmt.Errorf("protocol %s is not of type *protocol.Protocol", internal.ProtocolName)
 			}
@@ -272,7 +272,7 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 		hash := internal.NewIPFSHash(c)
 		corePin, err := s.pinSvc.GetPinByHash(hash, pin.UserID)
 		if err != nil {
-			s.logger.Warn("Failed to get core pin for unpin event", 
+			s.logger.Warn("Failed to get core pin for unpin event",
 				zap.Error(err),
 				zap.Stringer("cid", c),
 				zap.Uint("user_id", pin.UserID))
@@ -291,7 +291,7 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 			clientIP := store.GetClientIP(ctx)
 			quota.EmitStorageObjectUnpinned(s.ctx, corePin, clientIP)
 		}
-		
+
 		// Clean up file paths when no other pins reference this CID
 		if err = s.fileManagerSvc.DeleteFilePathSmart(ctx, pin.UserID, pin.CID); err != nil {
 			s.logger.Error("Failed to delete file paths smartly",
@@ -423,7 +423,6 @@ func (s *PinServiceDefault) getRelatedCIDs(ctx context.Context, userID uint, cid
 
 	return relatedCIDs, nil
 }
-
 
 // UpdatePinStatus updates the job's state.
 func (s *PinServiceDefault) UpdatePinStatus(ctx context.Context, requestID types.BinaryUUID, status pluginDb.PinningStatus, info datatypes.JSON) error {
