@@ -516,27 +516,33 @@ func Create7ZArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 	// Create 7Z archive using shell command
 	archivePath := filepath.Join(tempDir, "test.7z")
 
-	// Try to create 7Z using 7z command
-	cmd := exec.Command("7z", "a", archivePath, ".")
+	// Check availability of 7z commands first for cleaner error handling
+	var use7zz bool
+	
+	if _, err := exec.LookPath("7z"); err != nil {
+		// 7z not found, try 7zz
+		if _, err := exec.LookPath("7zz"); err != nil {
+			// Neither command found, skip test
+			t.Skip("7z/7zz command not found - install p7zip or skip 7Z tests")
+		}
+		use7zz = true
+	}
+
+	// Create 7Z archive using the available command
+	var cmd *exec.Cmd
+	if use7zz {
+		cmd = exec.Command("7zz", "a", archivePath, ".")
+	} else {
+		cmd = exec.Command("7z", "a", archivePath, ".")
+	}
 	cmd.Dir = tempDir
 
 	if err := cmd.Run(); err != nil {
-		// If 7z command is not available, try using the '7zz' command to check availability
-		// and then skip the test gracefully
-		if _, err := exec.LookPath("7z"); err != nil {
-			if _, err := exec.LookPath("7zz"); err != nil {
-				// 7z command not found, skip test
-				t.Skip("7z command not found - install 7z or skip 7Z tests")
-			}
-			// Try 7zz command
-			cmd = exec.Command("7zz", "a", archivePath, ".")
-			cmd.Dir = tempDir
-			if err := cmd.Run(); err != nil {
-				t.Fatalf("failed to create 7Z archive with 7zz: %v", err)
-			}
-		} else {
-			t.Fatalf("failed to create 7Z archive: %v", err)
+		commandName := "7z"
+		if use7zz {
+			commandName = "7zz"
 		}
+		t.Fatalf("failed to create 7Z archive with %s: %v", commandName, err)
 	}
 
 	// Read the created 7Z file

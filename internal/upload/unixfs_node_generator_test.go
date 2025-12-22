@@ -50,6 +50,7 @@ func setupNodeGeneratorTest(t *testing.T) (UnixFSNodeGenerator, context.Context,
 
 // TestNewUnixFSNodeGenerator tests the constructor with real components
 func TestNewUnixFSNodeGenerator(t *testing.T) {
+	t.Parallel()
 	generator, _, cleanup := setupNodeGeneratorTest(t)
 	defer cleanup()
 
@@ -62,6 +63,7 @@ func TestNewUnixFSNodeGenerator(t *testing.T) {
 
 // TestIPFSUnixFSNodeGenerator_CreateDirectory tests directory creation with real components
 func TestIPFSUnixFSNodeGenerator_CreateDirectory(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		expectError bool
@@ -98,6 +100,7 @@ func TestIPFSUnixFSNodeGenerator_CreateDirectory(t *testing.T) {
 
 // TestIPFSUnixFSNodeGenerator_CreateNode tests basic node creation with real components
 func TestIPFSUnixFSNodeGenerator_CreateNode(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		content      []byte
@@ -340,7 +343,6 @@ func TestIPFSUnixFSNodeGenerator_ContextCancellation(t *testing.T) {
 				assert.True(t, errors.Is(err, context.Canceled))
 			}
 
-			
 		})
 	}
 }
@@ -424,6 +426,7 @@ func TestIPFSUnixFSNodeGenerator_InvalidReaderScenarios(t *testing.T) {
 
 // TestIPFSUnixFSNodeGenerator_VariousContentSizes tests different content sizes with real components
 func TestIPFSUnixFSNodeGenerator_VariousContentSizes(t *testing.T) {
+	t.Parallel()
 	sizes := []struct {
 		name string
 		size int
@@ -439,7 +442,9 @@ func TestIPFSUnixFSNodeGenerator_VariousContentSizes(t *testing.T) {
 	}
 
 	for _, sizeTest := range sizes {
+		sizeTest := sizeTest // Capture range variable
 		t.Run(fmt.Sprintf("size_%s", sizeTest.name), func(t *testing.T) {
+			t.Parallel() // Enable parallel sub-tests
 			generator, ctx, cleanup := setupNodeGeneratorTest(t)
 			defer cleanup()
 

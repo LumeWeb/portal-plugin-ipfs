@@ -293,12 +293,22 @@ func (gen *IPFSCARGenerator) collectArchiveEntries(ctx context.Context, extracto
 			// Handle file
 			_, err = d.Info()
 			if err != nil {
+				if gen.logger != nil {
+					gen.logger.Warn("Skipping file due to info access error",
+						zap.String("path", currentPath),
+						zap.Error(err))
+				}
 				return nil // Continue processing
 			}
 
 			// Open the file from the archive filesystem
 			file, err := efs.Open(currentPath)
 			if err != nil {
+				if gen.logger != nil {
+					gen.logger.Warn("Skipping file due to open error",
+						zap.String("path", currentPath),
+						zap.Error(err))
+				}
 				return nil // Continue processing
 			}
 
@@ -308,6 +318,11 @@ func (gen *IPFSCARGenerator) collectArchiveEntries(ctx context.Context, extracto
 			if !exists {
 				if closeErr := file.Close(); closeErr != nil {
 					// Silently close file
+				}
+				if gen.logger != nil {
+					gen.logger.Warn("Skipping file due to missing parent directory",
+						zap.String("path", currentPath),
+						zap.String("parent_path", parentPath))
 				}
 				return nil // Continue processing
 			}
@@ -404,16 +419,14 @@ func (gen *IPFSCARGenerator) processNodeTree(ctx context.Context, directories ma
 	// Process all subdirectories
 	for _path, dir := range directories {
 		if err := gen.processDirectory(ctx, dir, _path); err != nil {
-			gen.logger.Warn("Failed to process directory", zap.String("path", _path), zap.Error(err))
-			continue
+			return fmt.Errorf("failed to process directory %s: %w", _path, err)
 		}
 	}
 
 	// Process all files
 	for _, fileNode := range files {
 		if err := gen.processFile(ctx, fileNode); err != nil {
-			gen.logger.Warn("Failed to process file node", zap.String("cid", fileNode.Cid().String()), zap.Error(err))
-			continue
+			return fmt.Errorf("failed to process file node %s: %w", fileNode.Cid().String(), err)
 		}
 	}
 

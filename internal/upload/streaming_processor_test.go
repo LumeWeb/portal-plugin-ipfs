@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"math/rand"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -17,6 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+)
+
+var (
+	registerZipExtractorOnce sync.Once
 )
 
 // setupStreamProcessorTest creates a streaming processor with default in-memory implementations
@@ -50,7 +55,9 @@ func createStreamProcessorTestArchive(t *testing.T, ctx core.Context, files map[
 	archiveData := CreateZIPArchive(t, ctx, testFiles)
 
 	// Create a real archive extractor
-	RegisterZipExtractor()
+	registerZipExtractorOnce.Do(func() {
+		RegisterZipExtractor()
+	})
 	extractor, err := CreateExtractor(createSeekableReader(archiveData))
 	require.NoError(t, err)
 

@@ -443,6 +443,12 @@ func (sp *StreamingProcessor) buildDirectoryTree(ctx context.Context) error {
 
 	dirPaths = common.SortDirectoriesByDepth(dirPaths)
 
+	// Create a snapshot of processedFiles once to avoid repeated copies
+	sp.mu.RLock()
+	processedFilesCopy := make([]FileInfo, len(sp.processedFiles))
+	copy(processedFilesCopy, sp.processedFiles)
+	sp.mu.RUnlock()
+
 	// Create UnixFS directory objects in memory only
 	for _, _path := range dirPaths {
 		metadata := directoryMetadataCopy[_path]
@@ -482,11 +488,6 @@ func (sp *StreamingProcessor) buildDirectoryTree(ctx context.Context) error {
 		}
 
 		// Add files to this directory using stored metadata
-		// Create a snapshot of processedFiles to avoid race conditions
-		sp.mu.RLock()
-		processedFilesCopy := make([]FileInfo, len(sp.processedFiles))
-		copy(processedFilesCopy, sp.processedFiles)
-		sp.mu.RUnlock()
 
 		for _, file := range processedFilesCopy {
 			if file.ParentPath == _path && file.Processed && file.Error == nil {
