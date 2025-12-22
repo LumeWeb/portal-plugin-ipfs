@@ -1,5 +1,5 @@
 // package downloader contains a cache for downloading blocks from a renterd node.
-// A cache optimizes the number of in-flight requests to avoid overloading the
+// A cache limits the number of in-flight requests to avoid overloading the
 // node and caches blocks to avoid redundant downloads.
 package downloader
 

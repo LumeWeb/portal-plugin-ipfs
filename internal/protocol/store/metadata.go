@@ -711,10 +711,10 @@ func ExtractNodeMetadata(clogger *core.Logger, block pluginCore.PinnedBlock) (*p
 	}
 
 	if analyzedNode.UnixFSType == unixfs.TFile {
-		if analyzedNode.UnixFSBlockSizes != nil && len(analyzedNode.UnixFSBlockSizes) > 0 {
-			logger.Debug("Processing file block sizes", zap.Stringer("cid", block.Cid), zap.Int("block_count", len(analyzedNode.UnixFSBlockSizes)))
+		if analyzedNode.ChunkSizes != nil && len(analyzedNode.ChunkSizes) > 0 {
+			logger.Debug("Processing file block sizes", zap.Stringer("cid", block.Cid), zap.Int("block_count", len(analyzedNode.ChunkSizes)))
 			var totalSize int64
-			for _, size := range analyzedNode.UnixFSBlockSizes {
+			for _, size := range analyzedNode.ChunkSizes {
 				totalSize += int64(size)
 			}
 			metadata.BlockSize = totalSize
@@ -726,7 +726,29 @@ func ExtractNodeMetadata(clogger *core.Logger, block pluginCore.PinnedBlock) (*p
 	}
 
 	logger.Debug("Processing child CIDs", zap.Stringer("cid", block.Cid), zap.Int("child_count", len(block.Links)))
-	metadata.ChildCID = datatypes.NewJSONSlice(lo.Map(analyzedNode.Links, func(l *format.Link, _ int) cid.Cid {
+	
+	// Validate that all link arrays have the same length to prevent index out of bounds
+	if len(analyzedNode.LinkNames) != len(analyzedNode.LinkCIDs) || len(analyzedNode.LinkSizes) != len(analyzedNode.LinkCIDs) {
+		return nil, fmt.Errorf("inconsistent link array lengths: CIDs=%d, Names=%d, Sizes=%d", 
+			len(analyzedNode.LinkCIDs), len(analyzedNode.LinkNames), len(analyzedNode.LinkSizes))
+	}
+	
+	// Convert separate arrays to format.Link structs for compatibility, filtering out invalid CIDs
+	var validLinks []*format.Link
+	for i, linkCIDBytes := range analyzedNode.LinkCIDs {
+		linkCID, err := cid.Cast(linkCIDBytes)
+		if err != nil {
+			logger.Error("Failed to cast link CID, skipping", zap.Stringer("parent_cid", block.Cid), zap.Error(err))
+			continue
+		}
+		validLinks = append(validLinks, &format.Link{
+			Cid:  linkCID,
+			Name: analyzedNode.LinkNames[i],
+			Size: analyzedNode.LinkSizes[i],
+		})
+	}
+
+	metadata.ChildCID = datatypes.NewJSONSlice(lo.Map(validLinks, func(l *format.Link, _ int) cid.Cid {
 		normalized := encoding.NormalizeCid(l.Cid)
 		logger.Debug("Processing child link", zap.Stringer("parent_cid", block.Cid), zap.Stringer("child_cid", normalized), zap.String("link_name", l.Name))
 		return normalized

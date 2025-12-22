@@ -63,7 +63,7 @@ func TestFilePathOperationHandler_StressTest_ConcurrentDirectoryCreation(t *test
 					}
 
 					// Create a test request
-					req := createTestRequest(t, rootCID, &userID)
+					req := createTestRequest(rootCID, &userID)
 
 					// Mock the workflow service to return pin workflow data
 					workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)

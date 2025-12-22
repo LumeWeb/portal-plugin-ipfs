@@ -9,9 +9,11 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	pluginErrors "go.lumeweb.com/portal-plugin-ipfs/internal/errors"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.uber.org/zap"
@@ -28,6 +30,8 @@ type UploadServiceDefault struct {
 	pin        pluginCore.IPFSPinService
 	storage    core.StorageService
 	ipfs       core.Protocol
+
+	processorFactory upload.UploadProcessorFactory
 }
 
 func NewUploadService() (core.Service, []core.ContextBuilderOption, error) {
@@ -41,45 +45,51 @@ func NewUploadService() (core.Service, []core.ContextBuilderOption, error) {
 			_service.corePin = core.GetService[core.PinService](ctx, core.PIN_SERVICE)
 			_service.coreUpload = core.GetService[core.UploadService](ctx, core.UPLOAD_SERVICE)
 			_service.ipfs = core.GetProtocol(internal.ProtocolName)
+
+			// Create processor factory
+			_service.processorFactory = upload.NewUploadProcessorFactory(ctx.Logger(), _service.storage, _service.ipfs)
+
 			return nil
 		}),
 	), nil
 }
 
 func (s *UploadServiceDefault) HandleUpload(ctx context.Context, reader io.ReadSeekCloser, userId uint) (cid.Cid, string, error) {
-	// Get the size of the reader
-	size, err := reader.Seek(0, io.SeekEnd)
-	if err != nil {
-		return cid.Undef, "", err
-	}
+	return s.HandleUploadWithMode(ctx, reader, userId, upload.ArchiveConvert)
+}
 
-	// Reset the reader to the beginning
-	_, err = reader.Seek(0, io.SeekStart)
+func (s *UploadServiceDefault) HandleUploadWithMode(ctx context.Context, reader io.ReadSeekCloser, userId uint, mode upload.ArchiveMode) (cid.Cid, string, error) {
+	// Detect file format
+	format, err := upload.DetectFormat(reader)
 	if err != nil {
-		return cid.Undef, "", err
-	}
-
-	roots, err := internal.GetCarRoots(reader, false)
-	if err != nil {
-		return cid.Undef, "", err
-	}
-	// TODO: Handle multiple roots in the future?
-	if len(roots) > 1 {
-		// Either handle multiple roots or return error
-		return cid.Undef, "", fmt.Errorf("CAR file has multiple roots, only single root CARs are supported")
+		// Check if it's an unsupported format error
+		if upload.IsUploadErrorType(err, pluginErrors.UploadErrUnsupportedFormat) {
+			return cid.Undef, "", upload.NewUnsupportedFormatError(err)
+		}
+		return cid.Undef, "", upload.NewCorruptedFileError(err)
 	}
 
 	_, err = reader.Seek(0, io.SeekStart)
 	if err != nil {
-		return cid.Undef, "", err
+		return cid.Undef, "", fmt.Errorf("failed to reset reader for processing: %w", err)
 	}
 
-	uploadId, err := s.storage.S3TemporaryUpload(ctx, reader, uint64(size), s.ipfs.(core.StorageProtocol))
+	processor, err := s.processorFactory.CreateProcessor(format, mode)
 	if err != nil {
-		return cid.Undef, "", err
+		return cid.Undef, "", upload.NewProcessorError(format.String(), mode.String(), err)
 	}
 
-	return roots[0], uploadId, nil
+	rootCID, uploadID, err := processor.Process(ctx, reader)
+	if err != nil {
+		// If it's already an UploadError, return it as-is
+		if _, ok := err.(*upload.UploadError); ok {
+			return cid.Undef, "", err
+		}
+		// Otherwise wrap it in a generic processing error
+		return cid.Undef, "", upload.NewProcessingError(err)
+	}
+
+	return rootCID, uploadID, nil
 }
 
 func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid, userId uint) error {
@@ -121,13 +131,12 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 	// Create upload records and core pin records for ALL CIDs (both roots and children)
 	clientIP := store.GetClientIP(ctx)
 	for _, c := range cids {
-		// Get size for this CID from cached map
+
 		size, exists := cidSizes[c.String()]
 		if !exists {
 			return fmt.Errorf("size not found for CID %s in cache", c.String())
 		}
 
-		// Create upload record for this CID
 		uploadMeta := &models.Upload{
 			UserID:   userId,
 			Protocol: s.ipfs.Name(),
@@ -141,7 +150,6 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 			return fmt.Errorf("failed to save upload record for CID %s: %w", c.String(), err)
 		}
 
-		// Create core pin record for this CID
 		pinMeta := &models.Pin{
 			UploadID: uploadMeta.ID,
 			UserID:   uploadMeta.UserID,
@@ -166,7 +174,7 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 }
 
 func (s *UploadServiceDefault) CreateRootPin(ctx context.Context, c cid.Cid, userId uint) (*pluginDb.IPFSPin, error) {
-	// Create IPFS pin record for the root CID and return it
+
 	ipfsPin, err := s.pin.AddPin(ctx, &pluginDb.IPFSPin{
 		UserID:    userId,
 		CID:       c.Bytes(),

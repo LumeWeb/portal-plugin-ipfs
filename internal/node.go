@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"fmt"
 	"github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/boxo/ipld/unixfs"
 	pb "github.com/ipfs/boxo/ipld/unixfs/pb"
@@ -9,7 +10,6 @@ import (
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
 	legacy "github.com/ipfs/go-ipld-legacy"
-	"github.com/samber/lo"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 )
 
@@ -30,16 +30,18 @@ const (
 )
 
 type NodeInfo struct {
-	Name             string           // Name of the node (e.g., filename within a directory)
-	CID              cid.Cid          // CID of the block
-	Type             NodeInfoType     // Type of the node (raw, protobuf, cbor, etc.)
-	UnixFSType       pb.Data_DataType // UnixFS type (file, directory, symlink, etc.)
-	Links            []*format.Link   // Links to child nodes
-	IsUnixFS         bool             // Whether the node is a UnixFS node
-	IsFileRoot       bool             // Whether the node is the root of a UnixFS file
-	BlockSize        uint64           // Raw, encoded size of the block (disk usage)
-	DataSize         uint64           // Size of the data within the node (e.g., file size, metadata size)
-	UnixFSBlockSizes []uint64         // Block sizes for UnixFS files (chunk sizes)
+	Name       string           // Name of node (e.g., filename within a directory)
+	CIDBytes   []byte           // Binary CID representation (more memory efficient)
+	Type       NodeInfoType     // Type of node (raw, protobuf, cbor, etc.)
+	UnixFSType pb.Data_DataType // UnixFS type (file, directory, symlink, etc.)
+	LinkCIDs   [][]byte         // Binary CIDs of child nodes (more compact than Link structs)
+	LinkNames  []string         // Names of child links (parallel array with LinkCIDs)
+	LinkSizes  []uint64         // Sizes of child links (parallel array with LinkCIDs)
+	IsUnixFS   bool             // Whether the node is a UnixFS node
+	IsFileRoot bool             // Whether the node is the root of a UnixFS file
+	BlockSize  uint64           // Raw, encoded size of block (disk usage)
+	DataSize   uint64           // Size of the data within the node (e.g., file size, metadata size)
+	ChunkSizes []uint64         // Block sizes for UnixFS files (chunk sizes) - renamed for clarity
 }
 
 func AnalyzeNode(ctx context.Context, block blocks.Block) (*NodeInfo, error) {
@@ -48,18 +50,25 @@ func AnalyzeNode(ctx context.Context, block blocks.Block) (*NodeInfo, error) {
 		return nil, err
 	}
 
-	links := lo.Map(node.Links(), func(link *format.Link, _ int) *format.Link {
-		return &format.Link{
-			Name: link.Name,
-			Size: link.Size,
-			Cid:  encoding.NormalizeCid(link.Cid),
-		}
-	})
+	links := node.Links()
+	linkCount := len(links)
 
+	// Pre-allocate slices to avoid multiple allocations
 	info := &NodeInfo{
-		CID:       block.Cid(),
-		Links:     links,
+		CIDBytes:  encoding.NormalizeCid(block.Cid()).Bytes(),
+		LinkCIDs:  make([][]byte, 0, linkCount),
+		LinkNames: make([]string, 0, linkCount),
+		LinkSizes: make([]uint64, 0, linkCount),
 		BlockSize: uint64(len(block.RawData())),
+	}
+
+	// Extract link data efficiently
+	for _, link := range links {
+		if link != nil {
+			info.LinkCIDs = append(info.LinkCIDs, encoding.NormalizeCid(link.Cid).Bytes())
+			info.LinkNames = append(info.LinkNames, link.Name)
+			info.LinkSizes = append(info.LinkSizes, link.Size)
+		}
 	}
 
 	switch n := node.(type) {
@@ -76,8 +85,12 @@ func AnalyzeNode(ctx context.Context, block blocks.Block) (*NodeInfo, error) {
 			info.UnixFSType = fsNode.Type()
 
 			if fsNode.Type() == pb.Data_File {
-				info.IsFileRoot = len(info.Links) > 0
-				info.UnixFSBlockSizes = fsNode.BlockSizes()
+				info.IsFileRoot = len(info.LinkCIDs) > 0
+				blockSizes := fsNode.BlockSizes()
+				if len(blockSizes) > 0 {
+					info.ChunkSizes = make([]uint64, len(blockSizes))
+					copy(info.ChunkSizes, blockSizes)
+				}
 			}
 		}
 	case *encoding.CBORNode:
@@ -101,10 +114,48 @@ func isLikelyChunk(size uint64) bool {
 
 func IsPartialFile(info *NodeInfo) bool {
 	if info.IsUnixFS && info.UnixFSType == pb.Data_File && !info.IsFileRoot {
-		// UnixFS files use the standard chunk size range (240KB <= size < 256KB)
+		// UnixFS files use standard chunk size range (240KB <= size < 256KB)
 		return isLikelyChunk(info.DataSize)
 	}
 
+	// Non-UnixFS raw data: 240KB <= size <= 256KB is considered partial
+	if info.Type == NodeTypeRaw {
+		return info.DataSize >= sizeThreshold && info.DataSize <= typicalChunkSize
+	}
+
+	// Non-UnixFS protobuf data: NEVER considered partial
+	return false
+}
+
+// GetCID returns the CID from its binary representation
+func (info *NodeInfo) GetCID() (cid.Cid, error) {
+	return cid.Cast(info.CIDBytes)
+}
+
+// GetLinkAt returns the link at the specified index as a format.Link
+func (info *NodeInfo) GetLinkAt(index int) (*format.Link, error) {
+	if index < 0 || index >= len(info.LinkCIDs) {
+		return nil, fmt.Errorf("link index out of bounds")
+	}
+
+	linkCID, err := cid.Cast(info.LinkCIDs[index])
+	if err != nil {
+		return nil, fmt.Errorf("invalid CID at index %d: %w", index, err)
+	}
+
+	return &format.Link{
+		Name: info.LinkNames[index],
+		Size: info.LinkSizes[index],
+		Cid:  linkCID,
+	}, nil
+}
+
+// LinkCount returns the number of links in this node
+func (info *NodeInfo) LinkCount() int {
+	return len(info.LinkCIDs)
+}
+
+func isPartialData(info *NodeInfo, sizeThreshold, typicalChunkSize uint64) bool {
 	// Non-UnixFS raw data: 240KB <= size <= 256KB is considered partial
 	if info.Type == NodeTypeRaw {
 		return info.DataSize >= sizeThreshold && info.DataSize <= typicalChunkSize

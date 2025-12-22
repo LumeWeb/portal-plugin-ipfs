@@ -121,7 +121,7 @@ func TestUnpinOperationHandler_FileCleanupAfterUnpin(t *testing.T) {
 		filePath := createTestFilePath(t, ctx, userID, targetCID, "/test/target.txt", "target.txt", false)
 
 		// Create a request
-		req := createTestRequest(t, targetCID, &userID)
+		req := createTestRequest(targetCID, &userID)
 
 		// Add pin after creating request to avoid validation issues
 		createTestPin(t, ctx, userID, targetCID)

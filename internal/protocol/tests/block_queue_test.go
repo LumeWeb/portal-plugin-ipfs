@@ -1,20 +1,22 @@
-package protocol_test
+package tests
 
 import (
+	"io"
+	"os"
+	"path"
+	"runtime"
+	"testing"
+
 	"github.com/ipld/go-car/v2"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/service"
-	"io"
-	"os"
-	"path"
-	"runtime"
-	"testing"
 
 	"github.com/stretchr/testify/require"
 	coreTesting "go.lumeweb.com/portal/core/testing"
@@ -32,21 +34,21 @@ func TestProcessCarIntegration(t *testing.T) {
 	}{
 		{
 			name:         "Valid CAR file - Big Buck Bunny",
-			carFileName:  "../testing/fixtures/cars/bbb.car",
+			carFileName:  "../../testing/fixtures/cars/bbb.car",
 			expectedSize: 515008217,
 			rootCIDs:     []string{"bafybeiehmyjhx3ucuy4gejj5q3nqgrp2uaiqnebqnfvchal63bsnwlxg7y"},
 			expectError:  false,
 		},
 		{
 			name:         "Valid CAR file - DOCX",
-			carFileName:  "../testing/fixtures/cars/docx.car", // Ensure this file exists
+			carFileName:  "../../testing/fixtures/cars/docx.car", // Ensure this file exists
 			expectedSize: 34658,
 			rootCIDs:     []string{"bafybeie4meysywjfzp6a6d4jo4t2zz262qduvesub647ov5g2rvc4doas4"},
 			expectError:  false,
 		},
 		{
 			name:         "Valid CAR file - File Tree",
-			carFileName:  "../testing/fixtures/cars/filetree.car",
+			carFileName:  "../../testing/fixtures/cars/filetree.car",
 			expectedSize: 497705023,
 			rootCIDs:     []string{"bafybeiccfclkdtucu6y4yc5cpr6y3yuinr67svmii46v5cfcrkp47ihehy"},
 			expectError:  false,
@@ -62,14 +64,14 @@ func TestProcessCarIntegration(t *testing.T) {
 			},*/
 		{
 			name:         "Invalid CAR file",
-			carFileName:  "../testing/fixtures/cars/invalid.car",
+			carFileName:  "../../testing/fixtures/cars/invalid.car",
 			expectedSize: 37,
 			rootCIDs:     []string{},
 			expectError:  true,
 		},
 		{
 			name:         "Empty CAR file",
-			carFileName:  "../testing/fixtures/cars/empty.car",
+			carFileName:  "../../testing/fixtures/cars/empty.car",
 			expectedSize: 75,
 			rootCIDs:     []string{},
 			expectError:  true,
@@ -89,10 +91,8 @@ func TestProcessCarIntegration(t *testing.T) {
 				carFile, err := os.Open(path.Join(path.Dir(file), tc.carFileName))
 				require.NoError(t, err)
 				defer func(carFile *os.File) {
-					err = carFile.Close()
-					if err != nil {
-						require.NoError(t, err)
-					}
+					err := carFile.Close()
+					require.NoError(t, err)
 				}(carFile)
 
 				// Verify the file size
@@ -103,8 +103,18 @@ func TestProcessCarIntegration(t *testing.T) {
 				proto := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol)
 				node := proto.GetNode()
 
-				// Call the ProcessCar function
-				processedCIDs, err := protocol.ProcessCar(ctx, carFile)
+				// Create CAR processor
+				processor, err := protocol.NewCARBlockProcessor(carFile)
+
+				// For invalid CAR files, expect processor creation to fail
+				if tc.name == "Invalid CAR file" {
+					require.Error(t, err)
+					return
+				}
+				require.NoError(t, err)
+
+				// Call the ProcessBlocks function
+				processedCIDs, _, err := protocol.ProcessBlocks(ctx, processor)
 
 				// Assert the error
 				if tc.expectError {
@@ -157,6 +167,7 @@ func TestProcessCarIntegration(t *testing.T) {
 				coreTesting.WithServiceFactory(core.CRON_SERVICE, service.NewCronService),
 				coreTesting.WithServiceFactory(core.REQUEST_SERVICE, service.NewRequestService),
 				coreTesting.WithServiceFactory(core.WORKFLOW_SERVICE, service.NewWorkflowCoordinator),
+				coreTesting.WithServiceFactory(pluginCore.FILE_MANAGER_SERVICE, filemanager.NewFileManagerService),
 				coreTesting.WithServiceFactory(pluginCore.PIN_SERVICE, pin.NewPinService),
 				coreTesting.WithProtocol(internal.ProtocolName, protocol.NewProtocol),
 				coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{}),

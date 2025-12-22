@@ -11,6 +11,7 @@ import (
 	"github.com/ipfs/go-cid"
 	mock "github.com/stretchr/testify/mock"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 )
 
 // NewMockUploadService creates a new instance of MockUploadService. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -188,6 +189,90 @@ func (_c *MockUploadService_HandleUpload_Call) Return(cid1 cid.Cid, s string, er
 }
 
 func (_c *MockUploadService_HandleUpload_Call) RunAndReturn(run func(ctx context.Context, reader io.ReadSeekCloser, userId uint) (cid.Cid, string, error)) *MockUploadService_HandleUpload_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// HandleUploadWithMode provides a mock function for the type MockUploadService
+func (_mock *MockUploadService) HandleUploadWithMode(ctx context.Context, reader io.ReadSeekCloser, userId uint, mode upload.ArchiveMode) (cid.Cid, string, error) {
+	ret := _mock.Called(ctx, reader, userId, mode)
+
+	if len(ret) == 0 {
+		panic("no return value specified for HandleUploadWithMode")
+	}
+
+	var r0 cid.Cid
+	var r1 string
+	var r2 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.ReadSeekCloser, uint, upload.ArchiveMode) (cid.Cid, string, error)); ok {
+		return returnFunc(ctx, reader, userId, mode)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, io.ReadSeekCloser, uint, upload.ArchiveMode) cid.Cid); ok {
+		r0 = returnFunc(ctx, reader, userId, mode)
+	} else {
+		r0 = ret.Get(0).(cid.Cid)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, io.ReadSeekCloser, uint, upload.ArchiveMode) string); ok {
+		r1 = returnFunc(ctx, reader, userId, mode)
+	} else {
+		r1 = ret.Get(1).(string)
+	}
+	if returnFunc, ok := ret.Get(2).(func(context.Context, io.ReadSeekCloser, uint, upload.ArchiveMode) error); ok {
+		r2 = returnFunc(ctx, reader, userId, mode)
+	} else {
+		r2 = ret.Error(2)
+	}
+	return r0, r1, r2
+}
+
+// MockUploadService_HandleUploadWithMode_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'HandleUploadWithMode'
+type MockUploadService_HandleUploadWithMode_Call struct {
+	*mock.Call
+}
+
+// HandleUploadWithMode is a helper method to define mock.On call
+//   - ctx context.Context
+//   - reader io.ReadSeekCloser
+//   - userId uint
+//   - mode upload.ArchiveMode
+func (_e *MockUploadService_Expecter) HandleUploadWithMode(ctx interface{}, reader interface{}, userId interface{}, mode interface{}) *MockUploadService_HandleUploadWithMode_Call {
+	return &MockUploadService_HandleUploadWithMode_Call{Call: _e.mock.On("HandleUploadWithMode", ctx, reader, userId, mode)}
+}
+
+func (_c *MockUploadService_HandleUploadWithMode_Call) Run(run func(ctx context.Context, reader io.ReadSeekCloser, userId uint, mode upload.ArchiveMode)) *MockUploadService_HandleUploadWithMode_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 io.ReadSeekCloser
+		if args[1] != nil {
+			arg1 = args[1].(io.ReadSeekCloser)
+		}
+		var arg2 uint
+		if args[2] != nil {
+			arg2 = args[2].(uint)
+		}
+		var arg3 upload.ArchiveMode
+		if args[3] != nil {
+			arg3 = args[3].(upload.ArchiveMode)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *MockUploadService_HandleUploadWithMode_Call) Return(cid1 cid.Cid, s string, err error) *MockUploadService_HandleUploadWithMode_Call {
+	_c.Call.Return(cid1, s, err)
+	return _c
+}
+
+func (_c *MockUploadService_HandleUploadWithMode_Call) RunAndReturn(run func(ctx context.Context, reader io.ReadSeekCloser, userId uint, mode upload.ArchiveMode) (cid.Cid, string, error)) *MockUploadService_HandleUploadWithMode_Call {
 	_c.Call.Return(run)
 	return _c
 }

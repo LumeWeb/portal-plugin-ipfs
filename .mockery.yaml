@@ -24,3 +24,11 @@ packages:
   go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store:
     interfaces:
       MockBlockstore: {}
+      MockDatastore: {}
+  go.lumeweb.com/portal-plugin-ipfs/internal/upload:
+    config:
+      pkgname: "{{.SrcPackageName}}"
+      dir: "{{.InterfaceDir}}"
+    interfaces:
+      ArchiveExtractor: {}
+      StreamingArchiveProcessor: {}
