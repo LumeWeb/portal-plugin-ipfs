@@ -2,10 +2,12 @@ package core
 
 import (
 	"context"
+	"io"
+
 	"github.com/ipfs/go-cid"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
-	"io"
 )
 
 const UPLOAD_SERVICE = "ipfs.upload"
@@ -15,6 +17,12 @@ type UploadService interface {
 	// It stores the upload as temporary storage and returns the root CID and upload ID.
 	// This method does NOT create any pin records - pins are created by ProcessUpload and CreateRootPin.
 	HandleUpload(ctx context.Context, reader io.ReadSeekCloser, userId uint) (cid.Cid, string, error)
+
+	// HandleUploadWithMode processes an upload stream with support for ZIP processing modes.
+	// It detects the file format automatically and processes accordingly.
+	// For ZIP files, the mode parameter determines whether to convert to IPFS structure or preserve as ZIP.
+	// For CAR files, the mode parameter is ignored.
+	HandleUploadWithMode(ctx context.Context, reader io.ReadSeekCloser, userId uint, mode upload.ArchiveMode) (cid.Cid, string, error)
 
 	// ProcessUpload processes a list of CIDs and creates upload and core pin records for a user.
 	// It creates upload records and core pin records for ALL provided CIDs (both roots and children),

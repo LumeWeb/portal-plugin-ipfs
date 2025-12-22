@@ -49,12 +49,12 @@ func TestFilePathOperationHandler_ValidateRequest(t *testing.T) {
 
 		// Test case 1: Valid request with hash
 		testCID := util.GenerateTestCID(t, "test data")
-		validReq := createTestRequest(t, testCID, uintPtr(123))
+		validReq := createTestRequest(testCID, uintPtr(123))
 		err := handler.ValidateRequest(context.Background(), validReq)
 		assert.NoError(tb, err)
 
 		// Test case 2: Invalid request without hash - need to mock the workflow service
-		invalidReq := createTestRequest(t, cid.Undef, uintPtr(123))
+		invalidReq := createTestRequest(cid.Undef, uintPtr(123))
 
 		// Create empty workflow data for the invalid case
 		k := koanf.New(".")
@@ -91,7 +91,7 @@ func TestFilePathOperationHandler_Execute_WithValidUnixFSDirectory(t *testing.T)
 		util.CreateTestBlockAndNode(t, ctx, childCID1, "child1.txt", 0, 512, []cid.Cid{})
 		util.CreateTestBlockAndNode(t, ctx, childCID2, "child2.txt", 0, 256, []cid.Cid{})
 
-		req := createTestRequest(t, testCID, &userID)
+		req := createTestRequest(testCID, &userID)
 
 		// Mock the workflow service to return pin workflow data
 		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
@@ -165,7 +165,7 @@ func TestFilePathOperationHandler_Execute_WithIncompleteMetadata(t *testing.T) {
 		// Create test block with incomplete UnixFS node (no name, no children)
 		_, _ = util.CreateTestBlockAndNode(t, ctx, testCID, "", 0, 0, []cid.Cid{})
 
-		req := createTestRequest(t, testCID, &userID)
+		req := createTestRequest(testCID, &userID)
 
 		// Mock the workflow service to return pin workflow data with the test CID
 		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
@@ -223,7 +223,7 @@ func TestFilePathOperationHandler_Execute_WithMissingMetadata(t *testing.T) {
 		userID := uint(123)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		req := createTestRequest(t, testCID, &userID)
+		req := createTestRequest(testCID, &userID)
 
 		// Mock the workflow service to return pin workflow data with the test CID
 		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)

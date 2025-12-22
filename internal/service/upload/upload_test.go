@@ -1,18 +1,23 @@
 package upload
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"path"
 	"runtime"
 	"testing"
+	"time"
 
+	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
@@ -27,6 +32,17 @@ var (
 	carFileName          = "../../testing/fixtures/cars/filetree.car"
 )
 
+func TestMain(m *testing.M) {
+	coreTesting.WithDBAndOptions(m, coreTesting.WithMockServiceFactory(pluginCore.PIN_SERVICE, mocks.NewMockIPFSPinService),
+		coreTesting.WithServiceFactory(pluginCore.UPLOAD_SERVICE, NewUploadService),
+		coreTesting.WithServiceFactory(core.WORKFLOW_SERVICE, service.NewWorkflowCoordinator),
+		coreTesting.WithProtocol(internal.ProtocolName, protocol.NewProtocol),
+		coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{}),
+		coreTesting.WithSQLitePluginMigrations(
+			internal.ProtocolName, migrations.GetSQLite(),
+		))
+}
+
 func TestUploadService_HandleUpload(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		internal.RegisterHashes()
@@ -35,15 +51,12 @@ func TestUploadService_HandleUpload(t *testing.T) {
 		uploadService := core.GetService[pluginCore.UploadService](ctx, pluginCore.UPLOAD_SERVICE)
 		require.NotNil(tb, uploadService)
 
-
 		mockStorageService := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
 		testReader, err := os.Open(path.Join(path.Dir(currentFile), carFileName))
 		require.NoError(tb, err)
 
 		userId := uint(123)
-
-
 
 		// Set expectations on the mock services
 		// HandleUpload only calls S3TemporaryUpload, AddPin is called in CreateRootPin via workflow
@@ -54,14 +67,78 @@ func TestUploadService_HandleUpload(t *testing.T) {
 
 		// Assert
 		assert.NoError(tb, err)
-	}, coreTesting.CombineOptions(
-		coreTesting.WithMockServiceFactory(pluginCore.PIN_SERVICE, mocks.NewMockIPFSPinService),
-		coreTesting.WithServiceFactory(pluginCore.UPLOAD_SERVICE, NewUploadService),
-		coreTesting.WithServiceFactory(core.WORKFLOW_SERVICE, service.NewWorkflowCoordinator),
-		coreTesting.WithProtocol(internal.ProtocolName, protocol.NewProtocol),
-		coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{}),
-		coreTesting.WithSQLitePluginMigrations(
-			internal.ProtocolName, migrations.GetSQLite(),
-		),
-	))
+	})
+}
+
+func TestUploadService_HandleUpload_WithMode(t *testing.T) {
+	tests := []struct {
+		name            string
+		archiveMode     upload.ArchiveMode
+		useHandleUpload bool
+	}{
+		{
+			name:            "ZIPConvert",
+			archiveMode:     upload.ArchiveConvert,
+			useHandleUpload: false,
+		},
+		{
+			name:            "ZIPPreserve",
+			archiveMode:     upload.ArchivePreserve,
+			useHandleUpload: false,
+		},
+		{
+			name:            "DefaultMode",
+			archiveMode:     upload.ArchiveConvert, // Default should be convert
+			useHandleUpload: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+				internal.RegisterHashes()
+				err := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol).GetNode().Close()
+
+				// Arrange
+				uploadService := core.GetService[pluginCore.UploadService](ctx, pluginCore.UPLOAD_SERVICE)
+				require.NotNil(tb, uploadService)
+
+				mockStorageService := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
+
+				// Create test ZIP file using upload package
+				testFiles := []upload.TestFile{
+					{
+						Name:     "test.txt",
+						Content:  "Hello, World!",
+						IsDir:    false,
+						Mode:     0644,
+						Modified: time.Now(),
+					},
+				}
+				zipData := bytes.NewReader(upload.CreateZIPArchive(testFiles))
+				reader := io.NopCloser(zipData)
+
+				userId := uint(123)
+
+				// Set expectations on mock services
+				mockStorageService.EXPECT().S3TemporaryUpload(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("test-upload-id", nil).Once()
+
+				// Act
+				var rootCID cid.Cid
+				var uploadId string
+				if tt.useHandleUpload {
+					rootCID, uploadId, err = uploadService.HandleUpload(ctx, upload.NewUniversalReader(reader), userId)
+				} else {
+					rootCID, uploadId, err = uploadService.HandleUploadWithMode(ctx, upload.NewUniversalReader(reader), userId, tt.archiveMode)
+				}
+
+				// Assert
+				assert.NoError(tb, err)
+				assert.NotEqual(tb, cid.Undef, rootCID)
+				assert.Equal(tb, "test-upload-id", uploadId)
+
+				mockStorageService.AssertExpectations(tb)
+			})
+		})
+	}
 }

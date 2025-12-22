@@ -5,23 +5,34 @@ import (
 	"net/http"
 	"strings"
 
+	"go.lumeweb.com/portal-plugin-ipfs/internal/errors"
 	router "go.lumeweb.com/portal-router"
 	core "go.lumeweb.com/portal/core"
 )
 
 // Error keys
 const (
-	Namespace                                    = "ipfs-plugin-api"
-	ErrKeyFileUploadFailed     core.ErrorType = "ErrFileUploadFailed"
-	ErrKeyMetadataFetchFailed  core.ErrorType = "ErrMetadataFetchFailed"
-	ErrKeyPinFetchFailed       core.ErrorType = "ErrPinFetchFailed"
-	ErrKeyInvalidUUIDFormat    core.ErrorType = "ErrInvalidUUIDFormat"
-	ErrKeyFileProcessingFailed core.ErrorType = "ErrFileProcessingFailed"
-	ErrKeyCIDParseFailed       core.ErrorType = "ErrKeyCIDParseFailed"
-	ErrKeyBlockNotFound        core.ErrorType = "ErrKeyBlockNotFound"
-	ErrKeyUploadNotFound       core.ErrorType = "ErrKeyUploadNotFound"
-	ErrKeyUnauthorized         core.ErrorType = "ErrKeyUnauthorized"
+	Namespace = "ipfs-plugin-api"
+
+	// Re-export error type constants from internal/errors
+	ErrKeyUnsupportedFormat = errors.ErrKeyUnsupportedFormat
+	ErrKeyCorruptedFile     = errors.ErrKeyCorruptedFile
+	ErrKeyEmptyZIP          = errors.ErrKeyEmptyZIP
+	ErrKeyPasswordProtected = errors.ErrKeyPasswordProtected
+	ErrKeyFileUploadFailed  = errors.ErrKeyFileUploadFailed
+
+	// Other API error types
+	ErrKeyFileUploadAPIFailed   core.ErrorType = "ErrFileUploadFailed"
+	ErrKeyMetadataFetchFailed   core.ErrorType = "ErrMetadataFetchFailed"
+	ErrKeyPinFetchFailed        core.ErrorType = "ErrPinFetchFailed"
+	ErrKeyInvalidUUIDFormat     core.ErrorType = "ErrInvalidUUIDFormat"
+	ErrKeyFileProcessingFailed  core.ErrorType = "ErrFileProcessingFailed"
+	ErrKeyCIDParseFailed        core.ErrorType = "ErrKeyCIDParseFailed"
+	ErrKeyBlockNotFound         core.ErrorType = "ErrKeyBlockNotFound"
+	ErrKeyUploadNotFound        core.ErrorType = "ErrKeyUploadNotFound"
+	ErrKeyUnauthorized          core.ErrorType = "ErrKeyUnauthorized"
 	ErrKeyDownloadQuotaExceeded core.ErrorType = "ErrDownloadQuotaExceeded"
+	ErrKeyInvalidRequest        core.ErrorType = "ErrInvalidRequest"
 )
 
 var _ router.ResponseError = (*IPFSError)(nil)
@@ -48,12 +59,12 @@ func (e *IPFSError) MarshalJSON() ([]byte, error) {
 		return json.Marshal(ErrorWrapper{Error: ErrorDetails{Reason: "Unknown"}})
 	}
 	reason := string(e.coreErr.Key)
-	
+
 	// First strip "ErrKey" prefix if present
 	if strings.HasPrefix(reason, "ErrKey") {
 		reason = reason[6:] // Strip "ErrKey" prefix
 	}
-	
+
 	// Then strip "Err" prefix if present
 	if strings.HasPrefix(reason, "Err") {
 		reason = reason[3:] // Strip "Err" prefix
@@ -87,29 +98,34 @@ func (e *IPFSError) Unwrap() error {
 func init() {
 	core.MustRegisterNamespace(Namespace)
 	core.MustRegisterDefaultErrorMessages(Namespace, map[core.ErrorType]core.ErrorDefinition{
-		ErrKeyFileUploadFailed:       {Key: ErrKeyFileUploadFailed, Message: "File upload failed due to an internal error."},
-		ErrKeyMetadataFetchFailed:    {Key: ErrKeyMetadataFetchFailed, Message: "Failed to fetch metadata."},
-		ErrKeyPinFetchFailed:         {Key: ErrKeyPinFetchFailed, Message: "Failed to fetch pin."},
-		ErrKeyInvalidUUIDFormat:      {Key: ErrKeyInvalidUUIDFormat, Message: "Invalid UUID format provided: %s"},
-		ErrKeyFileProcessingFailed:   {Key: ErrKeyFileProcessingFailed, Message: "Failed to process the file."},
-		ErrKeyCIDParseFailed:         {Key: ErrKeyCIDParseFailed, Message: "Failed to parse CID."},
-		ErrKeyBlockNotFound:          {Key: ErrKeyBlockNotFound, Message: "Block not found."},
-		ErrKeyUploadNotFound:         {Key: ErrKeyUploadNotFound, Message: "Upload not found."},
-		ErrKeyUnauthorized:           {Key: ErrKeyUnauthorized, Message: "Access denied. Please check your credentials and try again."},
-		ErrKeyDownloadQuotaExceeded:  {Key: ErrKeyDownloadQuotaExceeded, Message: "Download quota exceeded. Please try again later."},
+		ErrKeyFileUploadAPIFailed:   {Key: ErrKeyFileUploadAPIFailed, Message: "File upload failed due to an internal error."},
+		ErrKeyMetadataFetchFailed:   {Key: ErrKeyMetadataFetchFailed, Message: "Failed to fetch metadata."},
+		ErrKeyPinFetchFailed:        {Key: ErrKeyPinFetchFailed, Message: "Failed to fetch pin."},
+		ErrKeyInvalidUUIDFormat:     {Key: ErrKeyInvalidUUIDFormat, Message: "Invalid UUID format provided: %s"},
+		ErrKeyFileProcessingFailed:  {Key: ErrKeyFileProcessingFailed, Message: "Failed to process the file."},
+		ErrKeyCIDParseFailed:        {Key: ErrKeyCIDParseFailed, Message: "Failed to parse CID."},
+		ErrKeyBlockNotFound:         {Key: ErrKeyBlockNotFound, Message: "Block not found."},
+		ErrKeyUploadNotFound:        {Key: ErrKeyUploadNotFound, Message: "Upload not found."},
+		ErrKeyUnauthorized:          {Key: ErrKeyUnauthorized, Message: "Access denied. Please check your credentials and try again."},
+		ErrKeyDownloadQuotaExceeded: {Key: ErrKeyDownloadQuotaExceeded, Message: "Download quota exceeded. Please try again later."},
+		ErrKeyInvalidRequest:        {Key: ErrKeyInvalidRequest, Message: "Invalid request parameter: %s"},
+		ErrKeyUnsupportedFormat:     {Key: ErrKeyUnsupportedFormat, Message: "Unsupported file format. Supported formats: CAR, ZIP"},
+		ErrKeyCorruptedFile:         {Key: ErrKeyCorruptedFile, Message: "Corrupted or invalid file format"},
+		ErrKeyEmptyZIP:              {Key: ErrKeyEmptyZIP, Message: "Empty ZIP file cannot be converted"},
+		ErrKeyPasswordProtected:     {Key: ErrKeyPasswordProtected, Message: "Password-protected ZIP files are not supported"},
 	})
 
 	core.MustRegisterErrorCodes(Namespace, map[core.ErrorType]int{
-		ErrKeyFileUploadFailed:       http.StatusInternalServerError,
-		ErrKeyMetadataFetchFailed:    http.StatusInternalServerError,
-		ErrKeyPinFetchFailed:         http.StatusInternalServerError,
-		ErrKeyInvalidUUIDFormat:      http.StatusBadRequest,
-		ErrKeyFileProcessingFailed:   http.StatusInternalServerError,
-		ErrKeyCIDParseFailed:         http.StatusBadRequest,
-		ErrKeyBlockNotFound:          http.StatusNotFound,
-		ErrKeyUploadNotFound:         http.StatusNotFound,
-		ErrKeyUnauthorized:           http.StatusUnauthorized,
-		ErrKeyDownloadQuotaExceeded:  http.StatusTooManyRequests,
+		ErrKeyFileUploadAPIFailed:   http.StatusInternalServerError,
+		ErrKeyMetadataFetchFailed:   http.StatusInternalServerError,
+		ErrKeyPinFetchFailed:        http.StatusInternalServerError,
+		ErrKeyInvalidUUIDFormat:     http.StatusBadRequest,
+		ErrKeyFileProcessingFailed:  http.StatusInternalServerError,
+		ErrKeyCIDParseFailed:        http.StatusBadRequest,
+		ErrKeyBlockNotFound:         http.StatusNotFound,
+		ErrKeyUploadNotFound:        http.StatusNotFound,
+		ErrKeyUnauthorized:          http.StatusUnauthorized,
+		ErrKeyDownloadQuotaExceeded: http.StatusTooManyRequests,
 	})
 }
 

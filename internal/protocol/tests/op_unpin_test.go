@@ -126,13 +126,13 @@ func TestUnpinOperationHandler_InvalidCIDScenarios(t *testing.T) {
 		userID := lo.ToPtr(uint(123))
 
 		// Test with empty CID string
-		emptyCIDReq := createTestRequest(t, cid.Cid{}, userID)
+		emptyCIDReq := createTestRequest(cid.Cid{}, userID)
 		err := handler.ValidateRequest(context.Background(), emptyCIDReq)
 		assert.Error(tb, err)
 		assert.Contains(tb, err.Error(), "hash is required")
 
 		// Test with nil/undefined CID
-		nilCIDReq := createTestRequest(t, cid.Undef, userID)
+		nilCIDReq := createTestRequest(cid.Undef, userID)
 		err = handler.ValidateRequest(context.Background(), nilCIDReq)
 		assert.Error(tb, err)
 		assert.Contains(tb, err.Error(), "hash is required")
@@ -175,7 +175,7 @@ func TestUnpinOperationHandler_InvalidUserScenarios(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		// Test with zero user ID
-		zeroUserReq := createTestRequest(t, testCID, lo.ToPtr(uint(0)))
+		zeroUserReq := createTestRequest(testCID, lo.ToPtr(uint(0)))
 		err := handler.ValidateRequest(context.Background(), zeroUserReq)
 		assert.Error(tb, err)
 		assert.Contains(tb, err.Error(), "user ID is required")
@@ -220,7 +220,7 @@ func TestUnpinOperationHandler_InvalidRequestScenarios(t *testing.T) {
 		assert.Contains(tb, err.Error(), "user ID is required")
 
 		// Test request with nil user ID pointer
-		nilUserIDReq := createTestRequest(t, util.GenerateTestCID(t, "test data"), nil)
+		nilUserIDReq := createTestRequest(util.GenerateTestCID(t, "test data"), nil)
 		err = handler.ValidateRequest(context.Background(), nilUserIDReq)
 		assert.Error(tb, err)
 		assert.Contains(tb, err.Error(), "user ID is required")
@@ -919,12 +919,12 @@ func TestUnpinOperationHandler_ValidateRequest(t *testing.T) {
 
 		// Test case 1: Valid request with hash
 		testCID := util.GenerateTestCID(t, "test data")
-		validReq := createTestRequest(t, testCID, uintPtr(123))
+		validReq := createTestRequest(testCID, uintPtr(123))
 		err := handler.ValidateRequest(context.Background(), validReq)
 		assert.NoError(tb, err)
 
 		// Test case 2: Invalid request without hash
-		invalidReq := createTestRequest(t, cid.Undef, uintPtr(123))
+		invalidReq := createTestRequest(cid.Undef, uintPtr(123))
 		err = handler.ValidateRequest(context.Background(), invalidReq)
 		assert.Error(tb, err)
 		assert.Contains(tb, err.Error(), "hash is required")
@@ -1532,7 +1532,7 @@ func TestUnpinOperationHandler_ValidateRequest_NilUserID(t *testing.T) {
 		}
 
 		testCID := util.GenerateTestCID(t, "test data")
-		req := createTestRequest(t, testCID, nil) // nil user ID
+		req := createTestRequest(testCID, nil) // nil user ID
 
 		// Act
 		err := handler.ValidateRequest(context.Background(), req)

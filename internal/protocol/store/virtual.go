@@ -2,14 +2,19 @@ package store
 
 import (
 	"context"
+
 	"github.com/ipfs/boxo/blockstore"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
+	"github.com/ipfs/go-datastore"
 	"go.lumeweb.com/portal/core"
 )
 
 type MockBlockstore interface {
 	blockstore.Blockstore
+}
+type MockDatastore interface {
+	datastore.Datastore
 }
 
 // VirtualBlockStore is a wrapper around a CachedBlockstore that can bypass the cache

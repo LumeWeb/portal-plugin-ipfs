@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"path/filepath"
 
 	"github.com/ipfs/boxo/blockstore"
+	"github.com/ipfs/boxo/datastore/dshelp"
 	"github.com/ipfs/go-cid"
+	"github.com/ipfs/go-datastore"
+	ds "github.com/ipfs/go-datastore"
 	levelds "github.com/ipfs/go-ds-leveldb"
 	ipfsLog "github.com/ipfs/go-log/v2"
 	"github.com/samber/lo"
@@ -20,6 +22,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store/downloader"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
@@ -172,6 +175,9 @@ func (p Protocol) Operations() []core.Operation {
 			if err != nil {
 				return fmt.Errorf("failed to get upload reader: %w", err)
 			}
+
+			reader = upload.NewUniversalReader(reader)
+
 			defer func(reader io.ReadCloser) {
 				if reader == nil {
 					return
@@ -182,8 +188,31 @@ func (p Protocol) Operations() []core.Operation {
 				}
 			}(reader)
 
+			// Detect format using IPFS plugin logic
+			uploadedFormat, err := upload.DetectFormat(reader)
+			if err != nil {
+				return fmt.Errorf("failed to detect upload format: %w", err)
+			}
+
+			// Create appropriate processor based on format
+			var processor BlockProcessor
+			if uploadedFormat.IsUploadFormat() {
+				// CAR format
+				processor, err = NewCARBlockProcessor(reader)
+				if err != nil {
+					return fmt.Errorf("failed to create CAR processor: %w", err)
+				}
+			} else {
+				// Single file format (archives treated as files, not extracted)
+				processor, err = createFileProcessorForTUS(reader, p, helper.Logger())
+				if err != nil {
+					return fmt.Errorf("failed to create file processor: %w", err)
+				}
+			}
+			defer processor.Release()
+
 			// Process the upload
-			allCids, rootCids, err := ProcessCar(helper.Context(), reader)
+			allCids, rootCids, err := ProcessBlocks(helper.Context(), processor)
 			if err != nil {
 				return fmt.Errorf("failed to process upload: %w", err)
 			}
@@ -280,6 +309,8 @@ func (p Protocol) GetMetadataStore() *store.MetadataStoreDefault {
 
 func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 	proto := &Protocol{}
+	var ds datastore.Batching
+	var dsErr error
 
 	opts := core.ContextOptions(
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
@@ -308,9 +339,9 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 				return fmt.Errorf("failed to create virtual blockstore: %w", err)
 			}
 
-			ds, err := levelds.NewDatastore(filepath.Join(ctx.Config().ConfigDir(), internal.ProtocolName, "p2p.ldb"), nil)
-			if err != nil {
-				log.Fatal("failed to open leveldb datastore", zap.Error(err))
+			ds, dsErr = levelds.NewDatastore(filepath.Join(ctx.Config().ConfigDir(), internal.ProtocolName, "p2p.ldb"), nil)
+			if dsErr != nil {
+				ctx.Logger().Fatal("failed to open leveldb datastore", zap.Error(err))
 			}
 			level := mapLogLevel(cfg.LogLevel)
 
@@ -329,9 +360,13 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 		}),
 		core.ContextWithExitFunc(func(ctx core.Context) error {
 			if proto.node != nil {
-				return proto.node.Close()
+				err := proto.node.Close()
+				if err != nil {
+					return err
+				}
 			}
-			return nil
+
+			return ds.Close()
 		}),
 	)
 
@@ -349,4 +384,47 @@ func mapLogLevel(level string) ipfsLog.LogLevel {
 	default:
 		return ipfsLog.LevelError
 	}
+}
+
+// KeyFromCID converts a CID to a datastore key
+func KeyFromCID(c cid.Cid) ds.Key {
+	return dshelp.MultihashToDsKey(c.Hash())
+}
+
+// KeyToCIDString converts a datastore key to CID string, removing leading slash if present
+func KeyToCIDString(key ds.Key) string {
+	key = ds.NewKey(key.Name())
+	m, _ := dshelp.DsKeyToMultihash(key)
+	keyStr := cid.NewCidV0(m)
+
+	return keyStr.String()
+}
+
+// KeyToCIDBinary converts a datastore key to binary CID string for space-efficient storage
+func KeyToCIDBinary(key ds.Key) string {
+	cidStr := KeyToCIDString(key)
+	if cidObj, err := cid.Decode(cidStr); err == nil {
+		return string(cidObj.Bytes()) // Use binary representation for space efficiency
+	}
+	return key.String() // Fallback to string key if not a valid CID
+}
+
+// createFileProcessorForTUS creates a file processor for TUS uploads (archives treated as single files)
+func createFileProcessorForTUS(uploadFile io.ReadCloser, proto Protocol, logger *core.Logger) (BlockProcessor, error) {
+	doneTracker := NewDoneTracker()
+	bstore := proto.GetNode().GetBlockstore()
+	dagService := proto.GetNode().DagService()
+
+	// Create streaming blockstore with defaults
+	bs := NewStreamingBlockstoreWithDefaults(logger, bstore, doneTracker, DEFAULT_BLOCK_QUEUE_SIZE)
+
+	// Create UnixFS node generator
+	nodeGenerator := upload.NewUnixFSNodeGeneratorWithOptions(
+		upload.WithUnixFSNodeGeneratorDAGService(dagService),
+		upload.WithUnixFSNodeGeneratorBlockstore(bs),
+		upload.WithUnixFSNodeGeneratorLogger(logger),
+	)
+
+	// Create file block processor (not archive processor)
+	return NewFileBlockProcessorWithDefaults(proto.ctx, bs, upload.NewUniversalReader(uploadFile), dagService, nodeGenerator, logger, doneTracker)
 }
