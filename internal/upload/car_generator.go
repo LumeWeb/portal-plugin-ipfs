@@ -451,6 +451,22 @@ func (gen *IPFSCARGenerator) processFile(ctx context.Context, fileNode format.No
 	}
 
 	// Recursively process all child nodes (data blocks) of the file
+	links := fileNode.Links()
+	for _, link := range links {
+		// Get the child node
+		childNode, err := gen.dagService.Get(ctx, link.Cid)
+		if err != nil {
+			// If we can't find the child node, it might not be stored yet
+			// Try to add it from the blockstore if available
+			continue
+		}
+
+		// Process the child node recursively
+		if err := gen.processFile(ctx, childNode); err != nil {
+			return fmt.Errorf("failed to process child node %s: %w", link.Cid.String(), err)
+		}
+	}
+
 	return nil
 }
 

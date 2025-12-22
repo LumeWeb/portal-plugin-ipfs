@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"sync"
 	"time"
 
 	"github.com/ipfs/boxo/blockstore"
@@ -60,6 +61,7 @@ type StreamingProcessor struct {
 	rootCID           string                       // Store only root CID, not node
 	maxLinks          int
 	chunkSize         int64
+	mu                sync.RWMutex                // Protects access to processedFiles, directoryMetadata, and rootCID
 }
 
 // directoryMetadata stores metadata for directories
@@ -217,9 +219,11 @@ func (sp *StreamingProcessor) ProcessArchive(ctx context.Context, extractor Arch
 	}
 
 	// Initialize processor state
+	sp.mu.Lock()
 	sp.processedFiles = make([]FileInfo, 0)
 	sp.directoryMetadata = make(map[string]directoryMetadata)
 	sp.rootCID = ""
+	sp.mu.Unlock()
 
 	// Get filesystem from extractor
 	efs, err := extractor.Filesystem(ctx)
@@ -234,10 +238,12 @@ func (sp *StreamingProcessor) ProcessArchive(ctx context.Context, extractor Arch
 	}
 
 	// Handle empty archive case
+	sp.mu.RLock()
 	dirCount := 0
 	if sp.directoryMetadata != nil {
 		dirCount = len(sp.directoryMetadata)
 	}
+	sp.mu.RUnlock()
 	if len(files) == 0 && dirCount <= 1 {
 		// No files and only root directory (or no directories at all)
 		return fmt.Errorf("no entries found in archive")
@@ -254,10 +260,12 @@ func (sp *StreamingProcessor) ProcessArchive(ctx context.Context, extractor Arch
 	}
 
 	if sp.logger != nil {
+		sp.mu.RLock()
 		dirCount := 0
 		if sp.directoryMetadata != nil {
 			dirCount = len(sp.directoryMetadata)
 		}
+		sp.mu.RUnlock()
 		sp.logger.Info("Successfully processed archive",
 			zap.Int("total_files", len(files)),
 			zap.Int("directories", dirCount),
@@ -269,21 +277,28 @@ func (sp *StreamingProcessor) ProcessArchive(ctx context.Context, extractor Arch
 
 // GetRootNode implements StreamingArchiveProcessor.GetRootNode
 func (sp *StreamingProcessor) GetRootNode(ctx context.Context) (format.Node, error) {
-	if sp.rootCID == "" {
-		return nil, fmt.Errorf("root node not available - archive may not have been processed yet")
+	sp.mu.RLock()
+	rootCID := sp.rootCID
+	sp.mu.RUnlock()
+	
+	if rootCID == "" {
+		return nil, ErrRootNodeNotAvailable
 	}
 
 	// Reconstruct root node from blockstore using stored CID
-	rootCID, err := cid.Decode(sp.rootCID)
+	decodedCID, err := cid.Decode(rootCID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode root CID: %w", err)
 	}
 
-	return sp.dagService.Get(ctx, rootCID)
+	return sp.dagService.Get(ctx, decodedCID)
 }
 
 // GetProcessedFiles implements StreamingArchiveProcessor.GetProcessedFiles
 func (sp *StreamingProcessor) GetProcessedFiles() []FileInfo {
+	sp.mu.RLock()
+	defer sp.mu.RUnlock()
+	
 	// Return a copy to prevent external modification
 	if sp.processedFiles == nil {
 		return []FileInfo{}
@@ -295,6 +310,9 @@ func (sp *StreamingProcessor) GetProcessedFiles() []FileInfo {
 
 // Close implements StreamingArchiveProcessor.Close
 func (sp *StreamingProcessor) Close() error {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	
 	// Clear processed files
 	sp.processedFiles = nil
 	sp.directoryMetadata = nil
@@ -304,6 +322,8 @@ func (sp *StreamingProcessor) Close() error {
 
 // addProcessedFile adds a file to the processed files list
 func (sp *StreamingProcessor) addProcessedFile(fileInfo FileInfo) {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
 	sp.processedFiles = append(sp.processedFiles, fileInfo)
 }
 
@@ -345,6 +365,7 @@ func (sp *StreamingProcessor) collectFileMetadata(ctx context.Context, efs fs.FS
 
 		// Skip root path from file list but track it as directory
 		if currentPath == common.ROOT {
+			sp.mu.Lock()
 			if sp.directoryMetadata != nil {
 				sp.directoryMetadata[currentPath] = directoryMetadata{
 					Path:       currentPath,
@@ -352,6 +373,7 @@ func (sp *StreamingProcessor) collectFileMetadata(ctx context.Context, efs fs.FS
 					Name:       common.ROOT,
 				}
 			}
+			sp.mu.Unlock()
 			return nil
 		}
 
@@ -366,6 +388,7 @@ func (sp *StreamingProcessor) collectFileMetadata(ctx context.Context, efs fs.FS
 
 		if d.IsDir() {
 			// Only record directory metadata, don't create UnixFS directory objects yet
+			sp.mu.Lock()
 			if sp.directoryMetadata != nil {
 				sp.directoryMetadata[currentPath] = directoryMetadata{
 					Path:       currentPath,
@@ -373,6 +396,7 @@ func (sp *StreamingProcessor) collectFileMetadata(ctx context.Context, efs fs.FS
 					Name:       d.Name(),
 				}
 			}
+			sp.mu.Unlock()
 			return nil
 		}
 
@@ -414,13 +438,22 @@ func (sp *StreamingProcessor) collectFileMetadata(ctx context.Context, efs fs.FS
 // buildDirectoryTree constructs the directory tree in memory
 func (sp *StreamingProcessor) buildDirectoryTree(ctx context.Context) error {
 	// Check if directoryMetadata map is nil (race condition protection)
+	sp.mu.RLock()
 	if sp.directoryMetadata == nil {
+		sp.mu.RUnlock()
 		return nil
 	}
+	
+	// Copy directoryMetadata to work with it without holding the lock
+	directoryMetadataCopy := make(map[string]directoryMetadata)
+	for k, v := range sp.directoryMetadata {
+		directoryMetadataCopy[k] = v
+	}
+	sp.mu.RUnlock()
 
 	// Sort directory paths from deepest to shallowest
 	var dirPaths []string
-	for _path := range sp.directoryMetadata {
+	for _path := range directoryMetadataCopy {
 		dirPaths = append(dirPaths, _path)
 	}
 
@@ -428,7 +461,7 @@ func (sp *StreamingProcessor) buildDirectoryTree(ctx context.Context) error {
 
 	// Create UnixFS directory objects in memory only
 	for _, _path := range dirPaths {
-		metadata := sp.directoryMetadata[_path]
+		metadata := directoryMetadataCopy[_path]
 
 		// Create UnixFS directory in memory
 		dir, err := sp.nodeGenerator.CreateDirectory()
@@ -438,16 +471,16 @@ func (sp *StreamingProcessor) buildDirectoryTree(ctx context.Context) error {
 
 		// Store the directory object in metadata for later use
 		metadata.DirObj = dir
-		sp.directoryMetadata[_path] = metadata
+		directoryMetadataCopy[_path] = metadata
 	}
 
 	// Build tree from child to parent using stored metadata only
 	for _, _path := range dirPaths {
-		metadata := sp.directoryMetadata[_path]
+		metadata := directoryMetadataCopy[_path]
 
 		if _path != common.ROOT {
 			// Get parent directory object from metadata (not blockstore)
-			parentMetadata := sp.directoryMetadata[metadata.ParentPath]
+			parentMetadata := directoryMetadataCopy[metadata.ParentPath]
 			parentDir := parentMetadata.DirObj
 			if parentDir == nil {
 				return fmt.Errorf("parent directory object not available for %s", metadata.ParentPath)
@@ -475,7 +508,7 @@ func (sp *StreamingProcessor) buildDirectoryTree(ctx context.Context) error {
 
 				fileNode, err := sp.dagService.Get(ctx, fileCID)
 				if err != nil {
-					return fmt.Errorf("failed to get file node %s: %w", cid.NewCidV0(cid.MustParse(file.CID).Hash()), err)
+					return fmt.Errorf("failed to get file node %s: %w", file.CID, err)
 				}
 
 				// Add file to directory object in memory
@@ -486,11 +519,13 @@ func (sp *StreamingProcessor) buildDirectoryTree(ctx context.Context) error {
 		}
 	}
 
+	// Write the modified copy back to the original map
+	sp.mu.Lock()
+	sp.directoryMetadata = directoryMetadataCopy
+	sp.mu.Unlock()
+
 	if sp.logger != nil {
-		totalDirs := 0
-		if sp.directoryMetadata != nil {
-			totalDirs = len(sp.directoryMetadata)
-		}
+		totalDirs := len(directoryMetadataCopy)
 		sp.logger.Debug("Directory tree construction completed",
 			zap.Int("total_directories", totalDirs))
 	}
@@ -501,13 +536,22 @@ func (sp *StreamingProcessor) buildDirectoryTree(ctx context.Context) error {
 // persistDirectoryTree stores the complete directory tree to blockstore
 func (sp *StreamingProcessor) persistDirectoryTree(ctx context.Context) error {
 	// Check if directoryMetadata map is nil (race condition protection)
+	sp.mu.RLock()
 	if sp.directoryMetadata == nil {
+		sp.mu.RUnlock()
 		return nil
 	}
+	
+	// Copy directoryMetadata to work with it without holding the lock
+	directoryMetadataCopy := make(map[string]directoryMetadata)
+	for k, v := range sp.directoryMetadata {
+		directoryMetadataCopy[k] = v
+	}
+	sp.mu.RUnlock()
 
 	// Sort directory paths from deepest to shallowest for storage
 	var dirPaths []string
-	for _path := range sp.directoryMetadata {
+	for _path := range directoryMetadataCopy {
 		dirPaths = append(dirPaths, _path)
 	}
 
@@ -515,7 +559,7 @@ func (sp *StreamingProcessor) persistDirectoryTree(ctx context.Context) error {
 
 	// Store directories from deepest to shallowest
 	for _, _path := range dirPaths {
-		metadata := sp.directoryMetadata[_path]
+		metadata := directoryMetadataCopy[_path]
 		dir := metadata.DirObj
 
 		// Get the directory node
@@ -531,19 +575,23 @@ func (sp *StreamingProcessor) persistDirectoryTree(ctx context.Context) error {
 
 		// Update metadata with the actual CID
 		metadata.CID = dirNode.Cid().String()
-		sp.directoryMetadata[_path] = metadata
+		directoryMetadataCopy[_path] = metadata
 
 		// Update root CID if this is the root directory
 		if _path == common.ROOT {
+			sp.mu.Lock()
 			sp.rootCID = metadata.CID
+			sp.mu.Unlock()
 		}
 	}
 
+	// Write the modified copy back to the original map
+	sp.mu.Lock()
+	sp.directoryMetadata = directoryMetadataCopy
+	sp.mu.Unlock()
+
 	if sp.logger != nil {
-		totalDirs := 0
-		if sp.directoryMetadata != nil {
-			totalDirs = len(sp.directoryMetadata)
-		}
+		totalDirs := len(directoryMetadataCopy)
 		sp.logger.Debug("Directory tree persisted to blockstore",
 			zap.Int("total_directories", totalDirs))
 	}

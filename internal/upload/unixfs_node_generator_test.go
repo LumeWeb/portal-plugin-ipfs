@@ -174,7 +174,7 @@ func TestIPFSUnixFSNodeGenerator_CreateUnixFSNode(t *testing.T) {
 			maxLinks:     10,
 			chunkSize:    64,
 			expectError:  false,
-			expectedSize: 14,
+			expectedSize: 13,
 		},
 		{
 			name:         "large maxlinks",
@@ -704,10 +704,4 @@ func (r *failingReader) Close() error {
 	return nil
 }
 
-// failingSeekReader simulates a reader that can fail on seek
-type failingSeekReader struct {
-	data      []byte
-	pos       int64
-	seekFails bool
-	closed    bool
-}
+

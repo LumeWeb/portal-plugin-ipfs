@@ -26,6 +26,57 @@ var (
 	}
 )
 
+// Global registry instance
+var defaultRegistry *ArchiveRegistry
+
+// MaybeInit ensures the default registry is initialized if nil
+func MaybeInit() {
+	if defaultRegistry == nil {
+		defaultRegistry = NewArchiveRegistry()
+		RegisterDefaultDetectors(defaultRegistry)
+	}
+}
+
+// DefaultRegistry returns the default global archive registry
+func DefaultRegistry() *ArchiveRegistry {
+	MaybeInit()
+	return defaultRegistry
+}
+
+// RegisterExtractor registers an extractor with the default registry
+func RegisterExtractor(format Format, creator ExtractorCreator) {
+	MaybeInit()
+	defaultRegistry.RegisterExtractor(format, creator)
+}
+
+// DetectFormat detects format using the default registry
+func DetectFormat(reader io.Reader) (Format, error) {
+	MaybeInit()
+	return defaultRegistry.DetectFormat(reader)
+}
+
+// CreateExtractor creates an extractor using the default registry
+func CreateExtractor(reader archives.ReaderAtSeeker) (ArchiveExtractor, error) {
+	MaybeInit()
+	return defaultRegistry.CreateExtractor(reader)
+}
+
+// NewArchiveExtractor creates an archive extractor for a specific format
+func NewArchiveExtractor(reader archives.ReaderAtSeeker, format Format) (ArchiveExtractor, error) {
+	MaybeInit()
+	return defaultRegistry.CreateExtractorForFormat(format, reader)
+}
+
+// SupportedFormats returns supported formats from the default registry
+func SupportedFormats() []Format {
+	MaybeInit()
+	return defaultRegistry.SupportedFormats()
+}
+
+func init() {
+	MaybeInit()
+}
+
 // ArchiveRegistry manages registration and creation of archive extractors
 // It acts as both a registry and factory, combining the responsibilities
 // of format detection and extractor creation
@@ -41,20 +92,21 @@ type ExtractorCreator func(reader archives.ReaderAtSeeker) (ArchiveExtractor, er
 // FormatDetector defines a function to detect archive format from data
 type FormatDetector func(reader io.Reader) (Format, bool)
 
-// NewArchiveRegistry creates a new archive registry
+// NewArchiveRegistry creates a new empty archive registry
 func NewArchiveRegistry() *ArchiveRegistry {
-	registry := &ArchiveRegistry{
+	return &ArchiveRegistry{
 		extractors: make(map[Format]ExtractorCreator),
 		detectors:  make([]FormatDetector, 0),
 	}
+}
 
+// RegisterDefaultDetectors registers the default format detectors to a registry
+func RegisterDefaultDetectors(registry *ArchiveRegistry) {
 	// Register CAR detector
 	registry.RegisterDetector(detectCAR)
 
 	// Register compressed TAR detector
 	registry.RegisterDetector(detectCompressedTarFromReader)
-
-	return registry
 }
 
 // RegisterExtractor registers a creator function for a specific archive format
@@ -77,12 +129,20 @@ func (r *ArchiveRegistry) DetectFormat(reader io.Reader) (Format, error) {
 	r.mu.RLock()
 	detectors := make([]FormatDetector, len(r.detectors))
 	copy(detectors, r.detectors)
+	extractors := make(map[Format]ExtractorCreator)
+	for k, v := range r.extractors {
+		extractors[k] = v
+	}
 	r.mu.RUnlock()
 
-	// Check if reader supports seeking for proper format detection
-	seeker, ok := reader.(io.Seeker)
+	seeker, ok := reader.(io.ReadSeeker)
 	if !ok {
 		return FormatUnknown, fmt.Errorf("format detection requires a reader that supports seeking")
+	}
+
+	// Early validation: if no detectors and no extractors, we can't determine anything
+	if len(detectors) == 0 && len(extractors) == 0 {
+		return FormatUnknown, fmt.Errorf("no detectors or extractors registered for format detection")
 	}
 
 	// Prepare reader for format detection while preserving current position
@@ -145,7 +205,7 @@ func (r *ArchiveRegistry) DetectFormat(reader io.Reader) (Format, error) {
 		}
 
 		for _, detector := range detectors {
-			if format, detected := detector(reader); detected {
+			if format, detected := detector(seeker); detected {
 				// Only override if we detected an archive format (not FormatUnknown or FormatFile)
 				if format != FormatUnknown && format != FormatFile {
 					detectedFormat = format
@@ -174,12 +234,12 @@ func (r *ArchiveRegistry) DetectFormat(reader io.Reader) (Format, error) {
 	}
 
 	// Check if there's an extractor registered for the detected format
-	r.mu.RLock()
-	_, hasExtractor := r.extractors[detectedFormat]
-	r.mu.RUnlock()
-
-	if !hasExtractor {
-		return FormatUnknown, fmt.Errorf("no extractor registered for detected format %s", detectedFormat.String())
+	// FormatFile is a special case - regular files don't need extractors
+	if detectedFormat != FormatFile && detectedFormat != FormatCAR {
+		_, hasExtractor := extractors[detectedFormat]
+		if !hasExtractor {
+			return FormatUnknown, fmt.Errorf("no extractor registered for detected format %s", detectedFormat.String())
+		}
 	}
 
 	return detectedFormat, nil
@@ -251,37 +311,4 @@ func (r *ArchiveRegistry) IsFormatSupported(format Format) bool {
 
 	_, exists := r.extractors[format]
 	return exists
-}
-
-// Global registry instance
-var defaultRegistry = NewArchiveRegistry()
-
-// DefaultRegistry returns the default global archive registry
-func DefaultRegistry() *ArchiveRegistry {
-	return defaultRegistry
-}
-
-// RegisterExtractor registers an extractor with the default registry
-func RegisterExtractor(format Format, creator ExtractorCreator) {
-	defaultRegistry.RegisterExtractor(format, creator)
-}
-
-// DetectFormat detects format using the default registry
-func DetectFormat(reader io.Reader) (Format, error) {
-	return defaultRegistry.DetectFormat(reader)
-}
-
-// CreateExtractor creates an extractor using the default registry
-func CreateExtractor(reader archives.ReaderAtSeeker) (ArchiveExtractor, error) {
-	return defaultRegistry.CreateExtractor(reader)
-}
-
-// NewArchiveExtractor creates an archive extractor for a specific format
-func NewArchiveExtractor(reader archives.ReaderAtSeeker, format Format) (ArchiveExtractor, error) {
-	return defaultRegistry.CreateExtractorForFormat(format, reader)
-}
-
-// SupportedFormats returns supported formats from the default registry
-func SupportedFormats() []Format {
-	return defaultRegistry.SupportedFormats()
 }

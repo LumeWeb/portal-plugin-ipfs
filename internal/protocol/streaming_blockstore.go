@@ -13,6 +13,7 @@ import (
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.uber.org/zap"
 )
 
@@ -313,7 +314,9 @@ func (s *DefaultStreamingBlockstore) Get(ctx context.Context, c cid.Cid) (blocks
 					s.logger.Debug("Retrieving from passthrough store",
 						zap.String("cid", c.String()))
 				}
-				return s.passthrough.Get(ctx, c)
+				// Add SkipQuotaCheckOption for passthrough operations
+				passthroughCtx := store.SkipQuotaCheckOption(ctx, store.IsQuotaCheckSkipped(ctx))
+				return s.passthrough.Get(passthroughCtx, c)
 			}
 		}
 	}
@@ -367,7 +370,9 @@ func (s *DefaultStreamingBlockstore) Has(ctx context.Context, c cid.Cid) (bool, 
 
 	// Check passthrough
 	if s.passthrough != nil {
-		return s.passthrough.Has(ctx, c)
+		// Add SkipQuotaCheckOption for passthrough operations
+		passthroughCtx := store.SkipQuotaCheckOption(ctx, store.IsQuotaCheckSkipped(ctx))
+		return s.passthrough.Has(passthroughCtx, c)
 	}
 
 	return false, nil
@@ -392,7 +397,9 @@ func (s *DefaultStreamingBlockstore) GetSize(ctx context.Context, c cid.Cid) (in
 
 	// Check passthrough
 	if s.passthrough != nil {
-		return s.passthrough.GetSize(ctx, c)
+		// Add SkipQuotaCheckOption for passthrough operations
+		passthroughCtx := store.SkipQuotaCheckOption(ctx, store.IsQuotaCheckSkipped(ctx))
+		return s.passthrough.GetSize(passthroughCtx, c)
 	}
 
 	return -1, fmt.Errorf("block not found")
@@ -440,7 +447,9 @@ func (s *DefaultStreamingBlockstore) AllKeysChan(ctx context.Context) (<-chan ci
 
 		// Add results from passthrough if available
 		if s.passthrough != nil {
-			passthroughChan, err := s.passthrough.AllKeysChan(ctx)
+			// Add SkipQuotaCheckOption for passthrough operations
+			passthroughCtx := store.SkipQuotaCheckOption(ctx, store.IsQuotaCheckSkipped(ctx))
+			passthroughChan, err := s.passthrough.AllKeysChan(passthroughCtx)
 			if err == nil {
 				for cid := range passthroughChan {
 					select {

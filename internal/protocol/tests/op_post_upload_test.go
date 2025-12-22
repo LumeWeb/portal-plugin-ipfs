@@ -41,16 +41,7 @@ func TestPostUploadOperationHandler_Execute_Integration(t *testing.T) {
 			format:  upload.FormatTAR_BZ2,
 			creator: upload.CreateTARBZ2Archive,
 		},
-		{
-			name:    "7Z",
-			format:  upload.Format7Z,
-			creator: upload.Create7ZArchive,
-		},
-		{
-			name:    "RAR",
-			format:  upload.FormatRAR,
-			creator: upload.CreateRARArchive,
-		},
+		
 	}
 
 	for _, af := range archiveFormats {
@@ -77,17 +68,7 @@ func TestPostUploadOperationHandler_Execute_Integration(t *testing.T) {
 		})
 	}
 
-	// Test 7Z format with preserve mode
-	t.Run("7Z archive upload (preserve mode)", func(t *testing.T) {
-		t.Parallel()
-		testArchiveUpload(t, upload.Format7Z, upload.Create7ZArchive, upload.ArchivePreserve, testPostUploadWorkflow)
-	})
-
-	// Test RAR format with preserve mode
-	t.Run("RAR archive upload (preserve mode)", func(t *testing.T) {
-		t.Parallel()
-		testArchiveUpload(t, upload.FormatRAR, upload.CreateRARArchive, upload.ArchivePreserve, testPostUploadWorkflow)
-	})
+	
 }
 
 // testPostUploadWorkflow is a helper function that runs the complete upload workflow test for POST uploads

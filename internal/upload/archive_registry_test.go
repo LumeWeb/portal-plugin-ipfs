@@ -64,7 +64,7 @@ func TestArchiveRegistry(t *testing.T) {
 }
 
 func TestUnsupportedFormat(t *testing.T) {
-	registry := NewArchiveRegistry()
+	registry := NewArchiveRegistry() // Empty registry, no detectors
 
 	// Test with a reader that doesn't support seeking
 	reader := bytes.NewReader([]byte{0x00, 0x01, 0x02, 0x03})
@@ -84,8 +84,26 @@ func TestUnsupportedFormat(t *testing.T) {
 	}
 }
 
+func TestFormatFileDetection(t *testing.T) {
+	registry := NewArchiveRegistry()
+	RegisterDefaultDetectors(registry) // Register detectors but no extractors
+
+	// Test with regular file content (text)
+	fileContent := []byte("This is a regular text file content")
+	reader := bytes.NewReader(fileContent)
+
+	format, err := registry.DetectFormat(reader)
+	if err != nil {
+		t.Errorf("Should detect FormatFile successfully, got error: %v", err)
+	}
+	if format != FormatFile {
+		t.Errorf("Expected FormatFile, got %s", format.String())
+	}
+}
+
 func TestRegistryWithMocks(t *testing.T) {
 	registry := NewArchiveRegistry()
+	RegisterDefaultDetectors(registry)
 
 	// Test with mock extractor using factory
 	mockExtractor := NewMockArchiveExtractor(t)
@@ -139,6 +157,7 @@ func TestRegistryWithMocks(t *testing.T) {
 
 func TestRegistryThreadSafety(t *testing.T) {
 	registry := NewArchiveRegistry()
+	RegisterDefaultDetectors(registry)
 
 	// Test concurrent access
 	done := make(chan bool, 2)

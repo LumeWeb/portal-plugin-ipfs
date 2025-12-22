@@ -189,6 +189,7 @@ func ProcessBlocks(ctx core.Context, processor BlockProcessor) ([]cid.Cid, []cid
 					errChan <- fmt.Errorf("failed to queue block %s: %w", b.Cid().String(), err)
 					return
 				}
+				return
 			}
 
 			// Notify processor of completion

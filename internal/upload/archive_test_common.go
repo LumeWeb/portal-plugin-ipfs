@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
+	"go.lumeweb.com/portal/core"
 )
 
 // ArchiveCreator defines the function signature for creating test archives
@@ -36,7 +36,6 @@ func NewArchiveTestHelper(t *testing.T, format Format) *ArchiveTestHelper {
 }
 
 // ArchiveCreator defines a function that creates an archive with given files
-
 
 // TestFile represents a file to be included in test archives
 type TestFile struct {
@@ -62,8 +61,8 @@ func GetDefaultTestFiles() []TestFile {
 			Modified: baseTime,
 		},
 		{
-			Name:     "config.json",
-			Content:  `{
+			Name: "config.json",
+			Content: `{
   "name": "test-archive",
   "version": "1.0.0",
   "settings": {
@@ -645,27 +644,27 @@ func CreateTARBZ2Archive(t *testing.T, ctx core.Context, files []TestFile) []byt
 func CreateCARArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 	// Create a temporary archive extractor from the files
 	creator := NewTestArchiveCreator(t, ctx)
-	
+
 	// Create a ZIP archive first as an intermediate format
 	zipBuf, err := creator.CreateArchiveFromTestFiles(context.Background(), FormatZIP, files)
 	if err != nil {
 		t.Fatalf("failed to create ZIP archive: %v", err)
 	}
-	
+
 	// Create an extractor from the ZIP data
 	extractor, err := CreateExtractor(bytes.NewReader(zipBuf.Bytes()))
 	if err != nil {
 		t.Fatalf("failed to create archive extractor: %v", err)
 	}
 	defer extractor.Close()
-	
+
 	// Convert the archive to CAR format
 	generator := NewCARGeneratorWithDefaults(ctx.Logger())
 	carBuf, _, err := generator.ArchiveToCAR(context.Background(), extractor)
 	if err != nil {
 		t.Fatalf("failed to convert archive to CAR format: %v", err)
 	}
-	
+
 	return carBuf.Bytes()
 }
 

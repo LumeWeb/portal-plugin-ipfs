@@ -1290,9 +1290,9 @@ func TestProcessArchive_ComplexArchive(t *testing.T) {
 
 	t.Logf("Archive created in %v", archiveCreationTime)
 
+	processingStart := time.Now()
 	err := processor.ProcessArchive(ctx, extractor)
-
-	processingTime := time.Since(start)
+	processingTime := time.Since(processingStart)
 
 	if err != nil {
 		t.Fatalf("Failed to process 10MB archive: %v", err)
@@ -1379,6 +1379,6 @@ func TestProcessArchive_ComplexArchive(t *testing.T) {
 	// Verify root CID is valid
 	assert.NotEmpty(t, processor.rootCID, "Root CID should be valid")
 
-	t.Logf("✓ Successfully processed 1GB archive with mixed nested/sharded structure: %d files in %v",
-		filesGenerated, processingTime)
+	t.Logf("✓ Successfully processed %s archive with mixed nested/sharded structure: %d files in %v",
+		units.HumanSize(float64(targetSizeBytes)), filesGenerated, processingTime)
 }

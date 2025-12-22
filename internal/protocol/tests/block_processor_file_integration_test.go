@@ -104,8 +104,8 @@ func waitForFileProcessing(t *testing.T, processor *protocol.FileBlockProcessor,
 			t.Fatal("Timed out waiting for file processing to complete")
 		default:
 			if testing.Verbose() {
-			t.Logf("Checking for completion, attempt %d", pollCount)
-		}
+				t.Logf("Checking for completion, attempt %d", pollCount)
+			}
 			roots := processor.Roots()
 			if roots != nil && len(roots) > 0 {
 				t.Logf("Processing completed with roots: %v", roots)
@@ -117,14 +117,8 @@ func waitForFileProcessing(t *testing.T, processor *protocol.FileBlockProcessor,
 				return []string{roots[0].String()}
 			} else {
 				if testing.Verbose() {
-			t.Logf("Still waiting for completion, attempt %d", pollCount)
-		}
-			}
-
-			// Check if we've been waiting too long
-			if time.Since(start) > timeout {
-				t.Logf("Time limit exceeded on attempt %d", pollCount)
-				t.Fatal("Timed out waiting for roots to become available")
+					t.Logf("Still waiting for completion, attempt %d", pollCount)
+				}
 			}
 
 			time.Sleep(10 * time.Millisecond) // Small poll interval
@@ -143,8 +137,8 @@ func countBlocks(t *testing.T, processor protocol.BlockProcessor, dagService for
 
 	for {
 		if testing.Verbose() {
-		t.Logf("Retrieving next block, count=%d", blockCount)
-	}
+			t.Logf("Retrieving next block, count=%d", blockCount)
+		}
 		block, err := processor.Next()
 		if err == io.EOF {
 			t.Logf("Processing completed: %d unique blocks", blockCount)
@@ -163,8 +157,8 @@ func countBlocks(t *testing.T, processor protocol.BlockProcessor, dagService for
 			seenBlocks[cidStr] = true
 			blockCount++
 			if testing.Verbose() {
-			t.Logf("Unique block %d: %s", blockCount, keyStr)
-		}
+				t.Logf("Unique block %d: %s", blockCount, keyStr)
+			}
 
 			// Store the block in the DAG service for later retrieval by the streaming processor
 			if dagService != nil {
@@ -173,30 +167,24 @@ func countBlocks(t *testing.T, processor protocol.BlockProcessor, dagService for
 				node, err := encoding.DecodeBlock(ctx, block)
 				if err != nil {
 					if testing.Verbose() {
-			t.Logf("Failed to decode block: %v", err)
-		}
+					t.Logf("Failed to decode block: %v", err)
+				}
 				} else {
 					if err := dagService.Add(ctx, node); err != nil {
 						if testing.Verbose() {
-			t.Logf("Failed to store block: %v", err)
-		}
+						t.Logf("Failed to store block: %v", err)
+					}
 					} else {
 						if testing.Verbose() {
-			t.Logf("Block stored: %s", cidStr)
-		}
+							t.Logf("Block stored: %s", cidStr)
+						}
 					}
 				}
 			}
 		} else {
 			if testing.Verbose() {
-			t.Logf("Skipping duplicate: %s", keyStr)
-		}
-		}
-
-		// Safety check to prevent infinite loops for debugging
-		if len(seenBlocks) > 1000 {
-			t.Logf("Safety limit reached: %d blocks", len(seenBlocks))
-			break
+				t.Logf("Skipping duplicate: %s", keyStr)
+			}
 		}
 	}
 
