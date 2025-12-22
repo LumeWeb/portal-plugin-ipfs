@@ -3,7 +3,7 @@ module go.lumeweb.com/portal-plugin-ipfs
 go 1.25
 
 require (
-	github.com/Oudwins/zog v0.21.9
+	github.com/Oudwins/zog v0.22.0
 	github.com/bits-and-blooms/bloom/v3 v3.7.1
 	github.com/docker/go-units v0.5.0
 	github.com/gammazero/workerpool v1.1.3
