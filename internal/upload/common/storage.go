@@ -32,7 +32,11 @@ func (sh *StorageHelper) StoreFile(ctx context.Context, reader io.ReadSeekCloser
 	}
 
 	// Store the file using existing storage service
-	uploadID, err := sh.storage.S3TemporaryUpload(ctx, reader, uint64(size), sh.ipfs.(core.StorageProtocol))
+	storageProtocol, ok := sh.ipfs.(core.StorageProtocol)
+	if !ok {
+		return "", fmt.Errorf("ipfs does not implement core.StorageProtocol")
+	}
+	uploadID, err := sh.storage.S3TemporaryUpload(ctx, reader, uint64(size), storageProtocol)
 	if err != nil {
 		return "", fmt.Errorf("failed to store file: %w", err)
 	}

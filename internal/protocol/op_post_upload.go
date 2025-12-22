@@ -59,10 +59,16 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	if err != nil {
 		return err
 	}
+	defer processor.Release()
 
 	allCids, rootCids, err := ProcessBlocks(h.Context(), processor)
 	if err != nil {
 		return fmt.Errorf("failed to process CIDs from upload: %w", err)
+	}
+
+	// Check if any root CIDs were returned
+	if len(rootCids) == 0 {
+		return fmt.Errorf("no root CIDs found during block processing")
 	}
 
 	userID := lo.FromPtrOr(req.UserID, 0)
@@ -120,10 +126,26 @@ func (h *PostUploadOperationHandler) createProcessor(uploadFile io.ReadCloser, f
 	bs := NewStreamingBlockstoreWithDefaults(logger, bstore, doneTracker, DEFAULT_BLOCK_QUEUE_SIZE)
 
 	if format.IsArchiveFormat() {
-		return h.createArchiveProcessor(uploadFile, format, bs, dagService, logger, doneTracker)
+		processor, err := h.createArchiveProcessor(uploadFile, format, bs, dagService, logger, doneTracker)
+		if err != nil {
+			// Clean up StreamingBlockstore on error
+			if closeErr := bs.Close(); closeErr != nil && logger != nil {
+				logger.Error("Failed to cleanup StreamingBlockstore after archive processor creation error", zap.Error(closeErr))
+			}
+			return nil, err
+		}
+		return processor, nil
 	}
 
-	return h.createFileProcessor(uploadFile, bs, dagService, logger, doneTracker)
+	processor, err := h.createFileProcessor(uploadFile, bs, dagService, logger, doneTracker)
+	if err != nil {
+		// Clean up StreamingBlockstore on error
+		if closeErr := bs.Close(); closeErr != nil && logger != nil {
+			logger.Error("Failed to cleanup StreamingBlockstore after file processor creation error", zap.Error(closeErr))
+		}
+		return nil, err
+	}
+	return processor, nil
 }
 
 // createArchiveProcessor creates a processor for archive formats
@@ -230,7 +252,7 @@ func (h *PostUploadOperationHandler) updateWorkflow(ctx context.Context, request
 
 // logProcessingResult logs the final processing results
 func (h *PostUploadOperationHandler) logProcessingResult(allCids, rootCids []cid.Cid) {
-	h.Logger().Debug("Processed CAR file", zap.Int("num_cids", len(allCids)), zap.Int("num_roots", len(rootCids)))
+	h.Logger().Debug("Processed upload file", zap.Int("num_cids", len(allCids)), zap.Int("num_roots", len(rootCids)))
 }
 
 func (h *PostUploadOperationHandler) GetStatus(ctx context.Context, req *models.Request) (*core.RequestStatus, error) {

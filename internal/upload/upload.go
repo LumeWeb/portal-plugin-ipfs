@@ -33,7 +33,7 @@ func (m ArchiveMode) String() string {
 	}
 }
 
-// ParseZipMode parses a string into ArchiveMode
+// ParseArchiveMode parses a string into ArchiveMode
 func ParseArchiveMode(s string) ArchiveMode {
 	switch s {
 	case "convert":
@@ -70,6 +70,15 @@ func GetCarRoots(reader io.Reader, inspect bool) ([]cid.Cid, error) {
 	if len(roots) == 0 {
 		return cidUndefSlice, fmt.Errorf("no roots found in CAR file")
 	}
+
+	// Reset reader position if it's seekable, so caller can read full CAR content
+	if seeker, ok := reader.(io.Seeker); ok {
+		_, err = seeker.Seek(0, io.SeekStart)
+		if err != nil {
+			return nil, fmt.Errorf("failed to reset reader position: %w", err)
+		}
+	}
+
 	return roots, nil
 }
 

@@ -263,7 +263,7 @@ func TestArchiveBlockProcessor_Integration_ArchiveFormats(t *testing.T) {
 	tests := []struct {
 		name      string
 		testFiles []upload.TestFile
-		create    func([]upload.TestFile) []byte
+		create    upload.ArchiveCreator
 	}{
 		{
 			name:      "TAR with default files",
@@ -437,14 +437,17 @@ Sitemap: https://example.com/sitemap.xml`, Mode: 0644},
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			archiveData := tt.create(tt.testFiles)
+			// Create test context to get logger
+			ctx, err := coreTesting.NewTestContext(t)
+			require.NoError(t, err)
+			archiveData := tt.create(t, ctx, tt.testFiles)
 
 			processor, streamProcessor, dagService, _ := createTestArchiveProcessor(t, archiveData)
 			defer processor.Release()
 			defer require.NoError(t, streamProcessor.Close())
 
 			// Process archive and wait for completion
-			rootCID, blockCount := processArchiveAndWait(t, processor, streamProcessor, dagService, 5*time.Hour, tt.testFiles)
+			rootCID, blockCount := processArchiveAndWait(t, processor, streamProcessor, dagService, 5*time.Minute, tt.testFiles)
 
 			t.Logf("%s: root=%s, blocks=%d", tt.name, rootCID, blockCount)
 		})
@@ -461,7 +464,7 @@ func TestArchiveBlockProcessor_Integration_ContextCancellation(t *testing.T) {
 
 	// Create test archive
 	testFiles := upload.GetDefaultTestFiles()
-	archiveData := upload.CreateTARArchive(testFiles)
+	archiveData := upload.CreateTARArchive(t, ctx, testFiles)
 
 	// Register extractors
 	upload.RegisterTarExtractor()
@@ -535,7 +538,10 @@ func TestArchiveBlockProcessor_Integration_Scenarios(t *testing.T) {
 				t.Skip("Skipping large archive test in short mode")
 			}
 
-			archiveData := upload.CreateTARArchive(tt.testFiles)
+			// Create test context to get logger
+			ctx, err := coreTesting.NewTestContext(t)
+			require.NoError(t, err)
+			archiveData := upload.CreateTARArchive(t, ctx, tt.testFiles)
 
 			start := time.Now()
 			processor, streamProcessor, dagService, _ := createTestArchiveProcessor(t, archiveData)
@@ -553,8 +559,8 @@ func TestArchiveBlockProcessor_Integration_Scenarios(t *testing.T) {
 			select {
 			case blockCount := <-blockCountChan:
 				if testing.Verbose() {
-		t.Logf("Background processing completed: %d blocks", blockCount)
-	}
+					t.Logf("Background processing completed: %d blocks", blockCount)
+				}
 			case <-time.After(tt.maxDuration):
 				t.Fatal("Timed out waiting for background processing to complete")
 			}

@@ -12,14 +12,14 @@ import (
 func TestPostUploadOperationHandler_Execute_Integration(t *testing.T) {
 	// Define test cases for CAR files
 	t.Run("CAR file upload", func(t *testing.T) {
-		testArchiveUpload(t, upload.FormatCAR, createCARArchive, upload.ArchiveConvert, testPostUploadWorkflow)
+		testArchiveUpload(t, upload.FormatCAR, upload.CreateCARArchive, upload.ArchiveConvert, testPostUploadWorkflow)
 	})
 
 	// Define test cases for all archive formats with convert mode
 	archiveFormats := []struct {
 		name    string
 		format  upload.Format
-		creator func(files []upload.TestFile) []byte
+		creator upload.ArchiveCreator
 	}{
 		{
 			name:    "ZIP",
@@ -40,6 +40,16 @@ func TestPostUploadOperationHandler_Execute_Integration(t *testing.T) {
 			name:    "TAR.BZ2",
 			format:  upload.FormatTAR_BZ2,
 			creator: upload.CreateTARBZ2Archive,
+		},
+		{
+			name:    "7Z",
+			format:  upload.Format7Z,
+			creator: upload.Create7ZArchive,
+		},
+		{
+			name:    "RAR",
+			format:  upload.FormatRAR,
+			creator: upload.CreateRARArchive,
 		},
 	}
 

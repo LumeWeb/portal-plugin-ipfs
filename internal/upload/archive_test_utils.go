@@ -6,18 +6,26 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/mholt/archives"
+	"go.lumeweb.com/portal/core"
 )
 
 // TestArchiveCreator provides a unified interface for creating archives
 // from different data structures (map[string]string or []TestFile)
-type TestArchiveCreator struct{}
+type TestArchiveCreator struct {
+	t  *testing.T
+	ctx core.Context
+}
 
 // NewTestArchiveCreator creates a new unified archive creator
-func NewTestArchiveCreator() *TestArchiveCreator {
-	return &TestArchiveCreator{}
+func NewTestArchiveCreator(t *testing.T, ctx core.Context) *TestArchiveCreator {
+	return &TestArchiveCreator{
+		t:  t,
+		ctx: ctx,
+	}
 }
 
 // CreateArchiveFromMap creates an archive from a map[string]string
@@ -57,7 +65,7 @@ func (u *TestArchiveCreator) CreateArchiveFromTestFiles(ctx context.Context, for
 		return &buf, err
 	case Format7Z:
 		// For 7Z format, use the external tool approach from archive_test_common.go
-		archiveData := Create7ZArchive(files)
+		archiveData := Create7ZArchive(u.t, u.ctx, files)
 		return bytes.NewBuffer(archiveData), nil
 	default:
 		return nil, fmt.Errorf("unsupported archive format: %v", format)

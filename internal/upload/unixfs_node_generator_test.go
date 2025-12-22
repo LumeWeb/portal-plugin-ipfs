@@ -33,7 +33,11 @@ func setupNodeGeneratorTest(t *testing.T) (UnixFSNodeGenerator, context.Context,
 	dagService := merkledag.NewDAGService(blockservice.New(bstore, offline.Exchange(bstore)))
 
 	// Create the generator with real components
-	generator := NewUnixFSNodeGenerator(dagService, logger)
+	generator := NewUnixFSNodeGeneratorWithOptions(
+		WithUnixFSNodeGeneratorDAGService(dagService),
+		WithUnixFSNodeGeneratorBlockstore(bstore),
+		WithUnixFSNodeGeneratorLogger(logger),
+	)
 
 	// Return cleanup function
 	cleanup := func() {

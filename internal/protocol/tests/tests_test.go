@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path"
 	"runtime"
@@ -35,14 +34,8 @@ var (
 	carFileName          = "../../testing/fixtures/cars/bbb.car"
 )
 
-// createCARArchive creates a CAR archive from test files by reading the fixture CAR file
-func createCARArchive(testFiles []upload.TestFile) []byte {
-	carFile, err := os.OpenFile(path.Join(path.Dir(currentFile), carFileName), os.O_RDONLY, fs.ModePerm)
-	if err != nil {
-		panic("Failed to open CAR fixture file: " + err.Error())
-	}
-	defer carFile.Close()
-
+// createCARArchive creates a CAR archive by reading the fixture CAR file
+func createCARArchive() []byte {
 	carData, err := os.ReadFile(path.Join(path.Dir(currentFile), carFileName))
 	if err != nil {
 		panic("Failed to read CAR fixture file: " + err.Error())
@@ -147,10 +140,7 @@ func assertTUSWorkflowSuccess(wfTest *coreTesting.WorkflowTest, req *models.Requ
 
 // testArchiveUpload is a helper function that tests archive uploads for a given format and mode
 // The specific workflow function should be provided as a parameter, along with optional test options
-func testArchiveUpload(t *testing.T, format upload.Format, creator func(files []upload.TestFile) []byte, mode upload.ArchiveMode, workflowFunc func(*testing.T, coreTesting.TestContext, *upload.UniversalReader, upload.Format, upload.ArchiveMode), testOptions ...coreTesting.TestContextBuilderOption) {
-	// Skip 7Z and RAR tests if the required tools are not available
-	handleToolUnavailable(t, format)
-
+func testArchiveUpload(t *testing.T, format upload.Format, creator upload.ArchiveCreator, mode upload.ArchiveMode, workflowFunc func(*testing.T, coreTesting.TestContext, *upload.UniversalReader, upload.Format, upload.ArchiveMode), testOptions ...coreTesting.TestContextBuilderOption) {
 	// Use provided options if available, otherwise use defaults
 	var finalOptions []coreTesting.TestContextBuilderOption
 	if len(testOptions) > 0 {
@@ -164,7 +154,21 @@ func testArchiveUpload(t *testing.T, format upload.Format, creator func(files []
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange - Create test archive
 		testFiles := upload.GetDefaultTestFiles()
-		archiveData := creator(testFiles)
+
+		// Add panic recovery for archive creation if required tools are not available
+		if format == upload.Format7Z || format == upload.FormatRAR {
+			defer func() {
+				if r := recover(); r != nil {
+					if msg, ok := r.(string); ok && (strings.Contains(msg, "command not found") || strings.Contains(msg, "not found - install")) {
+						t.Skipf("Skipping %s test: %s", format.String(), msg)
+					} else {
+						t.Errorf("Unexpected error during %s archive creation: %v", format.String(), r)
+					}
+				}
+			}()
+		}
+
+		archiveData := creator(t, ctx, testFiles)
 
 		// Create a reader from the archive data using UniversalReader
 		archiveReader := bytes.NewReader(archiveData)
@@ -173,23 +177,6 @@ func testArchiveUpload(t *testing.T, format upload.Format, creator func(files []
 		// Run the upload workflow test using the provided workflow function
 		workflowFunc(t, ctx, universalReader, format, mode)
 	}, finalOptions...)
-}
-
-// handleToolUnavailable checks if required external tools are available for 7Z and RAR formats
-func handleToolUnavailable(t *testing.T, format upload.Format) {
-	if format == upload.Format7Z || format == upload.FormatRAR {
-		// These formats require external tools that might not be available in CI
-		// The test will be skipped if the tools are not found during archive creation
-		defer func() {
-			if r := recover(); r != nil {
-				if msg, ok := r.(string); ok && (strings.Contains(msg, "command not found") || strings.Contains(msg, "not found - install")) {
-					t.Skipf("Skipping %s test: %s", format.String(), msg)
-				} else {
-					t.Errorf("Unexpected error during %s archive creation: %v", format.String(), r)
-				}
-			}
-		}()
-	}
 }
 
 // setupTUSUpload creates a TUS upload with optional hash and returns protocol and request ID
@@ -252,7 +239,7 @@ func setupTUSUpload(t *testing.T, ctx coreTesting.TestContext, uploadFile *os.Fi
 
 // testTUSArchiveUpload is a TUS-specific wrapper for testArchiveUpload
 // It handles TUS-specific upload logic while using the generic archive upload pattern
-func testTUSArchiveUpload(t *testing.T, format upload.Format, creator func(files []upload.TestFile) []byte, mode upload.ArchiveMode, testOptions ...coreTesting.TestContextBuilderOption) {
+func testTUSArchiveUpload(t *testing.T, format upload.Format, creator upload.ArchiveCreator, mode upload.ArchiveMode, testOptions ...coreTesting.TestContextBuilderOption) {
 	// Since TUS doesn't support archive preserve mode yet, only test convert mode
 	if mode != upload.ArchiveConvert {
 		t.Skip("TUS doesn't support archive preserve mode yet")
@@ -348,7 +335,9 @@ func testUploadWorkflow(t *testing.T, ctx coreTesting.TestContext, universalRead
 	if workflowDataBuilder != nil {
 		workflowData := workflowDataBuilder(uploadId)
 		if workflowData != nil {
-			workflowOptions = append(workflowOptions, workflowData.(core.WorkflowOption))
+			if option, ok := workflowData.(core.WorkflowOption); ok {
+				workflowOptions = append(workflowOptions, option)
+			}
 		}
 	}
 

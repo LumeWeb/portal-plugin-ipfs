@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
 	"time"
+
+	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
 
 	"github.com/ipfs/boxo/blockservice"
 	"github.com/ipfs/boxo/exchange/offline"
@@ -32,7 +33,7 @@ import (
 // CARTestHelper provides unified test utilities for CAR-related tests
 type CARTestHelper struct {
 	tb     testing.TB
-	ctx    context.Context
+	ctx    core.Context
 	logger *core.Logger
 }
 
@@ -82,7 +83,7 @@ type TestFileContent struct {
 
 // CreateTestArchive creates an archive from test files using the unified creator
 func (h *CARTestHelper) CreateTestArchive(format Format, files map[string]string) *bytes.Buffer {
-	creator := NewTestArchiveCreator()
+	creator := NewTestArchiveCreator(h.tb.(*testing.T), h.ctx)
 	buf, err := creator.CreateArchiveFromMap(h.ctx, format, files)
 	require.NoError(h.tb, err, "Should create archive")
 	return buf
@@ -201,7 +202,9 @@ func (h *CARTestHelper) readFilesFromDirectory(dagService format.DAGService, nod
 				}
 			}()
 		} else if childFsNode.Type() == unixfs.TDirectory {
-			allContent.WriteString(h.readFilesFromDirectory(dagService, childNode.(*merkledag.ProtoNode), childPath))
+			if protoNode, ok := childNode.(*merkledag.ProtoNode); ok {
+				allContent.WriteString(h.readFilesFromDirectory(dagService, protoNode, childPath))
+			}
 		}
 	}
 
@@ -265,10 +268,13 @@ func (h *CARTestHelper) readFilesFromDirectoryStructured(dagService format.DAGSe
 		if childInfo.IsUnixFS && childInfo.UnixFSType == pb.Data_File {
 			reader, err := unixfsio.NewDagReader(h.ctx, childNode, dagService)
 			require.NoError(h.tb, err, "Should create DAG reader")
-			defer closeIo(h.tb, reader)
 
 			content, err := io.ReadAll(reader)
 			require.NoError(h.tb, err, "Should read file content")
+
+			// Close reader explicitly instead of deferring to avoid resource leaks in loop
+			closeIo(h.tb, reader)
+
 			directoryStructure[childPath] = string(content)
 		} else if childInfo.IsUnixFS && childInfo.UnixFSType == pb.Data_Directory {
 			// Recursively process subdirectories and merge their contents

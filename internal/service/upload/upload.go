@@ -9,6 +9,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	pluginErrors "go.lumeweb.com/portal-plugin-ipfs/internal/errors"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
@@ -62,24 +63,21 @@ func (s *UploadServiceDefault) HandleUploadWithMode(ctx context.Context, reader 
 	format, err := upload.DetectFormat(reader)
 	if err != nil {
 		// Check if it's an unsupported format error
-		if err.Error() == "unsupported file format" {
+		if upload.IsUploadErrorType(err, pluginErrors.UploadErrUnsupportedFormat) {
 			return cid.Undef, "", upload.NewUnsupportedFormatError(err)
 		}
 		return cid.Undef, "", upload.NewCorruptedFileError(err)
 	}
-
 
 	_, err = reader.Seek(0, io.SeekStart)
 	if err != nil {
 		return cid.Undef, "", fmt.Errorf("failed to reset reader for processing: %w", err)
 	}
 
-
 	processor, err := s.processorFactory.CreateProcessor(format, mode)
 	if err != nil {
 		return cid.Undef, "", upload.NewProcessorError(format.String(), mode.String(), err)
 	}
-
 
 	rootCID, uploadID, err := processor.Process(ctx, reader)
 	if err != nil {
@@ -133,13 +131,12 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 	// Create upload records and core pin records for ALL CIDs (both roots and children)
 	clientIP := store.GetClientIP(ctx)
 	for _, c := range cids {
-	
+
 		size, exists := cidSizes[c.String()]
 		if !exists {
 			return fmt.Errorf("size not found for CID %s in cache", c.String())
 		}
 
-	
 		uploadMeta := &models.Upload{
 			UserID:   userId,
 			Protocol: s.ipfs.Name(),
@@ -153,7 +150,6 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 			return fmt.Errorf("failed to save upload record for CID %s: %w", c.String(), err)
 		}
 
-	
 		pinMeta := &models.Pin{
 			UploadID: uploadMeta.ID,
 			UserID:   uploadMeta.UserID,

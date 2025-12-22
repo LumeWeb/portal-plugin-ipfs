@@ -40,7 +40,7 @@ type StreamingArchiveProcessor interface {
 	ProcessArchive(ctx context.Context, extractor ArchiveExtractor) error
 
 	// GetRootNode returns the root node of the processed archive
-	GetRootNode() (format.Node, error)
+	GetRootNode(ctx context.Context) (format.Node, error)
 
 	// GetProcessedFiles returns information about all processed files
 	GetProcessedFiles() []FileInfo
@@ -268,7 +268,7 @@ func (sp *StreamingProcessor) ProcessArchive(ctx context.Context, extractor Arch
 }
 
 // GetRootNode implements StreamingArchiveProcessor.GetRootNode
-func (sp *StreamingProcessor) GetRootNode() (format.Node, error) {
+func (sp *StreamingProcessor) GetRootNode(ctx context.Context) (format.Node, error) {
 	if sp.rootCID == "" {
 		return nil, fmt.Errorf("root node not available - archive may not have been processed yet")
 	}
@@ -279,7 +279,7 @@ func (sp *StreamingProcessor) GetRootNode() (format.Node, error) {
 		return nil, fmt.Errorf("failed to decode root CID: %w", err)
 	}
 
-	return sp.dagService.Get(context.Background(), rootCID)
+	return sp.dagService.Get(ctx, rootCID)
 }
 
 // GetProcessedFiles implements StreamingArchiveProcessor.GetProcessedFiles
@@ -391,9 +391,11 @@ func (sp *StreamingProcessor) collectFileMetadata(ctx context.Context, efs fs.FS
 
 		if err := sp.processFile(ctx, &fileInfo, efs); err != nil {
 			fileInfo.Error = err
-			sp.logger.Warn("Failed to process file",
-				zap.String("path", currentPath),
-				zap.Error(err))
+			if sp.logger != nil {
+				sp.logger.Warn("Failed to process file",
+					zap.String("path", currentPath),
+					zap.Error(err))
+			}
 		}
 
 		// Add to both local files and processor's processedFiles
@@ -567,9 +569,11 @@ func (sp *StreamingProcessor) processFile(ctx context.Context, fileInfo *FileInf
 	// Ensure file is closed even if processing fails
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			sp.logger.Warn("Failed to close file",
-				zap.String("path", fileInfo.Path),
-				zap.Error(closeErr))
+			if sp.logger != nil {
+				sp.logger.Warn("Failed to close file",
+					zap.String("path", fileInfo.Path),
+					zap.Error(closeErr))
+			}
 		}
 	}()
 
@@ -591,10 +595,12 @@ func (sp *StreamingProcessor) processFile(ctx context.Context, fileInfo *FileInf
 	fileInfo.CID = node.Cid().String()
 	fileInfo.Processed = true
 
-	sp.logger.Debug("File processed successfully",
-		zap.String("path", fileInfo.Path),
-		zap.String("cid", node.Cid().String()),
-		zap.Int64("size", fileInfo.Size))
+	if sp.logger != nil {
+		sp.logger.Debug("File processed successfully",
+			zap.String("path", fileInfo.Path),
+			zap.String("cid", node.Cid().String()),
+			zap.Int64("size", fileInfo.Size))
+	}
 
 	return nil
 }

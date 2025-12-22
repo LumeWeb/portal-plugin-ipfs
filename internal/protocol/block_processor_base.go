@@ -31,6 +31,7 @@ type BaseBlockProcessor struct {
 	errorChan chan error
 	closed    bool
 	closeOnce sync.Once
+	errorCloseOnce sync.Once
 
 	// Done tracking
 	DoneTracker
@@ -131,13 +132,9 @@ func (bp *BaseBlockProcessor) startBackgroundGoroutine(fn func() error) {
 
 // closeErrorChannel closes the error channel safely
 func (bp *BaseBlockProcessor) closeErrorChannel() {
-	select {
-	case <-bp.errorChan:
-		// Channel is already closed
-	default:
-		// Channel is still open, close it
+	bp.errorCloseOnce.Do(func() {
 		close(bp.errorChan)
-	}
+	})
 }
 
 // Close performs common cleanup for all processors

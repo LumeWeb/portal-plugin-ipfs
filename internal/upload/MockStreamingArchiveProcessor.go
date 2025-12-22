@@ -129,7 +129,7 @@ func (_c *MockStreamingArchiveProcessor_GetProcessedFiles_Call) RunAndReturn(run
 }
 
 // GetRootNode provides a mock function for the type MockStreamingArchiveProcessor
-func (_mock *MockStreamingArchiveProcessor) GetRootNode() (format.Node, error) {
+func (_mock *MockStreamingArchiveProcessor) GetRootNode(ctx context.Context) (format.Node, error) {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
@@ -162,7 +162,7 @@ type MockStreamingArchiveProcessor_GetRootNode_Call struct {
 }
 
 // GetRootNode is a helper method to define mock.On call
-func (_e *MockStreamingArchiveProcessor_Expecter) GetRootNode() *MockStreamingArchiveProcessor_GetRootNode_Call {
+func (_e *MockStreamingArchiveProcessor_Expecter) GetRootNode(ctx context.Context) *MockStreamingArchiveProcessor_GetRootNode_Call {
 	return &MockStreamingArchiveProcessor_GetRootNode_Call{Call: _e.mock.On("GetRootNode")}
 }
 

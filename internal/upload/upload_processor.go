@@ -74,11 +74,15 @@ func (p *CARProcessor) Process(ctx context.Context, reader io.ReadSeekCloser) (c
 		return cid.Undef, "", fmt.Errorf("failed to get CAR roots: %w", err)
 	}
 
+	// Reset reader position to start for full file upload
+	_, err = reader.Seek(0, io.SeekStart)
+	if err != nil {
+		return cid.Undef, "", fmt.Errorf("failed to reset reader position: %w", err)
+	}
 
 	if err := validateCARRoots(roots); err != nil {
 		return cid.Undef, "", err
 	}
-
 
 	uploadID, err := p.storageHelper.StoreFile(ctx, reader, size)
 	if err != nil {
@@ -129,7 +133,7 @@ func (p *ArchiveProcessor) Process(ctx context.Context, reader io.ReadSeekCloser
 	uReader := NewUniversalReader(reader)
 	defer common.SafeCloseFile(p.logger, uReader)
 
-	extractor, err := CreateExtractor(NewUniversalReader(reader))
+	extractor, err := CreateExtractor(uReader)
 	if err != nil {
 		return cid.Cid{}, "", err
 	}

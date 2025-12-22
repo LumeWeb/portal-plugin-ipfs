@@ -33,6 +33,8 @@ func (f Format) String() string {
 	switch f {
 	case FormatCAR:
 		return "car"
+	case FormatFile:
+		return "file"
 	case FormatZIP:
 		return "zip"
 	case FormatRAR:
@@ -55,6 +57,8 @@ func ParseFormat(s string) Format {
 	switch s {
 	case "car":
 		return FormatCAR
+	case "file":
+		return FormatFile
 	case "zip":
 		return FormatZIP
 	case "rar":

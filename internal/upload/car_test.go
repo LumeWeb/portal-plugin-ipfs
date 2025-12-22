@@ -212,7 +212,7 @@ func TestArchiveExtractorToCAR_ErrorConditions(t *testing.T) {
 						require.Contains(t, err.Error(), tc.errorMsg, "Error should contain expected message")
 					}
 					if tc.errorType != nil {
-						require.Equal(t, tc.errorType, err, "Error should be of expected type")
+						require.ErrorIs(t, err, tc.errorType, "Error should be of expected type")
 					}
 					require.Nil(t, buf, "Buffer should be nil on error")
 					require.Equal(t, cid.Undef, rootCID, "Root CID should be undefined on error")
@@ -332,7 +332,7 @@ func TestSingleFileToCAR(t *testing.T) {
 					require.Contains(t, err.Error(), tc.errorMsg, "Error should contain expected message")
 				}
 				if tc.errorType != nil {
-					require.Equal(t, tc.errorType, err, "Error should be of expected type")
+					require.ErrorIs(t, err, tc.errorType, "Error should be of expected type")
 				}
 				require.Nil(t, buf, "Buffer should be nil on error")
 				require.Equal(t, cid.Undef, rootCID, "Root CID should be undefined on error")

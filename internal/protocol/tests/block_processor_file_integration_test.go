@@ -216,7 +216,7 @@ func TestFileBlockProcessor_Integration_FileTypes(t *testing.T) {
 			fileContent: func() string {
 				return "Hello, World! This is a test file for IPFS processing."
 			},
-			timeout: 5 * time.Hour,
+			timeout: 5 * time.Second,
 			validate: func(t *testing.T, rootCID string, blockCount int) {
 				require.Greater(t, blockCount, 0, "Should have processed at least one block")
 				t.Logf("File processed successfully with root CID: %s", rootCID)

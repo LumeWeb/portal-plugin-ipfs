@@ -39,7 +39,7 @@ func NewFileBlockProcessor(ctx context.Context, blockstore StreamingBlockstore, 
 // NewFileBlockProcessorWithPath creates a new FileBlockProcessor with file path metadata
 func NewFileBlockProcessorWithPath(ctx context.Context, blockstore StreamingBlockstore, fileReader io.ReadSeekCloser, filePath string, dagService format.DAGService, nodeGenerator upload.UnixFSNodeGenerator, logger *core.Logger) (*FileBlockProcessor, error) {
 	if logger != nil {
-		logger.Debug("NewFileBlockProcessorWithPath() called", zap.String("filePath", filePath))
+		logger.Debug("Creating FileBlockProcessor with file path", zap.String("filePath", filePath))
 	}
 
 	processor, err := NewFileBlockProcessorWithDefaults(ctx, blockstore, fileReader, dagService, nodeGenerator, logger, NewDoneTracker())
@@ -50,7 +50,7 @@ func NewFileBlockProcessorWithPath(ctx context.Context, blockstore StreamingBloc
 	processor.filePath = filePath
 
 	if logger != nil {
-		logger.Debug("NewFileBlockProcessorWithPath(): created successfully", zap.String("filePath", filePath))
+		logger.Debug("FileBlockProcessor created successfully", zap.String("filePath", filePath))
 	}
 
 	return processor, nil
@@ -59,7 +59,7 @@ func NewFileBlockProcessorWithPath(ctx context.Context, blockstore StreamingBloc
 // NewFileBlockProcessorWithDefaults creates a new FileBlockProcessor with the given dependencies and shared DoneTracker
 func NewFileBlockProcessorWithDefaults(ctx context.Context, blockstore StreamingBlockstore, fileReader io.ReadSeekCloser, dagService format.DAGService, nodeGenerator upload.UnixFSNodeGenerator, logger *core.Logger, doneTracker DoneTracker) (*FileBlockProcessor, error) {
 	if logger != nil {
-		logger.Debug("NewFileBlockProcessorWithDefaults() called")
+		logger.Debug("Creating FileBlockProcessor with default settings")
 	}
 
 	if blockstore == nil {
@@ -88,7 +88,7 @@ func NewFileBlockProcessorWithDefaults(ctx context.Context, blockstore Streaming
 	}
 
 	if logger != nil {
-		logger.Debug("NewFileBlockProcessorWithDefaults(): created successfully")
+		logger.Debug("FileBlockProcessor with defaults created successfully")
 	}
 
 	return processor, nil
@@ -96,49 +96,56 @@ func NewFileBlockProcessorWithDefaults(ctx context.Context, blockstore Streaming
 
 // Next implements BlockProcessor interface
 func (fp *FileBlockProcessor) Next() (blocks.Block, error) {
-	fp.GetLogger().Debug("FileBlockProcessor.Next() called")
+	logger := fp.GetLogger()
+	logger.Debug("Requesting next block from FileBlockProcessor")
 
 	// Check if processor is closed
 	if fp.isClosed() {
-		fp.GetLogger().Debug("FileBlockProcessor.Next(): processor is closed")
+		logger.Debug("Cannot retrieve block: processor is closed")
 		return nil, fmt.Errorf("processor is closed")
+	}
+
+	// Check if context is already cancelled before starting processing
+	if err := fp.GetContext().Err(); err != nil {
+		logger.Debug("Cannot retrieve block: context cancelled", zap.Error(err))
+		return nil, err
 	}
 
 	// Start processing if not already started
 	if !fp.isStarted() {
-		fp.GetLogger().Debug("FileBlockProcessor.Next(): starting file processing")
+		logger.Debug("Starting file processing pipeline")
 		fp.markStarted()
 		fp.startFileProcessing()
 	}
 
-	fp.GetLogger().Debug("FileBlockProcessor.Next(): reading from block stream")
+	logger.Debug("Waiting for next block from processing stream")
 	// Read next block from the streaming datastore
 	select {
 	case entry, ok := <-fp.blockstore.GetBlockStream(fp.GetContext()):
 		if !ok {
-			fp.GetLogger().Debug("FileBlockProcessor.Next(): block stream channel closed")
+			logger.Debug("Block processing stream has ended")
 			// Channel closed, check for errors
 			select {
 			case err := <-fp.errorChan:
-				fp.GetLogger().Debug("FileBlockProcessor.Next(): error from error channel", zap.Error(err))
+				logger.Debug("Processing error detected", zap.Error(err))
 				return nil, err
 			default:
-				fp.GetLogger().Debug("FileBlockProcessor.Next(): returning io.EOF")
+				logger.Debug("All blocks processed, returning end of stream")
 				return nil, io.EOF
 			}
 		}
 
-		fp.GetLogger().Debug("FileBlockProcessor.Next(): got block from stream", zap.String("cid", entry.Block.Cid().String()))
+		logger.Debug("Retrieved block from stream", zap.String("cid", entry.Block.Cid().String()))
 		// Mark block as processed in datastore
 		fp.blockstore.MarkBlockProcessed(entry.Key.String())
 		return entry.Block, nil
 
 	case <-fp.GetContext().Done():
-		fp.GetLogger().Debug("FileBlockProcessor.Next(): context done", zap.Error(fp.GetContext().Err()))
+		logger.Debug("Processing cancelled due to context", zap.Error(fp.GetContext().Err()))
 		return nil, fp.GetContext().Err()
 
 	case err := <-fp.errorChan:
-		fp.GetLogger().Debug("FileBlockProcessor.Next(): error from error channel", zap.Error(err))
+		logger.Debug("Processing error detected", zap.Error(err))
 		return nil, err
 	}
 }
@@ -146,9 +153,9 @@ func (fp *FileBlockProcessor) Next() (blocks.Block, error) {
 // Roots implements BlockProcessor interface
 func (fp *FileBlockProcessor) Roots() []cid.Cid {
 	roots := fp.getRootCIDs()
-	if fp.GetLogger() != nil {
-		fp.GetLogger().Debug("FileBlockProcessor.Roots() called",
-			zap.Int("rootsCount", len(roots)),
+	if logger := fp.GetLogger(); logger != nil {
+		logger.Debug("Retrieving root CIDs from FileBlockProcessor",
+			zap.Int("rootCount", len(roots)),
 			zap.Strings("roots", func() []string {
 				rootStrings := make([]string, len(roots))
 				for i, r := range roots {
@@ -162,16 +169,16 @@ func (fp *FileBlockProcessor) Roots() []cid.Cid {
 
 // startFileProcessing begins the background processing of the file
 func (fp *FileBlockProcessor) startFileProcessing() {
-	if fp.GetLogger() != nil {
-		fp.GetLogger().Debug("FileBlockProcessor.startFileProcessing() called")
+	if logger := fp.GetLogger(); logger != nil {
+		logger.Debug("Starting background file processing")
 	}
 	fp.startBackgroundGoroutine(func() error {
 		err := fp.processFile(fp.GetContext())
-		if fp.GetLogger() != nil {
+		if logger := fp.GetLogger(); logger != nil {
 			if err != nil {
-				fp.GetLogger().Error("FileBlockProcessor.startFileProcessing(): processing failed", zap.Error(err))
+				logger.Error("File processing failed in background", zap.Error(err))
 			} else {
-				fp.GetLogger().Debug("FileBlockProcessor.startFileProcessing(): processing completed successfully")
+				logger.Debug("Background file processing completed successfully")
 			}
 		}
 		return err
@@ -180,8 +187,9 @@ func (fp *FileBlockProcessor) startFileProcessing() {
 
 // processFile processes the file by passing it directly to the UnixFS node generator
 func (fp *FileBlockProcessor) processFile(ctx context.Context) error {
-	fp.GetLogger().Debug("FileBlockProcessor.processFile() starting",
-		zap.String("file_path", fp.filePath))
+	logger := fp.GetLogger()
+	logger.Debug("Processing file for IPFS storage",
+		zap.String("filePath", fp.filePath))
 
 	// Ensure the file is seekable
 	seekableFile := upload.NewUniversalReader(fp.fileReader)
@@ -189,20 +197,20 @@ func (fp *FileBlockProcessor) processFile(ctx context.Context) error {
 	// Create the UnixFS node from the file using injected dependencies
 	node, err := fp.nodeGenerator.CreateNode(ctx, seekableFile)
 	if err != nil {
-		fp.GetLogger().Error("FileBlockProcessor.processFile(): failed to create node", zap.Error(err))
+		logger.Error("Failed to create UnixFS node from file", zap.Error(err))
 		return err
 	}
 
-	fp.GetLogger().Debug("FileBlockProcessor.processFile(): created UnixFS node",
+	logger.Debug("Successfully created UnixFS node",
 		zap.String("cid", node.Cid().String()))
 
 	// Store the node in the blockstore via injected dagService
 	if err := fp.dagService.Add(ctx, node); err != nil {
-		fp.GetLogger().Error("FileBlockProcessor.processFile(): failed to add node to DAG service", zap.Error(err))
+		logger.Error("Failed to store UnixFS node in DAG service", zap.Error(err))
 		return err
 	}
 
-	fp.GetLogger().Debug("FileBlockProcessor.processFile(): added node to DAG service")
+	logger.Debug("UnixFS node stored successfully in DAG service")
 
 	// Mark processing as completed with root CID
 	fp.markCompleted([]cid.Cid{node.Cid()})
@@ -213,7 +221,7 @@ func (fp *FileBlockProcessor) processFile(ctx context.Context) error {
 	// Mark root CID as done in datastore
 	fp.blockstore.MarkDone(node.Cid())
 
-	fp.GetLogger().Info("File processed successfully",
+	logger.Info("File processed successfully",
 		zap.String("file_path", fp.filePath),
 		zap.String("root_cid", node.Cid().String()))
 
@@ -223,16 +231,18 @@ func (fp *FileBlockProcessor) processFile(ctx context.Context) error {
 // Release implements BlockProcessor interface
 func (fp *FileBlockProcessor) Release() {
 	if fp.GetLogger() != nil {
-		fp.GetLogger().Debug("FileBlockProcessor.Release() called",
-			zap.String("file_path", fp.filePath))
+		fp.GetLogger().Debug("Releasing FileBlockProcessor resources",
+			zap.String("filePath", fp.filePath))
 	}
 
 	// Close the file reader if it's still open
 	if fp.fileReader != nil {
-		if err := fp.fileReader.Close(); err != nil && fp.GetLogger() != nil {
-			fp.GetLogger().Warn("Failed to close file reader",
-				zap.String("file_path", fp.filePath),
-				zap.Error(err))
+		if err := fp.fileReader.Close(); err != nil {
+			if logger := fp.GetLogger(); logger != nil {
+				logger.Warn("Failed to close file reader",
+					zap.String("file_path", fp.filePath),
+					zap.Error(err))
+			}
 		}
 		fp.fileReader = nil
 	}
@@ -242,13 +252,15 @@ func (fp *FileBlockProcessor) Release() {
 
 	// Close the blockstore
 	if fp.blockstore != nil {
-		if err := fp.blockstore.Close(); err != nil && fp.GetLogger() != nil {
-			fp.GetLogger().Warn("Failed to close blockstore", zap.Error(err))
+		if err := fp.blockstore.Close(); err != nil {
+			if logger := fp.GetLogger(); logger != nil {
+				logger.Warn("Failed to close blockstore", zap.Error(err))
+			}
 		}
 	}
 
 	if fp.GetLogger() != nil {
-		fp.GetLogger().Debug("FileBlockProcessor.Release() completed")
+		fp.GetLogger().Debug("FileBlockProcessor resources released successfully")
 	}
 }
 

@@ -91,10 +91,8 @@ func TestProcessCarIntegration(t *testing.T) {
 				carFile, err := os.Open(path.Join(path.Dir(file), tc.carFileName))
 				require.NoError(t, err)
 				defer func(carFile *os.File) {
-					err = carFile.Close()
-					if err != nil {
-						require.NoError(t, err)
-					}
+					err := carFile.Close()
+					require.NoError(t, err)
 				}(carFile)
 
 				// Verify the file size

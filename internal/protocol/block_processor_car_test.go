@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -180,7 +181,7 @@ func readTestFixture(path string) ([]byte, error) {
 	}
 
 	// Try to read from relative path to this test file
-	relPath := "./testing/fixtures/" + path
+	relPath := "./testing/fixtures/" + filepath.Base(path)
 	return os.ReadFile(relPath)
 }
 

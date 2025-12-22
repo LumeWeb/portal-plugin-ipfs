@@ -341,7 +341,7 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 
 			ds, dsErr = levelds.NewDatastore(filepath.Join(ctx.Config().ConfigDir(), internal.ProtocolName, "p2p.ldb"), nil)
 			if dsErr != nil {
-				ctx.Logger().Fatal("failed to open leveldb datastore", zap.Error(err))
+				ctx.Logger().Fatal("failed to open leveldb datastore", zap.Error(dsErr))
 			}
 			level := mapLogLevel(cfg.LogLevel)
 
@@ -366,7 +366,13 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 				}
 			}
 
-			return ds.Close()
+			if ds != nil {
+				if err := ds.Close(); err != nil {
+					return err
+				}
+			}
+
+			return nil
 		}),
 	)
 
@@ -394,7 +400,11 @@ func KeyFromCID(c cid.Cid) ds.Key {
 // KeyToCIDString converts a datastore key to CID string, removing leading slash if present
 func KeyToCIDString(key ds.Key) string {
 	key = ds.NewKey(key.Name())
-	m, _ := dshelp.DsKeyToMultihash(key)
+	m, err := dshelp.DsKeyToMultihash(key)
+	if err != nil {
+		// Return empty string for invalid keys
+		return ""
+	}
 	keyStr := cid.NewCidV0(m)
 
 	return keyStr.String()

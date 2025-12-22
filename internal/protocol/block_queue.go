@@ -99,8 +99,13 @@ func (bp *BlockQueue) processBlock(ctx context.Context, job *blockJob) error {
 	// Check bloom filter to skip already processed blocks
 	cidStr := job.Block.Cid().String()
 	if bp.processedFilter.Test([]byte(cidStr)) {
-		bp.logger.Debug("Block already processed, skipping", zap.String("CID", cidStr))
-		return nil
+		// Bloom filter hit - verify with authoritative blockstore to avoid false positives
+		hasBlock, err := bp.proto.GetNode().HasBlock(ctx, job.Block.Cid())
+		if err == nil && hasBlock {
+			bp.logger.Debug("Block confirmed as processed, skipping", zap.String("CID", cidStr))
+			return nil
+		}
+		bp.logger.Debug("Bloom filter false positive, proceeding with processing", zap.String("CID", cidStr))
 	}
 
 	// Retry logic

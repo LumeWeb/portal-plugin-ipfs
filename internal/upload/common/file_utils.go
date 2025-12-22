@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -150,10 +151,7 @@ func IsNoSuchFileError(err error) bool {
 	if err == nil {
 		return false
 	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "no such file") ||
-		strings.Contains(errStr, "not found") ||
-		strings.Contains(errStr, "does not exist")
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // IsPathError checks if an error is a filesystem path error
@@ -161,9 +159,6 @@ func IsPathError(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Check for common path-related error patterns
-	errStr := err.Error()
-	return strings.Contains(errStr, "invalid path") ||
-		strings.Contains(errStr, "path error") ||
-		strings.Contains(errStr, "filesystem")
+	var pathErr *fs.PathError
+	return errors.As(err, &pathErr)
 }

@@ -421,17 +421,22 @@ func (s *DefaultStreamingBlockstore) AllKeysChan(ctx context.Context) (<-chan ci
 	go func() {
 		defer close(ch)
 
-		// Add pending blocks from pending blocks map
+		// Copy pending blocks entries while holding the lock
+		var pendingCIDs []cid.Cid
 		s.pendingMutex.RLock()
 		for _, entry := range s.pendingBlocks {
+			pendingCIDs = append(pendingCIDs, entry.Block.Cid())
+		}
+		s.pendingMutex.RUnlock()
+
+		// Send pending block CIDs without holding the lock
+		for _, blockCID := range pendingCIDs {
 			select {
-			case ch <- entry.Block.Cid():
+			case ch <- blockCID:
 			case <-ctx.Done():
-				s.pendingMutex.RUnlock()
 				return
 			}
 		}
-		s.pendingMutex.RUnlock()
 
 		// Add results from passthrough if available
 		if s.passthrough != nil {
@@ -445,7 +450,9 @@ func (s *DefaultStreamingBlockstore) AllKeysChan(ctx context.Context) (<-chan ci
 					}
 				}
 			} else {
-				s.logger.Error("Failed to get keys from passthrough blockstore", zap.Error(err))
+				if s.logger != nil {
+					s.logger.Error("Failed to get keys from passthrough blockstore", zap.Error(err))
+				}
 			}
 		}
 	}()
@@ -546,9 +553,6 @@ func (s *DefaultStreamingBlockstore) ProcessingDone() {
 
 // MarkBlockProcessed marks a block as processed (sent to the next stage)
 func (s *DefaultStreamingBlockstore) MarkBlockProcessed(blockKey string) {
-	s.processedMutex.Lock()
-	defer s.processedMutex.Unlock()
-
 	// Convert blockKey to binary CID for cache removal
 	cidKey := KeyToCIDString(ds.NewKey(ds.NewKey(blockKey).Name()))
 	if s.logger != nil {
@@ -565,7 +569,9 @@ func (s *DefaultStreamingBlockstore) MarkBlockProcessed(blockKey string) {
 	s.pendingMutex.Unlock()
 
 	// Mark as processed using binary CID
+	s.processedMutex.Lock()
 	s.processedBlocks[cidKey] = true
+	s.processedMutex.Unlock()
 
 	// Mark as done in DoneTracker
 	if cidObj, err := cid.Decode(blockKey); err == nil {

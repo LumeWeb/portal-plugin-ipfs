@@ -47,6 +47,7 @@ func TestUploadService_HandleUpload(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		internal.RegisterHashes()
 		err := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol).GetNode().Close()
+		require.NoError(t, err)
 		// Arrange
 		uploadService := core.GetService[pluginCore.UploadService](ctx, pluginCore.UPLOAD_SERVICE)
 		require.NotNil(tb, uploadService)
@@ -98,6 +99,7 @@ func TestUploadService_HandleUpload_WithMode(t *testing.T) {
 			coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 				internal.RegisterHashes()
 				err := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol).GetNode().Close()
+				require.NoError(tb, err, "Failed to close protocol node")
 
 				// Arrange
 				uploadService := core.GetService[pluginCore.UploadService](ctx, pluginCore.UPLOAD_SERVICE)
@@ -115,7 +117,7 @@ func TestUploadService_HandleUpload_WithMode(t *testing.T) {
 						Modified: time.Now(),
 					},
 				}
-				zipData := bytes.NewReader(upload.CreateZIPArchive(testFiles))
+				zipData := bytes.NewReader(upload.CreateZIPArchive(t, ctx, testFiles))
 				reader := io.NopCloser(zipData)
 
 				userId := uint(123)

@@ -22,7 +22,7 @@ const (
 	ErrKeyFileUploadFailed  = errors.ErrKeyFileUploadFailed
 
 	// Other API error types
-	ErrKeyFileUploadAPIFailed   core.ErrorType = "ErrFileUploadFailed"
+	ErrKeyFileUploadAPIFailed   core.ErrorType = "ErrFileUploadAPIFailed"
 	ErrKeyMetadataFetchFailed   core.ErrorType = "ErrMetadataFetchFailed"
 	ErrKeyPinFetchFailed        core.ErrorType = "ErrPinFetchFailed"
 	ErrKeyInvalidUUIDFormat     core.ErrorType = "ErrInvalidUUIDFormat"

@@ -113,7 +113,7 @@ func (ap *ArchiveBlockProcessor) Roots() []cid.Cid {
 
 	// If not completed yet, try to get root from stream processor
 	if ap.streamProcessor != nil {
-		if rootNode, err := ap.streamProcessor.GetRootNode(); err == nil && rootNode != nil {
+		if rootNode, err := ap.streamProcessor.GetRootNode(ap.GetContext()); err == nil && rootNode != nil {
 			return []cid.Cid{rootNode.Cid()}
 		}
 	}
@@ -125,22 +125,28 @@ func (ap *ArchiveBlockProcessor) Roots() []cid.Cid {
 func (ap *ArchiveBlockProcessor) Release() {
 	// Close extractor
 	if ap.extractor != nil {
-		if err := ap.extractor.Close(); err != nil && ap.GetLogger() != nil {
-			ap.GetLogger().Error("Failed to close archive extractor", zap.Error(err))
+		if err := ap.extractor.Close(); err != nil {
+			if logger := ap.GetLogger(); logger != nil {
+				logger.Error("Failed to close archive extractor", zap.Error(err))
+			}
 		}
 	}
 
 	// Close streaming processor
 	if ap.streamProcessor != nil {
-		if err := ap.streamProcessor.Close(); err != nil && ap.GetLogger() != nil {
-			ap.GetLogger().Error("Failed to close streaming processor", zap.Error(err))
+		if err := ap.streamProcessor.Close(); err != nil {
+			if logger := ap.GetLogger(); logger != nil {
+				logger.Error("Failed to close streaming processor", zap.Error(err))
+			}
 		}
 	}
 
 	// Close blockstore
 	if ap.blockstore != nil {
-		if err := ap.blockstore.Close(); err != nil && ap.GetLogger() != nil {
-			ap.GetLogger().Error("Failed to close archive blockstore", zap.Error(err))
+		if err := ap.blockstore.Close(); err != nil {
+			if logger := ap.GetLogger(); logger != nil {
+				logger.Error("Failed to close archive blockstore", zap.Error(err))
+			}
 		}
 	}
 
@@ -158,7 +164,7 @@ func (ap *ArchiveBlockProcessor) startProcessing() {
 		}
 
 		// Get root node and set roots
-		rootNode, err := ap.streamProcessor.GetRootNode()
+		rootNode, err := ap.streamProcessor.GetRootNode(ap.GetContext())
 		if err != nil {
 			return fmt.Errorf("failed to get root node: %w", err)
 		}
@@ -169,8 +175,10 @@ func (ap *ArchiveBlockProcessor) startProcessing() {
 		// Signal that processing is complete
 		ap.blockstore.ProcessingDone()
 
-		ap.GetLogger().Info("Archive processed successfully",
-			zap.String("root_cid", rootNode.Cid().String()))
+		if logger := ap.GetLogger(); logger != nil {
+			logger.Info("Archive processed successfully",
+				zap.String("root_cid", rootNode.Cid().String()))
+		}
 
 		return nil
 	})

@@ -91,6 +91,7 @@ func NewUnixFSNodeGenerator(dagService format.DAGService, logger *core.Logger) U
 
 	return &IPFSUnixFSNodeGenerator{
 		dagService: dagService,
+		blockstore: nil, // Note: This constructor doesn't set blockstore - use NewUnixFSNodeGeneratorWithOptions if blockstore is needed
 		logger:     logger,
 	}
 }

@@ -237,6 +237,8 @@ func (gen *IPFSCARGenerator) pruneEmptyDirectories(ctx context.Context, director
 		// Remove the child from parent directory
 		dirName := _path[strings.LastIndex(_path, "/")+1:]
 		if err := parentDir.RemoveChild(ctx, dirName); err != nil {
+			// Log the error but continue - this is a best-effort cleanup operation
+			continue
 		}
 	}
 
@@ -326,7 +328,11 @@ func (gen *IPFSCARGenerator) collectArchiveEntries(ctx context.Context, extracto
 			}
 
 			// Add file to parent directory
-			err = parentDir.AddChild(ctx, d.Name(), node.(*merkledag.ProtoNode))
+			if protoNode, ok := node.(*merkledag.ProtoNode); ok {
+				err = parentDir.AddChild(ctx, d.Name(), protoNode)
+			} else {
+				return fmt.Errorf("expected ProtoNode, got %T", node)
+			}
 			if err != nil {
 				if closeErr := file.Close(); closeErr != nil {
 					gen.logger.Warn("Failed to close file", zap.String("path", currentPath), zap.Error(closeErr))

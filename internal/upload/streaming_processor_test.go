@@ -6,17 +6,16 @@ import (
 	"fmt"
 	"io/fs"
 	"math/rand"
-	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/ipfs/go-cid"
 	"github.com/mholt/archives"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 )
 
@@ -34,7 +33,7 @@ func setupStreamProcessorTest(t *testing.T) (*StreamingProcessor, context.Contex
 }
 
 // createStreamProcessorTestArchive creates a real archive extractor from test files
-func createStreamProcessorTestArchive(t *testing.T, files map[string]*fstest.MapFile) ArchiveExtractor {
+func createStreamProcessorTestArchive(t *testing.T, ctx core.Context, files map[string]*fstest.MapFile) ArchiveExtractor {
 	// Convert fstest.MapFile to TestFile format
 	testFiles := make([]TestFile, 0)
 	for path, file := range files {
@@ -48,7 +47,7 @@ func createStreamProcessorTestArchive(t *testing.T, files map[string]*fstest.Map
 	}
 
 	// Create a real ZIP archive
-	archiveData := CreateZIPArchive(testFiles)
+	archiveData := CreateZIPArchive(t, ctx, testFiles)
 
 	// Create a real archive extractor
 	RegisterZipExtractor()
@@ -120,8 +119,8 @@ func TestProcessArchive_FilesOnly(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			processor, ctx, _ := setupStreamProcessorTest(t)
-			extractor := createStreamProcessorTestArchive(t, tt.files)
+			processor, ctx, testCtx := setupStreamProcessorTest(t)
+			extractor := createStreamProcessorTestArchive(t, testCtx, tt.files)
 
 			err := processor.ProcessArchive(ctx, extractor)
 			assert.NoError(t, err)
@@ -183,8 +182,8 @@ func TestProcessArchive_DirectoryStructures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			processor, ctx, _ := setupStreamProcessorTest(t)
-			extractor := createStreamProcessorTestArchive(t, tt.dirs)
+			processor, ctx, testCtx := setupStreamProcessorTest(t)
+			extractor := createStreamProcessorTestArchive(t, testCtx, tt.dirs)
 
 			err := processor.ProcessArchive(ctx, extractor)
 			assert.NoError(t, err)
@@ -197,16 +196,16 @@ func TestProcessArchive_DirectoryStructures(t *testing.T) {
 func TestProcessArchive_ErrorCases(t *testing.T) {
 	tests := []struct {
 		name          string
-		setupTest     func(t *testing.T) (ArchiveExtractor, context.Context)
+		setupTest     func(t *testing.T, ctx core.Context) (ArchiveExtractor, context.Context)
 		expectedError string
 		expectError   bool
 	}{
 		{
 			name: "empty archive",
-			setupTest: func(t *testing.T) (ArchiveExtractor, context.Context) {
+			setupTest: func(t *testing.T, testCtx core.Context) (ArchiveExtractor, context.Context) {
 				_, ctx, _ := setupStreamProcessorTest(t)
 				emptyFiles := map[string]*fstest.MapFile{}
-				extractor := createStreamProcessorTestArchive(t, emptyFiles)
+				extractor := createStreamProcessorTestArchive(t, testCtx, emptyFiles)
 				return extractor, ctx
 			},
 			expectedError: "no entries found",
@@ -214,7 +213,7 @@ func TestProcessArchive_ErrorCases(t *testing.T) {
 		},
 		{
 			name: "context cancellation",
-			setupTest: func(t *testing.T) (ArchiveExtractor, context.Context) {
+			setupTest: func(t *testing.T, testCtx core.Context) (ArchiveExtractor, context.Context) {
 				_, _, _ = setupStreamProcessorTest(t)
 
 				ctx, cancel := context.WithCancel(context.Background())
@@ -226,7 +225,7 @@ func TestProcessArchive_ErrorCases(t *testing.T) {
 						Mode: 0644,
 					},
 				}
-				extractor := createStreamProcessorTestArchive(t, files)
+				extractor := createStreamProcessorTestArchive(t, testCtx, files)
 				return extractor, ctx
 			},
 			expectedError: "context canceled",
@@ -236,8 +235,8 @@ func TestProcessArchive_ErrorCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			processor, _, _ := setupStreamProcessorTest(t)
-			extractor, ctx := tt.setupTest(t)
+			processor, _, testCtx := setupStreamProcessorTest(t)
+			extractor, ctx := tt.setupTest(t, testCtx)
 
 			err := processor.ProcessArchive(ctx, extractor)
 
@@ -254,13 +253,13 @@ func TestProcessArchive_ErrorCases(t *testing.T) {
 func TestGetRootNode_ErrorCases(t *testing.T) {
 	tests := []struct {
 		name           string
-		setupProcessor func(*StreamingProcessor)
+		setupProcessor func(*StreamingProcessor, core.Context)
 		expectedError  string
 		expectError    bool
 	}{
 		{
 			name: "root node not available",
-			setupProcessor: func(sp *StreamingProcessor) {
+			setupProcessor: func(sp *StreamingProcessor, testCtx core.Context) {
 				// Don't set rootCID
 			},
 			expectedError: "root node not available",
@@ -268,7 +267,7 @@ func TestGetRootNode_ErrorCases(t *testing.T) {
 		},
 		{
 			name: "successful root node retrieval",
-			setupProcessor: func(sp *StreamingProcessor) {
+			setupProcessor: func(sp *StreamingProcessor, testCtx core.Context) {
 				// Process an archive to set rootCID
 				files := map[string]*fstest.MapFile{
 					"test.txt": {
@@ -276,7 +275,7 @@ func TestGetRootNode_ErrorCases(t *testing.T) {
 						Mode: 0644,
 					},
 				}
-				extractor := createStreamProcessorTestArchive(t, files)
+				extractor := createStreamProcessorTestArchive(t, testCtx, files)
 				ctx := context.Background()
 				err := sp.ProcessArchive(ctx, extractor)
 				require.NoError(t, err, "Setup should successfully process archive")
@@ -287,11 +286,11 @@ func TestGetRootNode_ErrorCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			processor, _, _ := setupStreamProcessorTest(t)
+			processor, _, testCtx := setupStreamProcessorTest(t)
 
-			tt.setupProcessor(processor)
+			tt.setupProcessor(processor, testCtx)
 
-			node, err := processor.GetRootNode()
+			node, err := processor.GetRootNode(context.Background())
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -313,7 +312,7 @@ func TestGetProcessedFiles_Empty(t *testing.T) {
 }
 
 func TestGetProcessedFiles_WithData(t *testing.T) {
-	processor, ctx, _ := setupStreamProcessorTest(t)
+	processor, ctx, testCtx := setupStreamProcessorTest(t)
 
 	// Process some files to generate data
 	files := map[string]*fstest.MapFile{
@@ -326,7 +325,7 @@ func TestGetProcessedFiles_WithData(t *testing.T) {
 			Mode: 0644,
 		},
 	}
-	extractor := createStreamProcessorTestArchive(t, files)
+	extractor := createStreamProcessorTestArchive(t, testCtx, files)
 
 	err := processor.ProcessArchive(ctx, extractor)
 	require.NoError(t, err)
@@ -334,13 +333,34 @@ func TestGetProcessedFiles_WithData(t *testing.T) {
 	retrievedFiles := processor.GetProcessedFiles()
 	assert.Equal(t, 2, len(retrievedFiles))
 
-	// Test that returned slice is a copy
-	retrievedFiles[0].Path = "modified.txt"
-	assert.Equal(t, "test.txt", processor.processedFiles[0].Path)
+	// Find the test.txt file to test copy behavior
+	var testFile *FileInfo
+	for i := range retrievedFiles {
+		if retrievedFiles[i].Path == "test.txt" {
+			testFile = &retrievedFiles[i]
+			break
+		}
+	}
+	require.NotNil(t, testFile, "test.txt should be found in processed files")
+
+	// Test that returned slice is a copy by modifying it
+	originalPath := testFile.Path
+	testFile.Path = "modified.txt"
+
+	// Verify the original processor data is unchanged
+	var originalTestFile *FileInfo
+	for i := range processor.processedFiles {
+		if processor.processedFiles[i].Path == originalPath {
+			originalTestFile = &processor.processedFiles[i]
+			break
+		}
+	}
+	require.NotNil(t, originalTestFile, "test.txt should still exist in processor files")
+	assert.Equal(t, originalPath, originalTestFile.Path)
 }
 
 func TestClose(t *testing.T) {
-	processor, ctx, _ := setupStreamProcessorTest(t)
+	processor, ctx, testCtx := setupStreamProcessorTest(t)
 
 	// Add some test data
 	files := map[string]*fstest.MapFile{
@@ -349,7 +369,7 @@ func TestClose(t *testing.T) {
 			Mode: 0644,
 		},
 	}
-	extractor := createStreamProcessorTestArchive(t, files)
+	extractor := createStreamProcessorTestArchive(t, testCtx, files)
 
 	err := processor.ProcessArchive(ctx, extractor)
 	require.NoError(t, err)
@@ -366,7 +386,7 @@ func TestClose(t *testing.T) {
 }
 
 func TestStreamingProcessor_Integration(t *testing.T) {
-	processor, ctx, _ := setupStreamProcessorTest(t)
+	processor, ctx, testCtx := setupStreamProcessorTest(t)
 
 	// Create test files with a realistic structure
 	files := map[string]*fstest.MapFile{
@@ -390,14 +410,14 @@ func TestStreamingProcessor_Integration(t *testing.T) {
 		},
 	}
 
-	extractor := createStreamProcessorTestArchive(t, files)
+	extractor := createStreamProcessorTestArchive(t, testCtx, files)
 
 	// Process the archive
 	err := processor.ProcessArchive(ctx, extractor)
 	assert.NoError(t, err)
 
 	// Get the root node
-	rootNode, err := processor.GetRootNode()
+	rootNode, err := processor.GetRootNode(context.Background())
 	assert.NoError(t, err)
 	assert.NotNil(t, rootNode)
 
@@ -439,7 +459,7 @@ func TestProcessArchive_PropertyBased(t *testing.T) {
 
 	for _, size := range contentSizes {
 		t.Run(fmt.Sprintf("content_size_%d", size), func(t *testing.T) {
-			processor, ctx, _ := setupStreamProcessorTest(t)
+			processor, ctx, testCtx := setupStreamProcessorTest(t)
 
 			// Generate content of specified size
 			content := make([]byte, size)
@@ -457,7 +477,7 @@ func TestProcessArchive_PropertyBased(t *testing.T) {
 				},
 			}
 
-			extractor := createStreamProcessorTestArchive(t, files)
+			extractor := createStreamProcessorTestArchive(t, testCtx, files)
 
 			err := processor.ProcessArchive(ctx, extractor)
 			assert.NoError(t, err)
@@ -512,7 +532,7 @@ func TestProcessArchive_DeeplyNestedStructures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			processor, ctx, _ := setupStreamProcessorTest(t)
+			processor, ctx, testCtx := setupStreamProcessorTest(t)
 
 			// Generate nested directory structure
 			files := make(map[string]*fstest.MapFile)
@@ -544,7 +564,7 @@ func TestProcessArchive_DeeplyNestedStructures(t *testing.T) {
 				}
 			}
 
-			extractor := createStreamProcessorTestArchive(t, files)
+			extractor := createStreamProcessorTestArchive(t, testCtx, files)
 
 			err := processor.ProcessArchive(ctx, extractor)
 			assert.NoError(t, err)
@@ -573,7 +593,7 @@ func TestProcessArchive_DeeplyNestedStructures(t *testing.T) {
 
 // TestProcessArchive_SpecialCharacters tests handling of special characters in filenames
 func TestProcessArchive_SpecialCharacters(t *testing.T) {
-	processor, ctx, _ := setupStreamProcessorTest(t)
+	processor, ctx, testCtx := setupStreamProcessorTest(t)
 
 	// Create files with various special characters
 	files := map[string]*fstest.MapFile{
@@ -658,7 +678,7 @@ func TestProcessArchive_SpecialCharacters(t *testing.T) {
 		},
 	}
 
-	extractor := createStreamProcessorTestArchive(t, files)
+	extractor := createStreamProcessorTestArchive(t, testCtx, files)
 
 	err := processor.ProcessArchive(ctx, extractor)
 	assert.NoError(t, err)
@@ -687,7 +707,7 @@ func TestProcessArchive_SpecialCharacters(t *testing.T) {
 
 // TestProcessArchive_MixedComplexStructure tests a realistic complex folder structure
 func TestProcessArchive_MixedComplexStructure(t *testing.T) {
-	processor, ctx, _ := setupStreamProcessorTest(t)
+	processor, ctx, testCtx := setupStreamProcessorTest(t)
 
 	// Create a realistic project structure
 	files := map[string]*fstest.MapFile{
@@ -840,7 +860,7 @@ func TestProcessArchive_MixedComplexStructure(t *testing.T) {
 		},
 	}
 
-	extractor := createStreamProcessorTestArchive(t, files)
+	extractor := createStreamProcessorTestArchive(t, testCtx, files)
 
 	err := processor.ProcessArchive(ctx, extractor)
 	assert.NoError(t, err)
@@ -895,7 +915,7 @@ func TestProcessArchive_MixedComplexStructure(t *testing.T) {
 
 // TestProcessArchive_LargeNumberOfFiles tests performance with many small files
 func TestProcessArchive_LargeNumberOfFiles(t *testing.T) {
-	processor, ctx, _ := setupStreamProcessorTest(t)
+	processor, ctx, testCtx := setupStreamProcessorTest(t)
 
 	// Generate a large number of small files
 	files := make(map[string]*fstest.MapFile)
@@ -920,7 +940,7 @@ func TestProcessArchive_LargeNumberOfFiles(t *testing.T) {
 		}
 	}
 
-	extractor := createStreamProcessorTestArchive(t, files)
+	extractor := createStreamProcessorTestArchive(t, testCtx, files)
 
 	// Measure processing time
 	start := time.Now()
@@ -949,7 +969,7 @@ func TestProcessArchive_LargeNumberOfFiles(t *testing.T) {
 
 // TestProcessArchive_EmptyDirectoryEdgeCases tests various empty directory scenarios
 func TestProcessArchive_EmptyDirectoryEdgeCases(t *testing.T) {
-	processor, ctx, _ := setupStreamProcessorTest(t)
+	processor, ctx, testCtx := setupStreamProcessorTest(t)
 
 	// Create structure with various empty directory scenarios
 	files := map[string]*fstest.MapFile{
@@ -1014,7 +1034,7 @@ func TestProcessArchive_EmptyDirectoryEdgeCases(t *testing.T) {
 		},
 	}
 
-	extractor := createStreamProcessorTestArchive(t, files)
+	extractor := createStreamProcessorTestArchive(t, testCtx, files)
 
 	err := processor.ProcessArchive(ctx, extractor)
 	assert.NoError(t, err)
@@ -1048,7 +1068,7 @@ func TestProcessArchive_EmptyDirectoryEdgeCases(t *testing.T) {
 
 // TestProcessArchive_PermissionsAndModes tests various file permission scenarios
 func TestProcessArchive_PermissionsAndModes(t *testing.T) {
-	processor, ctx, _ := setupStreamProcessorTest(t)
+	processor, ctx, testCtx := setupStreamProcessorTest(t)
 
 	// Create files with different permission modes
 	files := map[string]*fstest.MapFile{
@@ -1098,7 +1118,7 @@ func TestProcessArchive_PermissionsAndModes(t *testing.T) {
 		},
 	}
 
-	extractor := createStreamProcessorTestArchive(t, files)
+	extractor := createStreamProcessorTestArchive(t, testCtx, files)
 
 	err := processor.ProcessArchive(ctx, extractor)
 	assert.NoError(t, err)
@@ -1133,17 +1153,17 @@ func TestProcessArchive_PermissionsAndModes(t *testing.T) {
 }
 
 // Test mixed content within unit test scope - focused on specific processor behavior
-// TestProcessArchive_ComplexArchive creates and processes a 200MB archive with many small files
+// TestProcessArchive_ComplexArchive creates and processes a 10MB archive with many small files
 // This test is designed to stress test the streaming processor with large amounts of data
 // It creates both nested and sharded directory structures to test comprehensive scenarios
 func TestProcessArchive_ComplexArchive(t *testing.T) {
 	if testing.Short() {
-		t.Skip("Skipping 1GB archive test in short mode")
+		t.Skip("Skipping 10MB archive test in short mode")
 	}
 
-	processor, ctx, _ := setupStreamProcessorTest(t)
+	processor, ctx, testCtx := setupStreamProcessorTest(t)
 
-	// Generate a large number of small files to reach approximately 1GB
+	// Generate a large number of small files to reach approximately 10MB
 	const targetSizeBytes = 10 * units.MiB
 	const avgFileSize = units.KiB                  // 1KB average file size
 	const numFiles = targetSizeBytes / avgFileSize // Approximately 1M files
@@ -1265,56 +1285,17 @@ func TestProcessArchive_ComplexArchive(t *testing.T) {
 
 	// Create the archive (this may take some time)
 	start := time.Now()
-	extractor := createStreamProcessorTestArchive(t, files)
+	extractor := createStreamProcessorTestArchive(t, testCtx, files)
 	archiveCreationTime := time.Since(start)
 
 	t.Logf("Archive created in %v", archiveCreationTime)
 
-	// Process the archive with monitoring
-	start = time.Now()
-
-	// Monitor memory usage during processing
-	var maxMemoryUsage int64
-	var processingErrors []error
-
-	// Start memory monitoring goroutine
-	memChan := make(chan int64, 100)
-	stopChan := make(chan struct{})
-
-	go func() {
-		defer close(memChan)
-		for {
-			select {
-			case <-stopChan:
-				return
-			default:
-				var m runtime.MemStats
-				runtime.ReadMemStats(&m)
-				currentMem := int64(m.Alloc)
-				memChan <- currentMem
-
-				// Update max memory usage
-				if currentMem > maxMemoryUsage {
-					maxMemoryUsage = currentMem
-				}
-				time.Sleep(100 * time.Millisecond) // Sample every 100ms
-			}
-		}
-	}()
-
 	err := processor.ProcessArchive(ctx, extractor)
 
-	// Stop memory monitoring
-	close(stopChan)
-
-	// Drain remaining memory measurements
-	for range memChan {
-		// consume any remaining measurements
-	}
 	processingTime := time.Since(start)
 
 	if err != nil {
-		t.Fatalf("Failed to process 1GB archive: %v", err)
+		t.Fatalf("Failed to process 10MB archive: %v", err)
 	}
 
 	// Validate results
@@ -1330,6 +1311,7 @@ func TestProcessArchive_ComplexArchive(t *testing.T) {
 	// Verify all files were processed successfully
 	processedCount := 0
 	errorCount := 0
+	processingErrors := make([]error, 0)
 	for _, file := range processor.processedFiles {
 		if file.Processed {
 			processedCount++
@@ -1395,7 +1377,7 @@ func TestProcessArchive_ComplexArchive(t *testing.T) {
 	assert.True(t, shardedFileCount > 0, "Should have sharded files")
 
 	// Verify root CID is valid
-	assert.NotEqual(t, cid.Undef, processor.rootCID, "Root CID should be valid")
+	assert.NotEmpty(t, processor.rootCID, "Root CID should be valid")
 
 	t.Logf("✓ Successfully processed 1GB archive with mixed nested/sharded structure: %d files in %v",
 		filesGenerated, processingTime)

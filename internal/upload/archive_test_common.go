@@ -13,13 +13,18 @@ import (
 	"testing"
 	"time"
 
+	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
 )
+
+// ArchiveCreator defines the function signature for creating test archives
+type ArchiveCreator func(t *testing.T, ctx core.Context, files []TestFile) []byte
 
 // ArchiveTestHelper provides common test utilities for all archive formats
 type ArchiveTestHelper struct {
 	t      *testing.T
 	format Format
+	ctx    core.Context
 }
 
 // NewArchiveTestHelper creates a new test helper for the specified format
@@ -31,7 +36,7 @@ func NewArchiveTestHelper(t *testing.T, format Format) *ArchiveTestHelper {
 }
 
 // ArchiveCreator defines a function that creates an archive with given files
-type ArchiveCreator func(files []TestFile) []byte
+
 
 // TestFile represents a file to be included in test archives
 type TestFile struct {
@@ -233,7 +238,7 @@ func GetLargeTestFile() TestFile {
 // TestBasicExtraction tests basic archive extraction functionality
 func (h *ArchiveTestHelper) TestBasicExtraction(creator ArchiveCreator) {
 	files := GetDefaultTestFiles()
-	archiveData := creator(files)
+	archiveData := creator(h.t, h.ctx, files)
 
 	extractor, err := h.createExtractor(archiveData)
 	if err != nil {
@@ -280,7 +285,7 @@ func (h *ArchiveTestHelper) TestPathValidation(creator ArchiveCreator) {
 				},
 			}
 
-			archiveData := creator(files)
+			archiveData := creator(h.t, h.ctx, files)
 			extractor, err := h.createExtractor(archiveData)
 			if err != nil {
 				t.Fatalf("Failed to create %s extractor: %v", h.format.String(), err)
@@ -303,7 +308,7 @@ func (h *ArchiveTestHelper) TestPathValidation(creator ArchiveCreator) {
 func (h *ArchiveTestHelper) TestLargeFileContent(creator ArchiveCreator) {
 	largeFile := GetLargeTestFile()
 	files := []TestFile{largeFile}
-	archiveData := creator(files)
+	archiveData := creator(h.t, h.ctx, files)
 
 	extractor, err := h.createExtractor(archiveData)
 	if err != nil {
@@ -339,7 +344,7 @@ func (h *ArchiveTestHelper) TestLargeFileContent(creator ArchiveCreator) {
 // TestFormatDetection tests format detection for the archive
 func (h *ArchiveTestHelper) TestFormatDetection(creator ArchiveCreator) {
 	files := GetDefaultTestFiles()
-	archiveData := creator(files)
+	archiveData := creator(h.t, h.ctx, files)
 
 	reader := bytes.NewReader(archiveData)
 	format, err := DetectFormat(reader)
@@ -362,6 +367,7 @@ func (h *ArchiveTestHelper) createExtractor(archiveData []byte) (ArchiveExtracto
 func (h *ArchiveTestHelper) extractAllFiles(extractor ArchiveExtractor) ([]ArchiveFileEntry, []error) {
 	var files []ArchiveFileEntry
 	var errors []error
+	var readersToClose []io.ReadCloser
 
 	// Use the filesystem API instead of Extract
 	efs, err := extractor.Filesystem(context.Background())
@@ -404,6 +410,7 @@ func (h *ArchiveTestHelper) extractAllFiles(extractor ArchiveExtractor) ([]Archi
 				return nil // Continue processing
 			}
 			contentReader = file
+			readersToClose = append(readersToClose, file)
 		} else {
 			contentReader = io.NopCloser(bytes.NewReader(nil))
 		}
@@ -423,6 +430,13 @@ func (h *ArchiveTestHelper) extractAllFiles(extractor ArchiveExtractor) ([]Archi
 
 	if err != nil {
 		errors = append(errors, err)
+	}
+
+	// Close all readers to prevent resource leaks
+	for _, reader := range readersToClose {
+		if closeErr := reader.Close(); closeErr != nil {
+			errors = append(errors, fmt.Errorf("failed to close reader: %w", closeErr))
+		}
 	}
 
 	return files, errors
@@ -469,21 +483,21 @@ func (h *ArchiveTestHelper) verifyFileContent(extractedFiles []ArchiveFileEntry,
 // Archive creators for different formats
 
 // CreateZIPArchive creates a ZIP archive from the given files
-func CreateZIPArchive(files []TestFile) []byte {
-	creator := NewTestArchiveCreator()
+func CreateZIPArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
+	creator := NewTestArchiveCreator(t, ctx)
 	buf, err := creator.CreateArchiveFromTestFiles(context.Background(), FormatZIP, files)
 	if err != nil {
-		panic(err) // This is for testing, so panic is acceptable
+		t.Fatalf("failed to create ZIP archive: %v", err)
 	}
 	return buf.Bytes()
 }
 
 // Create7ZArchive creates a 7Z archive from the given files
-func Create7ZArchive(files []TestFile) []byte {
+func Create7ZArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 	// Create a temporary directory structure
 	tempDir, err := os.MkdirTemp("", "7z_test_*")
 	if err != nil {
-		panic(err)
+		t.Fatalf("failed to create temp directory: %v", err)
 	}
 	defer os.RemoveAll(tempDir)
 
@@ -493,16 +507,16 @@ func Create7ZArchive(files []TestFile) []byte {
 			// Create directory
 			dirPath := filepath.Join(tempDir, file.Name)
 			if err := os.MkdirAll(dirPath, os.FileMode(file.Mode)); err != nil {
-				panic(err)
+				t.Fatalf("failed to create directory %s: %v", file.Name, err)
 			}
 		} else {
 			// Create file
 			filePath := filepath.Join(tempDir, file.Name)
 			if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-				panic(err)
+				t.Fatalf("failed to create parent directory for %s: %v", file.Name, err)
 			}
 			if err := os.WriteFile(filePath, []byte(file.Content), os.FileMode(file.Mode)); err != nil {
-				panic(err)
+				t.Fatalf("failed to write file %s: %v", file.Name, err)
 			}
 		}
 	}
@@ -520,34 +534,34 @@ func Create7ZArchive(files []TestFile) []byte {
 		if _, err := exec.LookPath("7z"); err != nil {
 			if _, err := exec.LookPath("7zz"); err != nil {
 				// 7z command not found, skip test
-				panic("7z command not found - install 7z or skip 7Z tests")
+				t.Skip("7z command not found - install 7z or skip 7Z tests")
 			}
 			// Try 7zz command
 			cmd = exec.Command("7zz", "a", archivePath, ".")
 			cmd.Dir = tempDir
 			if err := cmd.Run(); err != nil {
-				panic(fmt.Sprintf("failed to create 7Z archive with 7zz: %v", err))
+				t.Fatalf("failed to create 7Z archive with 7zz: %v", err)
 			}
 		} else {
-			panic(fmt.Sprintf("failed to create 7Z archive: %v", err))
+			t.Fatalf("failed to create 7Z archive: %v", err)
 		}
 	}
 
 	// Read the created 7Z file
 	archiveData, err := os.ReadFile(archivePath)
 	if err != nil {
-		panic(err)
+		t.Fatalf("failed to read 7Z archive file: %v", err)
 	}
 
 	return archiveData
 }
 
 // CreateRARArchive creates a RAR archive from the given files
-func CreateRARArchive(files []TestFile) []byte {
+func CreateRARArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 	// Create a temporary directory structure
 	tempDir, err := os.MkdirTemp("", "rar_test_*")
 	if err != nil {
-		panic(err)
+		t.Fatalf("failed to create temp directory: %v", err)
 	}
 	defer os.RemoveAll(tempDir)
 
@@ -557,16 +571,16 @@ func CreateRARArchive(files []TestFile) []byte {
 			// Create directory
 			dirPath := filepath.Join(tempDir, file.Name)
 			if err := os.MkdirAll(dirPath, os.FileMode(file.Mode)); err != nil {
-				panic(err)
+				t.Fatalf("failed to create directory %s: %v", file.Name, err)
 			}
 		} else {
 			// Create file
 			filePath := filepath.Join(tempDir, file.Name)
 			if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-				panic(err)
+				t.Fatalf("failed to create parent directory for %s: %v", file.Name, err)
 			}
 			if err := os.WriteFile(filePath, []byte(file.Content), os.FileMode(file.Mode)); err != nil {
-				panic(err)
+				t.Fatalf("failed to write file %s: %v", file.Name, err)
 			}
 		}
 	}
@@ -583,48 +597,76 @@ func CreateRARArchive(files []TestFile) []byte {
 		// and then skip the test gracefully
 		if _, err := exec.LookPath("rar"); err != nil {
 			// RAR command not found, skip test
-			panic("rar command not found - install RAR or skip RAR tests")
+			t.Skip("rar command not found - install RAR or skip RAR tests")
 		}
-		panic(fmt.Sprintf("failed to create RAR archive: %v", err))
+		t.Fatalf("failed to create RAR archive: %v", err)
 	}
 
 	// Read the created RAR file
 	rarData, err := os.ReadFile(rarPath)
 	if err != nil {
-		panic(err)
+		t.Fatalf("failed to read RAR archive file: %v", err)
 	}
 
 	return rarData
 }
 
 // CreateTARArchive creates a TAR archive from the given files
-func CreateTARArchive(files []TestFile) []byte {
-	creator := NewTestArchiveCreator()
+func CreateTARArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
+	creator := NewTestArchiveCreator(t, ctx)
 	buf, err := creator.CreateArchiveFromTestFiles(context.Background(), FormatTAR, files)
 	if err != nil {
-		panic(err) // This is for testing, so panic is acceptable
+		t.Fatalf("failed to create TAR archive: %v", err)
 	}
 	return buf.Bytes()
 }
 
 // CreateTARGZArchive creates a TAR.GZ archive from the given files
-func CreateTARGZArchive(files []TestFile) []byte {
-	creator := NewTestArchiveCreator()
+func CreateTARGZArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
+	creator := NewTestArchiveCreator(t, ctx)
 	buf, err := creator.CreateArchiveFromTestFiles(context.Background(), FormatTAR_GZ, files)
 	if err != nil {
-		panic(err) // This is for testing, so panic is acceptable
+		t.Fatalf("failed to create TAR.GZ archive: %v", err)
 	}
 	return buf.Bytes()
 }
 
 // CreateTARBZ2Archive creates a TAR.BZ2 archive from the given files
-func CreateTARBZ2Archive(files []TestFile) []byte {
-	creator := NewTestArchiveCreator()
+func CreateTARBZ2Archive(t *testing.T, ctx core.Context, files []TestFile) []byte {
+	creator := NewTestArchiveCreator(t, ctx)
 	buf, err := creator.CreateArchiveFromTestFiles(context.Background(), FormatTAR_BZ2, files)
 	if err != nil {
-		panic(err) // This is for testing, so panic is acceptable
+		t.Fatalf("failed to create TAR.BZ2 archive: %v", err)
 	}
 	return buf.Bytes()
+}
+
+// CreateCARArchive creates a CAR archive from given files
+func CreateCARArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
+	// Create a temporary archive extractor from the files
+	creator := NewTestArchiveCreator(t, ctx)
+	
+	// Create a ZIP archive first as an intermediate format
+	zipBuf, err := creator.CreateArchiveFromTestFiles(context.Background(), FormatZIP, files)
+	if err != nil {
+		t.Fatalf("failed to create ZIP archive: %v", err)
+	}
+	
+	// Create an extractor from the ZIP data
+	extractor, err := CreateExtractor(bytes.NewReader(zipBuf.Bytes()))
+	if err != nil {
+		t.Fatalf("failed to create archive extractor: %v", err)
+	}
+	defer extractor.Close()
+	
+	// Convert the archive to CAR format
+	generator := NewCARGeneratorWithDefaults(ctx.Logger())
+	carBuf, _, err := generator.ArchiveToCAR(context.Background(), extractor)
+	if err != nil {
+		t.Fatalf("failed to convert archive to CAR format: %v", err)
+	}
+	
+	return carBuf.Bytes()
 }
 
 // closeIo safely closes an any io Reader and logs any errors

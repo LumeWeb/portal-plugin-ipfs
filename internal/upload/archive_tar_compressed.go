@@ -95,12 +95,12 @@ func RegisterTarBz2Extractor() {
 
 // detectCompressedTar contains the core logic for detecting compressed TAR archives
 func detectCompressedTar(data []byte, n int) (Format, bool) {
-	if len(data) < 10 {
+	if n < 2 {
 		return FormatUnknown, false
 	}
 
 	// Check for gzip magic number
-	if data[0] == 0x1f && data[1] == 0x8b {
+	if n >= 2 && data[0] == 0x1f && data[1] == 0x8b {
 		// This is gzip, assume it's tar.gz for our use case
 		return FormatTAR_GZ, true
 	}

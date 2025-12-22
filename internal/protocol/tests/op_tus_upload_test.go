@@ -9,14 +9,14 @@ import (
 func TestTUSUploadOperationHandler_Execute_Integration(t *testing.T) {
 	// Test CAR file upload using TUS-specific logic
 	t.Run("CAR file upload", func(t *testing.T) {
-		testTUSArchiveUpload(t, upload.FormatCAR, createCARArchive, upload.ArchiveConvert, GetTUSUploadTestOptions()...)
+		testTUSArchiveUpload(t, upload.FormatCAR, upload.CreateCARArchive, upload.ArchiveConvert, GetTUSUploadTestOptions()...)
 	})
 
 	// Define test cases for all archive formats with convert mode only (TUS doesn't support preserve mode yet)
 	archiveFormats := []struct {
 		name    string
 		format  upload.Format
-		creator func(files []upload.TestFile) []byte
+		creator upload.ArchiveCreator
 	}{
 		{
 			name:    "ZIP",

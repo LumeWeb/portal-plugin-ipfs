@@ -25,9 +25,12 @@ func ValidateArchivePath(path string) error {
 	// Clean the path for further validation
 	cleanPath := filepath.Clean(path)
 
-	// Check for path traversal attempts
-	if strings.Contains(cleanPath, "..") {
-		return fmt.Errorf("path contains parent directory references")
+	// Check for path traversal attempts using root-boundary check
+	root := "<archiveRoot>"
+	joinedPath := filepath.Join(root, cleanPath)
+	rel, err := filepath.Rel(root, joinedPath)
+	if err != nil || strings.HasPrefix(rel, "..") || (rel == "." && joinedPath != root) {
+		return fmt.Errorf("path escapes archive root boundary")
 	}
 
 	// Check for absolute paths (should be relative within the archive)

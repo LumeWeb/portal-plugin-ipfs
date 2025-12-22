@@ -166,11 +166,20 @@ func (r *ArchiveRegistry) DetectFormat(reader io.Reader) (Format, error) {
 		if n > 0 {
 			// We have data but couldn't detect any archive format,
 			// so it's a regular file
-			return FormatFile, nil
+			detectedFormat = FormatFile
 		} else {
 			// No data available to make determination
 			return FormatUnknown, fmt.Errorf("no data available for format detection")
 		}
+	}
+
+	// Check if there's an extractor registered for the detected format
+	r.mu.RLock()
+	_, hasExtractor := r.extractors[detectedFormat]
+	r.mu.RUnlock()
+
+	if !hasExtractor {
+		return FormatUnknown, fmt.Errorf("no extractor registered for detected format %s", detectedFormat.String())
 	}
 
 	return detectedFormat, nil
