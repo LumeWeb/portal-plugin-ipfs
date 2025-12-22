@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
 	"go.lumeweb.com/portal/core"
 )
@@ -241,7 +242,7 @@ func (h *ArchiveTestHelper) TestBasicExtraction(creator ArchiveCreator) {
 	if err != nil {
 		h.t.Fatalf("Failed to create %s extractor: %v", h.format.String(), err)
 	}
-	defer extractor.Close()
+	defer require.NoError(h.t, extractor.Close())
 
 	// Test format
 	if extractor.Format() != h.format {
@@ -364,7 +365,6 @@ func (h *ArchiveTestHelper) createExtractor(archiveData []byte) (ArchiveExtracto
 func (h *ArchiveTestHelper) extractAllFiles(extractor ArchiveExtractor) ([]ArchiveFileEntry, []error) {
 	var files []ArchiveFileEntry
 	var errors []error
-	var readersToClose []io.ReadCloser
 
 	// Use the filesystem API instead of Extract
 	efs, err := extractor.Filesystem(context.Background())
@@ -407,7 +407,6 @@ func (h *ArchiveTestHelper) extractAllFiles(extractor ArchiveExtractor) ([]Archi
 				return nil // Continue processing
 			}
 			contentReader = file
-			readersToClose = append(readersToClose, file)
 		} else {
 			contentReader = io.NopCloser(bytes.NewReader(nil))
 		}
@@ -428,8 +427,6 @@ func (h *ArchiveTestHelper) extractAllFiles(extractor ArchiveExtractor) ([]Archi
 	if err != nil {
 		errors = append(errors, err)
 	}
-
-	
 
 	return files, errors
 }
@@ -491,7 +488,7 @@ func Create7ZArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 	if err != nil {
 		t.Fatalf("failed to create temp directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer require.NoError(t, os.RemoveAll(tempDir))
 
 	// Create files in temp directory
 	for _, file := range files {
@@ -518,7 +515,7 @@ func Create7ZArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 
 	// Check availability of 7z commands first for cleaner error handling
 	var use7zz bool
-	
+
 	if _, err := exec.LookPath("7z"); err != nil {
 		// 7z not found, try 7zz
 		if _, err := exec.LookPath("7zz"); err != nil {
@@ -561,7 +558,7 @@ func CreateRARArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 	if err != nil {
 		t.Fatalf("failed to create temp directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer require.NoError(t, os.RemoveAll(tempDir))
 
 	// Create files in temp directory
 	for _, file := range files {
@@ -655,7 +652,7 @@ func CreateCARArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 	if err != nil {
 		t.Fatalf("failed to create archive extractor: %v", err)
 	}
-	defer extractor.Close()
+	defer require.NoError(t, extractor.Close())
 
 	// Convert the archive to CAR format
 	generator := NewCARGeneratorWithDefaults(ctx.Logger())
