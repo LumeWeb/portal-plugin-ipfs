@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"strings"
 
-	"github.com/docker/go-units"
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/boxo/ipld/merkledag"
 	unixfsio "github.com/ipfs/boxo/ipld/unixfs/io"
@@ -18,9 +17,8 @@ import (
 	carv2 "github.com/ipld/go-car/v2"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	blockstoreAdapter "github.com/ipld/go-ipld-prime/storage/bsadapter"
-	_ "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
-	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
+	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 )
 
@@ -74,11 +72,6 @@ type IPFSCARGenerator struct {
 	logger        *core.Logger
 	nodeGenerator UnixFSNodeGenerator
 }
-
-const (
-	// DefaultChunkSize represents the default chunk size for file processing (256 KiB)
-	DefaultChunkSize = 256 * units.KB
-)
 
 // NewCARGenerator creates a new CARGenerator instance with required nodeGenerator DI
 func NewCARGenerator(logger *core.Logger, nodeGenerator UnixFSNodeGenerator) CARGenerator {
@@ -456,14 +449,12 @@ func (gen *IPFSCARGenerator) processFile(ctx context.Context, fileNode format.No
 		// Get the child node
 		childNode, err := gen.dagService.Get(ctx, link.Cid)
 		if err != nil {
-			// If we can't find the child node, it might not be stored yet
-			// Try to add it from the blockstore if available
-			continue
+			return fmt.Errorf("failed to get child node %s: %w", link.Cid.String(), err)
 		}
 
 		// Process the child node recursively
-		if err := gen.processFile(ctx, childNode); err != nil {
-			return fmt.Errorf("failed to process child node %s: %w", link.Cid.String(), err)
+		if processErr := gen.processFile(ctx, childNode); processErr != nil {
+			return fmt.Errorf("failed to process child node %s: %w", link.Cid.String(), processErr)
 		}
 	}
 

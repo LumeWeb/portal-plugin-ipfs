@@ -46,17 +46,20 @@ func TestPostUploadOperationHandler_Execute_Integration(t *testing.T) {
 
 	for _, af := range archiveFormats {
 		t.Run(af.name+" archive upload (convert mode)", func(t *testing.T) {
+			t.Parallel()
 			testArchiveUpload(t, af.format, af.creator, upload.ArchiveConvert, testPostUploadWorkflow)
 		})
 	}
 
 	// Test 7Z format separately since it requires external tools
 	t.Run("7Z archive upload (convert mode)", func(t *testing.T) {
+		t.Parallel()
 		testArchiveUpload(t, upload.Format7Z, upload.Create7ZArchive, upload.ArchiveConvert, testPostUploadWorkflow)
 	})
 
 	// Test RAR format separately since it requires external tools
 	t.Run("RAR archive upload (convert mode)", func(t *testing.T) {
+		t.Parallel()
 		testArchiveUpload(t, upload.FormatRAR, upload.CreateRARArchive, upload.ArchiveConvert, testPostUploadWorkflow)
 	})
 
@@ -67,6 +70,18 @@ func TestPostUploadOperationHandler_Execute_Integration(t *testing.T) {
 			testArchiveUpload(t, af.format, af.creator, upload.ArchivePreserve, testPostUploadWorkflow)
 		})
 	}
+
+	// Test 7Z format separately since it requires external tools
+	t.Run("7Z archive upload (preserve mode)", func(t *testing.T) {
+		t.Parallel()
+		testArchiveUpload(t, upload.Format7Z, upload.Create7ZArchive, upload.ArchivePreserve, testPostUploadWorkflow)
+	})
+
+	// Test RAR format separately since it requires external tools
+	t.Run("RAR archive upload (preserve mode)", func(t *testing.T) {
+		t.Parallel()
+		testArchiveUpload(t, upload.FormatRAR, upload.CreateRARArchive, upload.ArchivePreserve, testPostUploadWorkflow)
+	})
 
 	
 }

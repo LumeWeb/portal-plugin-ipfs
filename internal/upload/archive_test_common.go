@@ -35,8 +35,6 @@ func NewArchiveTestHelper(t *testing.T, format Format) *ArchiveTestHelper {
 	}
 }
 
-// ArchiveCreator defines a function that creates an archive with given files
-
 // TestFile represents a file to be included in test archives
 type TestFile struct {
 	Name     string
@@ -431,12 +429,7 @@ func (h *ArchiveTestHelper) extractAllFiles(extractor ArchiveExtractor) ([]Archi
 		errors = append(errors, err)
 	}
 
-	// Close all readers to prevent resource leaks
-	for _, reader := range readersToClose {
-		if closeErr := reader.Close(); closeErr != nil {
-			errors = append(errors, fmt.Errorf("failed to close reader: %w", closeErr))
-		}
-	}
+	
 
 	return files, errors
 }

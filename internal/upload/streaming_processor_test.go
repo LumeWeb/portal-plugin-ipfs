@@ -253,13 +253,13 @@ func TestProcessArchive_ErrorCases(t *testing.T) {
 func TestGetRootNode_ErrorCases(t *testing.T) {
 	tests := []struct {
 		name           string
-		setupProcessor func(*StreamingProcessor, core.Context)
+		setupProcessor func(*testing.T, *StreamingProcessor, core.Context)
 		expectedError  string
 		expectError    bool
 	}{
 		{
 			name: "root node not available",
-			setupProcessor: func(sp *StreamingProcessor, testCtx core.Context) {
+			setupProcessor: func(t *testing.T, sp *StreamingProcessor, testCtx core.Context) {
 				// Don't set rootCID
 			},
 			expectedError: "root node not available",
@@ -267,7 +267,7 @@ func TestGetRootNode_ErrorCases(t *testing.T) {
 		},
 		{
 			name: "successful root node retrieval",
-			setupProcessor: func(sp *StreamingProcessor, testCtx core.Context) {
+			setupProcessor: func(t *testing.T, sp *StreamingProcessor, testCtx core.Context) {
 				// Process an archive to set rootCID
 				files := map[string]*fstest.MapFile{
 					"test.txt": {
@@ -288,7 +288,7 @@ func TestGetRootNode_ErrorCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			processor, _, testCtx := setupStreamProcessorTest(t)
 
-			tt.setupProcessor(processor, testCtx)
+			tt.setupProcessor(t, processor, testCtx)
 
 			node, err := processor.GetRootNode(context.Background())
 

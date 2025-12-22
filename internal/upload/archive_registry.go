@@ -28,13 +28,14 @@ var (
 
 // Global registry instance
 var defaultRegistry *ArchiveRegistry
+var initOnce sync.Once
 
 // MaybeInit ensures the default registry is initialized if nil
 func MaybeInit() {
-	if defaultRegistry == nil {
+	initOnce.Do(func() {
 		defaultRegistry = NewArchiveRegistry()
 		RegisterDefaultDetectors(defaultRegistry)
-	}
+	})
 }
 
 // DefaultRegistry returns the default global archive registry

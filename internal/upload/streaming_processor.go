@@ -12,8 +12,8 @@ import (
 	unixfsio "github.com/ipfs/boxo/ipld/unixfs/io"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
-	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
+	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 )
 
@@ -60,8 +60,7 @@ type StreamingProcessor struct {
 	directoryMetadata map[string]directoryMetadata // Store directory metadata only
 	rootCID           string                       // Store only root CID, not node
 	maxLinks          int
-	chunkSize         int64
-	mu                sync.RWMutex                // Protects access to processedFiles, directoryMetadata, and rootCID
+	mu                sync.RWMutex // Protects access to processedFiles, directoryMetadata, and rootCID
 }
 
 // directoryMetadata stores metadata for directories
@@ -80,7 +79,6 @@ type StreamingProcessorOptions struct {
 	Blockstore    blockstore.Blockstore
 	Logger        *core.Logger
 	MaxLinks      int
-	ChunkSize     int64
 }
 
 // StreamingProcessorOption is a function that configures StreamingProcessorOptions
@@ -121,13 +119,6 @@ func WithStreamingProcessorMaxLinks(maxLinks int) StreamingProcessorOption {
 	}
 }
 
-// WithStreamingProcessorChunkSize sets the chunk size for the streaming processor
-func WithStreamingProcessorChunkSize(chunkSize int64) StreamingProcessorOption {
-	return func(opts *StreamingProcessorOptions) {
-		opts.ChunkSize = chunkSize
-	}
-}
-
 // NewStreamingProcessor creates a new streaming processor instance with required dependencies and default options
 func NewStreamingProcessor(
 	nodeGenerator UnixFSNodeGenerator,
@@ -150,7 +141,6 @@ func NewStreamingProcessor(
 		WithStreamingProcessorBlockstore(blockstore),
 		WithStreamingProcessorLogger(logger),
 		WithStreamingProcessorMaxLinks(helpers.DefaultLinksPerBlock),
-		WithStreamingProcessorChunkSize(DefaultChunkSize),
 	)
 }
 
@@ -179,8 +169,7 @@ func NewStreamingProcessorWithDefaults(logger *core.Logger) *StreamingProcessor 
 func NewStreamingProcessorWithOptions(options ...StreamingProcessorOption) *StreamingProcessor {
 	// Create default options
 	opts := &StreamingProcessorOptions{
-		MaxLinks:  helpers.DefaultLinksPerBlock,
-		ChunkSize: DefaultChunkSize,
+		MaxLinks: helpers.DefaultLinksPerBlock,
 	}
 
 	// Apply provided options
@@ -205,7 +194,6 @@ func NewStreamingProcessorWithOptions(options ...StreamingProcessorOption) *Stre
 		processedFiles:    make([]FileInfo, 0),
 		directoryMetadata: make(map[string]directoryMetadata),
 		maxLinks:          opts.MaxLinks,
-		chunkSize:         opts.ChunkSize,
 	}
 }
 
@@ -265,11 +253,12 @@ func (sp *StreamingProcessor) ProcessArchive(ctx context.Context, extractor Arch
 		if sp.directoryMetadata != nil {
 			dirCount = len(sp.directoryMetadata)
 		}
+		rootCID := sp.rootCID
 		sp.mu.RUnlock()
 		sp.logger.Info("Successfully processed archive",
 			zap.Int("total_files", len(files)),
 			zap.Int("directories", dirCount),
-			zap.String("root_cid", sp.rootCID))
+			zap.String("root_cid", rootCID))
 	}
 
 	return nil
@@ -280,7 +269,7 @@ func (sp *StreamingProcessor) GetRootNode(ctx context.Context) (format.Node, err
 	sp.mu.RLock()
 	rootCID := sp.rootCID
 	sp.mu.RUnlock()
-	
+
 	if rootCID == "" {
 		return nil, ErrRootNodeNotAvailable
 	}
@@ -298,7 +287,7 @@ func (sp *StreamingProcessor) GetRootNode(ctx context.Context) (format.Node, err
 func (sp *StreamingProcessor) GetProcessedFiles() []FileInfo {
 	sp.mu.RLock()
 	defer sp.mu.RUnlock()
-	
+
 	// Return a copy to prevent external modification
 	if sp.processedFiles == nil {
 		return []FileInfo{}
@@ -312,7 +301,7 @@ func (sp *StreamingProcessor) GetProcessedFiles() []FileInfo {
 func (sp *StreamingProcessor) Close() error {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	
+
 	// Clear processed files
 	sp.processedFiles = nil
 	sp.directoryMetadata = nil
@@ -330,11 +319,6 @@ func (sp *StreamingProcessor) addProcessedFile(fileInfo FileInfo) {
 // getMaxLinks returns the maximum links per block setting
 func (sp *StreamingProcessor) getMaxLinks() int {
 	return sp.maxLinks
-}
-
-// getChunkSize returns the chunk size setting
-func (sp *StreamingProcessor) getChunkSize() int64 {
-	return sp.chunkSize
 }
 
 // collectFileMetadata walks the filesystem and collects file and directory metadata
@@ -443,7 +427,7 @@ func (sp *StreamingProcessor) buildDirectoryTree(ctx context.Context) error {
 		sp.mu.RUnlock()
 		return nil
 	}
-	
+
 	// Copy directoryMetadata to work with it without holding the lock
 	directoryMetadataCopy := make(map[string]directoryMetadata)
 	for k, v := range sp.directoryMetadata {
@@ -498,7 +482,13 @@ func (sp *StreamingProcessor) buildDirectoryTree(ctx context.Context) error {
 		}
 
 		// Add files to this directory using stored metadata
-		for _, file := range sp.processedFiles {
+		// Create a snapshot of processedFiles to avoid race conditions
+		sp.mu.RLock()
+		processedFilesCopy := make([]FileInfo, len(sp.processedFiles))
+		copy(processedFilesCopy, sp.processedFiles)
+		sp.mu.RUnlock()
+
+		for _, file := range processedFilesCopy {
 			if file.ParentPath == _path && file.Processed && file.Error == nil {
 				// Get file node from blockstore using stored CID
 				fileCID, err := cid.Decode(file.CID)
@@ -541,7 +531,7 @@ func (sp *StreamingProcessor) persistDirectoryTree(ctx context.Context) error {
 		sp.mu.RUnlock()
 		return nil
 	}
-	
+
 	// Copy directoryMetadata to work with it without holding the lock
 	directoryMetadataCopy := make(map[string]directoryMetadata)
 	for k, v := range sp.directoryMetadata {

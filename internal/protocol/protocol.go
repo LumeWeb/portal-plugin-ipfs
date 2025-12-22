@@ -309,7 +309,7 @@ func (p Protocol) GetMetadataStore() *store.MetadataStoreDefault {
 
 func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 	proto := &Protocol{}
-	var ds datastore.Batching
+	var _ds datastore.Batching
 	var dsErr error
 
 	opts := core.ContextOptions(
@@ -339,7 +339,7 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 				return fmt.Errorf("failed to create virtual blockstore: %w", err)
 			}
 
-			ds, dsErr = levelds.NewDatastore(filepath.Join(ctx.Config().ConfigDir(), internal.ProtocolName, "p2p.ldb"), nil)
+			_ds, dsErr = levelds.NewDatastore(filepath.Join(ctx.Config().ConfigDir(), internal.ProtocolName, "p2p.ldb"), nil)
 			if dsErr != nil {
 				ctx.Logger().Fatal("failed to open leveldb datastore", zap.Error(dsErr))
 			}
@@ -351,7 +351,7 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 
 			ipfsLog.SetAllLoggers(level)
 
-			proto.node, err = ipfs.NewNode(ctx, cfg, ms, ds, virtualBS)
+			proto.node, err = ipfs.NewNode(ctx, cfg, ms, _ds, virtualBS)
 			if err != nil {
 				return fmt.Errorf("failed to create ipfs node: %w", err)
 			}
@@ -366,8 +366,8 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 				}
 			}
 
-			if ds != nil {
-				if err := ds.Close(); err != nil {
+			if _ds != nil {
+				if err := _ds.Close(); err != nil {
 					return err
 				}
 			}

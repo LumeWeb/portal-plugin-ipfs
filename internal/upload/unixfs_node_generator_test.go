@@ -292,25 +292,21 @@ func TestIPFSUnixFSNodeGenerator_ContextCancellation(t *testing.T) {
 	tests := []struct {
 		name         string
 		cancelBefore bool
-		cancelAfter  bool
 		method       string
 	}{
 		{
 			name:         "CreateNode cancelled before",
 			cancelBefore: true,
-			cancelAfter:  false,
 			method:       "CreateNode",
 		},
 		{
 			name:         "CreateUnixFSNode cancelled before",
 			cancelBefore: true,
-			cancelAfter:  false,
 			method:       "CreateUnixFSNode",
 		},
 		{
 			name:         "CreateDAGFromReader cancelled before",
 			cancelBefore: true,
-			cancelAfter:  false,
 			method:       "CreateDAGFromReader",
 		},
 	}
@@ -344,9 +340,7 @@ func TestIPFSUnixFSNodeGenerator_ContextCancellation(t *testing.T) {
 				assert.True(t, errors.Is(err, context.Canceled))
 			}
 
-			if !tt.cancelBefore {
-				cancel()
-			}
+			
 		})
 	}
 }

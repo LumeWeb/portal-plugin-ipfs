@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -96,11 +97,17 @@ func NewStreamingBlockstoreWithDefaults(logger *core.Logger, passthrough blockst
 		queueSize = 10
 	}
 
+	// Use a buffer proportional to worker pool size for better throughput
+	bufferSize := queueSize
+	if bufferSize < 10 {
+		bufferSize = 10
+	}
+
 	abs := &DefaultStreamingBlockstore{
 		passthrough:     passthrough,
 		logger:          logger,
 		workerPool:      workerpool.New(queueSize), // Bounded queue
-		blockDelivery:   make(chan *BlockEntry, 1), // Small buffer for immediate delivery
+		blockDelivery:   make(chan *BlockEntry, bufferSize), // Buffer sized for throughput
 		pendingBlocks:   make(map[string]*BlockEntry),
 		seenFilter:      bloom.NewWithEstimates(bloomFilterEstimateItemsBlockstore, bloomFilterFalsePositiveRateBlockstore),
 		processedBlocks: make(map[string]bool),
@@ -218,6 +225,10 @@ func (s *DefaultStreamingBlockstore) putBlock(ctx context.Context, block blocks.
 		}
 
 		// Try to deliver block to consumer with retry logic for full channel
+		// Use exponential backoff for better resource efficiency under sustained high load
+		backoff := 1 * time.Millisecond
+		const maxBackoff = 100 * time.Millisecond
+		
 		for {
 			// Check if processing is done or channel is closed before attempting to send
 			if s.isProcessingDone() || s.isClosed() {
@@ -236,18 +247,21 @@ func (s *DefaultStreamingBlockstore) putBlock(ctx context.Context, block blocks.
 				return
 			case <-ctx.Done():
 				return
-			default:
-				// Channel is full, check if it's closed before retrying
+			case <-time.After(backoff):
+				// Timeout on blocked send, check if we should continue
 				if s.isProcessingDone() || s.isClosed() {
 					return
 				}
-				// Channel is full but not closed, wait a bit and retry
-				if s.logger != nil {
-					s.logger.Debug("Queue full, retrying block delivery",
-						zap.String("cid", block.Cid().String()))
+				// Exponential backoff with jitter
+				if backoff < maxBackoff {
+					backoff *= 2
 				}
-				// Add a small delay to prevent busy spinning
-				time.Sleep(1 * time.Millisecond)
+				// Add small random jitter to avoid thundering herd
+				jitter := time.Duration(rand.Int63n(int64(backoff) / 4))
+				backoff += jitter
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
 			}
 		}
 	})
