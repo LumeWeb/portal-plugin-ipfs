@@ -10,7 +10,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/golang/protobuf v1.5.4
 	github.com/google/uuid v1.6.0
-	github.com/h2non/filetype v1.0.12
+	github.com/h2non/filetype v1.1.3
 	github.com/ipfs/boxo v0.35.2
 	github.com/ipfs/go-block-format v0.2.3
 	github.com/ipfs/go-cid v0.6.0
