@@ -774,6 +774,14 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	// Check download quota if quota service is available
 	userID := upload.UserID
 
+	if err := quota.ValidateDownloadQuota(a.ctx, userID, upload.Size); err != nil {
+		a.logger.Warn("Download quota validation failed", zap.Uint("user_id", userID), zap.Error(err))
+		apiErr := NewError(ErrKeyDownloadQuotaExceeded, err)
+		_ = ctx.Error(apiErr, http.StatusTooManyRequests)
+		return apiErr
+	}
+
+	// Only fetch block data after quota validation passes
 	block, err := a.ipfs.GetNode().GetBlock(reqCtx, _cid)
 	if err != nil {
 		a.logger.Error("Failed to get block", zap.Error(err))
@@ -782,19 +790,7 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 		return apiErr
 	}
 
-	// Use actual block size for quota validation and events
-	actualBlockSize := uint64(len(block.RawData()))
-
-	if err := quota.ValidateDownloadQuota(a.ctx, userID, actualBlockSize); err != nil {
-		a.logger.Warn("Download quota validation failed", zap.Uint("user_id", userID), zap.Error(err))
-		apiErr := NewError(ErrKeyDownloadQuotaExceeded, err)
-		_ = ctx.Error(apiErr, http.StatusTooManyRequests)
-		return apiErr
-	}
-
-	// Emit download completion event for quota tracking
-
-	// Get client IP
+	// Get client IP for quota tracking
 	ip := c.RealIP()
 
 	a.setTrustlessHeaders(w, r, _cid.String())
