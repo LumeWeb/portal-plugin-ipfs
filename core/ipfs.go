@@ -1,6 +1,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/ipfs/boxo/provider"
 	"github.com/ipfs/go-cid"
 	"time"
@@ -14,8 +16,8 @@ type Provider interface {
 
 // A ReprovideStore stores CIDs that need to be periodically announced.
 type ReprovideStore interface {
-	ProvideCIDs(limit int) ([]PinnedCID, error)
-	SetLastAnnouncement(cids []cid.Cid, t time.Time) error
+	ProvideCIDs(ctx context.Context, limit int) ([]PinnedCID, error)
+	SetLastAnnouncement(ctx context.Context, cids []cid.Cid, t time.Time) error
 }
 
 type PinnedCID struct {

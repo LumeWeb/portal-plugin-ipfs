@@ -54,6 +54,9 @@ func (h *FilePathOperationHandler) ValidateRequest(_ context.Context, req *model
 }
 
 func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Request) error {
+	ctx, span := core.TraceMethod(ctx, "FilePathOperationHandler.Execute")
+	defer span.End()
+
 	var pinWorkflowData PinWorkflowData
 	err := h.StructuredWorkflowData(req.ID, &pinWorkflowData)
 	if err != nil {
@@ -244,6 +247,9 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 }
 
 func (h *FilePathOperationHandler) computeAndStoreFilePaths(ctx context.Context, fileManagerSvc pluginCore.FileManagerService, unixfsMeta *db.UnixFSNode, userID uint, rootCID cid.Cid, processed map[string]bool) error {
+	ctx, span := core.TraceMethod(ctx, "FilePathOperationHandler.computeAndStoreFilePaths")
+	defer span.End()
+
 	// Start recursive path computation from the root
 	size, err := h.ComputePathsRecursive(ctx, fileManagerSvc, unixfsMeta, userID, rootCID, "/", 0, processed, false)
 	if err != nil {
@@ -260,6 +266,9 @@ func (h *FilePathOperationHandler) computeAndStoreFilePaths(ctx context.Context,
 
 // createOrphanEntry creates a file path entry marked as orphan
 func (h *FilePathOperationHandler) createOrphanEntry(ctx context.Context, fileManagerSvc pluginCore.FileManagerService, userID uint, c cid.Cid, unixfsMeta *db.UnixFSNode) {
+	ctx, span := core.TraceMethod(ctx, "FilePathOperationHandler.createOrphanEntry")
+	defer span.End()
+
 	filePath := &db.FilePath{
 		UserID:      userID,
 		CID:         c.Bytes(),
@@ -312,6 +321,9 @@ func (h *FilePathOperationHandler) createOrphanEntry(ctx context.Context, fileMa
 
 // CreateOrphanEntriesForPins creates orphan file path entries for pins that don't have proper UnixFS metadata
 func (h *FilePathOperationHandler) CreateOrphanEntriesForPins(ctx context.Context, pins []*db.IPFSPin) error {
+	ctx, span := core.TraceMethod(ctx, "FilePathOperationHandler.CreateOrphanEntriesForPins")
+	defer span.End()
+
 	fileManagerSvc := core.GetService[pluginCore.FileManagerService](h.Context(), pluginCore.FILE_MANAGER_SERVICE)
 
 	for _, pin := range pins {
@@ -343,6 +355,9 @@ func (h *FilePathOperationHandler) CreateOrphanEntriesForPins(ctx context.Contex
 }
 
 func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fileManagerSvc pluginCore.FileManagerService, currentNodeMeta *db.UnixFSNode, userID uint, currentCID cid.Cid, parentPath string, depth int, processed map[string]bool, isOrphan bool) (uint64, error) {
+	ctx, span := core.TraceMethod(ctx, "FilePathOperationHandler.ComputePathsRecursive")
+	defer span.End()
+
 	cidStr := currentCID.String()
 
 	// Check if we've already processed this CID to avoid cycles
@@ -465,6 +480,9 @@ func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fi
 
 // pruneRelatedPaths deletes existing file paths for related CIDs
 func (h *FilePathOperationHandler) pruneRelatedPaths(ctx context.Context, fileManagerSvc pluginCore.FileManagerService, userID uint, relatedCIDs []string) error {
+	ctx, span := core.TraceMethod(ctx, "FilePathOperationHandler.pruneRelatedPaths")
+	defer span.End()
+
 	var errors []error
 	for _, cidStr := range relatedCIDs {
 		c, err := cid.Parse(cidStr)
@@ -491,6 +509,9 @@ func (h *FilePathOperationHandler) pruneRelatedPaths(ctx context.Context, fileMa
 }
 
 func (h *FilePathOperationHandler) GetStatus(ctx context.Context, req *models.Request) (*core.RequestStatus, error) {
+	ctx, span := core.TraceMethod(ctx, "FilePathOperationHandler.GetStatus")
+	defer span.End()
+
 	status := &core.RequestStatus{
 		ProgressPercent: 0,
 	}
@@ -568,6 +589,9 @@ func (h *FilePathOperationHandler) Cleanup(_ context.Context, _ *models.Request)
 // enrichOrphanEntryFromBlockstore tries to get basic block info from blockstore
 // when UnixFS metadata is not available, to set proper file size
 func (h *FilePathOperationHandler) enrichOrphanEntryFromBlockstore(ctx context.Context, c cid.Cid, filePath *db.FilePath) {
+	ctx, span := core.TraceMethod(ctx, "FilePathOperationHandler.enrichOrphanEntryFromBlockstore")
+	defer span.End()
+
 	// Try to get basic block metadata from blockstore using metadata-only APIs
 	proto := core.GetProtocol(internal.ProtocolName).(ProtoNode)
 	blockstore := proto.GetNode().GetBlockstore()
@@ -630,6 +654,9 @@ func (h *FilePathOperationHandler) enrichOrphanEntryFromBlockstore(ctx context.C
 // walkDAGForTotalSize recursively walks through all child blocks in the DAG
 // and sums up their sizes to get the total file size
 func (h *FilePathOperationHandler) walkDAGForTotalSize(ctx context.Context, c cid.Cid, visited map[string]bool) (uint64, error) {
+	ctx, span := core.TraceMethod(ctx, "FilePathOperationHandler.walkDAGForTotalSize")
+	defer span.End()
+
 	// Handle cycles gracefully
 	cidStr := c.String()
 	if visited[cidStr] {
@@ -645,7 +672,7 @@ func (h *FilePathOperationHandler) walkDAGForTotalSize(ctx context.Context, c ci
 	}
 
 	// Get size of current block
-	size, err := metadataStore.Size(c)
+	size, err := metadataStore.Size(ctx, c)
 	if err != nil {
 		// If we can't get the size from metadata store, try to get it from blockstore
 		proto := core.GetProtocol(internal.ProtocolName).(*Protocol)
@@ -660,7 +687,7 @@ func (h *FilePathOperationHandler) walkDAGForTotalSize(ctx context.Context, c ci
 	totalSize := size
 
 	// Get children of current block
-	children, err := metadataStore.BlockChildren(c, nil)
+	children, err := metadataStore.BlockChildren(ctx, c, nil)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get children for CID %s: %w", c.String(), err)
 	}

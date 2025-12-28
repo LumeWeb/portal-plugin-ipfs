@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"fmt"
+
 	"github.com/ipfs/go-cid"
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
@@ -28,6 +29,9 @@ func (h *ConfirmOperationHandler) ValidateRequest(_ context.Context, req *models
 }
 
 func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Request) error {
+	ctx, span := core.TraceMethod(ctx, "ConfirmOperationHandler.Execute")
+	defer span.End()
+
 	var workflowData PinWorkflowData
 	err := h.StructuredWorkflowData(req.ID, &workflowData)
 	if err != nil {
@@ -48,7 +52,7 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 		}
 
 		// Check if block exists and is ready
-		err = metadataStore.BlockExists(c)
+		err = metadataStore.BlockExists(ctx, c)
 		if err != nil {
 			return fmt.Errorf("block %s not ready: %w", c, err)
 		}
@@ -63,8 +67,8 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 			h.Logger().Error("Upload service not available")
 			return fmt.Errorf("upload service not available")
 		}
-		
-	// Set client IP in context for quota tracking
+
+		// Set client IP in context for quota tracking
 		ctx = store.ClientIPOption(ctx, req.SourceIP)
 
 		err := uploadSvc.ProcessUpload(ctx, cidList, lo.FromPtrOr(req.UserID, 0))

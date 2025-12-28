@@ -167,13 +167,13 @@ func countBlocks(t *testing.T, processor protocol.BlockProcessor, dagService for
 				node, err := encoding.DecodeBlock(ctx, block)
 				if err != nil {
 					if testing.Verbose() {
-					t.Logf("Failed to decode block: %v", err)
-				}
+						t.Logf("Failed to decode block: %v", err)
+					}
 				} else {
 					if err := dagService.Add(ctx, node); err != nil {
 						if testing.Verbose() {
-						t.Logf("Failed to store block: %v", err)
-					}
+							t.Logf("Failed to store block: %v", err)
+						}
 					} else {
 						if testing.Verbose() {
 							t.Logf("Block stored: %s", cidStr)

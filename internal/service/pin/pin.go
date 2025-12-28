@@ -25,9 +25,7 @@ import (
 
 // PinServiceDefault implements the IPFSPinService interface
 type PinServiceDefault struct {
-	ctx            core.Context
-	db             *gorm.DB
-	logger         *core.Logger
+	*core.BaseComponent
 	workflow       core.WorkflowService
 	ipfs           protocol.ProtoNode
 	pinSvc         core.PinService
@@ -43,9 +41,6 @@ func NewPinService() (core.Service, []core.ContextBuilderOption, error) {
 
 	opts := core.ContextOptions(
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
-			svc.ctx = ctx
-			svc.logger = ctx.ServiceLogger(svc)
-			svc.db = ctx.DB()
 			svc.workflow = core.GetService[core.WorkflowService](ctx, core.WORKFLOW_SERVICE)
 			svc.pinSvc = core.GetService[core.PinService](ctx, core.PIN_SERVICE)
 			proto := core.GetProtocol(internal.ProtocolName)
@@ -74,114 +69,156 @@ func (s *PinServiceDefault) ID() string {
 
 // AddPin creates a new pin job record.
 func (s *PinServiceDefault) AddPin(ctx context.Context, pin *pluginDb.IPFSPin) (*pluginDb.IPFSPin, error) {
-	// Get delegate addresses and store them as JSON
-	err := s.addDelegateAddresses(pin)
-	if err != nil {
-		s.logger.Error("Failed to get delegate addresses", zap.Error(err))
-	}
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.AddPin")
+	defer span.End()
 
-	err = db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		return g.WithContext(ctx).Create(pin)
-	})
-	if err != nil {
-		s.logger.Error("Failed to add pin", zap.Error(err), zap.Any("pin", pin))
-		return nil, fmt.Errorf("failed to add pin: %w", err)
-	}
+	return core.MetricTrackResult(
+		AddPinDuration.WithLabelValues(),
+		AddPinTotal.WithLabelValues(LabelStatusError),
+		func() (*pluginDb.IPFSPin, error) {
+			// Get delegate addresses and store them as JSON
+			err := s.addDelegateAddresses(pin)
+			if err != nil {
+				s.Logger().Error("Failed to get delegate addresses", zap.Error(err))
+			}
 
-	s.logger.Debug("Added pin", zap.String("request_id", pin.RequestID.String()), zap.Stringer("cid", cid.MustParse(pin.CID)))
-	return pin, nil
+			err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return g.Create(pin)
+			})
+			if err != nil {
+				s.Logger().Error("Failed to add pin", zap.Error(err), zap.Any("pin", pin))
+				return nil, fmt.Errorf("failed to add pin: %w", err)
+			}
+
+			s.Logger().Debug("Added pin", zap.String("request_id", pin.RequestID.String()), zap.Stringer("cid", cid.MustParse(pin.CID)))
+			return pin, nil
+		},
+	)
 }
 
 // GetPinByRequestID retrieves a single pin job by its unique RequestID.
 func (s *PinServiceDefault) GetPinByRequestID(ctx context.Context, requestID types.BinaryUUID) (*pluginDb.IPFSPin, error) {
-	var pin pluginDb.IPFSPin
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.GetPinByRequestID")
+	defer span.End()
 
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		return g.WithContext(ctx).Where("request_id = ?", requestID).First(&pin)
-	})
+	return core.MetricTrackResult(
+		GetPinByRequestIDDuration.WithLabelValues(),
+		GetPinByRequestIDTotal.WithLabelValues(LabelStatusError),
+		func() (*pluginDb.IPFSPin, error) {
+			var pin pluginDb.IPFSPin
 
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			s.logger.Debug("Pin not found", zap.String("request_id", requestID.String()))
-			return nil, nil
-		}
-		s.logger.Error("Failed to get pin by request ID",
-			zap.Error(err),
-			zap.String("request_id", requestID.String()))
-		return nil, fmt.Errorf("failed to get pin by request ID: %w", err)
-	}
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return g.Where("request_id = ?", requestID).First(&pin)
+			})
 
-	s.logger.Debug("Retrieved pin",
-		zap.String("request_id", pin.RequestID.String()),
-		zap.Binary("cid", pin.CID))
-	return &pin, nil
+			if err != nil {
+				if err == gorm.ErrRecordNotFound {
+					s.Logger().Debug("Pin not found", zap.String("request_id", requestID.String()))
+					return nil, nil
+				}
+				s.Logger().Error("Failed to get pin by request ID",
+					zap.Error(err),
+					zap.String("request_id", requestID.String()))
+				return nil, fmt.Errorf("failed to get pin by request ID: %w", err)
+			}
+
+			s.Logger().Debug("Retrieved pin",
+				zap.String("request_id", pin.RequestID.String()),
+				zap.Binary("cid", pin.CID))
+			return &pin, nil
+		},
+	)
 }
 
 // ListPins retrieves a paginated and filtered list of pin jobs.
 func (s *PinServiceDefault) ListPins(ctx context.Context, filter []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.IPFSPin, int64, error) {
-	var pins []*pluginDb.IPFSPin
-	var total int64
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.ListPins")
+	defer span.End()
 
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		// Construct the query
-		query := g.WithContext(ctx).Model(&pluginDb.IPFSPin{})
-		query = queryutil.ApplyFilters(query, filter, nil)
-		query = queryutil.ApplySort(query, sort)
-		query = queryutil.ApplyPagination(query, pagination)
+	var result struct {
+		pins  []*pluginDb.IPFSPin
+		total int64
+	}
 
-		// Get total count
-		if err := query.Count(&total).Error; err != nil {
-			_ = g.AddError(fmt.Errorf("failed to count pins: %w", err))
-			return g
-		}
+	err := core.MetricTrack(
+		ListPinsDuration.WithLabelValues(),
+		ListPinsTotal.WithLabelValues(LabelStatusError),
+		func() error {
+			var pins []*pluginDb.IPFSPin
+			var total int64
 
-		// Get the records
-		if err := query.Find(&pins).Error; err != nil {
-			_ = g.AddError(fmt.Errorf("failed to list pins: %w", err))
-			return g
-		}
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				// Construct the query
+				query := g.Model(&pluginDb.IPFSPin{})
+				query = queryutil.ApplyFilters(query, filter, nil)
+				query = queryutil.ApplySort(query, sort)
+				query = queryutil.ApplyPagination(query, pagination)
 
-		// Get delegate addresses once and reuse for all pins
-		delegatesJSON, err := s.getDelegatesJSON()
-		if err != nil {
-			s.logger.Error("Failed to get delegate addresses", zap.Error(err))
-			_ = g.AddError(fmt.Errorf("failed to get delegate addresses: %w", err))
-			return g
-		}
+				// Get total count
+				if err := query.Count(&total).Error; err != nil {
+					_ = g.AddError(fmt.Errorf("failed to count pins: %w", err))
+					return g
+				}
 
-		// Set the pre-marshalled delegates JSON onto each pin
-		for _, pin := range pins {
-			pin.Delegates = delegatesJSON
-		}
+				// Get the records
+				if err := query.Find(&pins).Error; err != nil {
+					_ = g.AddError(fmt.Errorf("failed to list pins: %w", err))
+					return g
+				}
 
-		return g
-	})
+				// Get delegate addresses once and reuse for all pins
+				delegatesJSON, err := s.getDelegatesJSON()
+				if err != nil {
+					s.Logger().Error("Failed to get delegate addresses", zap.Error(err))
+					_ = g.AddError(fmt.Errorf("failed to get delegate addresses: %w", err))
+					return g
+				}
+
+				// Set the pre-marshalled delegates JSON onto each pin
+				for _, pin := range pins {
+					pin.Delegates = delegatesJSON
+				}
+
+				return g
+			})
+
+			if err != nil {
+				s.Logger().Error("Failed to list pins",
+					zap.Error(err),
+					zap.Any("filters", filter),
+					zap.Any("pagination", pagination))
+				return err
+			}
+
+			s.Logger().Debug("Listed pins",
+				zap.Int("count", len(pins)),
+				zap.Int64("total", total))
+
+			result.pins = pins
+			result.total = total
+			return nil
+		})
 
 	if err != nil {
-		s.logger.Error("Failed to list pins",
-			zap.Error(err),
-			zap.Any("filters", filter),
-			zap.Any("pagination", pagination))
 		return nil, 0, err
 	}
 
-	s.logger.Debug("Listed pins",
-		zap.Int("count", len(pins)),
-		zap.Int64("total", total))
-	return pins, total, nil
+	return result.pins, result.total, nil
 }
 
 // ReplacePin creates a new pin job to replace an old one.
 func (s *PinServiceDefault) ReplacePin(ctx context.Context, _ uint, _ string, oldRequestID types.BinaryUUID, newPin *pluginDb.IPFSPin) (*pluginDb.IPFSPin, error) {
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.ReplacePin")
+	defer span.End()
+
 	var replacedPin *pluginDb.IPFSPin
 
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		// Delete the old pin
-		if err := g.WithContext(ctx).
-			Where("request_id = ?", oldRequestID).
+		if err := g.Where("request_id = ?", oldRequestID).
 			Delete(&pluginDb.IPFSPin{}).
 			Error; err != nil {
-			s.logger.Error("Failed to delete old pin",
+			s.Logger().Error("Failed to delete old pin",
 				zap.Error(err),
 				zap.String("old_request_id", oldRequestID.String()))
 			_ = g.AddError(fmt.Errorf("failed to delete old pin: %w", err))
@@ -189,8 +226,8 @@ func (s *PinServiceDefault) ReplacePin(ctx context.Context, _ uint, _ string, ol
 		}
 
 		// Add the new pin
-		if err := g.WithContext(ctx).Create(newPin).Error; err != nil {
-			s.logger.Error("Failed to add new pin",
+		if err := g.Create(newPin).Error; err != nil {
+			s.Logger().Error("Failed to add new pin",
 				zap.Error(err),
 				zap.Any("new_pin", newPin))
 			_ = g.AddError(fmt.Errorf("failed to add new pin: %w", err))
@@ -205,7 +242,7 @@ func (s *PinServiceDefault) ReplacePin(ctx context.Context, _ uint, _ string, ol
 		return nil, err
 	}
 
-	s.logger.Debug("Replaced pin",
+	s.Logger().Debug("Replaced pin",
 		zap.String("old_request_id", oldRequestID.String()),
 		zap.String("new_request_id", replacedPin.RequestID.String()),
 		zap.Binary("new_cid", replacedPin.CID))
@@ -214,158 +251,185 @@ func (s *PinServiceDefault) ReplacePin(ctx context.Context, _ uint, _ string, ol
 
 // DeletePin soft-deletes a pin job by its RequestID and initiates the unpin workflow if needed.
 func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.BinaryUUID) error {
-	// load + delete + re-check inside one txn with row lock; unpin after commit
-	var (
-		pin         pluginDb.IPFSPin
-		shouldUnpin bool
-		loaded      bool
-	)
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		// Lock the target row to serialize concurrent deletes on same request
-		if err := g.WithContext(ctx).
-			Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("request_id = ?", requestID).
-			First(&pin).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				// If pin doesn't exist, nothing to do
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.DeletePin")
+	defer span.End()
+
+	return core.MetricTrack(
+		DeletePinDuration.WithLabelValues(),
+		DeletePinTotal.WithLabelValues(LabelStatusError),
+		func() error {
+			// load + delete + re-check inside one txn with row lock; unpin after commit
+			var (
+				pin         pluginDb.IPFSPin
+				shouldUnpin bool
+				loaded      bool
+			)
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				// Lock the target row to serialize concurrent deletes on same request
+				if err := g.Clauses(clause.Locking{Strength: "UPDATE"}).
+					Where("request_id = ?", requestID).
+					First(&pin).Error; err != nil {
+					if err == gorm.ErrRecordNotFound {
+						// If pin doesn't exist, nothing to do
+						return g
+					}
+					_ = g.AddError(err)
+					return g
+				}
+				loaded = true
+				// Soft-delete the target
+				if err := g.Where("request_id = ?", requestID).
+					Delete(&pluginDb.IPFSPin{}).Error; err != nil {
+					_ = g.AddError(err)
+					return g
+				}
+				// Check if any other active pins remain for (user_id, cid)
+				cnt, err := s.countUserPinsByCID(ctx, pin.UserID, pin.CID, requestID)
+				if err != nil {
+					_ = g.AddError(err)
+					return g
+				}
+				shouldUnpin = (cnt == 0)
 				return g
+			})
+			if err != nil {
+				s.Logger().Error("Failed to delete pin",
+					zap.Error(err),
+					zap.String("request_id", requestID.String()))
+				return err
 			}
-			_ = g.AddError(err)
-			return g
-		}
-		loaded = true
-		// Soft-delete the target
-		if err := g.WithContext(ctx).
-			Where("request_id = ?", requestID).
-			Delete(&pluginDb.IPFSPin{}).Error; err != nil {
-			_ = g.AddError(err)
-			return g
-		}
-		// Check if any other active pins remain for (user_id, cid)
-		cnt, err := s.countUserPinsByCID(ctx, pin.UserID, pin.CID, requestID)
-		if err != nil {
-			_ = g.AddError(err)
-			return g
-		}
-		shouldUnpin = (cnt == 0)
-		return g
-	})
-	if err != nil {
-		s.logger.Error("Failed to delete pin",
-			zap.Error(err),
-			zap.String("request_id", requestID.String()))
-		return err
-	}
 
-	if !loaded {
-		return nil
-	}
+			if !loaded {
+				return nil
+			}
 
-	// If no other pins reference this CID, unpin it and clean up file paths
-	if shouldUnpin {
-		c, err := cid.Cast(pin.CID)
-		if err != nil {
-			return fmt.Errorf("cid cast: %w", err)
-		}
+			// If no other pins reference this CID, unpin it and clean up file paths
+			if shouldUnpin {
+				c, err := cid.Cast(pin.CID)
+				if err != nil {
+					return fmt.Errorf("cid cast: %w", err)
+				}
 
-		// Get the core pin before deleting it for event emission
-		hash := internal.NewIPFSHash(c)
-		corePin, err := s.pinSvc.GetPinByHash(hash, pin.UserID)
-		if err != nil {
-			s.logger.Warn("Failed to get core pin for unpin event",
-				zap.Error(err),
-				zap.Stringer("cid", c),
-				zap.Uint("user_id", pin.UserID))
-		}
+				// Get the core pin before deleting it for event emission
+				hash := internal.NewIPFSHash(c)
+				corePin, err := s.pinSvc.GetPinByHash(ctx, hash, pin.UserID)
+				if err != nil {
+					s.Logger().Warn("Failed to get core pin for unpin event",
+						zap.Error(err),
+						zap.Stringer("cid", c),
+						zap.Uint("user_id", pin.UserID))
+				}
 
-		if err := s.pinSvc.DeletePinByHash(hash, pin.UserID); err != nil {
-			s.logger.Error("Failed to unpin CID in core",
-				zap.Error(err),
-				zap.Stringer("cid", c),
-				zap.Uint("user_id", pin.UserID))
-			return fmt.Errorf("failed to unpin CID in core: %w", err)
-		}
+				if err := s.pinSvc.DeletePinByHash(ctx, hash, pin.UserID); err != nil {
+					s.Logger().Error("Failed to unpin CID in core",
+						zap.Error(err),
+						zap.Stringer("cid", c),
+						zap.Uint("user_id", pin.UserID))
+					return fmt.Errorf("failed to unpin CID in core: %w", err)
+				}
 
-		// Emit storage object unpinned event for quota tracking
-		if corePin != nil {
-			clientIP := store.GetClientIP(ctx)
-			quota.EmitStorageObjectUnpinned(s.ctx, corePin, clientIP)
-		}
+				// Emit storage object unpinned event for quota tracking
+				if corePin != nil {
+					clientIP := store.GetClientIP(ctx)
+					quota.EmitStorageObjectUnpinned(ctx, s.Context(), corePin, clientIP)
+				}
 
-		// Clean up file paths when no other pins reference this CID
-		if err = s.fileManagerSvc.DeleteFilePathSmart(ctx, pin.UserID, pin.CID); err != nil {
-			s.logger.Error("Failed to delete file paths smartly",
-				zap.Error(err),
-				zap.String("request_id", requestID.String()),
-				zap.Uint("user_id", pin.UserID))
-			// Don't fail the whole operation for path cleanup failure
-		}
+				// Clean up file paths when no other pins reference this CID
+				if err = s.fileManagerSvc.DeleteFilePathSmart(ctx, pin.UserID, pin.CID); err != nil {
+					s.Logger().Error("Failed to delete file paths smartly",
+						zap.Error(err),
+						zap.String("request_id", requestID.String()),
+						zap.Uint("user_id", pin.UserID))
+					// Don't fail the whole operation for path cleanup failure
+				}
 
-		s.logger.Debug("Core unpin operation completed and file paths cleaned up", zap.Stringer("cid", c), zap.Uint("user_id", pin.UserID))
-	} else {
-		s.logger.Debug("Deleted pin record, other pins still reference CID",
-			zap.String("request_id", requestID.String()),
-			zap.Uint("user_id", pin.UserID))
-	}
-	return nil
+				s.Logger().Debug("Core unpin operation completed and file paths cleaned up", zap.Stringer("cid", c), zap.Uint("user_id", pin.UserID))
+			} else {
+				s.Logger().Debug("Deleted pin record, other pins still reference CID",
+					zap.String("request_id", requestID.String()),
+					zap.Uint("user_id", pin.UserID))
+			}
+			return nil
+		})
 }
 
 // ValidateDAGCompletion checks if a new pin completes a DAG structure
 // and returns related CIDs that need path recomputation.
 func (s *PinServiceDefault) ValidateDAGCompletion(ctx context.Context, pin *pluginDb.IPFSPin) ([][]byte, error) {
-	// Get all related CIDs for this user that might form a complete DAG with this new pin
-	relatedCIDs, err := s.getRelatedCIDs(ctx, pin.UserID, pin.CID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get related CIDs: %w", err)
-	}
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.ValidateDAGCompletion")
+	defer span.End()
 
-	// If we found related CIDs, add the current pin's CID to the list
-	if len(relatedCIDs) > 0 {
-		relatedCIDs = append(relatedCIDs, pin.CID)
-		s.logger.Debug("DAG completion detected",
-			zap.Uint("user_id", pin.UserID),
-			zap.Int("related_cids_count", len(relatedCIDs)))
-	}
+	return core.MetricTrackResult(
+		ValidateDAGDuration.WithLabelValues(),
+		ValidateDAGTotal.WithLabelValues(LabelStatusError),
+		func() ([][]byte, error) {
+			// Get all related CIDs for this user that might form a complete DAG with this new pin
+			relatedCIDs, err := s.getRelatedCIDs(ctx, pin.UserID, pin.CID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get related CIDs: %w", err)
+			}
 
-	return relatedCIDs, nil
+			// If we found related CIDs, add the current pin's CID to the list
+			if len(relatedCIDs) > 0 {
+				relatedCIDs = append(relatedCIDs, pin.CID)
+				s.Logger().Debug("DAG completion detected",
+					zap.Uint("user_id", pin.UserID),
+					zap.Int("related_cids_count", len(relatedCIDs)))
+			}
+
+			return relatedCIDs, nil
+		},
+	)
 }
 
 // GetPinByCIDAndUser retrieves a pin by CID and user ID
 func (s *PinServiceDefault) GetPinByCIDAndUser(ctx context.Context, c cid.Cid, userID uint) (*pluginDb.IPFSPin, error) {
-	var pin pluginDb.IPFSPin
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.GetPinByCIDAndUser")
+	defer span.End()
 
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		return g.WithContext(ctx).Where("user_id = ? AND cid = ?", userID, c.Bytes()).First(&pin)
-	})
+	return core.MetricTrackResult(
+		GetPinByCIDDuration.WithLabelValues(),
+		GetPinByCIDTotal.WithLabelValues(LabelStatusError),
+		func() (*pluginDb.IPFSPin, error) {
+			var pin pluginDb.IPFSPin
 
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			s.logger.Debug("Pin not found for CID and user",
-				zap.Stringer("cid", c),
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return g.Where("user_id = ? AND cid = ?", userID, c.Bytes()).First(&pin)
+			})
+
+			if err != nil {
+				if err == gorm.ErrRecordNotFound {
+					s.Logger().Debug("Pin not found for CID and user",
+						zap.Stringer("cid", c),
+						zap.Uint("user_id", userID))
+					return nil, nil
+				}
+				s.Logger().Error("Failed to get pin by CID and user",
+					zap.Error(err),
+					zap.Stringer("cid", c),
+					zap.Uint("user_id", userID))
+				return nil, fmt.Errorf("failed to get pin by CID and user: %w", err)
+			}
+
+			s.Logger().Debug("Retrieved pin by CID and user",
+				zap.String("request_id", pin.RequestID.String()),
+				zap.Binary("cid", pin.CID),
 				zap.Uint("user_id", userID))
-			return nil, nil
-		}
-		s.logger.Error("Failed to get pin by CID and user",
-			zap.Error(err),
-			zap.Stringer("cid", c),
-			zap.Uint("user_id", userID))
-		return nil, fmt.Errorf("failed to get pin by CID and user: %w", err)
-	}
-
-	s.logger.Debug("Retrieved pin by CID and user",
-		zap.String("request_id", pin.RequestID.String()),
-		zap.Binary("cid", pin.CID),
-		zap.Uint("user_id", userID))
-	return &pin, nil
+			return &pin, nil
+		},
+	)
 }
 
 // getRelatedCIDs finds CIDs that share blocks with the given CID for the same user
 // Performs a shallow one-hop traversal to find parent and child CIDs only
 func (s *PinServiceDefault) getRelatedCIDs(ctx context.Context, userID uint, cidBytes []byte) ([][]byte, error) {
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.getRelatedCIDs")
+	defer span.End()
+
 	var relatedCIDs [][]byte
 
 	// Find all linked blocks where the given CID is either a parent or child
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		// Use a single query with joins to find all related CIDs where the input CID appears as either parent or child
 		query := `
 			SELECT DISTINCT ib.cid
@@ -386,7 +450,7 @@ func (s *PinServiceDefault) getRelatedCIDs(ctx context.Context, userID uint, cid
 		`
 
 		var blocks []pluginDb.IPFSBlock
-		err := g.WithContext(ctx).Raw(query, cidBytes, cidBytes).Scan(&blocks).Error
+		err := g.Raw(query, cidBytes, cidBytes).Scan(&blocks).Error
 		if err != nil && err != gorm.ErrRecordNotFound {
 			_ = g.AddError(fmt.Errorf("failed to find related blocks: %w", err))
 			return g
@@ -401,8 +465,7 @@ func (s *PinServiceDefault) getRelatedCIDs(ctx context.Context, userID uint, cid
 		if len(relatedCIDs) > 0 {
 			var pinnedCIDs [][]byte
 
-			err = g.WithContext(ctx).
-				Model(&pluginDb.IPFSPin{}).
+			err = g.Model(&pluginDb.IPFSPin{}).
 				Where("user_id = ? AND cid IN ?", userID, relatedCIDs).
 				Pluck("cid", &pinnedCIDs).Error
 
@@ -426,53 +489,63 @@ func (s *PinServiceDefault) getRelatedCIDs(ctx context.Context, userID uint, cid
 
 // UpdatePinStatus updates the job's state.
 func (s *PinServiceDefault) UpdatePinStatus(ctx context.Context, requestID types.BinaryUUID, status pluginDb.PinningStatus, info datatypes.JSON) error {
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.UpdatePinStatus")
+	defer span.End()
+
 	var rowsAffected int64
 
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		result := g.WithContext(ctx).
-			Model(&pluginDb.IPFSPin{}).
-			Where("request_id = ?", requestID).
-			Updates(map[string]interface{}{
-				"status": status,
-				"info":   info,
+	return core.MetricTrack(
+		UpdatePinStatusDuration.WithLabelValues(),
+		UpdatePinStatusTotal.WithLabelValues(LabelStatusError),
+		func() error {
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				result := g.Model(&pluginDb.IPFSPin{}).
+					Where("request_id = ?", requestID).
+					Updates(map[string]interface{}{
+						"status": status,
+						"info":   info,
+					})
+
+				if result.Error != nil {
+					_ = g.AddError(fmt.Errorf("failed to update pin status: %w", result.Error))
+					return g
+				}
+
+				rowsAffected = result.RowsAffected
+				return g
 			})
 
-		if result.Error != nil {
-			_ = g.AddError(fmt.Errorf("failed to update pin status: %w", result.Error))
-			return g
-		}
+			if err != nil {
+				s.Logger().Error("Failed to update pin status",
+					zap.Error(err),
+					zap.String("request_id", requestID.String()),
+					zap.String("status", string(status)))
+				return err
+			}
 
-		rowsAffected = result.RowsAffected
-		return g
-	})
+			if rowsAffected == 0 {
+				s.Logger().Warn("No pin found to update",
+					zap.String("request_id", requestID.String()))
+				return fmt.Errorf("no pin found with request ID: %s", requestID.String())
+			}
 
-	if err != nil {
-		s.logger.Error("Failed to update pin status",
-			zap.Error(err),
-			zap.String("request_id", requestID.String()),
-			zap.String("status", string(status)))
-		return err
-	}
-
-	if rowsAffected == 0 {
-		s.logger.Warn("No pin found to update",
-			zap.String("request_id", requestID.String()))
-		return fmt.Errorf("no pin found with request ID: %s", requestID.String())
-	}
-
-	s.logger.Debug("Updated pin status",
-		zap.String("request_id", requestID.String()),
-		zap.String("status", string(status)),
-		zap.Int64("rows_affected", rowsAffected))
-	return nil
+			s.Logger().Debug("Updated pin status",
+				zap.String("request_id", requestID.String()),
+				zap.String("status", string(status)),
+				zap.Int64("rows_affected", rowsAffected))
+			return nil
+		})
 }
 
 // countUserPinsByCID counts active pin records for a specific user and CID, excluding a specific request ID
 func (s *PinServiceDefault) countUserPinsByCID(ctx context.Context, userID uint, cidBytes []byte, excludeRequestID types.BinaryUUID) (int64, error) {
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.countUserPinsByCID")
+	defer span.End()
+
 	var count int64
 
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		query := g.WithContext(ctx).Model(&pluginDb.IPFSPin{}).
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		query := g.Model(&pluginDb.IPFSPin{}).
 			Where("user_id = ? AND cid = ? AND request_id != ?", userID, cidBytes, excludeRequestID)
 
 		return query.Count(&count)

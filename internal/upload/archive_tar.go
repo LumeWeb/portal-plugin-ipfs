@@ -6,6 +6,7 @@ import (
 	"io/fs"
 
 	"github.com/mholt/archives"
+	core "go.lumeweb.com/portal/core"
 )
 
 // TarArchiveExtractor implements ArchiveExtractor for TAR files using the unified driver
@@ -33,6 +34,9 @@ func (t *TarArchiveExtractor) Format() Format {
 
 // Filesystem returns a filesystem interface for the archive
 func (t *TarArchiveExtractor) Filesystem(ctx context.Context) (fs.FS, error) {
+	ctx, span := core.TraceMethod(ctx, "TarArchiveExtractor.Filesystem")
+	defer span.End()
+
 	return t.driver.Filesystem(ctx)
 }
 

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 
 	"github.com/mholt/archives"
+	core "go.lumeweb.com/portal/core"
 )
 
 // RarArchiveExtractor implements ArchiveExtractor for RAR files using the unified driver
@@ -33,6 +34,9 @@ func (r *RarArchiveExtractor) Format() Format {
 
 // Filesystem returns a filesystem interface for the archive
 func (r *RarArchiveExtractor) Filesystem(ctx context.Context) (fs.FS, error) {
+	ctx, span := core.TraceMethod(ctx, "RarArchiveExtractor.Filesystem")
+	defer span.End()
+
 	return r.driver.Filesystem(ctx)
 }
 

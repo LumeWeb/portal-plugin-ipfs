@@ -119,7 +119,7 @@ func CreateTestBlockAndNode(t *testing.T, ctx coreTesting.TestContext, cid cid.C
 func GetProtocolMock() coreTesting.TestContextBuilderOption {
 	return coreTesting.WithCustomMockProtocol(internal.ProtocolName, func(ctx coreTesting.TestContext) core.Protocol {
 		protoMock := mocks.NewMockProtoNode(ctx.T())
-		protoMock.EXPECT().Config().Return(&config.ProtocolConfig{}).Maybe()
+		protoMock.EXPECT().GetConfig().Return(&config.ProtocolConfig{}).Maybe()
 		protoMock.EXPECT().Workflows().Return(nil).Maybe()
 		ipfsNode := mocks.NewMockIPFSNode(ctx.T())
 		mockPeer := config.BootstrapPeers[0].ToAddrInfo()

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 
 	"github.com/mholt/archives"
+	core "go.lumeweb.com/portal/core"
 )
 
 // SevenZipArchiveExtractor implements ArchiveExtractor for 7Z files using the unified driver
@@ -33,6 +34,9 @@ func (s *SevenZipArchiveExtractor) Format() Format {
 
 // Filesystem returns a filesystem interface for archive
 func (s *SevenZipArchiveExtractor) Filesystem(ctx context.Context) (fs.FS, error) {
+	ctx, span := core.TraceMethod(ctx, "SevenZipArchiveExtractor.Filesystem")
+	defer span.End()
+
 	return s.driver.Filesystem(ctx)
 }
 

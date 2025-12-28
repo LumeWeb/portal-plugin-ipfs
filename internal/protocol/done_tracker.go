@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/ipfs/go-cid"
+	"go.lumeweb.com/portal/core"
 )
 
 // DoneTracker defines the interface for tracking completed CIDs
@@ -42,7 +43,7 @@ type cidWaiter struct {
 type DefaultDoneTracker struct {
 	mu        sync.RWMutex
 	waiters   map[string]*cidWaiter // Map of CID binary representation to waiter state
-	completed map[string]bool        // Permanent record of completed CIDs (binary CID key)
+	completed map[string]bool       // Permanent record of completed CIDs (binary CID key)
 }
 
 // NewDoneTracker creates a new DefaultDoneTracker instance
@@ -106,6 +107,9 @@ func (dt *DefaultDoneTracker) Done(c cid.Cid) {
 // Returns true if the CID is done, false if the context was canceled
 // This method is thread-safe
 func (dt *DefaultDoneTracker) WaitDone(ctx context.Context, c cid.Cid) bool {
+	ctx, span := core.TraceMethod(ctx, "DefaultDoneTracker.WaitDone")
+	defer span.End()
+
 	cidKey := string(c.Bytes())
 
 	// Check permanent completed record for historical CIDs

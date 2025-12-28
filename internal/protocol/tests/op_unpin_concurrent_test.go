@@ -61,13 +61,13 @@ func runConcurrentAnalysisTest(t *testing.T, ctx coreTesting.TestContext, handle
 // It launches 2*len(cids) operations, cycling through the CIDs
 func runHighFrequencyConcurrentAnalysisTest(t *testing.T, ctx coreTesting.TestContext, handler *protocol.UnpinOperationHandler,
 	userID uint, cids []cid.Cid, expectErrors bool) {
-	
+
 	// Create a slice with 2*len(cids) elements, cycling through the original CIDs
 	highFrequencyCIDs := make([]cid.Cid, 2*len(cids))
 	for i := 0; i < 2*len(cids); i++ {
 		highFrequencyCIDs[i] = cids[i%len(cids)]
 	}
-	
+
 	// Reuse the existing concurrent analysis test function
 	runConcurrentAnalysisTest(t, ctx, handler, userID, highFrequencyCIDs, expectErrors)
 }

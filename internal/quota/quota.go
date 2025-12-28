@@ -1,6 +1,7 @@
 package quota
 
 import (
+	"context"
 	"fmt"
 
 	quotaCore "go.lumeweb.com/portal-plugin-quota/core"
@@ -10,16 +11,18 @@ import (
 )
 
 // WithQuotaService executes a function with quota service if available
-func WithQuotaService(ctx core.Context, fn func(quotaCore.QuotaService) error) error {
-	return core.WithService[quotaCore.QuotaService](ctx, quotaCore.QUOTA_SERVICE, fn)
+func WithQuotaService(cctx context.Context, ctx core.Context, fn func(quotaCore.QuotaService, context.Context) error) error {
+	return core.WithService[quotaCore.QuotaService](ctx, quotaCore.QUOTA_SERVICE, func(qs quotaCore.QuotaService) error {
+		return fn(qs, cctx)
+	})
 }
 
 // CheckUploadQuota checks upload quota if service is available
-func CheckUploadQuota(ctx core.Context, userID uint, requestedBytes uint64) (*quotaCore.QuotaCheckResult, error) {
+func CheckUploadQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64) (*quotaCore.QuotaCheckResult, error) {
 	var result *quotaCore.QuotaCheckResult
 
-	err := WithQuotaService(ctx, func(qs quotaCore.QuotaService) error {
-		res, err := qs.CheckUploadQuota(userID, requestedBytes)
+	err := WithQuotaService(cctx, ctx, func(qs quotaCore.QuotaService, c context.Context) error {
+		res, err := qs.CheckUploadQuota(c, userID, requestedBytes)
 		if err != nil {
 			return err
 		}
@@ -31,11 +34,11 @@ func CheckUploadQuota(ctx core.Context, userID uint, requestedBytes uint64) (*qu
 }
 
 // CheckDownloadQuota checks download quota if service is available
-func CheckDownloadQuota(ctx core.Context, userID uint, requestedBytes uint64) (*quotaCore.QuotaCheckResult, error) {
+func CheckDownloadQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64) (*quotaCore.QuotaCheckResult, error) {
 	var result *quotaCore.QuotaCheckResult
 
-	err := WithQuotaService(ctx, func(qs quotaCore.QuotaService) error {
-		res, err := qs.CheckDownloadQuota(userID, requestedBytes)
+	err := WithQuotaService(cctx, ctx, func(qs quotaCore.QuotaService, c context.Context) error {
+		res, err := qs.CheckDownloadQuota(c, userID, requestedBytes)
 		if err != nil {
 			return err
 		}
@@ -47,11 +50,11 @@ func CheckDownloadQuota(ctx core.Context, userID uint, requestedBytes uint64) (*
 }
 
 // CheckStorageQuota checks storage quota if service is available
-func CheckStorageQuota(ctx core.Context, userID uint, requestedBytes uint64) (*quotaCore.QuotaCheckResult, error) {
+func CheckStorageQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64) (*quotaCore.QuotaCheckResult, error) {
 	var result *quotaCore.QuotaCheckResult
 
-	err := WithQuotaService(ctx, func(qs quotaCore.QuotaService) error {
-		res, err := qs.CheckStorageQuota(userID, requestedBytes)
+	err := WithQuotaService(cctx, ctx, func(qs quotaCore.QuotaService, c context.Context) error {
+		res, err := qs.CheckStorageQuota(c, userID, requestedBytes)
 		if err != nil {
 			return err
 		}
@@ -63,28 +66,28 @@ func CheckStorageQuota(ctx core.Context, userID uint, requestedBytes uint64) (*q
 }
 
 // EmitUploadCompleted emits an upload completed event for quota tracking
-func EmitUploadCompleted(ctx core.Context, userID *uint, uploadID uint, bytes uint64, ip string) {
-	ctx.FireAsync(event.EVENT_UPLOAD_COMPLETED, event.NewUploadCompletedEvent(uploadID, bytes, ip, userID))
+func EmitUploadCompleted(cctx context.Context, ctx core.Context, userID *uint, uploadID uint, bytes uint64, ip string) {
+	ctx.FireAsync(event.EVENT_UPLOAD_COMPLETED, event.NewUploadCompletedEvent(cctx, uploadID, bytes, ip, userID))
 }
 
 // EmitDownloadCompleted emits a download completed event for quota tracking
-func EmitDownloadCompleted(ctx core.Context, uploadID uint, bytes uint64, ip string, userID *uint) {
-	ctx.FireAsync(event.EVENT_DOWNLOAD_COMPLETED, event.NewDownloadCompletedEvent(uploadID, bytes, ip, userID))
+func EmitDownloadCompleted(cctx context.Context, ctx core.Context, uploadID uint, bytes uint64, ip string, userID *uint) {
+	ctx.FireAsync(event.EVENT_DOWNLOAD_COMPLETED, event.NewDownloadCompletedEvent(cctx, uploadID, bytes, ip, userID))
 }
 
 // EmitStorageObjectPinned emits a storage object pinned event for quota tracking
-func EmitStorageObjectPinned(ctx core.Context, pin *models.Pin, ip string) {
-	ctx.FireAsync(event.EVENT_STORAGE_OBJECT_PINNED, event.NewStorageObjectPinnedEvent(pin, ip))
+func EmitStorageObjectPinned(cctx context.Context, ctx core.Context, pin *models.Pin, ip string) {
+	ctx.FireAsync(event.EVENT_STORAGE_OBJECT_PINNED, event.NewStorageObjectPinnedEvent(cctx, pin, ip))
 }
 
 // EmitStorageObjectUnpinned emits a storage object unpinned event for quota tracking
-func EmitStorageObjectUnpinned(ctx core.Context, pin *models.Pin, ip string) {
-	ctx.FireAsync(event.EVENT_STORAGE_OBJECT_UNPINNED, event.NewStorageObjectUnpinnedEvent(pin, ip))
+func EmitStorageObjectUnpinned(cctx context.Context, ctx core.Context, pin *models.Pin, ip string) {
+	ctx.FireAsync(event.EVENT_STORAGE_OBJECT_UNPINNED, event.NewStorageObjectUnpinnedEvent(cctx, pin, ip))
 }
 
 // ValidateUploadQuota checks upload quota and returns an error if exceeded
-func ValidateUploadQuota(ctx core.Context, userID uint, requestedBytes uint64) error {
-	result, err := CheckUploadQuota(ctx, userID, requestedBytes)
+func ValidateUploadQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64) error {
+	result, err := CheckUploadQuota(cctx, ctx, userID, requestedBytes)
 	if err != nil {
 		return fmt.Errorf("quota check failed: %w", err)
 	}
@@ -95,8 +98,8 @@ func ValidateUploadQuota(ctx core.Context, userID uint, requestedBytes uint64) e
 }
 
 // ValidateDownloadQuota checks download quota and returns an error if exceeded
-func ValidateDownloadQuota(ctx core.Context, userID uint, requestedBytes uint64) error {
-	result, err := CheckDownloadQuota(ctx, userID, requestedBytes)
+func ValidateDownloadQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64) error {
+	result, err := CheckDownloadQuota(cctx, ctx, userID, requestedBytes)
 	if err != nil {
 		return fmt.Errorf("quota check failed: %w", err)
 	}
@@ -107,8 +110,8 @@ func ValidateDownloadQuota(ctx core.Context, userID uint, requestedBytes uint64)
 }
 
 // ValidateStorageQuota checks storage quota and returns an error if exceeded
-func ValidateStorageQuota(ctx core.Context, userID uint, requestedBytes uint64) error {
-	result, err := CheckStorageQuota(ctx, userID, requestedBytes)
+func ValidateStorageQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64) error {
+	result, err := CheckStorageQuota(cctx, ctx, userID, requestedBytes)
 	if err != nil {
 		return fmt.Errorf("quota check failed: %w", err)
 	}

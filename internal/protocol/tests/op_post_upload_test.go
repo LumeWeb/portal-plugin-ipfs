@@ -41,7 +41,6 @@ func TestPostUploadOperationHandler_Execute_Integration(t *testing.T) {
 			format:  upload.FormatTAR_BZ2,
 			creator: upload.CreateTARBZ2Archive,
 		},
-		
 	}
 
 	for _, af := range archiveFormats {
@@ -83,7 +82,6 @@ func TestPostUploadOperationHandler_Execute_Integration(t *testing.T) {
 		testArchiveUpload(t, upload.FormatRAR, upload.CreateRARArchive, upload.ArchivePreserve, testPostUploadWorkflow)
 	})
 
-	
 }
 
 // testPostUploadWorkflow is a helper function that runs the complete upload workflow test for POST uploads

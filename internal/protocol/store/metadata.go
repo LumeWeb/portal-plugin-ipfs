@@ -41,7 +41,10 @@ type ProtoNode interface {
 }
 
 // Pin adds a block to the store.
-func (s *MetadataStoreDefault) Pin(b pluginCore.PinnedBlock) error {
+func (s *MetadataStoreDefault) Pin(ctx context.Context, b pluginCore.PinnedBlock) error {
+	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.Pin")
+	defer span.End()
+
 	b.Cid = encoding.NormalizeCid(b.Cid)
 	s.logger.Debug("pinning block", zap.Stringer("cid", b.Cid))
 
@@ -278,10 +281,13 @@ func (s *MetadataStoreDefault) resolveNameFromParent(childCid cid.Cid, tx *gorm.
 	return s.resolveNameFromParentWithBlock(childCid, &childBlock, tx)
 }
 
-func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
+func (s *MetadataStoreDefault) Unpin(ctx context.Context, c cid.Cid) error {
+	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.Unpin")
+	defer span.End()
+
 	c = encoding.NormalizeCid(c)
 
-	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+	return db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		// Find the block to be unpinned
 		var block pluginDb.IPFSBlock
 		if err := tx.Where("cid = ?", c.Bytes()).First(&block).Error; err != nil {
@@ -316,7 +322,10 @@ func (s *MetadataStoreDefault) Unpin(c cid.Cid) error {
 	})
 }
 
-func (s *MetadataStoreDefault) BlockExists(c cid.Cid) error {
+func (s *MetadataStoreDefault) BlockExists(ctx context.Context, c cid.Cid) error {
+	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.BlockExists")
+	defer span.End()
+
 	var block pluginDb.IPFSBlock
 
 	c = encoding.NormalizeCid(c)
@@ -324,7 +333,7 @@ func (s *MetadataStoreDefault) BlockExists(c cid.Cid) error {
 	block.CID = c.Bytes()
 	block.Ready = true
 
-	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+	if err := db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		return tx.Where(&block).First(&block)
 	}); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -342,7 +351,10 @@ func (s *MetadataStoreDefault) BlockExists(c cid.Cid) error {
 
 	return nil
 }
-func (s *MetadataStoreDefault) BlockChildren(c cid.Cid, max *int) (children []cid.Cid, err error) {
+func (s *MetadataStoreDefault) BlockChildren(ctx context.Context, c cid.Cid, max *int) (children []cid.Cid, err error) {
+	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.BlockChildren")
+	defer core.EndSpanWithErr(span, err)
+
 	c = encoding.NormalizeCid(c)
 	query := `
         SELECT b.cid
@@ -361,7 +373,7 @@ func (s *MetadataStoreDefault) BlockChildren(c cid.Cid, max *int) (children []ci
 	}
 
 	var rows *sql.Rows
-	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+	if err = db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		ret := tx.Raw(query, args...)
 		if ret.Error == nil {
 			rows, err = ret.Rows()
@@ -393,7 +405,10 @@ func (s *MetadataStoreDefault) BlockChildren(c cid.Cid, max *int) (children []ci
 	return children, nil
 }
 
-func (s *MetadataStoreDefault) BlockSiblings(c cid.Cid, max int) (siblings []cid.Cid, err error) {
+func (s *MetadataStoreDefault) BlockSiblings(ctx context.Context, c cid.Cid, max int) (siblings []cid.Cid, err error) {
+	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.BlockSiblings")
+	defer core.EndSpanWithErr(span, err)
+
 	c = encoding.NormalizeCid(c)
 	const query = `
 WITH child_blocks AS (
@@ -417,7 +432,7 @@ WHERE b.ready = true
 `
 	var rows *sql.Rows
 
-	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+	if err = db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		ret := tx.Raw(query, c.Bytes(), max)
 		if ret.Error == nil {
 			rows, err = ret.Rows()
@@ -453,9 +468,12 @@ WHERE b.ready = true
 	return siblings, nil
 }
 
-func (s *MetadataStoreDefault) ProvideCIDs(limit int) (cids []pluginCore.PinnedCID, err error) {
+func (s *MetadataStoreDefault) ProvideCIDs(ctx context.Context, limit int) (cids []pluginCore.PinnedCID, err error) {
+	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.ProvideCIDs")
+	defer core.EndSpanWithErr(span, err)
+
 	var _blocks []pluginDb.IPFSBlock
-	if err = db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+	if err = db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		return tx.Where("ready = ?", true).Order("last_announcement ASC").Limit(limit).Find(&_blocks)
 	}); err != nil {
 		return nil, fmt.Errorf("failed to query: %w", err)
@@ -481,8 +499,11 @@ func (s *MetadataStoreDefault) ProvideCIDs(limit int) (cids []pluginCore.PinnedC
 	return cids, nil
 }
 
-func (s *MetadataStoreDefault) SetLastAnnouncement(cids []cid.Cid, t time.Time) error {
-	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+func (s *MetadataStoreDefault) SetLastAnnouncement(ctx context.Context, cids []cid.Cid, t time.Time) error {
+	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.SetLastAnnouncement")
+	defer span.End()
+
+	return db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		for _, c := range cids {
 
 			c = encoding.NormalizeCid(c)
@@ -517,10 +538,13 @@ func (s *MetadataStoreDefault) SetLastAnnouncement(cids []cid.Cid, t time.Time) 
 	})
 }
 
-func (s *MetadataStoreDefault) Pinned(offset, limit int) (roots []cid.Cid, err error) {
+func (s *MetadataStoreDefault) Pinned(ctx context.Context, offset, limit int) (roots []cid.Cid, err error) {
+	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.Pinned")
+	defer core.EndSpanWithErr(span, err)
+
 	var _blocks []pluginDb.IPFSBlock
 
-	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+	if err := db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		return tx.Model(&pluginDb.IPFSBlock{}).
 			Select("cid").
 			Where("ready = ?", true).
@@ -545,11 +569,14 @@ func (s *MetadataStoreDefault) Pinned(offset, limit int) (roots []cid.Cid, err e
 	return roots, err
 }
 
-func (s *MetadataStoreDefault) Size(c cid.Cid) (uint64, error) {
+func (s *MetadataStoreDefault) Size(ctx context.Context, c cid.Cid) (uint64, error) {
+	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.Size")
+	defer span.End()
+
 	c = encoding.NormalizeCid(c)
 
 	var size uint64
-	if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+	if err := db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		return tx.Model(&pluginDb.IPFSBlock{}).
 			Select("size").
 			Where("cid = ?", c.Bytes()).
@@ -726,13 +753,13 @@ func ExtractNodeMetadata(clogger *core.Logger, block pluginCore.PinnedBlock) (*p
 	}
 
 	logger.Debug("Processing child CIDs", zap.Stringer("cid", block.Cid), zap.Int("child_count", len(block.Links)))
-	
+
 	// Validate that all link arrays have the same length to prevent index out of bounds
 	if len(analyzedNode.LinkNames) != len(analyzedNode.LinkCIDs) || len(analyzedNode.LinkSizes) != len(analyzedNode.LinkCIDs) {
-		return nil, fmt.Errorf("inconsistent link array lengths: CIDs=%d, Names=%d, Sizes=%d", 
+		return nil, fmt.Errorf("inconsistent link array lengths: CIDs=%d, Names=%d, Sizes=%d",
 			len(analyzedNode.LinkCIDs), len(analyzedNode.LinkNames), len(analyzedNode.LinkSizes))
 	}
-	
+
 	// Convert separate arrays to format.Link structs for compatibility, filtering out invalid CIDs
 	var validLinks []*format.Link
 	for i, linkCIDBytes := range analyzedNode.LinkCIDs {

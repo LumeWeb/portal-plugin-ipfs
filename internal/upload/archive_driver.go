@@ -6,6 +6,7 @@ import (
 	"io/fs"
 
 	"github.com/mholt/archives"
+	core "go.lumeweb.com/portal/core"
 )
 
 // ArchivesDriver provides a unified interface using mholt/archives as the backend
@@ -58,6 +59,8 @@ func (d *ArchivesDriver) GetFormat() Format {
 
 // Filesystem returns a filesystem interface for the archive
 func (d *ArchivesDriver) Filesystem(ctx context.Context) (fs.FS, error) {
+	ctx, span := core.TraceMethod(ctx, "ArchivesDriver.Filesystem")
+	defer span.End()
 
 	switch d.format {
 	case FormatZIP, FormatTAR, FormatTAR_GZ, FormatTAR_BZ2, FormatRAR, Format7Z:

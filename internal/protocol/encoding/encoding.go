@@ -15,6 +15,7 @@ import (
 	_ "github.com/ipld/go-ipld-prime/codec/json"
 	_ "github.com/ipld/go-ipld-prime/codec/raw"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
+	"go.lumeweb.com/portal/core"
 )
 
 // encoderRegistry holds the global decoder registry for IPLD formats
@@ -35,6 +36,9 @@ func init() {
 
 // DecodeBlock decodes an IPFS block into an IPLD node using the registered codecs
 func DecodeBlock(ctx context.Context, block blocks.Block) (format.Node, error) {
+	ctx, span := core.TraceMethod(ctx, "DecodeBlock")
+	defer span.End()
+
 	return encoderRegistry.DecodeNode(ctx, block)
 }
 

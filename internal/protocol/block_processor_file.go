@@ -187,6 +187,9 @@ func (fp *FileBlockProcessor) startFileProcessing() {
 
 // processFile processes the file by passing it directly to the UnixFS node generator
 func (fp *FileBlockProcessor) processFile(ctx context.Context) error {
+	ctx, span := core.TraceMethod(ctx, "FileBlockProcessor.processFile")
+	defer span.End()
+
 	logger := fp.GetLogger()
 	logger.Debug("Processing file for IPFS storage",
 		zap.String("filePath", fp.filePath))

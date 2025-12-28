@@ -50,9 +50,7 @@ var _ core.APITusHandler = (*API)(nil)
 const TUS_HTTP_ROUTE = "/api/upload/tus"
 
 type API struct {
-	ctx                core.Context
-	config             config.Manager
-	logger             *core.Logger
+	*core.BaseComponent
 	coreUploadService  core.UploadService
 	uploadService      pluginCore.UploadService
 	pinService         pluginCore.IPFSPinService
@@ -68,9 +66,6 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 	return api, core.ContextOptions(
 
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
-			api.ctx = ctx
-			api.config = ctx.Config()
-			api.logger = ctx.APILogger(api)
 			api.pinService = core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)
 			api.blockService = core.GetService[pluginCore.BlockService](ctx, pluginCore.BLOCK_SERVICE)
 			api.coreUploadService = core.GetService[core.UploadService](ctx, core.UPLOAD_SERVICE)
@@ -78,7 +73,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 			api.workflowService = core.GetService[core.WorkflowService](ctx, core.WORKFLOW_SERVICE)
 			proto := core.GetProtocol(internal.ProtocolName)
 			sproto := proto.(core.StorageProtocol)
-			event.OnBootStartupFuncsCompleted(ctx, func(ctx core.Context) error {
+			event.OnBootStartupFuncsCompleted(ctx, func(ctx core.Context, eventCtx context.Context) error {
 				var _tus core.TusHandler
 				var err error
 				_tus, err = service.CreateTusHandler(ctx, core.TUSHandlerConfig{
@@ -89,12 +84,12 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 						// Defensive size validation to prevent negative/invalid values
 						size := hook.Upload.Size
 						if size < 0 {
-							api.logger.Warn("Unexpected negative upload size in TUS hook", zap.Int64("size", size))
+							api.Logger().Warn("Unexpected negative upload size in TUS hook", zap.Int64("size", size))
 							return nil, core.ErrUploadQuotaExceeded
 						}
 						requestedBytes := uint64(size)
-						if err := quota.ValidateUploadQuota(ctx, uploaderId, requestedBytes); err != nil {
-							api.logger.Error("Failed to check upload quota", zap.Error(err))
+						if err := quota.ValidateUploadQuota(eventCtx, ctx, uploaderId, requestedBytes); err != nil {
+							api.Logger().Error("Failed to check upload quota", zap.Error(err))
 							return nil, err
 						}
 						return nil, nil
@@ -104,12 +99,12 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 					CompletedUploadHandler: service.TUSDefaultUploadCompletedHandler(ctx, func(_ core.TusHandler, hook handler.HookEvent) {
 						upload, err := api.tus.UploadReader(ctx, hook.Upload.ID, sproto, 0)
 						if err != nil {
-							api.logger.Error("Failed to get request reader", zap.Error(err))
+							api.Logger().Error("Failed to get request reader", zap.Error(err))
 							return
 						}
-						defer closeUpload(upload, api.logger)
+						defer closeUpload(upload, api.Logger())
 
-						if !validateCARUpload(upload, api.tus, ctx, sproto, hook.Upload.ID, api.logger) {
+						if !validateCARUpload(upload, api.tus, ctx, sproto, hook.Upload.ID, api.Logger()) {
 							return
 						}
 
@@ -122,7 +117,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 									userIDVal := uint(uid)
 									userID = &userIDVal
 								} else {
-									api.logger.Warn("Failed to parse uploader_id from metadata", zap.String("uploader_id", uploaderID), zap.Error(err))
+									api.Logger().Warn("Failed to parse uploader_id from metadata", zap.String("uploader_id", uploaderID), zap.Error(err))
 									// Keep userID nil and continue; event will be emitted without user binding.
 								}
 							}
@@ -131,7 +126,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 						// Parse upload ID
 						uploadID, err := strconv.ParseUint(hook.Upload.ID, 10, 64)
 						if err != nil {
-							api.logger.Warn("Failed to parse upload ID", zap.String("upload_id", hook.Upload.ID), zap.Error(err))
+							api.Logger().Warn("Failed to parse upload ID", zap.String("upload_id", hook.Upload.ID), zap.Error(err))
 							return
 						}
 
@@ -147,19 +142,19 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 						// Use defensive size validation for event emission
 						size := hook.Upload.Size
 						if size < 0 {
-							api.logger.Warn("Unexpected negative upload size in TUS completed hook", zap.Int64("size", size))
+							api.Logger().Warn("Unexpected negative upload size in TUS completed hook", zap.Int64("size", size))
 							return
 						}
-						quota.EmitUploadCompleted(ctx, userID, uint(uploadID), uint64(size), ip)
+						quota.EmitUploadCompleted(eventCtx, ctx, userID, uint(uploadID), uint64(size), ip)
 					}, protocol.TUS_UPLOAD_WORKFLOW,
 						func(handlr core.TusHandler, hook handler.HookEvent) (core.StorageHash, error) {
 							upl, err := api.tus.UploadReader(ctx, hook.Upload.ID, sproto, 0)
 							if err != nil {
 								return nil, err
 							}
-							defer closeUpload(upl, api.logger)
+							defer closeUpload(upl, api.Logger())
 
-							return getCARUploadHash(upl, api.tus, ctx, sproto, hook.Upload.ID, api.logger)
+							return getCARUploadHash(upl, api.tus, ctx, sproto, hook.Upload.ID, api.Logger())
 						},
 					),
 					PreFinishResponse: service.TUSDefaultPreFinishResponse(func() core.TusHandler {
@@ -191,6 +186,10 @@ func (a *API) GetTusHandler() core.TusHandler {
 	return a.tus
 }
 
+func (a *API) ID() string {
+	return a.Name()
+}
+
 func (a *API) Name() string {
 	return internal.ProtocolName
 }
@@ -203,7 +202,7 @@ func (a *API) AuthTokenName() string {
 	return core.AUTH_TOKEN_NAME
 }
 
-func (a *API) Config() config.APIConfig {
+func (a *API) GetConfig() config.APIConfig {
 	return &pluginConfig.APIConfig{}
 }
 
@@ -243,7 +242,7 @@ The latest version of this spec and additional resources can be found at:
 
 func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 	// Middleware setup
-	authMw := middleware.AuthMiddleware(a.ctx, middleware.WithAuthErrorCallback(func(c echo.Context) (int, json.Marshaler) {
+	authMw := middleware.AuthMiddleware(a.Context(), middleware.WithAuthErrorCallback(func(c echo.Context) (int, json.Marshaler) {
 		err := NewError(ErrKeyUnauthorized, nil)
 		return err.HttpStatus(), err
 	}), middleware.WithAuthPurpose(jwt.PurposeLogin, jwt.PurposeAPI))
@@ -476,7 +475,7 @@ func (a *API) listPins(c echo.Context) error {
 	}
 	pins, total, err := a.pinService.ListPins(reqCtx, filters, sort, pagination)
 	if err != nil {
-		a.logger.Error("Failed to list pins", zap.Error(err))
+		a.Logger().Error("Failed to list pins", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
@@ -507,7 +506,7 @@ func (a *API) addPin(c echo.Context) error {
 
 	_pin, err := a.pinService.AddPin(reqCtx, model)
 	if err != nil {
-		a.logger.Error("Failed to add pin", zap.Error(err))
+		a.Logger().Error("Failed to add pin", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
@@ -545,7 +544,7 @@ func (a *API) getPin(c echo.Context) error {
 
 	_pin, err := a.pinService.GetPinByRequestID(reqCtx, requestID)
 	if err != nil {
-		a.logger.Error("Failed to get pin", zap.Error(err))
+		a.Logger().Error("Failed to get pin", zap.Error(err))
 		apiErr := NewError(ErrKeyPinFetchFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
@@ -584,7 +583,7 @@ func (a *API) replacePin(c echo.Context) error {
 
 	_pin, err := a.pinService.ReplacePin(reqCtx, 0, "", requestID, model)
 	if err != nil {
-		a.logger.Error("Failed to replace pin", zap.Error(err))
+		a.Logger().Error("Failed to replace pin", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
@@ -621,7 +620,7 @@ func (a *API) deletePin(c echo.Context) error {
 	requestID := types.FromUUID(_uuid)
 
 	if err := a.pinService.DeletePin(reqCtx, requestID); err != nil {
-		a.logger.Error("Failed to delete pin", zap.Error(err))
+		a.Logger().Error("Failed to delete pin", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
@@ -745,7 +744,7 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	// Check if the block exists before trying to fetch it
 	exists, err := a.ipfs.GetNode().HasBlock(reqCtx, _cid)
 	if err != nil {
-		a.logger.Error("Failed to check if block exists", zap.Error(err))
+		a.Logger().Error("Failed to check if block exists", zap.Error(err))
 		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
 		return apiErr
@@ -759,7 +758,7 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 
 	upload, err := a.coreUploadService.GetUpload(reqCtx, internal.NewIPFSHash(_cid))
 	if err != nil {
-		a.logger.Error("Failed to get upload", zap.Error(err))
+		a.Logger().Error("Failed to get upload", zap.Error(err))
 		apiErr := NewError(ErrKeyUploadNotFound, err)
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
 		return apiErr
@@ -774,8 +773,8 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	// Check download quota if quota service is available
 	userID := upload.UserID
 
-	if err := quota.ValidateDownloadQuota(a.ctx, userID, upload.Size); err != nil {
-		a.logger.Warn("Download quota validation failed", zap.Uint("user_id", userID), zap.Error(err))
+	if err := quota.ValidateDownloadQuota(reqCtx, a.Context(), userID, upload.Size); err != nil {
+		a.Logger().Warn("Download quota validation failed", zap.Uint("user_id", userID), zap.Error(err))
 		apiErr := NewError(ErrKeyDownloadQuotaExceeded, err)
 		_ = ctx.Error(apiErr, http.StatusTooManyRequests)
 		return apiErr
@@ -784,7 +783,7 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	// Only fetch block data after quota validation passes
 	block, err := a.ipfs.GetNode().GetBlock(reqCtx, _cid)
 	if err != nil {
-		a.logger.Error("Failed to get block", zap.Error(err))
+		a.Logger().Error("Failed to get block", zap.Error(err))
 		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
 		return apiErr
@@ -801,7 +800,7 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	}
 
 	// Emit download completion event only after successful write
-	quota.EmitDownloadCompleted(a.ctx, upload.ID, uint64(n), ip, &userID)
+	quota.EmitDownloadCompleted(reqCtx, a.Context(), upload.ID, uint64(n), ip, &userID)
 	return nil
 }
 
@@ -836,7 +835,7 @@ func (a *API) handleUpload(c echo.Context) error {
 		return nil
 	}
 
-	upl, err := ctx.PrepareFileUpload(int64(a.config.Config().Core.PostUploadLimit))
+	upl, err := ctx.PrepareFileUpload(int64(a.Config().Config().Core.PostUploadLimit))
 	if err != nil {
 		_ = ctx.Error(err, http.StatusBadRequest)
 		return nil
@@ -901,7 +900,7 @@ func (a *API) handleGetBlockMeta(c echo.Context) error {
 			return ctx.Error(apiErr, http.StatusNotFound)
 		}
 
-		a.logger.Error("Failed to get block meta", zap.Error(err))
+		a.Logger().Error("Failed to get block meta", zap.Error(err))
 		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
@@ -922,7 +921,7 @@ func (a *API) handleGetBlockMetaBatch(c echo.Context) error {
 	meta, err := a.blockService.GetBlockMetaBatch(ctx.Request().Context(), model.CID)
 
 	if err != nil {
-		a.logger.Error("Failed to get block meta", zap.Error(err))
+		a.Logger().Error("Failed to get block meta", zap.Error(err))
 		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
@@ -935,14 +934,14 @@ func (a *API) handleGetInfo(c echo.Context) error {
 
 	addrs, err := ipfs.AnnouncementAddresses()
 	if err != nil {
-		a.logger.Error("Failed to get announcement addresses", zap.Error(err))
+		a.Logger().Error("Failed to get announcement addresses", zap.Error(err))
 		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	connAddrs, err := a.ipfs.GetNode().ConnectionAddresses()
 	if err != nil {
-		a.logger.Error("Failed to get connection addresses", zap.Error(err))
+		a.Logger().Error("Failed to get connection addresses", zap.Error(err))
 		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
@@ -1041,7 +1040,7 @@ func getCARUploadHash(upload io.ReadCloser, tus core.TusHandler, ctx core.Contex
 func (a *API) convertFilePathToManagerItem(path *pluginDb.FilePath, userID uint) dto.FileManagerItem {
 	c, err := cid.Cast(path.CID)
 	if err != nil {
-		a.logger.Error("Failed to cast CID for file path", zap.Error(err), zap.String("path", path.Path))
+		a.Logger().Error("Failed to cast CID for file path", zap.Error(err), zap.String("path", path.Path))
 		return dto.FileManagerItem{
 			Path:        path.Path,
 			Name:        path.Name,
@@ -1062,7 +1061,7 @@ func (a *API) convertFilePathToManagerItem(path *pluginDb.FilePath, userID uint)
 	unpinnable := true // Default to unpinnable (safer)
 	pin, err := a.pinService.GetPinByCIDAndUser(context.Background(), c, userID)
 	if err != nil && err != gorm.ErrRecordNotFound {
-		a.logger.Error("Failed to check IPFS pin status", zap.Error(err), zap.Stringer("cid", c), zap.Uint("user_id", userID))
+		a.Logger().Error("Failed to check IPFS pin status", zap.Error(err), zap.Stringer("cid", c), zap.Uint("user_id", userID))
 	} else if pin != nil {
 		// There's an IPFS pin, so it can be unpinned via pinner API
 		unpinnable = false
@@ -1102,7 +1101,7 @@ func (a *API) handleFileManagerRequest(
 		if errors.Is(err, context.Canceled) {
 			return nil
 		}
-		a.logger.Error(fmt.Sprintf("Failed to prepare %s request", action), zap.Error(err))
+		a.Logger().Error(fmt.Sprintf("Failed to prepare %s request", action), zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}

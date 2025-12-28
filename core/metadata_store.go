@@ -1,6 +1,8 @@
 package core
 
 import (
+	"context"
+
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
 )
@@ -8,14 +10,14 @@ import (
 // A MetadataStore is a store for IPFS block metadata. It is used to
 // optimize block downloads by prefetching linked blocks.
 type MetadataStore interface {
-	BlockExists(c cid.Cid) (err error)
-	BlockSiblings(c cid.Cid, max int) (siblings []cid.Cid, err error)
-	BlockChildren(c cid.Cid, max *int) (siblings []cid.Cid, err error)
+	BlockExists(ctx context.Context, c cid.Cid) (err error)
+	BlockSiblings(ctx context.Context, c cid.Cid, max int) (siblings []cid.Cid, err error)
+	BlockChildren(ctx context.Context, c cid.Cid, max *int) (siblings []cid.Cid, err error)
 
-	Pin(PinnedBlock) error
-	Unpin(c cid.Cid) error
-	Pinned(offset, limit int) (roots []cid.Cid, err error)
-	Size(c cid.Cid) (uint64, error)
+	Pin(ctx context.Context, pinnedBlock PinnedBlock) error
+	Unpin(ctx context.Context, c cid.Cid) error
+	Pinned(ctx context.Context, offset, limit int) (roots []cid.Cid, err error)
+	Size(ctx context.Context, c cid.Cid) (uint64, error)
 }
 
 type PinnedBlock struct {

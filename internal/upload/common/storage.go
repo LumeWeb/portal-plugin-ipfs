@@ -25,6 +25,9 @@ func NewStorageHelper(storage core.StorageService, ipfs core.Protocol) *StorageH
 // StoreFile stores a file using the storage service and returns the upload ID
 // This method consolidates the identical storeFile logic from FileProcessor, CARProcessor, and ArchiveProcessor
 func (sh *StorageHelper) StoreFile(ctx context.Context, reader io.ReadSeekCloser, size int64) (string, error) {
+	ctx, span := core.TraceMethod(ctx, "StorageHelper.StoreFile")
+	defer span.End()
+
 	// Reset the reader for storage (needed for some processors)
 	_, err := reader.Seek(0, io.SeekStart)
 	if err != nil {

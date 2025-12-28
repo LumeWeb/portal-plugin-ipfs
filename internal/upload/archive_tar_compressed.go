@@ -7,6 +7,7 @@ import (
 	"io/fs"
 
 	"github.com/mholt/archives"
+	core "go.lumeweb.com/portal/core"
 )
 
 // TarGzArchiveExtractor implements ArchiveExtractor for TAR.GZ files using the unified driver
@@ -34,6 +35,9 @@ func (tgz *TarGzArchiveExtractor) Format() Format {
 
 // Filesystem returns a filesystem interface for the archive
 func (tgz *TarGzArchiveExtractor) Filesystem(ctx context.Context) (fs.FS, error) {
+	ctx, span := core.TraceMethod(ctx, "TarGzArchiveExtractor.Filesystem")
+	defer span.End()
+
 	return tgz.driver.Filesystem(ctx)
 }
 
@@ -69,6 +73,9 @@ func (tbz2 *TarBz2ArchiveExtractor) Format() Format {
 
 // Filesystem returns a filesystem interface for the archive
 func (tbz2 *TarBz2ArchiveExtractor) Filesystem(ctx context.Context) (fs.FS, error) {
+	ctx, span := core.TraceMethod(ctx, "TarBz2ArchiveExtractor.Filesystem")
+	defer span.End()
+
 	return tbz2.driver.Filesystem(ctx)
 }
 

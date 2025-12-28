@@ -14,6 +14,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
@@ -69,6 +70,9 @@ type NopExchange struct {
 }
 
 func (n *NopExchange) NotifyNewBlocks(ctx context.Context, blocks ...blocks.Block) error {
+	ctx, span := core.TraceMethod(ctx, "NopExchange.NotifyNewBlocks")
+	defer span.End()
+
 	return nil
 }
 
@@ -110,16 +114,25 @@ func (n *Node) Close() error {
 
 // GetBlock fetches a block from the IPFS network
 func (n *Node) GetBlock(ctx context.Context, c cid.Cid) (format.Node, error) {
+	ctx, span := core.TraceMethod(ctx, "Node.GetBlock")
+	defer span.End()
+
 	return n.dagService.Get(ctx, c)
 }
 
 // HasBlock checks if a block is locally pinned
 func (n *Node) HasBlock(ctx context.Context, c cid.Cid) (bool, error) {
+	ctx, span := core.TraceMethod(ctx, "Node.HasBlock")
+	defer span.End()
+
 	return n.blockService.Blockstore().Has(ctx, c)
 }
 
 // AddBlock adds a generic block to the IPFS node
 func (n *Node) AddBlock(ctx context.Context, block blocks.Block) error {
+	ctx, span := core.TraceMethod(ctx, "Node.AddBlock")
+	defer span.End()
+
 	if err := n.blockService.AddBlock(ctx, block); err != nil {
 		return fmt.Errorf("failed to add block: %w", err)
 	}
@@ -160,6 +173,9 @@ func (n *Node) AddPeer(addr peer.AddrInfo) {
 
 // Pin pins a CID
 func (n *Node) Pin(ctx context.Context, root cid.Cid, recursive bool) error {
+	ctx, span := core.TraceMethod(ctx, "Node.Pin")
+	defer span.End()
+
 	log := n.log.Named("Pin").With(zap.Stringer("rootCID", root), zap.Bool("recursive", recursive))
 	if !recursive {
 		block, err := n.dagService.Get(ctx, root)
@@ -253,6 +269,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		libp2p.ResourceManager(rm),
 		libp2p.DefaultPeerstore,
 		libp2p.DefaultTransports,
+		libp2p.PrometheusRegisterer(prometheus.WrapRegistererWithPrefix("libp2p_", core.PluginMetricsRegistry(internal.ProtocolName))),
 		libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 			announceAddresses, err := AnnouncementAddresses()
 			if err != nil {

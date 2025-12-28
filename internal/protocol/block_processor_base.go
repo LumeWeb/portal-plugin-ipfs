@@ -25,12 +25,12 @@ type BaseBlockProcessor struct {
 	mu sync.RWMutex
 
 	// State tracking
-	started   bool
-	completed bool
-	rootCIDs  []cid.Cid
-	errorChan chan error
-	closed    bool
-	closeOnce sync.Once
+	started        bool
+	completed      bool
+	rootCIDs       []cid.Cid
+	errorChan      chan error
+	closed         bool
+	closeOnce      sync.Once
 	errorCloseOnce sync.Once
 
 	// Done tracking

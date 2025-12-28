@@ -100,6 +100,9 @@ func RestoreReaderPos(seeker io.Seeker, pos int64) error {
 
 // CheckContext checks for context cancellation
 func CheckContext(ctx context.Context) error {
+	ctx, span := core.TraceMethod(ctx, "CheckContext")
+	defer span.End()
+
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

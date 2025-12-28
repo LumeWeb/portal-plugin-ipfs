@@ -10,10 +10,13 @@ import (
 	"github.com/ipfs/go-cid"
 	mock "github.com/stretchr/testify/mock"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal/config"
+	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/types"
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
 	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
 
 // NewMockIPFSPinService creates a new instance of MockIPFSPinService. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -107,6 +110,144 @@ func (_c *MockIPFSPinService_AddPin_Call) Return(iPFSPin *db.IPFSPin, err error)
 }
 
 func (_c *MockIPFSPinService_AddPin_Call) RunAndReturn(run func(ctx context.Context, pin *db.IPFSPin) (*db.IPFSPin, error)) *MockIPFSPinService_AddPin_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Config provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) Config() config.Manager {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Config")
+	}
+
+	var r0 config.Manager
+	if returnFunc, ok := ret.Get(0).(func() config.Manager); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(config.Manager)
+		}
+	}
+	return r0
+}
+
+// MockIPFSPinService_Config_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Config'
+type MockIPFSPinService_Config_Call struct {
+	*mock.Call
+}
+
+// Config is a helper method to define mock.On call
+func (_e *MockIPFSPinService_Expecter) Config() *MockIPFSPinService_Config_Call {
+	return &MockIPFSPinService_Config_Call{Call: _e.mock.On("Config")}
+}
+
+func (_c *MockIPFSPinService_Config_Call) Run(run func()) *MockIPFSPinService_Config_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_Config_Call) Return(manager config.Manager) *MockIPFSPinService_Config_Call {
+	_c.Call.Return(manager)
+	return _c
+}
+
+func (_c *MockIPFSPinService_Config_Call) RunAndReturn(run func() config.Manager) *MockIPFSPinService_Config_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Context provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) Context() core.Context {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Context")
+	}
+
+	var r0 core.Context
+	if returnFunc, ok := ret.Get(0).(func() core.Context); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(core.Context)
+		}
+	}
+	return r0
+}
+
+// MockIPFSPinService_Context_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Context'
+type MockIPFSPinService_Context_Call struct {
+	*mock.Call
+}
+
+// Context is a helper method to define mock.On call
+func (_e *MockIPFSPinService_Expecter) Context() *MockIPFSPinService_Context_Call {
+	return &MockIPFSPinService_Context_Call{Call: _e.mock.On("Context")}
+}
+
+func (_c *MockIPFSPinService_Context_Call) Run(run func()) *MockIPFSPinService_Context_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_Context_Call) Return(context1 core.Context) *MockIPFSPinService_Context_Call {
+	_c.Call.Return(context1)
+	return _c
+}
+
+func (_c *MockIPFSPinService_Context_Call) RunAndReturn(run func() core.Context) *MockIPFSPinService_Context_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// DB provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) DB() *gorm.DB {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for DB")
+	}
+
+	var r0 *gorm.DB
+	if returnFunc, ok := ret.Get(0).(func() *gorm.DB); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*gorm.DB)
+		}
+	}
+	return r0
+}
+
+// MockIPFSPinService_DB_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DB'
+type MockIPFSPinService_DB_Call struct {
+	*mock.Call
+}
+
+// DB is a helper method to define mock.On call
+func (_e *MockIPFSPinService_Expecter) DB() *MockIPFSPinService_DB_Call {
+	return &MockIPFSPinService_DB_Call{Call: _e.mock.On("DB")}
+}
+
+func (_c *MockIPFSPinService_DB_Call) Run(run func()) *MockIPFSPinService_DB_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_DB_Call) Return(dB *gorm.DB) *MockIPFSPinService_DB_Call {
+	_c.Call.Return(dB)
+	return _c
+}
+
+func (_c *MockIPFSPinService_DB_Call) RunAndReturn(run func() *gorm.DB) *MockIPFSPinService_DB_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -440,6 +581,52 @@ func (_c *MockIPFSPinService_ListPins_Call) RunAndReturn(run func(ctx context.Co
 	return _c
 }
 
+// Logger provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) Logger() *core.Logger {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Logger")
+	}
+
+	var r0 *core.Logger
+	if returnFunc, ok := ret.Get(0).(func() *core.Logger); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*core.Logger)
+		}
+	}
+	return r0
+}
+
+// MockIPFSPinService_Logger_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Logger'
+type MockIPFSPinService_Logger_Call struct {
+	*mock.Call
+}
+
+// Logger is a helper method to define mock.On call
+func (_e *MockIPFSPinService_Expecter) Logger() *MockIPFSPinService_Logger_Call {
+	return &MockIPFSPinService_Logger_Call{Call: _e.mock.On("Logger")}
+}
+
+func (_c *MockIPFSPinService_Logger_Call) Run(run func()) *MockIPFSPinService_Logger_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_Logger_Call) Return(logger *core.Logger) *MockIPFSPinService_Logger_Call {
+	_c.Call.Return(logger)
+	return _c
+}
+
+func (_c *MockIPFSPinService_Logger_Call) RunAndReturn(run func() *core.Logger) *MockIPFSPinService_Logger_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ReplacePin provides a mock function for the type MockIPFSPinService
 func (_mock *MockIPFSPinService) ReplacePin(ctx context.Context, userId uint, userIp string, oldRequestID types.BinaryUUID, newPin *db.IPFSPin) (*db.IPFSPin, error) {
 	ret := _mock.Called(ctx, userId, userIp, oldRequestID, newPin)
@@ -523,6 +710,166 @@ func (_c *MockIPFSPinService_ReplacePin_Call) Return(iPFSPin *db.IPFSPin, err er
 
 func (_c *MockIPFSPinService_ReplacePin_Call) RunAndReturn(run func(ctx context.Context, userId uint, userIp string, oldRequestID types.BinaryUUID, newPin *db.IPFSPin) (*db.IPFSPin, error)) *MockIPFSPinService_ReplacePin_Call {
 	_c.Call.Return(run)
+	return _c
+}
+
+// SetConfig provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) SetConfig(cfg config.Manager) {
+	_mock.Called(cfg)
+	return
+}
+
+// MockIPFSPinService_SetConfig_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetConfig'
+type MockIPFSPinService_SetConfig_Call struct {
+	*mock.Call
+}
+
+// SetConfig is a helper method to define mock.On call
+//   - cfg config.Manager
+func (_e *MockIPFSPinService_Expecter) SetConfig(cfg interface{}) *MockIPFSPinService_SetConfig_Call {
+	return &MockIPFSPinService_SetConfig_Call{Call: _e.mock.On("SetConfig", cfg)}
+}
+
+func (_c *MockIPFSPinService_SetConfig_Call) Run(run func(cfg config.Manager)) *MockIPFSPinService_SetConfig_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 config.Manager
+		if args[0] != nil {
+			arg0 = args[0].(config.Manager)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_SetConfig_Call) Return() *MockIPFSPinService_SetConfig_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockIPFSPinService_SetConfig_Call) RunAndReturn(run func(cfg config.Manager)) *MockIPFSPinService_SetConfig_Call {
+	_c.Run(run)
+	return _c
+}
+
+// SetContext provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) SetContext(ctx core.Context) {
+	_mock.Called(ctx)
+	return
+}
+
+// MockIPFSPinService_SetContext_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetContext'
+type MockIPFSPinService_SetContext_Call struct {
+	*mock.Call
+}
+
+// SetContext is a helper method to define mock.On call
+//   - ctx core.Context
+func (_e *MockIPFSPinService_Expecter) SetContext(ctx interface{}) *MockIPFSPinService_SetContext_Call {
+	return &MockIPFSPinService_SetContext_Call{Call: _e.mock.On("SetContext", ctx)}
+}
+
+func (_c *MockIPFSPinService_SetContext_Call) Run(run func(ctx core.Context)) *MockIPFSPinService_SetContext_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 core.Context
+		if args[0] != nil {
+			arg0 = args[0].(core.Context)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_SetContext_Call) Return() *MockIPFSPinService_SetContext_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockIPFSPinService_SetContext_Call) RunAndReturn(run func(ctx core.Context)) *MockIPFSPinService_SetContext_Call {
+	_c.Run(run)
+	return _c
+}
+
+// SetDB provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) SetDB(db1 *gorm.DB) {
+	_mock.Called(db1)
+	return
+}
+
+// MockIPFSPinService_SetDB_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetDB'
+type MockIPFSPinService_SetDB_Call struct {
+	*mock.Call
+}
+
+// SetDB is a helper method to define mock.On call
+//   - db1 *gorm.DB
+func (_e *MockIPFSPinService_Expecter) SetDB(db1 interface{}) *MockIPFSPinService_SetDB_Call {
+	return &MockIPFSPinService_SetDB_Call{Call: _e.mock.On("SetDB", db1)}
+}
+
+func (_c *MockIPFSPinService_SetDB_Call) Run(run func(db1 *gorm.DB)) *MockIPFSPinService_SetDB_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 *gorm.DB
+		if args[0] != nil {
+			arg0 = args[0].(*gorm.DB)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_SetDB_Call) Return() *MockIPFSPinService_SetDB_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockIPFSPinService_SetDB_Call) RunAndReturn(run func(db1 *gorm.DB)) *MockIPFSPinService_SetDB_Call {
+	_c.Run(run)
+	return _c
+}
+
+// SetLogger provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) SetLogger(logger *core.Logger) {
+	_mock.Called(logger)
+	return
+}
+
+// MockIPFSPinService_SetLogger_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetLogger'
+type MockIPFSPinService_SetLogger_Call struct {
+	*mock.Call
+}
+
+// SetLogger is a helper method to define mock.On call
+//   - logger *core.Logger
+func (_e *MockIPFSPinService_Expecter) SetLogger(logger interface{}) *MockIPFSPinService_SetLogger_Call {
+	return &MockIPFSPinService_SetLogger_Call{Call: _e.mock.On("SetLogger", logger)}
+}
+
+func (_c *MockIPFSPinService_SetLogger_Call) Run(run func(logger *core.Logger)) *MockIPFSPinService_SetLogger_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 *core.Logger
+		if args[0] != nil {
+			arg0 = args[0].(*core.Logger)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_SetLogger_Call) Return() *MockIPFSPinService_SetLogger_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockIPFSPinService_SetLogger_Call) RunAndReturn(run func(logger *core.Logger)) *MockIPFSPinService_SetLogger_Call {
+	_c.Run(run)
 	return _c
 }
 
