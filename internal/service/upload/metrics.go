@@ -10,7 +10,10 @@ const (
 	MetricHandleUploadWithMode = "handle_upload_with_mode_total"
 	MetricProcessUpload        = "process_upload_total"
 	MetricCreateRootPin        = "create_root_pin_total"
-	MetricDuration             = "duration_seconds"
+	MetricHandleUploadDuration         = "handle_upload_duration_seconds"
+	MetricHandleUploadWithModeDuration = "handle_upload_with_mode_duration_seconds"
+	MetricProcessUploadDuration        = "process_upload_duration_seconds"
+	MetricCreateRootPinDuration        = "create_root_pin_duration_seconds"
 )
 
 const (
@@ -21,20 +24,20 @@ const (
 )
 
 var (
-	HandleUploadTotal         prometheus.CounterVec
-	HandleUploadWithModeTotal prometheus.CounterVec
-	ProcessUploadTotal        prometheus.CounterVec
-	CreateRootPinTotal        prometheus.CounterVec
+	HandleUploadTotal         *prometheus.CounterVec
+	HandleUploadWithModeTotal *prometheus.CounterVec
+	ProcessUploadTotal        *prometheus.CounterVec
+	CreateRootPinTotal        *prometheus.CounterVec
 
-	HandleUploadDuration         prometheus.HistogramVec
-	HandleUploadWithModeDuration prometheus.HistogramVec
-	ProcessUploadDuration        prometheus.HistogramVec
-	CreateRootPinDuration        prometheus.HistogramVec
+	HandleUploadDuration         *prometheus.HistogramVec
+	HandleUploadWithModeDuration *prometheus.HistogramVec
+	ProcessUploadDuration        *prometheus.HistogramVec
+	CreateRootPinDuration        *prometheus.HistogramVec
 )
 
 func init() {
 	// Counters
-	HandleUploadTotal = *prometheus.NewCounterVec(
+	HandleUploadTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricHandleUpload,
 			Subsystem: pluginCore.UPLOAD_SERVICE,
@@ -43,7 +46,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	HandleUploadWithModeTotal = *prometheus.NewCounterVec(
+	HandleUploadWithModeTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricHandleUploadWithMode,
 			Subsystem: pluginCore.UPLOAD_SERVICE,
@@ -52,7 +55,7 @@ func init() {
 		[]string{"status", "mode"},
 	)
 
-	ProcessUploadTotal = *prometheus.NewCounterVec(
+	ProcessUploadTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricProcessUpload,
 			Subsystem: pluginCore.UPLOAD_SERVICE,
@@ -61,7 +64,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	CreateRootPinTotal = *prometheus.NewCounterVec(
+	CreateRootPinTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricCreateRootPin,
 			Subsystem: pluginCore.UPLOAD_SERVICE,
@@ -71,9 +74,9 @@ func init() {
 	)
 
 	// Histograms
-	HandleUploadDuration = *prometheus.NewHistogramVec(
+	HandleUploadDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricHandleUploadDuration,
 			Subsystem: pluginCore.UPLOAD_SERVICE,
 			Help:      "Duration of HandleUpload operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -81,9 +84,9 @@ func init() {
 		[]string{},
 	)
 
-	HandleUploadWithModeDuration = *prometheus.NewHistogramVec(
+	HandleUploadWithModeDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricHandleUploadWithModeDuration,
 			Subsystem: pluginCore.UPLOAD_SERVICE,
 			Help:      "Duration of HandleUploadWithMode operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -91,9 +94,9 @@ func init() {
 		[]string{},
 	)
 
-	ProcessUploadDuration = *prometheus.NewHistogramVec(
+	ProcessUploadDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricProcessUploadDuration,
 			Subsystem: pluginCore.UPLOAD_SERVICE,
 			Help:      "Duration of ProcessUpload operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -101,9 +104,9 @@ func init() {
 		[]string{},
 	)
 
-	CreateRootPinDuration = *prometheus.NewHistogramVec(
+	CreateRootPinDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricCreateRootPinDuration,
 			Subsystem: pluginCore.UPLOAD_SERVICE,
 			Help:      "Duration of CreateRootPin operations in seconds",
 			Buckets:   prometheus.DefBuckets,

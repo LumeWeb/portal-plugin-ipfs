@@ -83,7 +83,7 @@ func (s *PinServiceDefault) AddPin(ctx context.Context, pin *pluginDb.IPFSPin) (
 			}
 
 			err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				return g.Create(pin)
+				return tx.Create(pin)
 			})
 			if err != nil {
 				s.Logger().Error("Failed to add pin", zap.Error(err), zap.Any("pin", pin))
@@ -108,7 +108,7 @@ func (s *PinServiceDefault) GetPinByRequestID(ctx context.Context, requestID typ
 			var pin pluginDb.IPFSPin
 
 			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				return g.Where("request_id = ?", requestID).First(&pin)
+				return tx.Where("request_id = ?", requestID).First(&pin)
 			})
 
 			if err != nil {
@@ -149,29 +149,29 @@ func (s *PinServiceDefault) ListPins(ctx context.Context, filter []queryutil.Cru
 
 			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 				// Construct the query
-				query := g.Model(&pluginDb.IPFSPin{})
+				query := tx.Model(&pluginDb.IPFSPin{})
 				query = queryutil.ApplyFilters(query, filter, nil)
 				query = queryutil.ApplySort(query, sort)
 				query = queryutil.ApplyPagination(query, pagination)
 
 				// Get total count
 				if err := query.Count(&total).Error; err != nil {
-					_ = g.AddError(fmt.Errorf("failed to count pins: %w", err))
-					return g
+					_ = tx.AddError(fmt.Errorf("failed to count pins: %w", err))
+					return tx
 				}
 
 				// Get the records
 				if err := query.Find(&pins).Error; err != nil {
-					_ = g.AddError(fmt.Errorf("failed to list pins: %w", err))
-					return g
+					_ = tx.AddError(fmt.Errorf("failed to list pins: %w", err))
+					return tx
 				}
 
 				// Get delegate addresses once and reuse for all pins
 				delegatesJSON, err := s.getDelegatesJSON()
 				if err != nil {
 					s.Logger().Error("Failed to get delegate addresses", zap.Error(err))
-					_ = g.AddError(fmt.Errorf("failed to get delegate addresses: %w", err))
-					return g
+					_ = tx.AddError(fmt.Errorf("failed to get delegate addresses: %w", err))
+					return tx
 				}
 
 				// Set the pre-marshalled delegates JSON onto each pin
@@ -179,7 +179,7 @@ func (s *PinServiceDefault) ListPins(ctx context.Context, filter []queryutil.Cru
 					pin.Delegates = delegatesJSON
 				}
 
-				return g
+				return tx
 			})
 
 			if err != nil {
@@ -215,27 +215,27 @@ func (s *PinServiceDefault) ReplacePin(ctx context.Context, _ uint, _ string, ol
 
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		// Delete the old pin
-		if err := g.Where("request_id = ?", oldRequestID).
+		if err := tx.Where("request_id = ?", oldRequestID).
 			Delete(&pluginDb.IPFSPin{}).
 			Error; err != nil {
 			s.Logger().Error("Failed to delete old pin",
 				zap.Error(err),
 				zap.String("old_request_id", oldRequestID.String()))
-			_ = g.AddError(fmt.Errorf("failed to delete old pin: %w", err))
-			return g
+			_ = tx.AddError(fmt.Errorf("failed to delete old pin: %w", err))
+			return tx
 		}
 
 		// Add the new pin
-		if err := g.Create(newPin).Error; err != nil {
+		if err := tx.Create(newPin).Error; err != nil {
 			s.Logger().Error("Failed to add new pin",
 				zap.Error(err),
 				zap.Any("new_pin", newPin))
-			_ = g.AddError(fmt.Errorf("failed to add new pin: %w", err))
-			return g
+			_ = tx.AddError(fmt.Errorf("failed to add new pin: %w", err))
+			return tx
 		}
 
 		replacedPin = newPin
-		return g
+		return tx
 	})
 
 	if err != nil {
@@ -266,31 +266,31 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 			)
 			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 				// Lock the target row to serialize concurrent deletes on same request
-				if err := g.Clauses(clause.Locking{Strength: "UPDATE"}).
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 					Where("request_id = ?", requestID).
 					First(&pin).Error; err != nil {
 					if err == gorm.ErrRecordNotFound {
 						// If pin doesn't exist, nothing to do
-						return g
+						return tx
 					}
-					_ = g.AddError(err)
-					return g
+					_ = tx.AddError(err)
+					return tx
 				}
 				loaded = true
 				// Soft-delete the target
-				if err := g.Where("request_id = ?", requestID).
+				if err := tx.Where("request_id = ?", requestID).
 					Delete(&pluginDb.IPFSPin{}).Error; err != nil {
-					_ = g.AddError(err)
-					return g
+					_ = tx.AddError(err)
+					return tx
 				}
 				// Check if any other active pins remain for (user_id, cid)
 				cnt, err := s.countUserPinsByCID(ctx, pin.UserID, pin.CID, requestID)
 				if err != nil {
-					_ = g.AddError(err)
-					return g
+					_ = tx.AddError(err)
+					return tx
 				}
 				shouldUnpin = (cnt == 0)
-				return g
+				return tx
 			})
 			if err != nil {
 				s.Logger().Error("Failed to delete pin",
@@ -394,7 +394,7 @@ func (s *PinServiceDefault) GetPinByCIDAndUser(ctx context.Context, c cid.Cid, u
 			var pin pluginDb.IPFSPin
 
 			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				return g.Where("user_id = ? AND cid = ?", userID, c.Bytes()).First(&pin)
+				return tx.Where("user_id = ? AND cid = ?", userID, c.Bytes()).First(&pin)
 			})
 
 			if err != nil {
@@ -450,10 +450,10 @@ func (s *PinServiceDefault) getRelatedCIDs(ctx context.Context, userID uint, cid
 		`
 
 		var blocks []pluginDb.IPFSBlock
-		err := g.Raw(query, cidBytes, cidBytes).Scan(&blocks).Error
+		err := tx.Raw(query, cidBytes, cidBytes).Scan(&blocks).Error
 		if err != nil && err != gorm.ErrRecordNotFound {
-			_ = g.AddError(fmt.Errorf("failed to find related blocks: %w", err))
-			return g
+			_ = tx.AddError(fmt.Errorf("failed to find related blocks: %w", err))
+			return tx
 		}
 
 		// Extract CIDs from the blocks
@@ -465,19 +465,19 @@ func (s *PinServiceDefault) getRelatedCIDs(ctx context.Context, userID uint, cid
 		if len(relatedCIDs) > 0 {
 			var pinnedCIDs [][]byte
 
-			err = g.Model(&pluginDb.IPFSPin{}).
+			err = tx.Model(&pluginDb.IPFSPin{}).
 				Where("user_id = ? AND cid IN ?", userID, relatedCIDs).
 				Pluck("cid", &pinnedCIDs).Error
 
 			if err != nil && err != gorm.ErrRecordNotFound {
-				_ = g.AddError(fmt.Errorf("failed to filter pinned CIDs: %w", err))
-				return g
+				_ = tx.AddError(fmt.Errorf("failed to filter pinned CIDs: %w", err))
+				return tx
 			}
 
 			relatedCIDs = pinnedCIDs
 		}
 
-		return g
+		return tx
 	})
 
 	if err != nil {
@@ -499,7 +499,7 @@ func (s *PinServiceDefault) UpdatePinStatus(ctx context.Context, requestID types
 		UpdatePinStatusTotal.WithLabelValues(LabelStatusError),
 		func() error {
 			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				result := g.Model(&pluginDb.IPFSPin{}).
+				result := tx.Model(&pluginDb.IPFSPin{}).
 					Where("request_id = ?", requestID).
 					Updates(map[string]interface{}{
 						"status": status,
@@ -507,12 +507,12 @@ func (s *PinServiceDefault) UpdatePinStatus(ctx context.Context, requestID types
 					})
 
 				if result.Error != nil {
-					_ = g.AddError(fmt.Errorf("failed to update pin status: %w", result.Error))
-					return g
+					_ = tx.AddError(fmt.Errorf("failed to update pin status: %w", result.Error))
+					return tx
 				}
 
 				rowsAffected = result.RowsAffected
-				return g
+				return tx
 			})
 
 			if err != nil {
@@ -545,7 +545,7 @@ func (s *PinServiceDefault) countUserPinsByCID(ctx context.Context, userID uint,
 	var count int64
 
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		query := g.Model(&pluginDb.IPFSPin{}).
+		query := tx.Model(&pluginDb.IPFSPin{}).
 			Where("user_id = ? AND cid = ? AND request_id != ?", userID, cidBytes, excludeRequestID)
 
 		return query.Count(&count)

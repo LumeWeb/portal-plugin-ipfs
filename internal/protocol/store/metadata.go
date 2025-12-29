@@ -53,7 +53,7 @@ func (s *MetadataStoreDefault) Pin(ctx context.Context, b pluginCore.PinnedBlock
 		return encoding.NormalizeCid(link)
 	}))
 
-	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+	return db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		// Insert or update the parent block
 		parentBlock := pluginDb.IPFSBlock{
 			CID:              b.Cid.Bytes(),
@@ -62,7 +62,7 @@ func (s *MetadataStoreDefault) Pin(ctx context.Context, b pluginCore.PinnedBlock
 			Ready:            true,
 		}
 
-		if err := db.RetryableTransaction(s.ctx, tx, func(tx *gorm.DB) *gorm.DB {
+		if err := db.RetryableTransaction(ctx, tx, func(tx *gorm.DB) *gorm.DB {
 			return tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "cid"}},
 				DoUpdates: clause.AssignmentColumns([]string{"updated_at", "size", "ready"}),
@@ -100,7 +100,7 @@ func (s *MetadataStoreDefault) Pin(ctx context.Context, b pluginCore.PinnedBlock
 				s.logger.Debug("Using existing name", zap.String("name", unixfsNode.Name), zap.Stringer("cid", b.Cid))
 			}
 
-			if err = db.RetryableTransaction(s.ctx, tx, func(tx *gorm.DB) *gorm.DB {
+			if err = db.RetryableTransaction(ctx, tx, func(tx *gorm.DB) *gorm.DB {
 				return tx.Clauses(clause.OnConflict{
 					Columns: []clause.Column{{Name: "block_id"}},
 					DoUpdates: clause.Assignments(map[string]interface{}{
@@ -124,7 +124,7 @@ func (s *MetadataStoreDefault) Pin(ctx context.Context, b pluginCore.PinnedBlock
 		for i, link := range b.Links {
 			link = encoding.NormalizeCid(link)
 			var childBlock pluginDb.IPFSBlock
-			if err = db.RetryableTransaction(s.ctx, tx, func(tx *gorm.DB) *gorm.DB {
+			if err = db.RetryableTransaction(ctx, tx, func(tx *gorm.DB) *gorm.DB {
 				return tx.Where(&pluginDb.IPFSBlock{
 					CID: link.Bytes(),
 				}).FirstOrCreate(&childBlock, pluginDb.IPFSBlock{
@@ -143,7 +143,7 @@ func (s *MetadataStoreDefault) Pin(ctx context.Context, b pluginCore.PinnedBlock
 				LinkIndex: i,
 			}
 
-			if err = db.RetryableTransaction(s.ctx, tx, func(tx *gorm.DB) *gorm.DB {
+			if err = db.RetryableTransaction(ctx, tx, func(tx *gorm.DB) *gorm.DB {
 				return tx.Clauses(clause.OnConflict{
 					Columns:   []clause.Column{{Name: "parent_id"}, {Name: "child_id"}, {Name: "link_index"}},
 					DoNothing: true,
@@ -154,7 +154,7 @@ func (s *MetadataStoreDefault) Pin(ctx context.Context, b pluginCore.PinnedBlock
 			}
 
 			// Update any existing linked blocks with the correct parent ID
-			if err = db.RetryableTransaction(s.ctx, tx, func(tx *gorm.DB) *gorm.DB {
+			if err = db.RetryableTransaction(ctx, tx, func(tx *gorm.DB) *gorm.DB {
 				return tx.Model(&pluginDb.IPFSLinkedBlock{}).
 					Where("child_id = ? AND parent_id IS NULL", childBlock.ID).
 					Update("parent_id", parentBlock.ID)

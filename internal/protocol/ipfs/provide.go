@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"go.lumeweb.com/portal-plugin-ipfs/core"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal/core"
 
 	"github.com/ipfs/go-cid"
@@ -20,8 +20,8 @@ type (
 
 // A Reprovider periodically announces CIDs to the IPFS network.
 type Reprovider struct {
-	provider core.Provider
-	store    core.ReprovideStore
+	provider pluginCore.Provider
+	store    pluginCore.ReprovideStore
 	log      *zap.Logger
 
 	triggerProvide       chan struct{}
@@ -171,7 +171,7 @@ func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.
 }
 
 // NewReprovider creates a new reprovider.
-func NewReprovider(provider core.Provider, store core.ReprovideStore, log *zap.Logger) *Reprovider {
+func NewReprovider(provider pluginCore.Provider, store pluginCore.ReprovideStore, log *zap.Logger) *Reprovider {
 	return &Reprovider{
 		provider:             provider,
 		store:                store,

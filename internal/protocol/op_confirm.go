@@ -43,6 +43,9 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 	proto := h.Protocol().(*Protocol)
 	metadataStore := proto.GetMetadataStore()
 
+	// Set client IP in context for quota tracking before any operations
+	ctx = store.ClientIPOption(ctx, req.SourceIP)
+
 	var cidList []cid.Cid
 
 	for _, cidStr := range workflowData.Cids {
@@ -67,9 +70,6 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 			h.Logger().Error("Upload service not available")
 			return fmt.Errorf("upload service not available")
 		}
-
-		// Set client IP in context for quota tracking
-		ctx = store.ClientIPOption(ctx, req.SourceIP)
 
 		err := uploadSvc.ProcessUpload(ctx, cidList, lo.FromPtrOr(req.UserID, 0))
 		if err != nil {

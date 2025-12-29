@@ -112,15 +112,15 @@ func (dt *DefaultDoneTracker) WaitDone(ctx context.Context, c cid.Cid) bool {
 
 	cidKey := string(c.Bytes())
 
+	// Use a single Lock for both completed and waiters checks to prevent race condition
+	dt.mu.Lock()
+
 	// Check permanent completed record for historical CIDs
-	dt.mu.RLock()
 	if dt.completed[cidKey] {
-		dt.mu.RUnlock()
+		dt.mu.Unlock()
 		return true
 	}
-	dt.mu.RUnlock()
 
-	dt.mu.Lock()
 	waiter, exists := dt.waiters[cidKey]
 
 	if !exists {
@@ -140,6 +140,7 @@ func (dt *DefaultDoneTracker) WaitDone(ctx context.Context, c cid.Cid) bool {
 	ch := make(chan struct{})
 	waiter.waiters = append(waiter.waiters, ch)
 
+	// Release lock before waiting to allow Done() to proceed
 	dt.mu.Unlock()
 
 	select {

@@ -8,7 +8,8 @@ import (
 const (
 	MetricGetBlockMeta      = "get_block_meta_total"
 	MetricGetBlockMetaBatch = "get_block_meta_batch_total"
-	MetricDuration          = "duration_seconds"
+	MetricGetBlockMetaDuration = "get_block_meta_duration_seconds"
+	MetricGetBlockMetaBatchDuration = "get_block_meta_batch_duration_seconds"
 )
 
 const (
@@ -17,14 +18,14 @@ const (
 )
 
 var (
-	GetBlockMetaTotal         prometheus.CounterVec
-	GetBlockMetaBatchTotal    prometheus.CounterVec
-	GetBlockMetaDuration      prometheus.HistogramVec
-	GetBlockMetaBatchDuration prometheus.HistogramVec
+	GetBlockMetaTotal         *prometheus.CounterVec
+	GetBlockMetaBatchTotal    *prometheus.CounterVec
+	GetBlockMetaDuration      *prometheus.HistogramVec
+	GetBlockMetaBatchDuration *prometheus.HistogramVec
 )
 
 func init() {
-	GetBlockMetaTotal = *prometheus.NewCounterVec(
+	GetBlockMetaTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricGetBlockMeta,
 			Subsystem: pluginCore.BLOCK_SERVICE,
@@ -33,7 +34,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	GetBlockMetaBatchTotal = *prometheus.NewCounterVec(
+	GetBlockMetaBatchTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricGetBlockMetaBatch,
 			Subsystem: pluginCore.BLOCK_SERVICE,
@@ -42,9 +43,9 @@ func init() {
 		[]string{"status"},
 	)
 
-	GetBlockMetaDuration = *prometheus.NewHistogramVec(
+	GetBlockMetaDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricGetBlockMetaDuration,
 			Subsystem: pluginCore.BLOCK_SERVICE,
 			Help:      "Duration of GetBlockMeta operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -52,9 +53,9 @@ func init() {
 		[]string{},
 	)
 
-	GetBlockMetaBatchDuration = *prometheus.NewHistogramVec(
+	GetBlockMetaBatchDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricGetBlockMetaBatchDuration,
 			Subsystem: pluginCore.BLOCK_SERVICE,
 			Help:      "Duration of GetBlockMetaBatch operations in seconds",
 			Buckets:   prometheus.DefBuckets,

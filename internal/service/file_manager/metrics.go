@@ -18,7 +18,18 @@ const (
 	MetricDeleteFilePathSmart      = "delete_file_path_smart_total"
 	MetricDeleteFilePathsByUserID  = "delete_file_paths_by_user_id_total"
 	MetricHealthCheck              = "health_check_total"
-	MetricDuration                 = "duration_seconds"
+	MetricListFilesDuration                = "list_files_duration_seconds"
+	MetricListDirectoryContentsDuration    = "list_directory_contents_duration_seconds"
+	MetricGetBreadcrumbsDuration           = "get_breadcrumbs_duration_seconds"
+	MetricCreateFilePathDuration           = "create_file_path_duration_seconds"
+	MetricValidatePathCompletenessDuration = "validate_path_completeness_duration_seconds"
+	MetricGetIncompletePinsDuration        = "get_incomplete_pins_duration_seconds"
+	MetricGetOrphanedPathsDuration         = "get_orphaned_paths_duration_seconds"
+	MetricUpdateFilePathDuration           = "update_file_path_duration_seconds"
+	MetricDeleteFilePathDuration           = "delete_file_path_duration_seconds"
+	MetricDeleteFilePathSmartDuration      = "delete_file_path_smart_duration_seconds"
+	MetricDeleteFilePathsByUserIDDuration  = "delete_file_paths_by_user_id_duration_seconds"
+	MetricHealthCheckDuration              = "health_check_duration_seconds"
 )
 
 const (
@@ -27,36 +38,36 @@ const (
 )
 
 var (
-	ListFilesTotal                prometheus.CounterVec
-	ListDirectoryContentsTotal    prometheus.CounterVec
-	GetBreadcrumbsTotal           prometheus.CounterVec
-	CreateFilePathTotal           prometheus.CounterVec
-	ValidatePathCompletenessTotal prometheus.CounterVec
-	GetIncompletePinsTotal        prometheus.CounterVec
-	GetOrphanedPathsTotal         prometheus.CounterVec
-	UpdateFilePathTotal           prometheus.CounterVec
-	DeleteFilePathTotal           prometheus.CounterVec
-	DeleteFilePathSmartTotal      prometheus.CounterVec
-	DeleteFilePathsByUserIDTotal  prometheus.CounterVec
-	HealthCheckTotal              prometheus.CounterVec
+	ListFilesTotal                *prometheus.CounterVec
+	ListDirectoryContentsTotal    *prometheus.CounterVec
+	GetBreadcrumbsTotal           *prometheus.CounterVec
+	CreateFilePathTotal           *prometheus.CounterVec
+	ValidatePathCompletenessTotal *prometheus.CounterVec
+	GetIncompletePinsTotal        *prometheus.CounterVec
+	GetOrphanedPathsTotal         *prometheus.CounterVec
+	UpdateFilePathTotal           *prometheus.CounterVec
+	DeleteFilePathTotal           *prometheus.CounterVec
+	DeleteFilePathSmartTotal      *prometheus.CounterVec
+	DeleteFilePathsByUserIDTotal  *prometheus.CounterVec
+	HealthCheckTotal              *prometheus.CounterVec
 
-	ListFilesDuration                prometheus.HistogramVec
-	ListDirectoryContentsDuration    prometheus.HistogramVec
-	GetBreadcrumbsDuration           prometheus.HistogramVec
-	CreateFilePathDuration           prometheus.HistogramVec
-	ValidatePathCompletenessDuration prometheus.HistogramVec
-	GetIncompletePinsDuration        prometheus.HistogramVec
-	GetOrphanedPathsDuration         prometheus.HistogramVec
-	UpdateFilePathDuration           prometheus.HistogramVec
-	DeleteFilePathDuration           prometheus.HistogramVec
-	DeleteFilePathSmartDuration      prometheus.HistogramVec
-	DeleteFilePathsByUserIDDuration  prometheus.HistogramVec
-	HealthCheckDuration              prometheus.HistogramVec
+	ListFilesDuration                *prometheus.HistogramVec
+	ListDirectoryContentsDuration    *prometheus.HistogramVec
+	GetBreadcrumbsDuration           *prometheus.HistogramVec
+	CreateFilePathDuration           *prometheus.HistogramVec
+	ValidatePathCompletenessDuration *prometheus.HistogramVec
+	GetIncompletePinsDuration        *prometheus.HistogramVec
+	GetOrphanedPathsDuration         *prometheus.HistogramVec
+	UpdateFilePathDuration           *prometheus.HistogramVec
+	DeleteFilePathDuration           *prometheus.HistogramVec
+	DeleteFilePathSmartDuration      *prometheus.HistogramVec
+	DeleteFilePathsByUserIDDuration  *prometheus.HistogramVec
+	HealthCheckDuration              *prometheus.HistogramVec
 )
 
 func init() {
 	// Counters
-	ListFilesTotal = *prometheus.NewCounterVec(
+	ListFilesTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricListFiles,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
@@ -65,7 +76,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	ListDirectoryContentsTotal = *prometheus.NewCounterVec(
+	ListDirectoryContentsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricListDirectoryContents,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
@@ -74,7 +85,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	GetBreadcrumbsTotal = *prometheus.NewCounterVec(
+	GetBreadcrumbsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricGetBreadcrumbs,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
@@ -83,7 +94,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	CreateFilePathTotal = *prometheus.NewCounterVec(
+	CreateFilePathTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricCreateFilePath,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
@@ -92,7 +103,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	ValidatePathCompletenessTotal = *prometheus.NewCounterVec(
+	ValidatePathCompletenessTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricValidatePathCompleteness,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
@@ -101,7 +112,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	GetIncompletePinsTotal = *prometheus.NewCounterVec(
+	GetIncompletePinsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricGetIncompletePins,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
@@ -110,7 +121,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	GetOrphanedPathsTotal = *prometheus.NewCounterVec(
+	GetOrphanedPathsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricGetOrphanedPaths,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
@@ -119,7 +130,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	UpdateFilePathTotal = *prometheus.NewCounterVec(
+	UpdateFilePathTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricUpdateFilePath,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
@@ -128,7 +139,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	DeleteFilePathTotal = *prometheus.NewCounterVec(
+	DeleteFilePathTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricDeleteFilePath,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
@@ -137,7 +148,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	DeleteFilePathSmartTotal = *prometheus.NewCounterVec(
+	DeleteFilePathSmartTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricDeleteFilePathSmart,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
@@ -146,7 +157,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	DeleteFilePathsByUserIDTotal = *prometheus.NewCounterVec(
+	DeleteFilePathsByUserIDTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricDeleteFilePathsByUserID,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
@@ -155,7 +166,7 @@ func init() {
 		[]string{"status"},
 	)
 
-	HealthCheckTotal = *prometheus.NewCounterVec(
+	HealthCheckTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name:      MetricHealthCheck,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
@@ -165,9 +176,9 @@ func init() {
 	)
 
 	// Histograms
-	ListFilesDuration = *prometheus.NewHistogramVec(
+	ListFilesDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricListFilesDuration,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
 			Help:      "Duration of ListFiles operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -175,9 +186,9 @@ func init() {
 		[]string{},
 	)
 
-	ListDirectoryContentsDuration = *prometheus.NewHistogramVec(
+	ListDirectoryContentsDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricListDirectoryContentsDuration,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
 			Help:      "Duration of ListDirectoryContents operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -185,9 +196,9 @@ func init() {
 		[]string{},
 	)
 
-	GetBreadcrumbsDuration = *prometheus.NewHistogramVec(
+	GetBreadcrumbsDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricGetBreadcrumbsDuration,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
 			Help:      "Duration of GetBreadcrumbs operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -195,9 +206,9 @@ func init() {
 		[]string{},
 	)
 
-	CreateFilePathDuration = *prometheus.NewHistogramVec(
+	CreateFilePathDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricCreateFilePathDuration,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
 			Help:      "Duration of CreateFilePath operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -205,9 +216,9 @@ func init() {
 		[]string{},
 	)
 
-	ValidatePathCompletenessDuration = *prometheus.NewHistogramVec(
+	ValidatePathCompletenessDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricValidatePathCompletenessDuration,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
 			Help:      "Duration of ValidatePathCompleteness operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -215,9 +226,9 @@ func init() {
 		[]string{},
 	)
 
-	GetIncompletePinsDuration = *prometheus.NewHistogramVec(
+	GetIncompletePinsDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricGetIncompletePinsDuration,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
 			Help:      "Duration of GetIncompletePins operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -225,9 +236,9 @@ func init() {
 		[]string{},
 	)
 
-	GetOrphanedPathsDuration = *prometheus.NewHistogramVec(
+	GetOrphanedPathsDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricGetOrphanedPathsDuration,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
 			Help:      "Duration of GetOrphanedPaths operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -235,9 +246,9 @@ func init() {
 		[]string{},
 	)
 
-	UpdateFilePathDuration = *prometheus.NewHistogramVec(
+	UpdateFilePathDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricUpdateFilePathDuration,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
 			Help:      "Duration of UpdateFilePath operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -245,9 +256,9 @@ func init() {
 		[]string{},
 	)
 
-	DeleteFilePathDuration = *prometheus.NewHistogramVec(
+	DeleteFilePathDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricDeleteFilePathDuration,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
 			Help:      "Duration of DeleteFilePath operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -255,9 +266,9 @@ func init() {
 		[]string{},
 	)
 
-	DeleteFilePathSmartDuration = *prometheus.NewHistogramVec(
+	DeleteFilePathSmartDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricDeleteFilePathSmartDuration,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
 			Help:      "Duration of DeleteFilePathSmart operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -265,9 +276,9 @@ func init() {
 		[]string{},
 	)
 
-	DeleteFilePathsByUserIDDuration = *prometheus.NewHistogramVec(
+	DeleteFilePathsByUserIDDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricDeleteFilePathsByUserIDDuration,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
 			Help:      "Duration of DeleteFilePathsByUserID operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -275,9 +286,9 @@ func init() {
 		[]string{},
 	)
 
-	HealthCheckDuration = *prometheus.NewHistogramVec(
+	HealthCheckDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricHealthCheckDuration,
 			Subsystem: pluginCore.FILE_MANAGER_SERVICE,
 			Help:      "Duration of HealthCheck operations in seconds",
 			Buckets:   prometheus.DefBuckets,

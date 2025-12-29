@@ -42,7 +42,7 @@ func (bs *BlockService) GetBlockMeta(ctx context.Context, c cid.Cid) (*pluginDb.
 			if err := db.RetryableComponentTransaction(bs, ctx, func(tx *gorm.DB) *gorm.DB {
 				return tx.Model(&pluginDb.UnixFSNode{}).
 					Preload("Block"). // This will automatically join with IPFSBlock
-					Joins("Block"). // This ensures the join condition is included in the main query
+					Joins("Block").   // This ensures the join condition is included in the main query
 					Where("Block.cid = ?", c.Bytes()).
 					First(&unixFSNode)
 			}); err != nil {

@@ -354,3 +354,350 @@ func TestNewDoneTracker(t *testing.T) {
 	assert.Equal(t, 0, dt.Count(), "New DoneTracker should have count of 0")
 	assert.Empty(t, dt.GetDoneCIDs(), "New DoneTracker should have no done CIDs")
 }
+
+// TestDoneTracker_RaceConditionWaitDoneVsDone tests the specific race condition
+// that was fixed: WaitDone checking completed with RLock, then acquiring Lock
+// while Done could mark the CID as done in between.
+func TestDoneTracker_RaceConditionWaitDoneVsDone(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping race condition test in short mode")
+	}
+
+	// Run this test multiple times to increase chance of catching race conditions
+	for run := 0; run < 100; run++ {
+		dt := NewDoneTracker()
+		testCid := generateTestCIDFromInt(run)
+
+		var wg sync.WaitGroup
+		numGoroutines := 50
+
+		// Start many goroutines that will call WaitDone
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				defer cancel()
+				dt.WaitDone(ctx, testCid)
+			}()
+		}
+
+		// Start many goroutines that will call Done
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				dt.Done(testCid)
+			}()
+		}
+
+		wg.Wait()
+
+		// Verify final state is consistent
+		assert.True(t, dt.IsDone(testCid), "CID should be marked as done")
+	}
+}
+
+// TestDoneTracker_RaceConditionMultipleCIDs tests concurrent operations on multiple CIDs
+func TestDoneTracker_RaceConditionMultipleCIDs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping race condition test in short mode")
+	}
+
+	dt := NewDoneTracker()
+	numCIDs := 20
+	cids := make([]cid.Cid, numCIDs)
+	for i := 0; i < numCIDs; i++ {
+		cids[i] = generateTestCIDFromInt(i)
+	}
+
+	var wg sync.WaitGroup
+
+	// Start many waiters for each CID
+	for _, c := range cids {
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func(testCid cid.Cid) {
+				defer wg.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+				defer cancel()
+				dt.WaitDone(ctx, testCid)
+			}(c)
+		}
+	}
+
+	// Mark CIDs as done concurrently
+	for _, c := range cids {
+		wg.Add(1)
+		go func(testCid cid.Cid) {
+			defer wg.Done()
+			time.Sleep(time.Duration(randInt(0, 10)) * time.Millisecond)
+			dt.Done(testCid)
+		}(c)
+	}
+
+	wg.Wait()
+
+	// Verify all CIDs are marked as done
+	for _, c := range cids {
+		assert.True(t, dt.IsDone(c), "CID %v should be marked as done", c)
+	}
+}
+
+// TestDoneTracker_StressTestHighConcurrency performs a stress test with high concurrency
+func TestDoneTracker_StressTestHighConcurrency(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping stress test in short mode")
+	}
+
+	dt := NewDoneTracker()
+	numOperations := 1000
+	numCIDs := 50
+
+	var wg sync.WaitGroup
+
+	// Randomly perform WaitDone and Done operations
+	for i := 0; i < numOperations; i++ {
+		cidIndex := i % numCIDs
+		testCid := generateTestCIDFromInt(cidIndex)
+
+		if i%2 == 0 {
+			// WaitDone operation
+			wg.Add(1)
+			go func(c cid.Cid) {
+				defer wg.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				defer cancel()
+				dt.WaitDone(ctx, c)
+			}(testCid)
+		} else {
+			// Done operation
+			wg.Add(1)
+			go func(c cid.Cid) {
+				defer wg.Done()
+				dt.Done(c)
+			}(testCid)
+		}
+	}
+
+	wg.Wait()
+
+	// Verify tracker is still functional
+	newCid := generateTestCIDFromInt(numCIDs + 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		dt.Done(newCid)
+	}()
+
+	done := dt.WaitDone(ctx, newCid)
+	assert.True(t, done, "Should be able to wait for new CID after stress test")
+}
+
+// TestDoneTracker_PermanentCompletedRecord tests that completed CIDs are permanently recorded
+func TestDoneTracker_PermanentCompletedRecord(t *testing.T) {
+	dt := NewDoneTracker()
+	testCid := generateTestCIDFromInt(1)
+
+	// Mark CID as done without any waiters
+	dt.Done(testCid)
+
+	// Verify it's marked as done
+	assert.True(t, dt.IsDone(testCid), "CID should be marked as done")
+
+	// WaitDone should return immediately for completed CIDs
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	done := dt.WaitDone(ctx, testCid)
+	elapsed := time.Since(start)
+
+	assert.True(t, done, "WaitDone should return true for completed CID")
+	assert.Less(t, elapsed, 5*time.Millisecond, "WaitDone should return immediately for completed CID")
+
+	// Multiple WaitDone calls should all return immediately
+	for i := 0; i < 10; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		start := time.Now()
+		done := dt.WaitDone(ctx, testCid)
+		elapsed := time.Since(start)
+		cancel()
+
+		assert.True(t, done, "WaitDone call %d should return true", i)
+		assert.Less(t, elapsed, 5*time.Millisecond, "WaitDone call %d should return immediately", i)
+	}
+}
+
+// TestDoneTracker_PermanentCompletedRecordConcurrent tests permanent record with concurrent access
+func TestDoneTracker_PermanentCompletedRecordConcurrent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping concurrent test in short mode")
+	}
+
+	dt := NewDoneTracker()
+	testCid := generateTestCIDFromInt(1)
+
+	// Mark CID as done
+	dt.Done(testCid)
+
+	var wg sync.WaitGroup
+	numGoroutines := 100
+
+	// Many concurrent WaitDone calls should all return immediately
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+			start := time.Now()
+			done := dt.WaitDone(ctx, testCid)
+			elapsed := time.Since(start)
+			cancel()
+
+			assert.True(t, done, "Goroutine %d: WaitDone should return true", index)
+			assert.Less(t, elapsed, 5*time.Millisecond, "Goroutine %d: WaitDone should return immediately", index)
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+// TestDoneTracker_RaceConditionWaitDoneCancellation tests race condition between
+// context cancellation and Done being called
+func TestDoneTracker_RaceConditionWaitDoneCancellation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping race condition test in short mode")
+	}
+
+	for run := 0; run < 50; run++ {
+		dt := NewDoneTracker()
+		testCid := generateTestCIDFromInt(run)
+
+		var wg sync.WaitGroup
+		numGoroutines := 20
+
+		// Start many waiters that will be canceled
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
+				defer cancel()
+				dt.WaitDone(ctx, testCid)
+			}()
+		}
+
+		// Also call Done concurrently
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			time.Sleep(500 * time.Microsecond)
+			dt.Done(testCid)
+		}()
+
+		wg.Wait()
+
+		// Verify final state is consistent
+		assert.True(t, dt.IsDone(testCid), "CID should be marked as done")
+	}
+}
+
+// TestDoneTracker_RaceConditionIsDoneVsDone tests race condition between IsDone and Done
+func TestDoneTracker_RaceConditionIsDoneVsDone(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping race condition test in short mode")
+	}
+
+	for run := 0; run < 50; run++ {
+		dt := NewDoneTracker()
+		testCid := generateTestCIDFromInt(run)
+
+		var wg sync.WaitGroup
+		numGoroutines := 50
+
+		// Start many IsDone calls
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				dt.IsDone(testCid)
+			}()
+		}
+
+		// Start many Done calls
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				dt.Done(testCid)
+			}()
+		}
+
+		wg.Wait()
+
+		// Verify final state
+		assert.True(t, dt.IsDone(testCid), "CID should be marked as done")
+	}
+}
+
+// TestDoneTracker_RaceConditionResetVsOperations tests race condition between Reset and other operations
+func TestDoneTracker_RaceConditionResetVsOperations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping race condition test in short mode")
+	}
+
+	for run := 0; run < 20; run++ {
+		dt := NewDoneTracker()
+		numCIDs := 10
+		cids := make([]cid.Cid, numCIDs)
+		for i := 0; i < numCIDs; i++ {
+			cids[i] = generateTestCIDFromInt(i)
+		}
+
+		var wg sync.WaitGroup
+
+		// Start various operations
+		for _, c := range cids {
+			wg.Add(1)
+			go func(testCid cid.Cid) {
+				defer wg.Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+				defer cancel()
+				dt.WaitDone(ctx, testCid)
+			}(c)
+
+			wg.Add(1)
+			go func(testCid cid.Cid) {
+				defer wg.Done()
+				dt.Done(testCid)
+			}(c)
+
+			wg.Add(1)
+			go func(testCid cid.Cid) {
+				defer wg.Done()
+				dt.IsDone(testCid)
+			}(c)
+		}
+
+		// Reset concurrently
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			time.Sleep(1 * time.Millisecond)
+			dt.Reset()
+		}()
+
+		wg.Wait()
+
+		// After reset, tracker should be clean
+		assert.Equal(t, 0, dt.Count(), "Count should be 0 after reset")
+	}
+}
+
+// randInt returns a random integer in [min, max)
+func randInt(min, max int) int {
+	return min + int(time.Now().UnixNano()%int64(max-min))
+}
