@@ -9,9 +9,8 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/gammazero/workerpool v1.1.3
 	github.com/go-viper/mapstructure/v2 v2.4.0
-	github.com/golang/protobuf v1.5.4
 	github.com/google/uuid v1.6.0
-	github.com/h2non/filetype v1.0.12
+	github.com/h2non/filetype v1.1.3
 	github.com/ipfs/boxo v0.35.2
 	github.com/ipfs/go-block-format v0.2.3
 	github.com/ipfs/go-cid v0.6.0
@@ -20,6 +19,7 @@ require (
 	github.com/ipfs/go-ipld-format v0.6.3
 	github.com/ipfs/go-ipld-legacy v0.2.2
 	github.com/ipfs/go-log/v2 v2.9.0
+	github.com/ipfs/go-metrics-interface v0.3.0
 	github.com/ipfs/go-unixfsnode v1.10.2
 	github.com/ipld/go-car/v2 v2.16.0
 	github.com/ipld/go-codec-dagpb v1.7.0
@@ -138,6 +138,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9 // indirect
 	github.com/golang-sql/sqlexp v0.1.0 // indirect
+	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/gopacket v1.1.19 // indirect
 	github.com/google/pprof v0.0.0-20250607225305-033d6d78b36a // indirect
@@ -159,7 +160,6 @@ require (
 	github.com/ipfs/go-dsqueue v0.1.1 // indirect
 	github.com/ipfs/go-ipfs-pq v0.0.3 // indirect
 	github.com/ipfs/go-ipld-cbor v0.2.1 // indirect
-	github.com/ipfs/go-metrics-interface v0.3.0 // indirect
 	github.com/ipfs/go-peertaskqueue v0.8.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
