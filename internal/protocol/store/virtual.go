@@ -38,6 +38,9 @@ func NewVirtualBlockStore(ctx core.Context, directBS blockstore.Blockstore, cach
 
 // DeleteBlock removes a given block from the blockstore
 func (v *VirtualBlockStore) DeleteBlock(ctx context.Context, c cid.Cid) error {
+	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.DeleteBlock")
+	defer span.End()
+
 	if isVirtualReadEnabled(ctx) {
 		return v.directBS.DeleteBlock(ctx, c)
 	}
@@ -46,6 +49,9 @@ func (v *VirtualBlockStore) DeleteBlock(ctx context.Context, c cid.Cid) error {
 
 // Has returns whether or not a given block is in the blockstore
 func (v *VirtualBlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
+	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.Has")
+	defer span.End()
+
 	if isVirtualReadEnabled(ctx) {
 		return v.directBS.Has(ctx, c)
 	}
@@ -54,6 +60,9 @@ func (v *VirtualBlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
 
 // Get returns a block by CID
 func (v *VirtualBlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.Get")
+	defer span.End()
+
 	if isVirtualReadEnabled(ctx) {
 		return v.directBS.Get(ctx, c)
 	}
@@ -62,6 +71,9 @@ func (v *VirtualBlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, e
 
 // GetSize returns the CIDs mapped BlockSize
 func (v *VirtualBlockStore) GetSize(ctx context.Context, c cid.Cid) (int, error) {
+	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.GetSize")
+	defer span.End()
+
 	if isVirtualReadEnabled(ctx) {
 		return v.directBS.GetSize(ctx, c)
 	}
@@ -70,6 +82,9 @@ func (v *VirtualBlockStore) GetSize(ctx context.Context, c cid.Cid) (int, error)
 
 // Put puts a given block to the underlying datastore
 func (v *VirtualBlockStore) Put(ctx context.Context, b blocks.Block) error {
+	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.Put")
+	defer span.End()
+
 	if isVirtualReadEnabled(ctx) {
 		return v.directBS.Put(ctx, b)
 	}
@@ -78,6 +93,9 @@ func (v *VirtualBlockStore) Put(ctx context.Context, b blocks.Block) error {
 
 // PutMany puts a slice of blocks at the same time using batching
 func (v *VirtualBlockStore) PutMany(ctx context.Context, bs []blocks.Block) error {
+	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.PutMany")
+	defer span.End()
+
 	if isVirtualReadEnabled(ctx) {
 		return v.directBS.PutMany(ctx, bs)
 	}
@@ -86,6 +104,9 @@ func (v *VirtualBlockStore) PutMany(ctx context.Context, bs []blocks.Block) erro
 
 // AllKeysChan returns a channel from which the CIDs in the Blockstore can be read
 func (v *VirtualBlockStore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, error) {
+	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.AllKeysChan")
+	defer span.End()
+
 	if isVirtualReadEnabled(ctx) {
 		return v.directBS.AllKeysChan(ctx)
 	}

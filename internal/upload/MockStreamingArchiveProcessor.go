@@ -130,7 +130,7 @@ func (_c *MockStreamingArchiveProcessor_GetProcessedFiles_Call) RunAndReturn(run
 
 // GetRootNode provides a mock function for the type MockStreamingArchiveProcessor
 func (_mock *MockStreamingArchiveProcessor) GetRootNode(ctx context.Context) (format.Node, error) {
-	ret := _mock.Called()
+	ret := _mock.Called(ctx)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetRootNode")
@@ -138,18 +138,18 @@ func (_mock *MockStreamingArchiveProcessor) GetRootNode(ctx context.Context) (fo
 
 	var r0 format.Node
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func() (format.Node, error)); ok {
-		return returnFunc()
+	if returnFunc, ok := ret.Get(0).(func(context.Context) (format.Node, error)); ok {
+		return returnFunc(ctx)
 	}
-	if returnFunc, ok := ret.Get(0).(func() format.Node); ok {
-		r0 = returnFunc()
+	if returnFunc, ok := ret.Get(0).(func(context.Context) format.Node); ok {
+		r0 = returnFunc(ctx)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(format.Node)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func() error); ok {
-		r1 = returnFunc()
+	if returnFunc, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = returnFunc(ctx)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -162,13 +162,20 @@ type MockStreamingArchiveProcessor_GetRootNode_Call struct {
 }
 
 // GetRootNode is a helper method to define mock.On call
-func (_e *MockStreamingArchiveProcessor_Expecter) GetRootNode(ctx context.Context) *MockStreamingArchiveProcessor_GetRootNode_Call {
-	return &MockStreamingArchiveProcessor_GetRootNode_Call{Call: _e.mock.On("GetRootNode")}
+//   - ctx context.Context
+func (_e *MockStreamingArchiveProcessor_Expecter) GetRootNode(ctx interface{}) *MockStreamingArchiveProcessor_GetRootNode_Call {
+	return &MockStreamingArchiveProcessor_GetRootNode_Call{Call: _e.mock.On("GetRootNode", ctx)}
 }
 
-func (_c *MockStreamingArchiveProcessor_GetRootNode_Call) Run(run func()) *MockStreamingArchiveProcessor_GetRootNode_Call {
+func (_c *MockStreamingArchiveProcessor_GetRootNode_Call) Run(run func(ctx context.Context)) *MockStreamingArchiveProcessor_GetRootNode_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run()
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		run(
+			arg0,
+		)
 	})
 	return _c
 }
@@ -178,7 +185,7 @@ func (_c *MockStreamingArchiveProcessor_GetRootNode_Call) Return(node format.Nod
 	return _c
 }
 
-func (_c *MockStreamingArchiveProcessor_GetRootNode_Call) RunAndReturn(run func() (format.Node, error)) *MockStreamingArchiveProcessor_GetRootNode_Call {
+func (_c *MockStreamingArchiveProcessor_GetRootNode_Call) RunAndReturn(run func(ctx context.Context) (format.Node, error)) *MockStreamingArchiveProcessor_GetRootNode_Call {
 	_c.Call.Return(run)
 	return _c
 }

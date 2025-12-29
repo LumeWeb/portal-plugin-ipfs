@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
 )
@@ -12,9 +13,6 @@ const FILE_MANAGER_SERVICE = "ipfs.file_manager"
 
 // FileManagerService provides file listing functionality for display purposes only
 type FileManagerService interface {
-	// ID returns the service identifier
-	ID() string
-
 	// ListFiles retrieves a paginated and filtered list of files for display
 	ListFiles(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*db.FilePath, int64, error)
 
@@ -48,4 +46,6 @@ type FileManagerService interface {
 
 	// GetOrphanedPaths retrieves all file paths marked as orphaned
 	GetOrphanedPaths(ctx context.Context) ([]*db.FilePath, error)
+
+	core.Service
 }

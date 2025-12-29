@@ -24,6 +24,9 @@ func (h *StoreOperationHandler) ValidateRequest(_ context.Context, req *models.R
 }
 
 func (h *StoreOperationHandler) Execute(ctx context.Context, req *models.Request) error {
+	ctx, span := core.TraceMethod(ctx, "StoreOperationHandler.Execute")
+	defer span.End()
+
 	var workflowData PinWorkflowData
 	err := h.StructuredWorkflowData(req.ID, &workflowData)
 	if err != nil {
@@ -47,7 +50,7 @@ func (h *StoreOperationHandler) Execute(ctx context.Context, req *models.Request
 			}
 		}
 	}
-	
+
 	return nil
 }
 

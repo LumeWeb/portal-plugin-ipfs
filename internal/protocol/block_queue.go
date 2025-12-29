@@ -96,6 +96,9 @@ func (bp *BlockQueue) queueBlock(block blocks.Block) error {
 
 // processBlock processes a single block.
 func (bp *BlockQueue) processBlock(ctx context.Context, job *blockJob) error {
+	ctx, span := core.TraceMethod(ctx, "BlockQueue.processBlock")
+	defer span.End()
+
 	// Check bloom filter to skip already processed blocks
 	cidStr := job.Block.Cid().String()
 	if bp.processedFilter.Test([]byte(cidStr)) {
@@ -122,6 +125,9 @@ func (bp *BlockQueue) processBlock(ctx context.Context, job *blockJob) error {
 }
 
 func (bp *BlockQueue) processBlockInternal(ctx context.Context, job *blockJob) error {
+	ctx, span := core.TraceMethod(ctx, "BlockQueue.processBlockInternal")
+	defer span.End()
+
 	bp.logger.Debug("Processing block", zap.String("CID", job.Block.Cid().String()))
 
 	// Import block into IPFS node

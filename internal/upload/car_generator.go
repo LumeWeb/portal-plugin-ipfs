@@ -148,6 +148,9 @@ func NewCARGeneratorWithOptions(logger *core.Logger, options ...CARGeneratorOpti
 
 // generateCARFromStore generates a CAR file from a blockstore and root CID
 func (gen *IPFSCARGenerator) generateCARFromStore(ctx context.Context, node format.Node) (*bytes.Buffer, error) {
+	ctx, span := core.TraceMethod(ctx, "IPFSCARGenerator.generateCARFromStore")
+	defer span.End()
+
 	// Set up LinkSystem with the provided blockstore
 	ls := cidlink.DefaultLinkSystem()
 	ls.SetReadStorage(&blockstoreAdapter.Adapter{
@@ -183,6 +186,9 @@ func (gen *IPFSCARGenerator) generateCARFromStore(ctx context.Context, node form
 
 // pruneEmptyDirectories removes empty directories from the directory tree and updates their parents
 func (gen *IPFSCARGenerator) pruneEmptyDirectories(ctx context.Context, directories map[string]unixfsio.Directory) error {
+	ctx, span := core.TraceMethod(ctx, "IPFSCARGenerator.pruneEmptyDirectories")
+	defer span.End()
+
 	// Track which directories are empty
 	emptyDirs := make(map[string]bool)
 
@@ -247,6 +253,9 @@ func (gen *IPFSCARGenerator) pruneEmptyDirectories(ctx context.Context, director
 
 // collectArchiveEntries extracts archive entries and builds a directory structure
 func (gen *IPFSCARGenerator) collectArchiveEntries(ctx context.Context, extractor ArchiveExtractor) (unixfsio.Directory, map[string]unixfsio.Directory, []format.Node, error) {
+	ctx, span := core.TraceMethod(ctx, "IPFSCARGenerator.collectArchiveEntries")
+	defer span.End()
+
 	efs, err := extractor.Filesystem(ctx)
 	if err != nil {
 		return nil, nil, nil, err
@@ -399,23 +408,35 @@ func (gen *IPFSCARGenerator) collectArchiveEntries(ctx context.Context, extracto
 
 // createDAGFromReader creates a DAG from a reader with the given parameters
 func (gen *IPFSCARGenerator) createDAGFromReader(ctx context.Context, reader io.Reader, maxlinks int, chunkSize int64, rawLeaves bool) (format.Node, error) {
+	ctx, span := core.TraceMethod(ctx, "IPFSCARGenerator.createDAGFromReader")
+	defer span.End()
+
 	return gen.nodeGenerator.CreateDAGFromReader(ctx, reader, maxlinks, chunkSize, rawLeaves)
 }
 
 // createUnixFSNode creates a UnixFS node from a reader using specified parameters
 // Automatically detects and switches to rawLeaves=true for large content to avoid identity hash limits
 func (gen *IPFSCARGenerator) createUnixFSNode(ctx context.Context, r io.ReadSeekCloser, maxlinks int, chunkSize int64) (format.Node, error) {
+	ctx, span := core.TraceMethod(ctx, "IPFSCARGenerator.createUnixFSNode")
+	defer span.End()
+
 	return gen.nodeGenerator.CreateUnixFSNode(ctx, r, maxlinks, chunkSize)
 }
 
 // createNode creates a UnixFS node from a reader using default parameters
 func (gen *IPFSCARGenerator) createNode(ctx context.Context, r io.ReadSeekCloser) (format.Node, error) {
+	ctx, span := core.TraceMethod(ctx, "IPFSCARGenerator.createNode")
+	defer span.End()
+
 	return gen.nodeGenerator.CreateNode(ctx, r)
 }
 
 // processNodeTree manually crawls the node tree and processes all file and folder records
 // ensuring all nodes are stored in the blockstore
 func (gen *IPFSCARGenerator) processNodeTree(ctx context.Context, directories map[string]unixfsio.Directory, files []format.Node) error {
+	ctx, span := core.TraceMethod(ctx, "IPFSCARGenerator.processNodeTree")
+	defer span.End()
+
 	// Process all subdirectories
 	for _path, dir := range directories {
 		if err := gen.processDirectory(ctx, dir, _path); err != nil {
@@ -435,6 +456,9 @@ func (gen *IPFSCARGenerator) processNodeTree(ctx context.Context, directories ma
 
 // processDirectory ensures a directory and all its children are stored in the blockstore
 func (gen *IPFSCARGenerator) processDirectory(ctx context.Context, dir unixfsio.Directory, path string) error {
+	ctx, span := core.TraceMethod(ctx, "IPFSCARGenerator.processDirectory")
+	defer span.End()
+
 	// Get the directory node to ensure it's stored
 	node, err := dir.GetNode()
 	if err != nil {
@@ -451,6 +475,9 @@ func (gen *IPFSCARGenerator) processDirectory(ctx context.Context, dir unixfsio.
 
 // processFile ensures a file and all its data blocks are stored in the blockstore
 func (gen *IPFSCARGenerator) processFile(ctx context.Context, fileNode format.Node) error {
+	ctx, span := core.TraceMethod(ctx, "IPFSCARGenerator.processFile")
+	defer span.End()
+
 	// Store the file node itself
 	if err := gen.dagService.Add(ctx, fileNode); err != nil {
 		return fmt.Errorf("failed to store file node: %w", err)
@@ -476,6 +503,9 @@ func (gen *IPFSCARGenerator) processFile(ctx context.Context, fileNode format.No
 
 // ArchiveToCAR implements CARGenerator.ArchiveToCAR
 func (gen *IPFSCARGenerator) ArchiveToCAR(ctx context.Context, extractor ArchiveExtractor) (*bytes.Buffer, cid.Cid, error) {
+	ctx, span := core.TraceMethod(ctx, "IPFSCARGenerator.ArchiveToCAR")
+	defer span.End()
+
 	// Check for context cancellation
 	if err := ctx.Err(); err != nil {
 		return nil, cid.Undef, err
@@ -519,6 +549,9 @@ func (gen *IPFSCARGenerator) ArchiveToCAR(ctx context.Context, extractor Archive
 
 // FileToCAR implements CARGenerator.FileToCAR
 func (gen *IPFSCARGenerator) FileToCAR(ctx context.Context, reader io.ReadCloser) (*bytes.Buffer, cid.Cid, error) {
+	ctx, span := core.TraceMethod(ctx, "IPFSCARGenerator.FileToCAR")
+	defer span.End()
+
 	if reader == nil {
 		return nil, cid.Undef, fmt.Errorf("reader is nil")
 	}
@@ -550,6 +583,9 @@ func (gen *IPFSCARGenerator) FileToCAR(ctx context.Context, reader io.ReadCloser
 // ArchiveExtractorToCAR converts an ArchiveExtractor to a CAR file buffer and root CID.
 // This is a backward compatibility wrapper that uses the new interface-based implementation.
 func ArchiveExtractorToCAR(ctx context.Context, logger *core.Logger, extractor ArchiveExtractor) (*bytes.Buffer, cid.Cid, error) {
+	ctx, span := core.TraceMethod(ctx, "ArchiveExtractorToCAR")
+	defer span.End()
+
 	generator := NewCARGeneratorWithDefaults(logger)
 
 	return generator.ArchiveToCAR(ctx, extractor)
@@ -558,6 +594,9 @@ func ArchiveExtractorToCAR(ctx context.Context, logger *core.Logger, extractor A
 // SingleFileToCAR converts a single file reader to a CAR file buffer and root CID.
 // This is a backward compatibility wrapper that uses the new interface-based implementation.
 func SingleFileToCAR(ctx context.Context, logger *core.Logger, r io.ReadCloser) (*bytes.Buffer, cid.Cid, error) {
+	ctx, span := core.TraceMethod(ctx, "SingleFileToCAR")
+	defer span.End()
+
 	generator := NewCARGeneratorWithDefaults(logger)
 
 	return generator.FileToCAR(ctx, r)

@@ -49,8 +49,7 @@ type ProtoNode interface {
 }
 
 type Protocol struct {
-	ctx           core.Context
-	db            *gorm.DB
+	*core.BaseComponent
 	node          ipfs.IPFSNode
 	metadataStore *store.MetadataStoreDefault
 	pin           core.PinService
@@ -61,22 +60,37 @@ type pinHandler struct {
 }
 
 func (p pinHandler) CreateProtocolPin(ctx context.Context, id uint, data any) error {
+	ctx, span := core.TraceMethod(ctx, "pinHandler.CreateProtocolPin")
+	defer span.End()
+
 	return nil
 }
 
 func (p pinHandler) GetProtocolPin(ctx context.Context, tx *gorm.DB, id uint) (any, error) {
+	ctx, span := core.TraceMethod(ctx, "pinHandler.GetProtocolPin")
+	defer span.End()
+
 	return nil, nil
 }
 
 func (p pinHandler) UpdateProtocolPin(ctx context.Context, id uint, data any) error {
+	ctx, span := core.TraceMethod(ctx, "pinHandler.UpdateProtocolPin")
+	defer span.End()
+
 	return nil
 }
 
 func (p pinHandler) DeleteProtocolPin(ctx context.Context, id uint) error {
+	ctx, span := core.TraceMethod(ctx, "pinHandler.DeleteProtocolPin")
+	defer span.End()
+
 	return nil
 }
 
 func (p pinHandler) QueryProtocolPin(ctx context.Context, query any) *gorm.DB {
+	ctx, span := core.TraceMethod(ctx, "pinHandler.QueryProtocolPin")
+	defer span.End()
+
 	return nil
 }
 
@@ -86,6 +100,10 @@ func (p pinHandler) GetProtocolPinModel() data_models.PinDataModel {
 
 func (p Protocol) PinHandler() core.ProtocolPinHandler {
 	return &pinHandler{}
+}
+
+func (p Protocol) ID() string {
+	return p.Name()
 }
 
 func (p Protocol) Workflows() []core.WorkflowDefinition {
@@ -161,14 +179,17 @@ func (p Protocol) newContinueStep(operation string) core.OperationStep {
 
 func (p Protocol) Operations() []core.Operation {
 	return []core.Operation{
-		NewRetrieveOperation(p.ctx),
-		NewScanOperation(p.ctx),
-		NewStoreOperation(p.ctx),
-		NewPublishOperation(p.ctx),
-		NewConfirmOperation(p.ctx),
-		NewPostUploadOperation(p.ctx),
-		NewFilePathOperation(p.ctx),
-		service.NewTUSOperationHandler(p.ctx, p, func(ctx context.Context, helper core.OperationHelper, request *models.Request, tsReq *models.TUSRequest) error {
+		NewRetrieveOperation(p.Context()),
+		NewScanOperation(p.Context()),
+		NewStoreOperation(p.Context()),
+		NewPublishOperation(p.Context()),
+		NewConfirmOperation(p.Context()),
+		NewPostUploadOperation(p.Context()),
+		NewFilePathOperation(p.Context()),
+		service.NewTUSOperationHandler(p.Context(), p, func(ctx context.Context, helper core.OperationHelper, request *models.Request, tsReq *models.TUSRequest) error {
+			ctx, span := core.TraceMethod(ctx, "anonymous")
+			defer span.End()
+
 			tusHandler := core.GetAPI(internal.ProtocolName).(core.APITusHandler).GetTusHandler()
 
 			reader, err := tusHandler.UploadReader(ctx, tsReq.TUSUploadID, p, 0)
@@ -299,7 +320,7 @@ func (p Protocol) DisplayName() string {
 	return internal.ProtocolDisplayName
 }
 
-func (p Protocol) Config() config.ProtocolConfig {
+func (p Protocol) GetConfig() config.ProtocolConfig {
 	return &pluginConfig.ProtocolConfig{}
 }
 
@@ -314,9 +335,7 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 
 	opts := core.ContextOptions(
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
-			proto.ctx = ctx
 			cfg := ctx.Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig)
-			proto.db = ctx.DB()
 			proto.pin = core.GetService[core.PinService](ctx, core.PIN_SERVICE)
 
 			ms := store.NewMetadataStore(ctx, proto)
@@ -436,5 +455,5 @@ func createFileProcessorForTUS(uploadFile io.ReadCloser, proto Protocol, logger 
 	)
 
 	// Create file block processor (not archive processor)
-	return NewFileBlockProcessorWithDefaults(proto.ctx, bs, upload.NewUniversalReader(uploadFile), dagService, nodeGenerator, logger, doneTracker)
+	return NewFileBlockProcessorWithDefaults(proto.Context(), bs, upload.NewUniversalReader(uploadFile), dagService, nodeGenerator, logger, doneTracker)
 }

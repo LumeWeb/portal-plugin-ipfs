@@ -67,6 +67,9 @@ func (h *UnpinOperationHandler) ValidateRequest(_ context.Context, req *models.R
 }
 
 func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request) error {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.Execute")
+	defer span.End()
+
 	// Parse the CID
 	c, err := cid.Parse(req.Hash)
 	if err != nil {
@@ -218,7 +221,7 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 		ctx = store.ClientIPOption(ctx, req.SourceIP)
 
 		// Get the core pin before deleting it for event emission
-		corePin, err := pinSvc.GetPinByHash(internal.NewIPFSHash(c), userID)
+		corePin, err := pinSvc.GetPinByHash(ctx, internal.NewIPFSHash(c), userID)
 		if err != nil {
 			h.Logger().Warn("Failed to get core pin for unpin event",
 				zap.Error(err),
@@ -226,7 +229,7 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 				zap.Uint("user_id", userID))
 		}
 
-		err = pinSvc.DeletePinByHash(internal.NewIPFSHash(c), userID)
+		err = pinSvc.DeletePinByHash(ctx, internal.NewIPFSHash(c), userID)
 		if err != nil {
 			h.Logger().Error("Failed to unpin CID",
 				zap.Stringer("cid", c),
@@ -238,7 +241,7 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 
 		// Emit storage object unpinned event for quota tracking
 		if corePin != nil {
-			quota.EmitStorageObjectUnpinned(h.Context(), corePin, req.SourceIP)
+			quota.EmitStorageObjectUnpinned(ctx, h.Context(), corePin, req.SourceIP)
 		}
 
 		h.Logger().Debug("Unpinned CID successfully",
@@ -333,6 +336,9 @@ type DAGValidationResult struct {
 // 4. These orphaned children need to be promoted to root-level paths in the file UI so users can still access them
 // We only care about children becoming orphans because parent dependencies don't affect file UI structure breaking.
 func (h *UnpinOperationHandler) AnalyzeUnpinImpact(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) (*UnpinImpactAnalysis, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.AnalyzeUnpinImpact")
+	defer span.End()
+
 	h.Logger().Debug("Starting unpin impact analysis",
 		zap.Stringer("target_cid", c),
 		zap.Uint("user_id", userID))
@@ -381,6 +387,9 @@ func (h *UnpinOperationHandler) AnalyzeUnpinImpact(ctx context.Context, tx *gorm
 
 // getBlockRelationshipsWithLogging retrieves parent and child relationships for a CID with logging
 func (h *UnpinOperationHandler) getBlockRelationshipsWithLogging(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) (parents []string, children []string, err error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.getBlockRelationshipsWithLogging")
+	defer core.EndSpanWithErr(span, err)
+
 	blockSvc := core.GetService[pluginCore.BlockService](h.Context(), pluginCore.BLOCK_SERVICE)
 	if blockSvc == nil {
 		h.Logger().Error("Block service not available during DAG dependency analysis")
@@ -407,6 +416,9 @@ func (h *UnpinOperationHandler) getBlockRelationshipsWithLogging(ctx context.Con
 
 // findPinnedChildBlocks identifies all descendant blocks that are pinned by the user
 func (h *UnpinOperationHandler) findPinnedChildBlocks(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint, children []string) ([]string, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.findPinnedChildBlocks")
+	defer span.End()
+
 	blockSvc := core.GetService[pluginCore.BlockService](h.Context(), pluginCore.BLOCK_SERVICE)
 	if blockSvc == nil {
 		return nil, fmt.Errorf("block service not available")
@@ -426,6 +438,9 @@ func (h *UnpinOperationHandler) findPinnedChildBlocks(ctx context.Context, tx *g
 
 // findPinnedDescendants recursively finds all descendant CIDs that are pinned by the user
 func (h *UnpinOperationHandler) findPinnedDescendants(ctx context.Context, tx *gorm.DB, blockSvc pluginCore.BlockService, currentCID cid.Cid, userID uint, visited map[string]bool) ([]string, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.findPinnedDescendants")
+	defer span.End()
+
 	cidStr := currentCID.String()
 
 	// If we've already visited this CID, skip to prevent infinite loops
@@ -483,6 +498,9 @@ func (h *UnpinOperationHandler) findPinnedDescendants(ctx context.Context, tx *g
 
 // GetAllUserPins retrieves all pins for a specific user
 func (h *UnpinOperationHandler) GetAllUserPins(ctx context.Context, tx *gorm.DB, userID uint) ([]*pluginDb.IPFSPin, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.GetAllUserPins")
+	defer span.End()
+
 	var pins []*pluginDb.IPFSPin
 
 	err := tx.WithContext(ctx).Where("user_id = ?", userID).Find(&pins).Error
@@ -495,6 +513,9 @@ func (h *UnpinOperationHandler) GetAllUserPins(ctx context.Context, tx *gorm.DB,
 
 // DoesPinDependOnCID checks if a pin depends on a specific CID in its DAG structure
 func (h *UnpinOperationHandler) DoesPinDependOnCID(ctx context.Context, blockSvc pluginCore.BlockService, pinCID cid.Cid, targetCID cid.Cid) (bool, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.DoesPinDependOnCID")
+	defer span.End()
+
 	h.Logger().Debug("Starting pin dependency check",
 		zap.Stringer("pin_cid", pinCID),
 		zap.Stringer("target_cid", targetCID))
@@ -556,6 +577,9 @@ func (h *UnpinOperationHandler) DoesPinDependOnCID(ctx context.Context, blockSvc
 
 // CheckDAGForCID recursively traverses a DAG to see if it contains a specific CID
 func (h *UnpinOperationHandler) CheckDAGForCID(ctx context.Context, blockSvc pluginCore.BlockService, currentCID cid.Cid, targetCID cid.Cid, visited map[string]bool) (bool, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.CheckDAGForCID")
+	defer span.End()
+
 	h.Logger().Debug("Starting DAG traversal check",
 		zap.Stringer("current_cid", currentCID),
 		zap.Stringer("target_cid", targetCID),
@@ -663,6 +687,9 @@ func (h *UnpinOperationHandler) CheckDAGForCID(ctx context.Context, blockSvc plu
 
 // GetBlockRelationships retrieves parent and child relationships for a CID
 func (h *UnpinOperationHandler) GetBlockRelationships(ctx context.Context, tx *gorm.DB, blockSvc pluginCore.BlockService, c cid.Cid, userID uint) (parents []string, children []string, err error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.GetBlockRelationships")
+	defer core.EndSpanWithErr(span, err)
+
 	// Get metadata for the block
 	meta, err := blockSvc.GetBlockMeta(ctx, c)
 	if err != nil {
@@ -736,6 +763,9 @@ func (h *UnpinOperationHandler) GetBlockRelationships(ctx context.Context, tx *g
 
 // PromotePinsToRootLevelVisibility updates file paths for dependent pins to mark them as root level visible
 func (h *UnpinOperationHandler) PromotePinsToRootLevelVisibility(ctx context.Context, tx *gorm.DB, dependentPins []string, userID uint) error {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.PromotePinsToRootLevelVisibility")
+	defer span.End()
+
 	fileManagerSvc := core.GetService[pluginCore.FileManagerService](h.Context(), pluginCore.FILE_MANAGER_SERVICE)
 	if fileManagerSvc == nil {
 		return fmt.Errorf("file manager service not available")
@@ -770,6 +800,9 @@ func (h *UnpinOperationHandler) PromotePinsToRootLevelVisibility(ctx context.Con
 
 // AnalyzePathDependencies analyzes file path dependencies for the given CID
 func (h *UnpinOperationHandler) AnalyzePathDependencies(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) (*PathDependencyAnalysis, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.AnalyzePathDependencies")
+	defer span.End()
+
 	analysis := &PathDependencyAnalysis{
 		AffectedPaths:       make([]string, 0),
 		SharedDirectories:   make([]string, 0),
@@ -840,6 +873,9 @@ func (h *UnpinOperationHandler) AnalyzePathDependencies(ctx context.Context, tx 
 
 // IsCIDShared checks if the same CID is pinned multiple times by the same user
 func (h *UnpinOperationHandler) IsCIDShared(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) (bool, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.IsCIDShared")
+	defer span.End()
+
 	var pinCount int64
 	err := tx.WithContext(ctx).
 		Model(&pluginDb.IPFSPin{}).
@@ -855,6 +891,9 @@ func (h *UnpinOperationHandler) IsCIDShared(ctx context.Context, tx *gorm.DB, c 
 
 // IsDirectoryShared checks if a directory contains multiple different pins
 func (h *UnpinOperationHandler) IsDirectoryShared(ctx context.Context, tx *gorm.DB, dirPath string, userID uint) (bool, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.IsDirectoryShared")
+	defer span.End()
+
 	// Count how many pins reference this directory path
 	var pinCount int64
 	err := tx.WithContext(ctx).
@@ -873,6 +912,9 @@ func (h *UnpinOperationHandler) IsDirectoryShared(ctx context.Context, tx *gorm.
 
 // IsPathShared checks if a path is shared by multiple pins for the same user
 func (h *UnpinOperationHandler) IsPathShared(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) (bool, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.IsPathShared")
+	defer span.End()
+
 	// First check if the CID itself is shared (duplicate pins)
 	shared, err := h.IsCIDShared(ctx, tx, c, userID)
 	if err != nil {
@@ -901,6 +943,9 @@ func (h *UnpinOperationHandler) IsPathShared(ctx context.Context, tx *gorm.DB, c
 
 // GetAffectedPaths retrieves all file paths that would be affected by unpinning a specific path
 func (h *UnpinOperationHandler) GetAffectedPaths(ctx context.Context, tx *gorm.DB, targetPath string, userID uint) ([]string, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.GetAffectedPaths")
+	defer span.End()
+
 	var affectedPaths []string
 
 	// Get all file paths for this user
@@ -926,6 +971,9 @@ func (h *UnpinOperationHandler) GetAffectedPaths(ctx context.Context, tx *gorm.D
 
 // GetSharedDirectories identifies directories that are shared by multiple pins
 func (h *UnpinOperationHandler) GetSharedDirectories(ctx context.Context, tx *gorm.DB, targetPath string, userID uint) ([]string, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.GetSharedDirectories")
+	defer span.End()
+
 	sharedDirs := make([]string, 0)
 
 	// Extract directory hierarchy from target path
@@ -969,6 +1017,9 @@ func (h *UnpinOperationHandler) GetSharedDirectories(ctx context.Context, tx *go
 
 // GetOrphanCandidates identifies CIDs that might become orphans when a path is removed
 func (h *UnpinOperationHandler) GetOrphanCandidates(ctx context.Context, tx *gorm.DB, targetPath string, userID uint) ([]string, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.GetOrphanCandidates")
+	defer span.End()
+
 	var orphanCandidates []string
 
 	// Get all child paths of the target path
@@ -1020,6 +1071,9 @@ func (h *UnpinOperationHandler) WouldBreakDirectoryStructure(path pluginDb.FileP
 
 // HandlePathCascadingEffects manages the cascading effects of unpinning on file paths
 func (h *UnpinOperationHandler) HandlePathCascadingEffects(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint, analysis *PathDependencyAnalysis) error {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.HandlePathCascadingEffects")
+	defer span.End()
+
 	if analysis == nil {
 		return fmt.Errorf("path dependency analysis cannot be nil")
 	}
@@ -1069,6 +1123,9 @@ func (h *UnpinOperationHandler) HandlePathCascadingEffects(ctx context.Context, 
 
 // UpdatePathsToRootLevelVisibility moves orphaned pins to root level path structure and marks them as root level visible
 func (h *UnpinOperationHandler) UpdatePathsToRootLevelVisibility(ctx context.Context, c cid.Cid, userID uint) error {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.UpdatePathsToRootLevelVisibility")
+	defer span.End()
+
 	// Check for service availability before proceeding
 	fileManagerSvc := core.GetService[pluginCore.FileManagerService](h.Context(), pluginCore.FILE_MANAGER_SERVICE)
 	if fileManagerSvc == nil {
@@ -1080,11 +1137,17 @@ func (h *UnpinOperationHandler) UpdatePathsToRootLevelVisibility(ctx context.Con
 
 // UpdatePathsToRootLevelVisibilityWithTx moves orphaned pins to root level path structure and marks them as root level visible using a transaction
 func (h *UnpinOperationHandler) UpdatePathsToRootLevelVisibilityWithTx(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) error {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.UpdatePathsToRootLevelVisibilityWithTx")
+	defer span.End()
+
 	return h.updatePathsToRootLevelVisibilityWithDB(ctx, tx, c, userID)
 }
 
 // updatePathsToRootLevelVisibilityWithDB contains the shared logic for updating paths to root level visibility
 func (h *UnpinOperationHandler) updatePathsToRootLevelVisibilityWithDB(ctx context.Context, db *gorm.DB, c cid.Cid, userID uint) error {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.updatePathsToRootLevelVisibilityWithDB")
+	defer span.End()
+
 	// Get all file paths for this CID and user
 	var paths []pluginDb.FilePath
 
@@ -1131,6 +1194,9 @@ func (h *UnpinOperationHandler) updatePathsToRootLevelVisibilityWithDB(ctx conte
 }
 
 func (h *UnpinOperationHandler) GetStatus(ctx context.Context, req *models.Request) (*core.RequestStatus, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.GetStatus")
+	defer span.End()
+
 	status := &core.RequestStatus{
 		ProgressPercent: 0,
 	}
@@ -1192,6 +1258,9 @@ func (h *UnpinOperationHandler) Cleanup(_ context.Context, _ *models.Request) er
 
 // ValidateDAGIntegrityBeforeUnpin validates the DAG structure before unpinning
 func (h *UnpinOperationHandler) ValidateDAGIntegrityBeforeUnpin(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) error {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.ValidateDAGIntegrityBeforeUnpin")
+	defer span.End()
+
 	blockSvc := core.GetService[pluginCore.BlockService](h.Context(), pluginCore.BLOCK_SERVICE)
 	if blockSvc == nil {
 		return fmt.Errorf("block service not available")
@@ -1235,6 +1304,9 @@ func (h *UnpinOperationHandler) ValidateDAGIntegrityBeforeUnpin(ctx context.Cont
 
 // ValidateDAGIntegrityAfterUnpin validates the DAG structure after unpinning
 func (h *UnpinOperationHandler) ValidateDAGIntegrityAfterUnpin(ctx context.Context, tx *gorm.DB, c cid.Cid, userID uint) error {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.ValidateDAGIntegrityAfterUnpin")
+	defer span.End()
+
 	// Validate the entire DAG structure for this user after unpinning
 	result, err := h.ValidateUserDAGStructure(ctx, tx, userID)
 	if err != nil {
@@ -1254,6 +1326,9 @@ func (h *UnpinOperationHandler) ValidateDAGIntegrityAfterUnpin(ctx context.Conte
 
 // ValidateUserDAGStructure validates the entire DAG structure for a user
 func (h *UnpinOperationHandler) ValidateUserDAGStructure(ctx context.Context, tx *gorm.DB, userID uint) (*DAGValidationResult, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.ValidateUserDAGStructure")
+	defer span.End()
+
 	result := &DAGValidationResult{
 		IsValid:        true,
 		MissingBlocks:  make([]string, 0),
@@ -1325,6 +1400,9 @@ func (h *UnpinOperationHandler) ValidateUserDAGStructure(ctx context.Context, tx
 
 // ValidateDAG recursively validates a DAG structure
 func (h *UnpinOperationHandler) ValidateDAG(ctx context.Context, blockSvc pluginCore.BlockService, currentCID cid.Cid, pinnedCIDs map[string]bool, processedBlocks map[string]bool) ([]string, bool, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.ValidateDAG")
+	defer span.End()
+
 	cidStr := currentCID.String()
 
 	// If we've already processed this block, skip to prevent infinite loops
@@ -1377,6 +1455,9 @@ func (h *UnpinOperationHandler) ValidateDAG(ctx context.Context, blockSvc plugin
 
 // ValidateAllPins performs batched validation of all pins for a user
 func (h *UnpinOperationHandler) ValidateAllPins(ctx context.Context, blockSvc pluginCore.BlockService, pinCIDs []cid.Cid, pinnedCIDs map[string]bool) ([]string, bool, error) {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.ValidateAllPins")
+	defer span.End()
+
 	processedBlocks := make(map[string]bool)
 	var missingBlocks []string
 	cycleDetected := false
@@ -1402,6 +1483,9 @@ func (h *UnpinOperationHandler) ValidateAllPins(ctx context.Context, blockSvc pl
 
 // ValidateRootLevelVisibilityPromotion validates that root level visibility promotion was successful
 func (h *UnpinOperationHandler) ValidateRootLevelVisibilityPromotion(ctx context.Context, dependentPins []string, userID uint) error {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.ValidateRootLevelVisibilityPromotion")
+	defer span.End()
+
 	__db := h.Context().DB()
 
 	for _, pinCIDStr := range dependentPins {
@@ -1435,6 +1519,9 @@ func (h *UnpinOperationHandler) ValidateRootLevelVisibilityPromotion(ctx context
 
 // ValidateSystemConsistency performs final validation to ensure system consistency
 func (h *UnpinOperationHandler) ValidateSystemConsistency(ctx context.Context, c cid.Cid, userID uint) error {
+	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.ValidateSystemConsistency")
+	defer span.End()
+
 	__db := h.Context().DB()
 
 	// Check that the pin record no longer exists

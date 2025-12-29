@@ -199,6 +199,9 @@ func NewStreamingProcessorWithOptions(options ...StreamingProcessorOption) *Stre
 
 // ProcessArchive implements StreamingArchiveProcessor.ProcessArchive
 func (sp *StreamingProcessor) ProcessArchive(ctx context.Context, extractor ArchiveExtractor) error {
+	ctx, span := core.TraceMethod(ctx, "StreamingProcessor.ProcessArchive")
+	defer span.End()
+
 	// Check for context cancellation
 	select {
 	case <-ctx.Done():
@@ -266,6 +269,9 @@ func (sp *StreamingProcessor) ProcessArchive(ctx context.Context, extractor Arch
 
 // GetRootNode implements StreamingArchiveProcessor.GetRootNode
 func (sp *StreamingProcessor) GetRootNode(ctx context.Context) (format.Node, error) {
+	ctx, span := core.TraceMethod(ctx, "StreamingProcessor.GetRootNode")
+	defer span.End()
+
 	sp.mu.RLock()
 	rootCID := sp.rootCID
 	sp.mu.RUnlock()
@@ -323,6 +329,9 @@ func (sp *StreamingProcessor) getMaxLinks() int {
 
 // collectFileMetadata walks the filesystem and collects file and directory metadata
 func (sp *StreamingProcessor) collectFileMetadata(ctx context.Context, efs fs.FS) ([]FileInfo, error) {
+	ctx, span := core.TraceMethod(ctx, "StreamingProcessor.collectFileMetadata")
+	defer span.End()
+
 	var files []FileInfo
 
 	// Walk the filesystem and collect metadata only
@@ -421,6 +430,9 @@ func (sp *StreamingProcessor) collectFileMetadata(ctx context.Context, efs fs.FS
 
 // buildDirectoryTree constructs the directory tree in memory
 func (sp *StreamingProcessor) buildDirectoryTree(ctx context.Context) error {
+	ctx, span := core.TraceMethod(ctx, "StreamingProcessor.buildDirectoryTree")
+	defer span.End()
+
 	// Check if directoryMetadata map is nil (race condition protection)
 	sp.mu.RLock()
 	if sp.directoryMetadata == nil {
@@ -526,6 +538,9 @@ func (sp *StreamingProcessor) buildDirectoryTree(ctx context.Context) error {
 
 // persistDirectoryTree stores the complete directory tree to blockstore
 func (sp *StreamingProcessor) persistDirectoryTree(ctx context.Context) error {
+	ctx, span := core.TraceMethod(ctx, "StreamingProcessor.persistDirectoryTree")
+	defer span.End()
+
 	// Check if directoryMetadata map is nil (race condition protection)
 	sp.mu.RLock()
 	if sp.directoryMetadata == nil {
@@ -592,6 +607,9 @@ func (sp *StreamingProcessor) persistDirectoryTree(ctx context.Context) error {
 
 // processFile processes a single file and stores its CID metadata
 func (sp *StreamingProcessor) processFile(ctx context.Context, fileInfo *FileInfo, efs fs.FS) error {
+	ctx, span := core.TraceMethod(ctx, "StreamingProcessor.processFile")
+	defer span.End()
+
 	// Check for context cancellation
 	select {
 	case <-ctx.Done():

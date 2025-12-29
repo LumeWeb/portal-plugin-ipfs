@@ -5,6 +5,7 @@
 package mocks
 
 import (
+	"context"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -40,8 +41,8 @@ func (_m *MockReprovideStore) EXPECT() *MockReprovideStore_Expecter {
 }
 
 // ProvideCIDs provides a mock function for the type MockReprovideStore
-func (_mock *MockReprovideStore) ProvideCIDs(limit int) ([]core.PinnedCID, error) {
-	ret := _mock.Called(limit)
+func (_mock *MockReprovideStore) ProvideCIDs(ctx context.Context, limit int) ([]core.PinnedCID, error) {
+	ret := _mock.Called(ctx, limit)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ProvideCIDs")
@@ -49,18 +50,18 @@ func (_mock *MockReprovideStore) ProvideCIDs(limit int) ([]core.PinnedCID, error
 
 	var r0 []core.PinnedCID
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(int) ([]core.PinnedCID, error)); ok {
-		return returnFunc(limit)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int) ([]core.PinnedCID, error)); ok {
+		return returnFunc(ctx, limit)
 	}
-	if returnFunc, ok := ret.Get(0).(func(int) []core.PinnedCID); ok {
-		r0 = returnFunc(limit)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int) []core.PinnedCID); ok {
+		r0 = returnFunc(ctx, limit)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]core.PinnedCID)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(int) error); ok {
-		r1 = returnFunc(limit)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, int) error); ok {
+		r1 = returnFunc(ctx, limit)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -73,19 +74,25 @@ type MockReprovideStore_ProvideCIDs_Call struct {
 }
 
 // ProvideCIDs is a helper method to define mock.On call
+//   - ctx context.Context
 //   - limit int
-func (_e *MockReprovideStore_Expecter) ProvideCIDs(limit interface{}) *MockReprovideStore_ProvideCIDs_Call {
-	return &MockReprovideStore_ProvideCIDs_Call{Call: _e.mock.On("ProvideCIDs", limit)}
+func (_e *MockReprovideStore_Expecter) ProvideCIDs(ctx interface{}, limit interface{}) *MockReprovideStore_ProvideCIDs_Call {
+	return &MockReprovideStore_ProvideCIDs_Call{Call: _e.mock.On("ProvideCIDs", ctx, limit)}
 }
 
-func (_c *MockReprovideStore_ProvideCIDs_Call) Run(run func(limit int)) *MockReprovideStore_ProvideCIDs_Call {
+func (_c *MockReprovideStore_ProvideCIDs_Call) Run(run func(ctx context.Context, limit int)) *MockReprovideStore_ProvideCIDs_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 int
+		var arg0 context.Context
 		if args[0] != nil {
-			arg0 = args[0].(int)
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 int
+		if args[1] != nil {
+			arg1 = args[1].(int)
 		}
 		run(
 			arg0,
+			arg1,
 		)
 	})
 	return _c
@@ -96,22 +103,22 @@ func (_c *MockReprovideStore_ProvideCIDs_Call) Return(pinnedCIDs []core.PinnedCI
 	return _c
 }
 
-func (_c *MockReprovideStore_ProvideCIDs_Call) RunAndReturn(run func(limit int) ([]core.PinnedCID, error)) *MockReprovideStore_ProvideCIDs_Call {
+func (_c *MockReprovideStore_ProvideCIDs_Call) RunAndReturn(run func(ctx context.Context, limit int) ([]core.PinnedCID, error)) *MockReprovideStore_ProvideCIDs_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // SetLastAnnouncement provides a mock function for the type MockReprovideStore
-func (_mock *MockReprovideStore) SetLastAnnouncement(cids []cid.Cid, t time.Time) error {
-	ret := _mock.Called(cids, t)
+func (_mock *MockReprovideStore) SetLastAnnouncement(ctx context.Context, cids []cid.Cid, t time.Time) error {
+	ret := _mock.Called(ctx, cids, t)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetLastAnnouncement")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func([]cid.Cid, time.Time) error); ok {
-		r0 = returnFunc(cids, t)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, []cid.Cid, time.Time) error); ok {
+		r0 = returnFunc(ctx, cids, t)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -124,25 +131,31 @@ type MockReprovideStore_SetLastAnnouncement_Call struct {
 }
 
 // SetLastAnnouncement is a helper method to define mock.On call
+//   - ctx context.Context
 //   - cids []cid.Cid
 //   - t time.Time
-func (_e *MockReprovideStore_Expecter) SetLastAnnouncement(cids interface{}, t interface{}) *MockReprovideStore_SetLastAnnouncement_Call {
-	return &MockReprovideStore_SetLastAnnouncement_Call{Call: _e.mock.On("SetLastAnnouncement", cids, t)}
+func (_e *MockReprovideStore_Expecter) SetLastAnnouncement(ctx interface{}, cids interface{}, t interface{}) *MockReprovideStore_SetLastAnnouncement_Call {
+	return &MockReprovideStore_SetLastAnnouncement_Call{Call: _e.mock.On("SetLastAnnouncement", ctx, cids, t)}
 }
 
-func (_c *MockReprovideStore_SetLastAnnouncement_Call) Run(run func(cids []cid.Cid, t time.Time)) *MockReprovideStore_SetLastAnnouncement_Call {
+func (_c *MockReprovideStore_SetLastAnnouncement_Call) Run(run func(ctx context.Context, cids []cid.Cid, t time.Time)) *MockReprovideStore_SetLastAnnouncement_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 []cid.Cid
+		var arg0 context.Context
 		if args[0] != nil {
-			arg0 = args[0].([]cid.Cid)
+			arg0 = args[0].(context.Context)
 		}
-		var arg1 time.Time
+		var arg1 []cid.Cid
 		if args[1] != nil {
-			arg1 = args[1].(time.Time)
+			arg1 = args[1].([]cid.Cid)
+		}
+		var arg2 time.Time
+		if args[2] != nil {
+			arg2 = args[2].(time.Time)
 		}
 		run(
 			arg0,
 			arg1,
+			arg2,
 		)
 	})
 	return _c
@@ -153,7 +166,7 @@ func (_c *MockReprovideStore_SetLastAnnouncement_Call) Return(err error) *MockRe
 	return _c
 }
 
-func (_c *MockReprovideStore_SetLastAnnouncement_Call) RunAndReturn(run func(cids []cid.Cid, t time.Time) error) *MockReprovideStore_SetLastAnnouncement_Call {
+func (_c *MockReprovideStore_SetLastAnnouncement_Call) RunAndReturn(run func(ctx context.Context, cids []cid.Cid, t time.Time) error) *MockReprovideStore_SetLastAnnouncement_Call {
 	_c.Call.Return(run)
 	return _c
 }

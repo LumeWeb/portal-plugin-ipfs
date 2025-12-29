@@ -22,6 +22,9 @@ func ValidateDAGCompletionAndUpdateWorkflow(
 	ipfsPin *db.IPFSPin,
 	workflowData *PinWorkflowData,
 ) error {
+	ctx, span := core.TraceMethod(ctx, "ValidateDAGCompletionAndUpdateWorkflow")
+	defer span.End()
+
 	pinSvc := core.GetService[pluginCore.IPFSPinService](helper.Context(), pluginCore.PIN_SERVICE)
 	if pinSvc == nil {
 		helper.Logger().Error("Pin service not available")

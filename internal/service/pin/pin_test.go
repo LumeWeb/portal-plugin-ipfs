@@ -213,8 +213,8 @@ func TestPinService_DeletePin(t *testing.T) {
 
 		// Setup mock expectations
 		hash := internal.NewIPFSHash(testCID)
-		corePinService.EXPECT().GetPinByHash(hash, uint(0)).Return(nil, nil).Maybe()
-		corePinService.EXPECT().DeletePinByHash(hash, uint(0)).Return(nil).Maybe()
+		corePinService.EXPECT().GetPinByHash(mock.Anything, hash, uint(0)).Return(nil, nil).Maybe()
+		corePinService.EXPECT().DeletePinByHash(mock.Anything, hash, uint(0)).Return(nil).Maybe()
 		fileManagerService.EXPECT().DeleteFilePathSmart(mock.Anything, uint(0), testCID.Bytes()).Return(nil).Maybe()
 
 		// Add the pin to the database

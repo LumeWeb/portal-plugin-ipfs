@@ -15,8 +15,8 @@ import (
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/multiformats/go-multicodec"
-	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
+	"go.lumeweb.com/portal/core"
 )
 
 // UnixFSNodeGenerator defines the interface for creating UnixFS nodes from readers
@@ -137,11 +137,17 @@ func (gen *IPFSUnixFSNodeGenerator) CreateDirectory() (unixfsio.Directory, error
 
 // CreateNode implements UnixFSNodeGenerator.CreateNode
 func (gen *IPFSUnixFSNodeGenerator) CreateNode(ctx context.Context, r io.ReadSeekCloser) (format.Node, error) {
+	ctx, span := core.TraceMethod(ctx, "IPFSUnixFSNodeGenerator.CreateNode")
+	defer span.End()
+
 	return gen.CreateUnixFSNode(ctx, r, helpers.DefaultLinksPerBlock, 0)
 }
 
 // CreateUnixFSNode implements UnixFSNodeGenerator.CreateUnixFSNode
 func (gen *IPFSUnixFSNodeGenerator) CreateUnixFSNode(ctx context.Context, r io.ReadSeekCloser, maxlinks int, chunkSize int64) (format.Node, error) {
+	ctx, span := core.TraceMethod(ctx, "IPFSUnixFSNodeGenerator.CreateUnixFSNode")
+	defer span.End()
+
 	// Check for context cancellation
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -164,6 +170,9 @@ func (gen *IPFSUnixFSNodeGenerator) CreateUnixFSNode(ctx context.Context, r io.R
 
 // CreateDAGFromReader implements UnixFSNodeGenerator.CreateDAGFromReader
 func (gen *IPFSUnixFSNodeGenerator) CreateDAGFromReader(ctx context.Context, reader io.Reader, maxlinks int, chunkSize int64, rawLeaves bool) (format.Node, error) {
+	ctx, span := core.TraceMethod(ctx, "IPFSUnixFSNodeGenerator.CreateDAGFromReader")
+	defer span.End()
+
 	if reader == nil {
 		return nil, fmt.Errorf("reader cannot be nil")
 	}

@@ -34,6 +34,9 @@ func (h *RetrieveOperationHandler) ValidateRequest(_ context.Context, req *model
 }
 
 func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Request) error {
+	ctx, span := core.TraceMethod(ctx, "RetrieveOperationHandler.Execute")
+	defer span.End()
+
 	var workflowData PinWorkflowData
 	err := h.StructuredWorkflowData(req.ID, &workflowData)
 	if err != nil {
@@ -64,7 +67,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 	// Check download quota if user ID is available
 	if req.UserID != nil && *req.UserID > 0 {
 		// Validate download quota using the already fetched block
-		err = quota.ValidateDownloadQuota(h.Context(), *req.UserID, blockSize)
+		err = quota.ValidateDownloadQuota(ctx, h.Context(), *req.UserID, blockSize)
 		if err != nil {
 			h.Logger().Warn("Download quota exceeded", zap.Uint("user_id", *req.UserID), zap.Uint64("block_size", blockSize), zap.Error(err))
 			return err
@@ -75,8 +78,6 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 	if err != nil {
 		return fmt.Errorf("failed to collect cids: %w", err)
 	}
-
-
 
 	childCids := lo.Filter(cids, func(item cid.Cid, _ int) bool {
 		return !item.Equals(c)
@@ -157,6 +158,9 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 }
 
 func (h *RetrieveOperationHandler) GetStatus(ctx context.Context, req *models.Request) (*core.RequestStatus, error) {
+	ctx, span := core.TraceMethod(ctx, "RetrieveOperationHandler.GetStatus")
+	defer span.End()
+
 	// For now just return a simple status since retrieval is synchronous
 	status := &core.RequestStatus{
 		ProgressPercent: 100,

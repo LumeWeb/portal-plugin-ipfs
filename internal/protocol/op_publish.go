@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"fmt"
+
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
@@ -14,6 +15,9 @@ type PublishOperationHandler struct {
 }
 
 func (h *PublishOperationHandler) ValidateRequest(ctx context.Context, req *models.Request) error {
+	ctx, span := core.TraceMethod(ctx, "PublishOperationHandler.ValidateRequest")
+	defer span.End()
+
 	if len(req.Hash) == 0 {
 		return fmt.Errorf("hash is required")
 	}

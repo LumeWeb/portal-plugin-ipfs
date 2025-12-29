@@ -56,7 +56,7 @@ func (j *CookieJar) Cookies(u *url.URL) []*http.Cookie {
 	}
 
 	var result []*http.Cookie
-	
+
 	// Add cookies for exact host match
 	if cookies, ok := j.cookies[host]; ok {
 		result = append(result, filterValidCookies(cookies)...)
@@ -106,12 +106,12 @@ func (j *CookieJar) shouldSendCookie(cookie *http.Cookie, scheme, host, path str
 func filterValidCookies(cookies []*http.Cookie) []*http.Cookie {
 	var valid []*http.Cookie
 	now := time.Now()
-	
+
 	for _, cookie := range cookies {
 		if cookie.Expires.IsZero() || cookie.Expires.After(now) {
 			valid = append(valid, cookie)
 		}
 	}
-	
+
 	return valid
 }

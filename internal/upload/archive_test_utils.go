@@ -16,20 +16,23 @@ import (
 // TestArchiveCreator provides a unified interface for creating archives
 // from different data structures (map[string]string or []TestFile)
 type TestArchiveCreator struct {
-	t  *testing.T
+	t   *testing.T
 	ctx core.Context
 }
 
 // NewTestArchiveCreator creates a new unified archive creator
 func NewTestArchiveCreator(t *testing.T, ctx core.Context) *TestArchiveCreator {
 	return &TestArchiveCreator{
-		t:  t,
+		t:   t,
 		ctx: ctx,
 	}
 }
 
 // CreateArchiveFromMap creates an archive from a map[string]string
 func (u *TestArchiveCreator) CreateArchiveFromMap(ctx context.Context, format Format, files map[string]string) (*bytes.Buffer, error) {
+	ctx, span := core.TraceMethod(ctx, "TestArchiveCreator.CreateArchiveFromMap")
+	defer span.End()
+
 	// Convert map to TestFile slice
 	testFiles := u.mapToTestFiles(files)
 	return u.CreateArchiveFromTestFiles(ctx, format, testFiles)
@@ -37,6 +40,9 @@ func (u *TestArchiveCreator) CreateArchiveFromMap(ctx context.Context, format Fo
 
 // CreateArchiveFromTestFiles creates an archive from a []TestFile
 func (u *TestArchiveCreator) CreateArchiveFromTestFiles(ctx context.Context, format Format, files []TestFile) (*bytes.Buffer, error) {
+	ctx, span := core.TraceMethod(ctx, "TestArchiveCreator.CreateArchiveFromTestFiles")
+	defer span.End()
+
 	var buf bytes.Buffer
 	fileList := u.createFileListFromTestFiles(files)
 

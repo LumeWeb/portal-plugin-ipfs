@@ -6,6 +6,7 @@ import (
 	"io/fs"
 
 	"github.com/mholt/archives"
+	core "go.lumeweb.com/portal/core"
 )
 
 // ZipArchiveExtractor implements ArchiveExtractor for ZIP files using the unified driver
@@ -33,6 +34,9 @@ func (z *ZipArchiveExtractor) Format() Format {
 
 // Filesystem returns a filesystem interface for the archive
 func (z *ZipArchiveExtractor) Filesystem(ctx context.Context) (fs.FS, error) {
+	ctx, span := core.TraceMethod(ctx, "ZipArchiveExtractor.Filesystem")
+	defer span.End()
+
 	return z.driver.Filesystem(ctx)
 }
 

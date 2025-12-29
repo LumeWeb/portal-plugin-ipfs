@@ -3,10 +3,11 @@ package ipfs
 import (
 	"context"
 	"errors"
-	"go.lumeweb.com/portal-plugin-ipfs/core"
 	"sync"
 	"testing"
 	"time"
+
+	"go.lumeweb.com/portal-plugin-ipfs/core"
 
 	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/assert"
@@ -531,4 +532,3 @@ func TestReprovider_performProvide_MinAnnouncement_NotAllAnnounced(t *testing.T)
 
 	assert.Less(t, time.Until(testCIDs[2].LastAnnouncement.Add(interval)), sleepDuration)
 }
-

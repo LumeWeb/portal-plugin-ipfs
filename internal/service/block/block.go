@@ -16,19 +16,14 @@ import (
 var _ pluginCore.BlockService = (*BlockService)(nil)
 
 type BlockService struct {
-	ctx    core.Context
-	db     *gorm.DB
-	logger *core.Logger
-	ipfs   core.Protocol
+	*core.BaseComponent
+	ipfs core.Protocol
 }
 
 func NewBlockService() (core.Service, []core.ContextBuilderOption, error) {
 	bs := &BlockService{}
 	return bs, core.ContextOptions(
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
-			bs.ctx = ctx
-			bs.db = ctx.DB()
-			bs.logger = ctx.ServiceLogger(bs)
 			bs.ipfs = core.GetProtocol(internal.ProtocolName)
 			return nil
 		}),
@@ -36,40 +31,57 @@ func NewBlockService() (core.Service, []core.ContextBuilderOption, error) {
 }
 
 func (bs *BlockService) GetBlockMeta(ctx context.Context, c cid.Cid) (*pluginDb.UnixFSNode, error) {
-	var unixFSNode pluginDb.UnixFSNode
-	if err := db.RetryableTransaction(bs.ctx, bs.db, func(tx *gorm.DB) *gorm.DB {
-		return tx.WithContext(ctx).
-			Model(&pluginDb.UnixFSNode{}).
-			Preload("Block"). // This will automatically join with IPFSBlock
-			Joins("Block").   // This ensures the join condition is included in the main query
-			Where("Block.cid = ?", c.Bytes()).
-			First(&unixFSNode)
-	}); err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, err
-		}
-		return nil, fmt.Errorf("failed to get block meta: %w", err)
-	}
+	ctx, span := core.TraceMethod(ctx, "BlockService.GetBlockMeta")
+	defer span.End()
 
-	return &unixFSNode, nil
+	return core.MetricTrackResult(
+		GetBlockMetaDuration.WithLabelValues(),
+		GetBlockMetaTotal.WithLabelValues(LabelStatusError),
+		func() (*pluginDb.UnixFSNode, error) {
+			var unixFSNode pluginDb.UnixFSNode
+			if err := db.RetryableComponentTransaction(bs, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Model(&pluginDb.UnixFSNode{}).
+					Preload("Block"). // This will automatically join with IPFSBlock
+					Joins("Block").   // This ensures the join condition is included in the main query
+					Where("Block.cid = ?", c.Bytes()).
+					First(&unixFSNode)
+			}); err != nil {
+				if err == gorm.ErrRecordNotFound {
+					return nil, err
+				}
+				return nil, fmt.Errorf("failed to get block meta: %w", err)
+			}
+
+			return &unixFSNode, nil
+		},
+	)
 }
 
 func (bs *BlockService) GetBlockMetaBatch(ctx context.Context, cids []cid.Cid) (map[string]*pluginDb.UnixFSNode, error) {
-	metas := make(map[string]*pluginDb.UnixFSNode, len(cids))
+	ctx, span := core.TraceMethod(ctx, "BlockService.GetBlockMetaBatch")
+	defer span.End()
 
-	for _, c := range cids {
-		meta, err := bs.GetBlockMeta(ctx, c)
-		if err != nil {
-			if err == gorm.ErrRecordNotFound {
-				continue
+	return core.MetricTrackResult(
+		GetBlockMetaBatchDuration.WithLabelValues(),
+		GetBlockMetaBatchTotal.WithLabelValues(LabelStatusError),
+		func() (map[string]*pluginDb.UnixFSNode, error) {
+			metas := make(map[string]*pluginDb.UnixFSNode, len(cids))
+
+			for _, c := range cids {
+				meta, err := bs.GetBlockMeta(ctx, c)
+				if err != nil {
+					if err == gorm.ErrRecordNotFound {
+						continue
+					}
+					return nil, fmt.Errorf("failed to get block meta for %s: %w", c.String(), err)
+				}
+
+				metas[c.String()] = meta
 			}
-			return nil, fmt.Errorf("failed to get block meta for %s: %w", c.String(), err)
-		}
 
-		metas[c.String()] = meta
-	}
-
-	return metas, nil
+			return metas, nil
+		},
+	)
 }
 
 func (bs *BlockService) ID() string {

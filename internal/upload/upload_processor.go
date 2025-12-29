@@ -30,11 +30,13 @@ func NewFileProcessor(storage core.StorageService, ipfs core.Protocol, carGenera
 
 // Process converts a single file to CAR format and stores it
 func (p *FileProcessor) Process(ctx context.Context, reader io.ReadSeekCloser) (cid.Cid, string, error) {
+	ctx, span := core.TraceMethod(ctx, "FileProcessor.Process")
+	defer span.End()
+
 	car, c, err := p.carGenerator.FileToCAR(ctx, reader)
 	if err != nil {
 		return cid.Cid{}, "", err
 	}
-
 
 	uploadID, err := p.storageHelper.StoreFile(ctx, NewUniversalReader(car), int64(car.Len()))
 	if err != nil {
@@ -62,12 +64,13 @@ func NewCARProcessor(storage core.StorageService, ipfs core.Protocol) *CARProces
 
 // Process validates and stores a CAR file directly
 func (p *CARProcessor) Process(ctx context.Context, reader io.ReadSeekCloser) (cid.Cid, string, error) {
+	ctx, span := core.TraceMethod(ctx, "CARProcessor.Process")
+	defer span.End()
 
 	size, err := common.PrepareReader(reader)
 	if err != nil {
 		return cid.Undef, "", err
 	}
-
 
 	roots, err := GetCarRoots(reader, false)
 	if err != nil {
@@ -130,6 +133,9 @@ func NewArchiveProcessor(format Format, storage core.StorageService, ipfs core.P
 
 // Process extracts archive contents and converts to CAR format
 func (p *ArchiveProcessor) Process(ctx context.Context, reader io.ReadSeekCloser) (cid.Cid, string, error) {
+	ctx, span := core.TraceMethod(ctx, "ArchiveProcessor.Process")
+	defer span.End()
+
 	uReader := NewUniversalReader(reader)
 	defer common.SafeCloseFile(p.logger, uReader)
 
@@ -142,7 +148,6 @@ func (p *ArchiveProcessor) Process(ctx context.Context, reader io.ReadSeekCloser
 	if err != nil {
 		return cid.Cid{}, "", err
 	}
-
 
 	uploadID, err := p.storageHelper.StoreFile(ctx, NewUniversalReader(car), int64(car.Len()))
 	if err != nil {

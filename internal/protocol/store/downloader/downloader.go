@@ -8,15 +8,16 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"io"
+	"sync"
+	"time"
+
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
-	"io"
-	"sync"
-	"time"
 
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -45,6 +46,7 @@ type (
 		timestamp time.Time
 		log       *core.Logger
 		clientIP  string
+		ctx       context.Context
 	}
 
 	priorityQueue []*blockResponse
@@ -117,6 +119,9 @@ func (h *priorityQueue) Pop() any {
 var _ heap.Interface = &priorityQueue{}
 
 func (br *blockResponse) block(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+	ctx, span := core.TraceMethod(ctx, "blockResponse.block")
+	defer span.End()
+
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -132,6 +137,9 @@ func (br *blockResponse) block(ctx context.Context, c cid.Cid) (blocks.Block, er
 }
 
 func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.Cid, clientIP string) ([]byte, error) {
+	ctx, span := core.TraceMethod(ctx, "BlockDownloaderDefault.downloadBlockData")
+	defer span.End()
+
 	blockBuf := bytes.NewBuffer(make([]byte, 0, 2<<20))
 
 	bd.log.Debug("Trying to download block", zap.String("CID", c.String()))
@@ -169,20 +177,23 @@ func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.C
 	// Emit download completion event for block retrieval
 	// uploadID=0 indicates this download is not associated with a specific upload record
 	// The clientIP is still tracked for quota purposes when available
-	quota.EmitDownloadCompleted(bd.ctx, 0, uint64(blockBuf.Len()), clientIP, nil)
+	quota.EmitDownloadCompleted(ctx, bd.ctx, 0, uint64(blockBuf.Len()), clientIP, nil)
 
 	return blockBuf.Bytes(), nil
 }
 
-func (bd *BlockDownloaderDefault) queueRelated(c cid.Cid) {
+func (bd *BlockDownloaderDefault) queueRelated(ctx context.Context, c cid.Cid) {
+	ctx, span := core.TraceMethod(ctx, "BlockDownloaderDefault.queueRelated")
+	defer span.End()
+
 	log := bd.log.Named("queueRelated").With(zap.Stringer("cid", c))
-	siblings, err := bd.store.BlockSiblings(c, 64)
+	siblings, err := bd.store.BlockSiblings(ctx, c, 64)
 	if err != nil {
 		log.Error("failed to get block siblings", zap.Error(err))
 		return
 	}
 
-	children, err := bd.store.BlockChildren(c, lo.ToPtr(64))
+	children, err := bd.store.BlockChildren(ctx, c, lo.ToPtr(64))
 	if err != nil {
 		log.Error("failed to get block children", zap.Error(err))
 		return
@@ -193,28 +204,28 @@ func (bd *BlockDownloaderDefault) queueRelated(c cid.Cid) {
 
 	for _, sibling := range siblings {
 		// check if the block exists in the store
-		err = bd.store.BlockExists(sibling)
+		err = bd.store.BlockExists(ctx, sibling)
 		if err != nil {
 			continue
 		}
 
 		// Prefetch downloads use empty client IP to distinguish from user-initiated downloads
 		// This allows quota tracking to differentiate between foreground and background traffic
-		if _, ok := bd.queueBlock(sibling, downloadPriorityMedium, ""); ok {
+		if _, ok := bd.queueBlock(ctx, sibling, downloadPriorityMedium, ""); ok {
 			log.Debug("queued sibling", zap.Stringer("sibling", sibling))
 		}
 	}
 
 	for _, child := range children {
 		// check if the block exists in the store
-		err = bd.store.BlockExists(child)
+		err = bd.store.BlockExists(ctx, child)
 		if err != nil {
 			continue
 		}
 
 		// Prefetch downloads use empty client IP to distinguish from user-initiated downloads
 		// This allows quota tracking to differentiate between foreground and background traffic
-		if _, ok := bd.queueBlock(child, downloadPriorityLow, ""); ok {
+		if _, ok := bd.queueBlock(ctx, child, downloadPriorityLow, ""); ok {
 			log.Debug("queued child", zap.Stringer("child", child))
 		}
 	}
@@ -238,7 +249,7 @@ func (bd *BlockDownloaderDefault) doDownloadTask(task *blockResponse, log *zap.L
 	close(task.ch)
 
 	if task.err == nil && task.priority >= downloadPriorityHigh {
-		go bd.queueRelated(task.cid)
+		go bd.queueRelated(task.ctx, task.cid)
 	}
 }
 
@@ -266,7 +277,10 @@ func (bd *BlockDownloaderDefault) downloadWorker(n int) {
 	}
 }
 
-func (bd *BlockDownloaderDefault) queueBlock(c cid.Cid, priority downloadPriority, clientIP string) (*blockResponse, bool) {
+func (bd *BlockDownloaderDefault) queueBlock(ctx context.Context, c cid.Cid, priority downloadPriority, clientIP string) (*blockResponse, bool) {
+	ctx, span := core.TraceMethod(ctx, "BlockDownloaderDefault.queueBlock")
+	defer span.End()
+
 	resp, ok := bd.inflight[cidKey(c)]
 	if ok {
 		if resp.priority < priority {
@@ -292,6 +306,7 @@ func (bd *BlockDownloaderDefault) queueBlock(c cid.Cid, priority downloadPriorit
 		ch:       make(chan struct{}),
 		log:      bd.log,
 		clientIP: clientIP,
+		ctx:      ctx,
 	}
 	bd.inflight[cidKey(c)] = resp
 	heap.Push(bd.queue, resp)
@@ -301,6 +316,9 @@ func (bd *BlockDownloaderDefault) queueBlock(c cid.Cid, priority downloadPriorit
 
 // Get returns a block by CID.
 func (bd *BlockDownloaderDefault) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+	ctx, span := core.TraceMethod(ctx, "BlockDownloaderDefault.Get")
+	defer span.End()
+
 	// Check context before doing any work
 	select {
 	case <-ctx.Done():
@@ -309,7 +327,7 @@ func (bd *BlockDownloaderDefault) Get(ctx context.Context, c cid.Cid) (blocks.Bl
 	}
 
 	// check if the block exists in the store
-	err := bd.store.BlockExists(c)
+	err := bd.store.BlockExists(ctx, c)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +338,7 @@ func (bd *BlockDownloaderDefault) Get(ctx context.Context, c cid.Cid) (blocks.Bl
 	bd.mu.Lock()
 
 	bd.log.Debug("queuing block", zap.String("CID", c.String()))
-	resp, _ := bd.queueBlock(c, downloadPriorityMax, clientIP)
+	resp, _ := bd.queueBlock(ctx, c, downloadPriorityMax, clientIP)
 	bd.mu.Unlock()
 	bd.log.Debug("waiting on queued block", zap.String("CID", c.String()))
 	return resp.block(ctx, c)

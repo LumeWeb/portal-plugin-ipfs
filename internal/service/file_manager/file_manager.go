@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/prometheus/client_golang/prometheus"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
@@ -18,9 +19,7 @@ import (
 
 // FileManagerServiceDefault implements the FileManagerService interface
 type FileManagerServiceDefault struct {
-	ctx    core.Context
-	db     *gorm.DB
-	logger *core.Logger
+	*core.BaseComponent
 }
 
 // Predefined errors
@@ -37,9 +36,6 @@ func NewFileManagerService() (core.Service, []core.ContextBuilderOption, error) 
 
 	opts := core.ContextOptions(
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
-			svc.ctx = ctx
-			svc.logger = ctx.ServiceLogger(svc)
-			svc.db = ctx.DB()
 			return nil
 		}),
 	)
@@ -53,15 +49,21 @@ func (s *FileManagerServiceDefault) ID() string {
 
 // ListFiles retrieves a paginated and filtered list of files using the path table
 func (s *FileManagerServiceDefault) ListFiles(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.FilePath, int64, error) {
+	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.ListFiles")
+	defer span.End()
+
+	timer := prometheus.NewTimer(ListFilesDuration.WithLabelValues())
+	defer timer.ObserveDuration()
+
 	var paths []*pluginDb.FilePath
 	var total int64
 
-	// Process filters to handle hierarchical parent_path filtering
-	processedFilters := s.processHierarchicalFilters(filters)
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		// Process filters to handle hierarchical parent_path filtering
+		processedFilters := s.processHierarchicalFilters(filters)
 
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
 		// Construct the query for file paths
-		query := g.WithContext(ctx).Model(&pluginDb.FilePath{}).Where("user_id = ?", userID)
+		query := tx.Model(&pluginDb.FilePath{}).Where("user_id = ?", userID)
 
 		// Apply filters using queryutil
 		query = queryutil.ApplyFilters(query, processedFilters, nil)
@@ -71,8 +73,8 @@ func (s *FileManagerServiceDefault) ListFiles(ctx context.Context, userID uint, 
 
 		// Get total count
 		if err := query.Count(&total).Error; err != nil {
-			_ = g.AddError(fmt.Errorf("failed to count files: %w", err))
-			return g
+			_ = tx.AddError(fmt.Errorf("failed to count files: %w", err))
+			return tx
 		}
 
 		// Apply pagination
@@ -80,15 +82,16 @@ func (s *FileManagerServiceDefault) ListFiles(ctx context.Context, userID uint, 
 
 		// Get the records
 		if err := query.Find(&paths).Error; err != nil {
-			_ = g.AddError(fmt.Errorf("failed to list files: %w", err))
-			return g
+			_ = tx.AddError(fmt.Errorf("failed to list files: %w", err))
+			return tx
 		}
 
-		return g
+		return tx
 	})
 
 	if err != nil {
-		s.logger.Error("Failed to list files",
+		ListFilesTotal.WithLabelValues(LabelStatusError).Inc()
+		s.Logger().Error("Failed to list files",
 			zap.Error(err),
 			zap.Uint("user_id", userID),
 			zap.Any("filters", filters),
@@ -96,221 +99,268 @@ func (s *FileManagerServiceDefault) ListFiles(ctx context.Context, userID uint, 
 		return nil, 0, err
 	}
 
-	s.logger.Debug("Listed files",
+	ListFilesTotal.WithLabelValues(LabelStatusSuccess).Inc()
+	s.Logger().Debug("Listed files",
 		zap.Uint("user_id", userID),
 		zap.Int("count", len(paths)),
 		zap.Int64("total", total))
+
 	return paths, total, nil
 }
 
 // ListDirectoryContents lists files and directories in a specific parent path
 // Includes orphaned files only when parentPath is RootPath
 func (s *FileManagerServiceDefault) ListDirectoryContents(ctx context.Context, userID uint, parentPath string) ([]*pluginDb.FilePath, error) {
-	var paths []*pluginDb.FilePath
+	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.ListDirectoryContents")
+	defer span.End()
 
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		query := g.WithContext(ctx).
-			Where("user_id = ? AND parent_path = ?", userID, parentPath)
+	return core.MetricTrackResult(
+		ListDirectoryContentsDuration.WithLabelValues(),
+		ListDirectoryContentsTotal.WithLabelValues(LabelStatusError),
+		func() ([]*pluginDb.FilePath, error) {
+			var paths []*pluginDb.FilePath
 
-		// When listing root directory, include orphaned files
-		// No additional filter needed as the base query already includes all entries for the parent path
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				query := tx.Where("user_id = ? AND parent_path = ?", userID, parentPath)
 
-		return query.Order("is_directory DESC, name ASC").Find(&paths)
-	})
+				// When listing root directory, include orphaned files
+				// No additional filter needed as the base query already includes all entries for the parent path
 
-	if err != nil {
-		s.logger.Error("Failed to list directory contents",
-			zap.Error(err),
-			zap.Uint("user_id", userID),
-			zap.String("parent_path", parentPath))
-		return nil, err
-	}
+				return query.Order("is_directory DESC, name ASC").Find(&paths)
+			})
 
-	return paths, nil
+			if err != nil {
+				s.Logger().Error("Failed to list directory contents",
+					zap.Error(err),
+					zap.Uint("user_id", userID),
+					zap.String("parent_path", parentPath))
+				return nil, err
+			}
+
+			return paths, nil
+		})
 }
 
 // GetBreadcrumbs retrieves breadcrumb navigation for a given path
 func (s *FileManagerServiceDefault) GetBreadcrumbs(ctx context.Context, userID uint, path string) ([]*pluginDb.FilePath, error) {
-	// Validate the input path
-	if path == "" {
-		return nil, fmt.Errorf("path cannot be empty")
-	}
+	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.GetBreadcrumbs")
+	defer span.End()
 
-	if !strings.HasPrefix(path, "/") {
-		return nil, fmt.Errorf("path must start with '/'")
-	}
+	return core.MetricTrackResult(
+		GetBreadcrumbsDuration.WithLabelValues(),
+		GetBreadcrumbsTotal.WithLabelValues(LabelStatusError),
+		func() ([]*pluginDb.FilePath, error) {
+			// Validate the input path
+			if path == "" {
+				return nil, fmt.Errorf("path cannot be empty")
+			}
 
-	// Special case for root path - return empty breadcrumbs
-	if path == pluginDb.RootPath {
-		return []*pluginDb.FilePath{}, nil
-	}
+			if !strings.HasPrefix(path, "/") {
+				return nil, fmt.Errorf("path must start with '/'")
+			}
 
-	// Check if path exists for the given user
-	var existingPath pluginDb.FilePath
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		return g.WithContext(ctx).
-			Where("user_id = ? AND path = ?", userID, path).
-			First(&existingPath)
-	})
+			// Special case for root path - return empty breadcrumbs
+			if path == pluginDb.RootPath {
+				return []*pluginDb.FilePath{}, nil
+			}
 
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("path not found for user")
-		}
-		s.logger.Error("Failed to check if path exists",
-			zap.Error(err),
-			zap.Uint("user_id", userID),
-			zap.String("path", path))
-		return nil, err
-	}
+			// Check if path exists for the given user
+			var existingPath pluginDb.FilePath
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Where("user_id = ? AND path = ?", userID, path).
+					First(&existingPath)
+			})
 
-	var breadcrumbs []*pluginDb.FilePath
+			if err != nil {
+				if err == gorm.ErrRecordNotFound {
+					return nil, fmt.Errorf("path not found for user")
+				}
+				s.Logger().Error("Failed to check if path exists",
+					zap.Error(err),
+					zap.Uint("user_id", userID),
+					zap.String("path", path))
+				return nil, err
+			}
 
-	// Build path hierarchy
-	pathParts := strings.Split(strings.Trim(path, "/"), "/")
-	var paths []string
-	currentPath := ""
+			var breadcrumbs []*pluginDb.FilePath
 
-	for _, part := range pathParts {
-		if part == "" {
-			continue
-		}
-		if currentPath == "" {
-			currentPath = "/" + part
-		} else {
-			currentPath += "/" + part
-		}
-		paths = append(paths, currentPath)
-	}
+			// Build path hierarchy
+			pathParts := strings.Split(strings.Trim(path, "/"), "/")
+			var paths []string
+			currentPath := ""
 
-	err = db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		return g.WithContext(ctx).
-			Where("user_id = ? AND path IN ?", userID, paths).
-			Order("depth ASC").
-			Find(&breadcrumbs)
-	})
+			for _, part := range pathParts {
+				if part == "" {
+					continue
+				}
+				if currentPath == "" {
+					currentPath = "/" + part
+				} else {
+					currentPath += "/" + part
+				}
+				paths = append(paths, currentPath)
+			}
 
-	if err != nil {
-		s.logger.Error("Failed to get breadcrumbs",
-			zap.Error(err),
-			zap.Uint("user_id", userID),
-			zap.String("path", path))
-		return nil, err
-	}
+			err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Where("user_id = ? AND path IN ?", userID, paths).
+					Order("depth ASC").
+					Find(&breadcrumbs)
+			})
 
-	return breadcrumbs, nil
+			if err != nil {
+				s.Logger().Error("Failed to get breadcrumbs",
+					zap.Error(err),
+					zap.Uint("user_id", userID),
+					zap.String("path", path))
+				return nil, err
+			}
+
+			return breadcrumbs, nil
+		})
 }
 
 // CreateFilePath creates a new file path entry
 func (s *FileManagerServiceDefault) CreateFilePath(ctx context.Context, path *pluginDb.FilePath) error {
-	// Check if a file path entry already exists for the same user_id, cid, and path
-	var existingPath pluginDb.FilePath
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		return g.WithContext(ctx).
-			Where("user_id = ? AND cid = ? AND path = ?", path.UserID, path.CID, path.Path).
-			First(&existingPath)
-	})
+	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.CreateFilePath")
+	defer span.End()
 
-	// If an entry exists, return an error indicating duplicate path
-	if err == nil {
-		return ErrDuplicateFilePath
-	}
+	return core.MetricTrack(
+		CreateFilePathDuration.WithLabelValues(),
+		CreateFilePathTotal.WithLabelValues(LabelStatusError),
+		func() error {
+			// Check if a file path entry already exists for the same user_id, cid, and path
+			var existingPath pluginDb.FilePath
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Where("user_id = ? AND cid = ? AND path = ?", path.UserID, path.CID, path.Path).
+					First(&existingPath)
+			})
 
-	// If the error is not a "record not found" error, return the database error
-	if err != gorm.ErrRecordNotFound {
-		s.logger.Error("Failed to check for existing file path",
-			zap.Error(err),
-			zap.Any("path", path))
-		return err
-	}
+			// If an entry exists, return an error indicating duplicate path
+			if err == nil {
+				return ErrDuplicateFilePath
+			}
 
-	// If no entry exists, proceed with the normal creation logic
-	err = db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		return g.WithContext(ctx).Create(path)
-	})
+			// If the error is not a "record not found" error, return the database error
+			if err != gorm.ErrRecordNotFound {
+				s.Logger().Error("Failed to check for existing file path",
+					zap.Error(err),
+					zap.Any("path", path))
+				return err
+			}
 
-	if err != nil {
-		s.logger.Error("Failed to create file path",
-			zap.Error(err),
-			zap.Any("path", path))
-		return err
-	}
+			// If no entry exists, proceed with the normal creation logic
+			err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Create(path)
+			})
 
-	return nil
+			if err != nil {
+				s.Logger().Error("Failed to create file path",
+					zap.Error(err),
+					zap.Any("path", path))
+				return err
+			}
+
+			return nil
+		},
+	)
 }
 
 // ValidatePathCompleteness checks if all pins have corresponding file paths
 func (s *FileManagerServiceDefault) ValidatePathCompleteness(ctx context.Context) (bool, error) {
-	incompletePins, err := s.GetIncompletePins(ctx)
-	if err != nil {
-		return false, fmt.Errorf("failed to get incomplete pins: %w", err)
-	}
+	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.ValidatePathCompleteness")
+	defer span.End()
 
-	if len(incompletePins) > 0 {
-		s.logger.Warn("Found pins without file paths",
-			zap.Int("count", len(incompletePins)))
-		return false, nil
-	}
+	return core.MetricTrackResult(
+		ValidatePathCompletenessDuration.WithLabelValues(),
+		ValidatePathCompletenessTotal.WithLabelValues(LabelStatusError),
+		func() (bool, error) {
+			incompletePins, err := s.GetIncompletePins(ctx)
+			if err != nil {
+				return false, fmt.Errorf("failed to get incomplete pins: %w", err)
+			}
 
-	return true, nil
+			if len(incompletePins) > 0 {
+				s.Logger().Warn("Found pins without file paths",
+					zap.Int("count", len(incompletePins)))
+				return false, nil
+			}
+
+			return true, nil
+		})
 }
 
 // GetIncompletePins returns pins that don't have corresponding file paths
 func (s *FileManagerServiceDefault) GetIncompletePins(ctx context.Context) ([]*pluginDb.IPFSPin, error) {
-	var incompletePins []*pluginDb.IPFSPin
+	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.GetIncompletePins")
+	defer span.End()
 
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		// Find pins that don't have corresponding file paths
-		query := `
+	return core.MetricTrackResult(
+		GetIncompletePinsDuration.WithLabelValues(),
+		GetIncompletePinsTotal.WithLabelValues(LabelStatusError),
+		func() ([]*pluginDb.IPFSPin, error) {
+			var incompletePins []*pluginDb.IPFSPin
+
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				// Find pins that don't have corresponding file paths
+				query := `
 			SELECT ip.* 
 			FROM ipfs_pins ip
 			LEFT JOIN ipfs_file_paths ifp ON ip.user_id = ifp.user_id AND ip.cid = ifp.cid
 			WHERE ifp.cid IS NULL
 		`
 
-		if err := g.WithContext(ctx).Raw(query).Scan(&incompletePins).Error; err != nil {
-			_ = g.AddError(fmt.Errorf("failed to find incomplete pins: %w", err))
-			return g
-		}
+				if err := tx.Raw(query).Scan(&incompletePins).Error; err != nil {
+					_ = tx.AddError(fmt.Errorf("failed to find incomplete pins: %w", err))
+					return tx
+				}
 
-		return g
-	})
+				return tx
+			})
 
-	if err != nil {
-		s.logger.Error("Failed to get incomplete pins", zap.Error(err))
-		return nil, err
-	}
+			if err != nil {
+				s.Logger().Error("Failed to get incomplete pins", zap.Error(err))
+				return nil, err
+			}
 
-	return incompletePins, nil
+			return incompletePins, nil
+		})
 }
 
 // GetOrphanedPaths returns file paths that don't have corresponding pins
 func (s *FileManagerServiceDefault) GetOrphanedPaths(ctx context.Context) ([]*pluginDb.FilePath, error) {
-	var orphanedPaths []*pluginDb.FilePath
+	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.GetOrphanedPaths")
+	defer span.End()
 
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		// Find file paths that don't have corresponding pins
-		query := `
+	return core.MetricTrackResult(
+		GetOrphanedPathsDuration.WithLabelValues(),
+		GetOrphanedPathsTotal.WithLabelValues(LabelStatusError),
+		func() ([]*pluginDb.FilePath, error) {
+			var orphanedPaths []*pluginDb.FilePath
+
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				// Find file paths that don't have corresponding pins
+				query := `
 			SELECT ifp.* 
 			FROM ipfs_file_paths ifp
 			LEFT JOIN ipfs_pins ip ON ip.user_id = ifp.user_id AND ip.cid = ifp.cid
 			WHERE ip.cid IS NULL
 		`
 
-		if err := g.WithContext(ctx).Raw(query).Scan(&orphanedPaths).Error; err != nil {
-			_ = g.AddError(fmt.Errorf("failed to find orphaned paths: %w", err))
-			return g
-		}
+				if err := tx.Raw(query).Scan(&orphanedPaths).Error; err != nil {
+					_ = tx.AddError(fmt.Errorf("failed to find orphaned paths: %w", err))
+					return tx
+				}
 
-		return g
-	})
+				return tx
+			})
 
-	if err != nil {
-		s.logger.Error("Failed to get orphaned paths", zap.Error(err))
-		return nil, err
-	}
+			if err != nil {
+				s.Logger().Error("Failed to get orphaned paths", zap.Error(err))
+				return nil, err
+			}
 
-	return orphanedPaths, nil
+			return orphanedPaths, nil
+		})
 }
 
 // processHierarchicalFilters handles special parent_path filtering logic
@@ -357,154 +407,188 @@ func (s *FileManagerServiceDefault) processHierarchicalFilters(filters []queryut
 
 // HealthCheck implements core.HealthChecker interface
 func (s *FileManagerServiceDefault) HealthCheck(ctx context.Context) error {
-	// Check database connectivity
-	if err := s.db.WithContext(ctx).Exec("SELECT 1").Error; err != nil {
-		return fmt.Errorf("database connectivity check failed: %w", err)
-	}
+	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.HealthCheck")
+	defer span.End()
 
-	// Validate path completeness
-	valid, err := s.ValidatePathCompleteness(ctx)
-	if err != nil {
-		return fmt.Errorf("path completeness validation failed: %w", err)
-	}
+	return core.MetricTrack(
+		HealthCheckDuration.WithLabelValues(),
+		HealthCheckTotal.WithLabelValues(LabelStatusError),
+		func() error {
+			// Check database connectivity
+			if err := s.DB().Exec("SELECT 1").Error; err != nil {
+				return fmt.Errorf("database connectivity check failed: %w", err)
+			}
 
-	if !valid {
-		// Log warning but don't fail health check - this is informational
-		s.logger.Warn("File path completeness validation failed - some pins may not have file paths computed")
-	}
+			// Validate path completeness
+			valid, err := s.ValidatePathCompleteness(ctx)
+			if err != nil {
+				return fmt.Errorf("path completeness validation failed: %w", err)
+			}
 
-	return nil
+			if !valid {
+				// Log warning but don't fail health check - this is informational
+				s.Logger().Warn("File path completeness validation failed - some pins may not have file paths computed")
+			}
+
+			return nil
+		})
 }
 
 // DeleteFilePathSmart performs smart deletion of file paths, only removing paths
 // that are not referenced by other pins for the same user
 func (s *FileManagerServiceDefault) DeleteFilePathSmart(ctx context.Context, userID uint, cid []byte) error {
-	// Get all file paths associated with this CID
-	var pathsToDelete []*pluginDb.FilePath
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		return g.WithContext(ctx).
-			Where("user_id = ? AND cid = ?", userID, cid).
-			Find(&pathsToDelete)
-	})
+	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.DeleteFilePathSmart")
+	defer span.End()
 
-	if err != nil {
-		s.logger.Error("Failed to get file paths for deletion",
-			zap.Error(err),
-			zap.Uint("user_id", userID))
-		return err
-	}
-
-	// For each path, check if other pins reference it
-	for _, path := range pathsToDelete {
-		// Count how many pins reference this path (by checking parent paths)
-		var pinCount int64
-		err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-			// Check if any other pins have this CID
-			return g.WithContext(ctx).
-				Model(&pluginDb.IPFSPin{}).
-				Where("user_id = ? AND cid = ?", userID, cid).
-				Count(&pinCount)
-		})
-
-		if err != nil {
-			s.logger.Error("Failed to count pins referencing path",
-				zap.Error(err),
-				zap.Uint("user_id", userID),
-				zap.String("path", path.Path))
-			continue
-		}
-
-		// Only delete the path if no other pins reference it
-		if pinCount == 0 {
-			err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-				return g.WithContext(ctx).
-					Where("id = ?", path.ID).
-					Delete(&pluginDb.FilePath{})
+	return core.MetricTrack(
+		DeleteFilePathSmartDuration.WithLabelValues(),
+		DeleteFilePathSmartTotal.WithLabelValues(LabelStatusError),
+		func() error {
+			// Get all file paths associated with this CID
+			var pathsToDelete []*pluginDb.FilePath
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Where("user_id = ? AND cid = ?", userID, cid).
+					Find(&pathsToDelete)
 			})
 
 			if err != nil {
-				s.logger.Error("Failed to delete file path",
+				s.Logger().Error("Failed to get file paths for deletion",
 					zap.Error(err),
-					zap.Uint("user_id", userID),
-					zap.String("path", path.Path))
-				continue
+					zap.Uint("user_id", userID))
+				return err
 			}
 
-			s.logger.Debug("Deleted file path",
-				zap.Uint("user_id", userID),
-				zap.String("path", path.Path))
-		} else {
-			s.logger.Debug("Skipped deleting file path (referenced by other pins)",
-				zap.Uint("user_id", userID),
-				zap.String("path", path.Path),
-				zap.Int64("pin_count", pinCount))
-		}
-	}
+			// For each path, check if other pins reference it
+			for _, path := range pathsToDelete {
+				// Count how many pins reference this path (by checking parent paths)
+				var pinCount int64
+				err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+					// Check if any other pins have this CID
+					return tx.Model(&pluginDb.IPFSPin{}).
+						Where("user_id = ? AND cid = ?", userID, cid).
+						Count(&pinCount)
+				})
 
-	return nil
+				if err != nil {
+					s.Logger().Error("Failed to count pins referencing path",
+						zap.Error(err),
+						zap.Uint("user_id", userID),
+						zap.String("path", path.Path))
+					continue
+				}
+
+				// Only delete the path if no other pins reference it
+				if pinCount == 0 {
+					err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+						return tx.Where("id = ?", path.ID).
+							Delete(&pluginDb.FilePath{})
+					})
+
+					if err != nil {
+						s.Logger().Error("Failed to delete file path",
+							zap.Error(err),
+							zap.Uint("user_id", userID),
+							zap.String("path", path.Path))
+						continue
+					}
+
+					s.Logger().Debug("Deleted file path",
+						zap.Uint("user_id", userID),
+						zap.String("path", path.Path))
+				} else {
+					s.Logger().Debug("Skipped deleting file path (referenced by other pins)",
+						zap.Uint("user_id", userID),
+						zap.String("path", path.Path),
+						zap.Int64("pin_count", pinCount))
+				}
+			}
+
+			return nil
+		})
 }
 
 // UpdateFilePath updates an existing file path entry
 func (s *FileManagerServiceDefault) UpdateFilePath(ctx context.Context, path *pluginDb.FilePath) error {
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		return g.WithContext(ctx).
-			Model(&pluginDb.FilePath{}).
-			Where("user_id = ? AND cid = ? AND path = ?", path.UserID, path.CID, path.Path).
-			Updates(map[string]interface{}{
-				"name":         path.Name,
-				"type":         path.Type,
-				"size":         path.Size,
-				"is_directory": path.IsDirectory,
-				"is_orphan":    path.IsOrphan,
-				"parent_path":  path.ParentPath,
-				"depth":        path.Depth,
+	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.UpdateFilePath")
+	defer span.End()
+
+	return core.MetricTrack(
+		UpdateFilePathDuration.WithLabelValues(),
+		UpdateFilePathTotal.WithLabelValues(LabelStatusError),
+		func() error {
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Model(&pluginDb.FilePath{}).
+					Where("user_id = ? AND cid = ? AND path = ?", path.UserID, path.CID, path.Path).
+					Updates(map[string]interface{}{
+						"name":         path.Name,
+						"type":         path.Type,
+						"size":         path.Size,
+						"is_directory": path.IsDirectory,
+						"is_orphan":    path.IsOrphan,
+						"parent_path":  path.ParentPath,
+						"depth":        path.Depth,
+					})
 			})
-	})
 
-	if err != nil {
-		s.logger.Error("Failed to update file path",
-			zap.Error(err),
-			zap.Uint("user_id", path.UserID),
-			zap.String("path", path.Path))
-		return err
-	}
+			if err != nil {
+				s.Logger().Error("Failed to update file path",
+					zap.Error(err),
+					zap.Uint("user_id", path.UserID),
+					zap.String("path", path.Path))
+				return err
+			}
 
-	return nil
+			return nil
+		})
 }
 
 // DeleteFilePath deletes all file path entries for a specific CID and user
 // This is a force delete that doesn't check for shared references
 func (s *FileManagerServiceDefault) DeleteFilePath(ctx context.Context, userID uint, cid []byte) error {
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		return g.WithContext(ctx).
-			Where("user_id = ? AND cid = ?", userID, cid).
-			Delete(&pluginDb.FilePath{})
-	})
+	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.DeleteFilePath")
+	defer span.End()
 
-	if err != nil {
-		s.logger.Error("Failed to delete file path",
-			zap.Error(err),
-			zap.Uint("user_id", userID))
-		return err
-	}
+	return core.MetricTrack(
+		DeleteFilePathDuration.WithLabelValues(),
+		DeleteFilePathTotal.WithLabelValues(LabelStatusError),
+		func() error {
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Where("user_id = ? AND cid = ?", userID, cid).
+					Delete(&pluginDb.FilePath{})
+			})
 
-	return nil
+			if err != nil {
+				s.Logger().Error("Failed to delete file path",
+					zap.Error(err),
+					zap.Uint("user_id", userID))
+				return err
+			}
+
+			return nil
+		})
 }
 
 // DeleteFilePathsByUserID deletes all file path entries for a user
 func (s *FileManagerServiceDefault) DeleteFilePathsByUserID(ctx context.Context, userID uint) error {
-	err := db.RetryableTransaction(s.ctx, s.db, func(g *gorm.DB) *gorm.DB {
-		return g.WithContext(ctx).
-			Where("user_id = ?", userID).
-			Delete(&pluginDb.FilePath{})
-	})
+	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.DeleteFilePathsByUserID")
+	defer span.End()
 
-	if err != nil {
-		s.logger.Error("Failed to delete file paths by user ID",
-			zap.Error(err),
-			zap.Uint("user_id", userID))
-		return err
-	}
+	return core.MetricTrack(
+		DeleteFilePathsByUserIDDuration.WithLabelValues(),
+		DeleteFilePathsByUserIDTotal.WithLabelValues(LabelStatusError),
+		func() error {
+			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Where("user_id = ?", userID).
+					Delete(&pluginDb.FilePath{})
+			})
 
-	return nil
+			if err != nil {
+				s.Logger().Error("Failed to delete file paths by user ID",
+					zap.Error(err),
+					zap.Uint("user_id", userID))
+				return err
+			}
+
+			return nil
+		})
 }

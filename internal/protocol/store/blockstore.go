@@ -37,6 +37,9 @@ type (
 
 // DeleteBlock removes a given block from the blockstore.
 func (bs *BlockStore) DeleteBlock(ctx context.Context, c cid.Cid) error {
+	ctx, span := core.TraceMethod(ctx, "BlockStore.DeleteBlock")
+	defer span.End()
+
 	key := cidKey(c)
 	log := bs.log.Named("DeleteBlock").With(zap.Stack("stack"), zap.Stringer("cid", c), zap.String("key", key))
 
@@ -45,7 +48,7 @@ func (bs *BlockStore) DeleteBlock(ctx context.Context, c cid.Cid) error {
 		return nil
 	}
 
-	if err := bs.metadata.Unpin(c); err != nil {
+	if err := bs.metadata.Unpin(ctx, c); err != nil {
 		return fmt.Errorf("failed to unpin block: %w", err)
 	}
 
@@ -60,6 +63,9 @@ func (bs *BlockStore) DeleteBlock(ctx context.Context, c cid.Cid) error {
 
 // Has returns whether or not a given block is in the blockstore.
 func (bs *BlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
+	ctx, span := core.TraceMethod(ctx, "BlockStore.Has")
+	defer span.End()
+
 	log := bs.log.Named("Has").With(zap.Stringer("cid", c))
 
 	if isVirtualReadEnabled(ctx) {
@@ -69,7 +75,7 @@ func (bs *BlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
 
 	start := time.Now()
 
-	err := bs.metadata.BlockExists(c)
+	err := bs.metadata.BlockExists(ctx, c)
 	if format.IsNotFound(err) {
 		return false, nil
 	} else if err != nil {
@@ -82,6 +88,9 @@ func (bs *BlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
 
 // Get returns a block by CID
 func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+	ctx, span := core.TraceMethod(ctx, "BlockStore.Get")
+	defer span.End()
+
 	if isVirtualReadEnabled(ctx) {
 		bs.log.Debug("virtual read enabled, fetching block without storing")
 		return bs.downloader.Get(ctx, c)
@@ -91,14 +100,14 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 	clientIP := GetClientIP(ctx)
 
 	// Get block size for quota validation
-	size, err := bs.metadata.Size(c)
+	size, err := bs.metadata.Size(ctx, c)
 	if err != nil {
 		return nil, err
 	}
 
 	// Validate download quota - always anonymous (nil userID), unless skipped
 	if !IsQuotaCheckSkipped(ctx) {
-		if err := quota.ValidateDownloadQuota(bs.ctx, 0, size); err != nil {
+		if err := quota.ValidateDownloadQuota(ctx, bs.ctx, 0, uint64(size)); err != nil {
 			bs.log.Debug("download quota validation failed", zap.String("cid", c.String()), zap.Error(err))
 			return nil, err
 		}
@@ -111,13 +120,16 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 	}
 
 	// Emit download completion event - anonymous (nil userID)
-	quota.EmitDownloadCompleted(bs.ctx, 0, uint64(len(block.RawData())), clientIP, nil)
+	quota.EmitDownloadCompleted(ctx, bs.ctx, 0, uint64(len(block.RawData())), clientIP, nil)
 
 	return block, nil
 }
 
 // GetSize returns the CIDs mapped BlockSize
 func (bs *BlockStore) GetSize(ctx context.Context, c cid.Cid) (int, error) {
+	ctx, span := core.TraceMethod(ctx, "BlockStore.GetSize")
+	defer span.End()
+
 	key := cidKey(c)
 	log := bs.log.Named("GetSize").With(zap.Stringer("cid", c), zap.String("key", key))
 
@@ -130,12 +142,12 @@ func (bs *BlockStore) GetSize(ctx context.Context, c cid.Cid) (int, error) {
 		return len(block.RawData()), nil
 	}
 
-	err := bs.metadata.BlockExists(c)
+	err := bs.metadata.BlockExists(ctx, c)
 	if err != nil {
 		return 0, err
 	}
 
-	size, err := bs.metadata.Size(c)
+	size, err := bs.metadata.Size(ctx, c)
 	if err != nil {
 		return 0, err
 	}
@@ -146,6 +158,9 @@ func (bs *BlockStore) GetSize(ctx context.Context, c cid.Cid) (int, error) {
 
 // Put puts a given block to the underlying datastore
 func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
+	ctx, span := core.TraceMethod(ctx, "BlockStore.Put")
+	defer span.End()
+
 	key := cidKey(b.Cid())
 	log := bs.log.Named("Put").With(zap.Stringer("cid", b.Cid()), zap.String("key", key), zap.Int("size", len(b.RawData())))
 
@@ -186,7 +201,7 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 		meta.Links = append(meta.Links, link.Cid)
 	}
 
-	if err = bs.metadata.Pin(meta); err != nil {
+	if err = bs.metadata.Pin(ctx, meta); err != nil {
 		log.Debug("failed to pin block", zap.Error(err))
 		return fmt.Errorf("failed to pin block %q: %w", b.Cid(), err)
 	}
@@ -197,6 +212,9 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 // PutMany puts a slice of blocks at the same time using batching
 // capabilities of the underlying datastore whenever possible.
 func (bs *BlockStore) PutMany(ctx context.Context, blocks []blocks.Block) error {
+	ctx, span := core.TraceMethod(ctx, "BlockStore.PutMany")
+	defer span.End()
+
 	log := bs.log.Named("PutMany").With(zap.Int("blocks", len(blocks)))
 
 	for _, block := range blocks {
@@ -213,6 +231,9 @@ func (bs *BlockStore) PutMany(ctx context.Context, blocks []blocks.Block) error 
 // the CIDs in the Blockstore can be read. It should respect
 // the given context, closing the channel if it becomes Done.
 func (bs *BlockStore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, error) {
+	ctx, span := core.TraceMethod(ctx, "BlockStore.AllKeysChan")
+	defer span.End()
+
 	log := bs.log.Named("AllKeysChan")
 
 	if isVirtualReadEnabled(ctx) {
@@ -225,7 +246,7 @@ func (bs *BlockStore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, error) {
 	ch := make(chan cid.Cid)
 	go func() {
 		for i := 0; ; i += 1000 {
-			cids, err := bs.metadata.Pinned(i, 1000)
+			cids, err := bs.metadata.Pinned(ctx, i, 1000)
 			if err != nil {
 				bs.log.Error("failed to get root CIDs", zap.Error(err))
 				close(ch)
@@ -283,6 +304,9 @@ func NewBlockStore(ctx core.Context, downloader pluginCore.BlockDownloader, meta
 }
 
 func blockLinks(ctx context.Context, b blocks.Block) []*format.Link {
+	ctx, span := core.TraceMethod(ctx, "blockLinks")
+	defer span.End()
+
 	pn, err := encoding.DecodeBlock(ctx, b)
 	if err != nil {
 		return nil

@@ -27,6 +27,9 @@ type PostUploadOperationHandler struct {
 }
 
 func (h *PostUploadOperationHandler) ValidateRequest(ctx context.Context, req *models.Request) error {
+	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.ValidateRequest")
+	defer span.End()
+
 	if req.Hash == nil {
 		return fmt.Errorf("upload hash is required")
 	}
@@ -34,6 +37,9 @@ func (h *PostUploadOperationHandler) ValidateRequest(ctx context.Context, req *m
 }
 
 func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Request) error {
+	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.Execute")
+	defer span.End()
+
 	workflow, err := h.getWorkflowData(req.ID)
 	if err != nil {
 		return err
@@ -105,6 +111,9 @@ func (h *PostUploadOperationHandler) getWorkflowData(requestID uint) (*PostUploa
 
 // getUpload retrieves the upload file from storage
 func (h *PostUploadOperationHandler) getUpload(ctx context.Context, uploadID string) (io.ReadCloser, error) {
+	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.getUpload")
+	defer span.End()
+
 	storageSvc := core.GetService[core.StorageService](h.Context(), core.STORAGE_SERVICE)
 	uploadFile, err := storageSvc.S3GetTemporaryUpload(ctx, h.Protocol().(core.StorageProtocol), uploadID)
 	if err != nil {
@@ -194,6 +203,9 @@ func (h *PostUploadOperationHandler) createFileProcessor(uploadFile io.ReadClose
 
 // processCIDs processes all CIDs and creates upload records
 func (h *PostUploadOperationHandler) processCIDs(ctx context.Context, allCids []cid.Cid, userID uint, sourceIP string) error {
+	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.processCIDs")
+	defer span.End()
+
 	uploadSvc := core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE)
 	if uploadSvc == nil {
 		h.Logger().Error("Upload service not available")
@@ -222,6 +234,9 @@ func (h *PostUploadOperationHandler) processMetadata(allCids []cid.Cid) {
 
 // createRootPin creates a root pin for the upload
 func (h *PostUploadOperationHandler) createRootPin(ctx context.Context, rootCid cid.Cid, userID uint) (*db.IPFSPin, error) {
+	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.createRootPin")
+	defer span.End()
+
 	uploadSvc := core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE)
 	ipfsPin, err := uploadSvc.CreateRootPin(ctx, rootCid, userID)
 	if err != nil {
@@ -232,6 +247,9 @@ func (h *PostUploadOperationHandler) createRootPin(ctx context.Context, rootCid 
 
 // updateWorkflow updates workflow data with pin information
 func (h *PostUploadOperationHandler) updateWorkflow(ctx context.Context, requestID uint, rootCids []cid.Cid, ipfsPin *db.IPFSPin) error {
+	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.updateWorkflow")
+	defer span.End()
+
 	workflowData := &PinWorkflowData{
 		PinRequestID: ipfsPin.RequestID.ToUUID(),
 		Cids:         lo.Map(rootCids, func(item cid.Cid, _ int) string { return item.String() }),
@@ -256,6 +274,9 @@ func (h *PostUploadOperationHandler) logProcessingResult(allCids, rootCids []cid
 }
 
 func (h *PostUploadOperationHandler) GetStatus(ctx context.Context, req *models.Request) (*core.RequestStatus, error) {
+	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.GetStatus")
+	defer span.End()
+
 	return &core.RequestStatus{
 		ProgressPercent: 100,
 		Message:         "Upload processed successfully",
@@ -263,6 +284,9 @@ func (h *PostUploadOperationHandler) GetStatus(ctx context.Context, req *models.
 }
 
 func (h *PostUploadOperationHandler) Cleanup(ctx context.Context, req *models.Request) error {
+	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.Cleanup")
+	defer span.End()
+
 	// Delete temporary upload
 	storageSvc := core.GetService[core.StorageService](h.Context(), core.STORAGE_SERVICE)
 	err := storageSvc.S3DeleteTemporaryUpload(ctx, h.Protocol().(core.StorageProtocol), req.Hash.String())

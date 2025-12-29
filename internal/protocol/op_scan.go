@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"fmt"
+
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
@@ -21,11 +22,17 @@ func (h *ScanOperationHandler) ValidateRequest(_ context.Context, req *models.Re
 }
 
 func (h *ScanOperationHandler) Execute(ctx context.Context, req *models.Request) error {
+	ctx, span := core.TraceMethod(ctx, "ScanOperationHandler.Execute")
+	defer span.End()
+
 	// TODO: implement content scan
 	return nil
 }
 
 func (h *ScanOperationHandler) GetStatus(ctx context.Context, req *models.Request) (*core.RequestStatus, error) {
+	ctx, span := core.TraceMethod(ctx, "ScanOperationHandler.GetStatus")
+	defer span.End()
+
 	status := &core.RequestStatus{
 		ProgressPercent: 100,
 	}

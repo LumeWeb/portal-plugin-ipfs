@@ -2,9 +2,11 @@ package ipfs
 
 import (
 	"context"
-	"go.lumeweb.com/portal-plugin-ipfs/core"
 	"sync"
 	"time"
+
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal/core"
 
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multihash"
@@ -18,8 +20,8 @@ type (
 
 // A Reprovider periodically announces CIDs to the IPFS network.
 type Reprovider struct {
-	provider core.Provider
-	store    core.ReprovideStore
+	provider pluginCore.Provider
+	store    pluginCore.ReprovideStore
 	log      *zap.Logger
 
 	triggerProvide       chan struct{}
@@ -40,6 +42,9 @@ func (r *Reprovider) Trigger() {
 // Run starts the reprovider loop, which periodically announces CIDs that
 // have not been announced in the last interval.
 func (r *Reprovider) Run(ctx context.Context, interval, timeout time.Duration, batchSize int) {
+	ctx, span := core.TraceMethod(ctx, "Reprovider.Run")
+	defer span.End()
+
 	for {
 		if r.provider.Ready() {
 			break
@@ -76,6 +81,9 @@ func (r *Reprovider) Run(ctx context.Context, interval, timeout time.Duration, b
 }
 
 func (r *Reprovider) handleTriggers(ctx context.Context, interval, timeout time.Duration, batchSize int) {
+	ctx, span := core.TraceMethod(ctx, "Reprovider.handleTriggers")
+	defer span.End()
+
 	var triggerTimer *time.Timer
 	for {
 		select {
@@ -97,7 +105,13 @@ func (r *Reprovider) handleTriggers(ctx context.Context, interval, timeout time.
 }
 
 func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.Duration, batchSize int) time.Duration {
+	ctx, span := core.TraceMethod(ctx, "Reprovider.performProvide")
+	defer span.End()
+
 	doProvide := func(ctx context.Context, keys []multihash.Multihash) error {
+		ctx, span := core.TraceMethod(ctx, "anonymous")
+		defer span.End()
+
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		return r.provider.ProvideMany(ctx, keys)
@@ -107,7 +121,7 @@ func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.
 
 	start := time.Now()
 
-	cids, err := r.store.ProvideCIDs(batchSize)
+	cids, err := r.store.ProvideCIDs(ctx, batchSize)
 	if err != nil {
 		r.log.Error("failed to fetch CIDs to provide", zap.Error(err))
 		return time.Minute // Return a shorter sleep time on error
@@ -141,7 +155,7 @@ func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.
 		return time.Minute // Return a shorter sleep time on error
 	}
 
-	if err := r.store.SetLastAnnouncement(announced, time.Now()); err != nil {
+	if err := r.store.SetLastAnnouncement(ctx, announced, time.Now()); err != nil {
 		r.log.Error("failed to update last announcement time", zap.Error(err))
 		return time.Minute // Return a shorter sleep time on error
 	}
@@ -157,7 +171,7 @@ func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.
 }
 
 // NewReprovider creates a new reprovider.
-func NewReprovider(provider core.Provider, store core.ReprovideStore, log *zap.Logger) *Reprovider {
+func NewReprovider(provider pluginCore.Provider, store pluginCore.ReprovideStore, log *zap.Logger) *Reprovider {
 	return &Reprovider{
 		provider:             provider,
 		store:                store,

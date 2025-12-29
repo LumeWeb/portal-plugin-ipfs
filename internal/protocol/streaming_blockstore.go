@@ -13,8 +13,8 @@ import (
 	"github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
-	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 )
 
@@ -106,7 +106,7 @@ func NewStreamingBlockstoreWithDefaults(logger *core.Logger, passthrough blockst
 	abs := &DefaultStreamingBlockstore{
 		passthrough:     passthrough,
 		logger:          logger,
-		workerPool:      workerpool.New(queueSize), // Bounded queue
+		workerPool:      workerpool.New(queueSize),          // Bounded queue
 		blockDelivery:   make(chan *BlockEntry, bufferSize), // Buffer sized for throughput
 		pendingBlocks:   make(map[string]*BlockEntry),
 		seenFilter:      bloom.NewWithEstimates(bloomFilterEstimateItemsBlockstore, bloomFilterFalsePositiveRateBlockstore),
@@ -156,6 +156,9 @@ func (s *DefaultStreamingBlockstore) setProcessingDone() {
 // Put implements blockstore.Blockstore.Put
 // Stores a block and queues it for streaming
 func (s *DefaultStreamingBlockstore) Put(ctx context.Context, block blocks.Block) error {
+	ctx, span := core.TraceMethod(ctx, "DefaultStreamingBlockstore.Put")
+	defer span.End()
+
 	if s.isClosed() {
 		return fmt.Errorf("blockstore is closed")
 	}
@@ -165,6 +168,9 @@ func (s *DefaultStreamingBlockstore) Put(ctx context.Context, block blocks.Block
 
 // putBlock is a private method to directly put a block
 func (s *DefaultStreamingBlockstore) putBlock(ctx context.Context, block blocks.Block) error {
+	ctx, span := core.TraceMethod(ctx, "DefaultStreamingBlockstore.putBlock")
+	defer span.End()
+
 	if s.isClosed() {
 		return fmt.Errorf("blockstore is closed")
 	}
@@ -228,7 +234,7 @@ func (s *DefaultStreamingBlockstore) putBlock(ctx context.Context, block blocks.
 		// Use exponential backoff for better resource efficiency under sustained high load
 		backoff := 1 * time.Millisecond
 		const maxBackoff = 100 * time.Millisecond
-		
+
 		for {
 			// Check if processing is done or channel is closed before attempting to send
 			if s.isProcessingDone() || s.isClosed() {
@@ -276,6 +282,9 @@ func (s *DefaultStreamingBlockstore) putBlock(ctx context.Context, block blocks.
 
 // PutMany implements blockstore.Blockstore.PutMany
 func (s *DefaultStreamingBlockstore) PutMany(ctx context.Context, blocks []blocks.Block) error {
+	ctx, span := core.TraceMethod(ctx, "DefaultStreamingBlockstore.PutMany")
+	defer span.End()
+
 	for _, block := range blocks {
 		if err := s.Put(ctx, block); err != nil {
 			return err
@@ -287,6 +296,9 @@ func (s *DefaultStreamingBlockstore) PutMany(ctx context.Context, blocks []block
 // Get implements blockstore.Blockstore.Get
 // First checks LRU cache, then falls back to passthrough blockstore
 func (s *DefaultStreamingBlockstore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
+	ctx, span := core.TraceMethod(ctx, "DefaultStreamingBlockstore.Get")
+	defer span.End()
+
 	if s.isClosed() {
 		return nil, fmt.Errorf("blockstore is closed")
 	}
@@ -344,6 +356,9 @@ func (s *DefaultStreamingBlockstore) Get(ctx context.Context, c cid.Cid) (blocks
 
 // Has implements blockstore.Blockstore.Has
 func (s *DefaultStreamingBlockstore) Has(ctx context.Context, c cid.Cid) (bool, error) {
+	ctx, span := core.TraceMethod(ctx, "DefaultStreamingBlockstore.Has")
+	defer span.End()
+
 	if s.isClosed() {
 		return false, fmt.Errorf("blockstore is closed")
 	}
@@ -394,6 +409,9 @@ func (s *DefaultStreamingBlockstore) Has(ctx context.Context, c cid.Cid) (bool, 
 
 // GetSize implements blockstore.Blockstore.GetSize
 func (s *DefaultStreamingBlockstore) GetSize(ctx context.Context, c cid.Cid) (int, error) {
+	ctx, span := core.TraceMethod(ctx, "DefaultStreamingBlockstore.GetSize")
+	defer span.End()
+
 	if s.isClosed() {
 		return -1, fmt.Errorf("blockstore is closed")
 	}
@@ -421,6 +439,9 @@ func (s *DefaultStreamingBlockstore) GetSize(ctx context.Context, c cid.Cid) (in
 
 // DeleteBlock implements blockstore.Blockstore.DeleteBlock
 func (s *DefaultStreamingBlockstore) DeleteBlock(ctx context.Context, c cid.Cid) error {
+	ctx, span := core.TraceMethod(ctx, "DefaultStreamingBlockstore.DeleteBlock")
+	defer span.End()
+
 	if s.isClosed() {
 		return fmt.Errorf("blockstore is closed")
 	}
@@ -432,6 +453,9 @@ func (s *DefaultStreamingBlockstore) DeleteBlock(ctx context.Context, c cid.Cid)
 
 // AllKeysChan implements blockstore.Blockstore.AllKeysChan
 func (s *DefaultStreamingBlockstore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, error) {
+	ctx, span := core.TraceMethod(ctx, "DefaultStreamingBlockstore.AllKeysChan")
+	defer span.End()
+
 	if s.isClosed() {
 		return nil, fmt.Errorf("blockstore is closed")
 	}
@@ -643,6 +667,9 @@ func (s *DefaultStreamingBlockstore) GetProcessedCount() int {
 
 // WaitDone waits for a CID to be marked as done (implements DoneTracker interface)
 func (s *DefaultStreamingBlockstore) WaitDone(ctx context.Context, c cid.Cid) bool {
+	ctx, span := core.TraceMethod(ctx, "DefaultStreamingBlockstore.WaitDone")
+	defer span.End()
+
 	return s.DoneTracker.WaitDone(ctx, c)
 }
 
