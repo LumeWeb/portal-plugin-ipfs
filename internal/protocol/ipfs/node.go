@@ -357,8 +357,15 @@ func AnnouncementAddresses() ([]multiaddr.Multiaddr, error) {
 	}
 
 	unspecAddrs := []multiaddr.Multiaddr{
+		// TCP
 		multiaddr.StringCast("/ip4/0.0.0.0/tcp/4001"),
 		multiaddr.StringCast("/ip6/::/tcp/4001"),
+		// QUIC v1
+		multiaddr.StringCast("/ip4/0.0.0.0/udp/4001/quic-v1"),
+		multiaddr.StringCast("/ip6/::/udp/4001/quic-v1"),
+		// WebSocket
+		multiaddr.StringCast("/ip4/0.0.0.0/tcp/4002/ws"),
+		multiaddr.StringCast("/ip6/::/tcp/4002/ws"),
 	}
 
 	announcementAddrs, err := manet.ResolveUnspecifiedAddresses(unspecAddrs, nil)
