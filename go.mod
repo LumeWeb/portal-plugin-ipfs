@@ -45,7 +45,7 @@ require (
 	go.lumeweb.com/portal v0.4.2-0.20251229200155-e5f1801ebe11
 	go.lumeweb.com/portal-middleware v0.3.4
 	go.lumeweb.com/portal-plugin-core v0.0.0-20251213020130-9d424965fad2
-	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20251213101354-739005102118
+	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20251231015112-75b70a00decc
 	go.lumeweb.com/portal-plugin-quota v0.0.0-20251229183341-d3147a18bb0f
 	go.lumeweb.com/portal-router v0.6.9
 	go.lumeweb.com/queryutil v0.3.15
@@ -82,7 +82,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.16 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.16 // indirect
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.94.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.95.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.12 // indirect
@@ -338,7 +338,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
 	golang.org/x/exp v0.0.0-20251209150349-8475f28825e9 // indirect
-	golang.org/x/image v0.33.0 // indirect
+	golang.org/x/image v0.34.0 // indirect
 	golang.org/x/mod v0.31.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/oauth2 v0.32.0 // indirect
