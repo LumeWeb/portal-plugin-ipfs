@@ -45,9 +45,9 @@ require (
 	go.lumeweb.com/portal v0.4.2-0.20260101152308-e41084408e36
 	go.lumeweb.com/portal-middleware v0.3.4
 	go.lumeweb.com/portal-plugin-core v0.0.0-20251213020130-9d424965fad2
-	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20251213101354-739005102118
+	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20260105013443-bd1ea8cf080a
 	go.lumeweb.com/portal-plugin-quota v0.0.0-20251229183341-d3147a18bb0f
-	go.lumeweb.com/portal-router v0.6.9
+	go.lumeweb.com/portal-router v0.6.11
 	go.lumeweb.com/queryutil v0.3.15
 	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20251231162019-eac476925dcf
 	go.uber.org/zap v1.27.1
@@ -338,7 +338,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
 	golang.org/x/exp v0.0.0-20251219203646-944ab1f22d93 // indirect
-	golang.org/x/image v0.33.0 // indirect
+	golang.org/x/image v0.34.0 // indirect
 	golang.org/x/mod v0.31.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
