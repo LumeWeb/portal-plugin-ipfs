@@ -1,0 +1,19 @@
+name: Update UI
+
+on:
+  repository_dispatch:
+    types: [update-ui]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  call-workflow:
+    uses: LumeWeb/workflows/.github/workflows/update-ui.yml@develop
+    with:
+      commit_hash: ${{ github.event.client_payload.commit_hash }}
+      app_name: ${{ github.event.client_payload.app_name }}
+      repository: ${{ github.event.client_payload.repository }}
+    secrets:
+      PAT: ${{ secrets.PAT }}
