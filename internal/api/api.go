@@ -147,14 +147,8 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 						}
 						quota.EmitUploadCompleted(eventCtx, ctx, userID, uint(uploadID), uint64(size), ip)
 					}, protocol.TUS_UPLOAD_WORKFLOW,
-						func(handlr core.TusHandler, hook handler.HookEvent) (core.StorageHash, error) {
-							upl, err := api.tus.UploadReader(ctx, hook.Upload.ID, sproto, 0)
-							if err != nil {
-								return nil, err
-							}
-							defer closeUpload(upl, api.Logger())
-
-							return getCARUploadHash(upl, api.tus, ctx, sproto, hook.Upload.ID, api.Logger())
+						func(handlr core.TusHandler, hook handler.HookEvent, reader io.Reader) (core.StorageHash, error) {
+							return getCARUploadHash(reader, api.tus, ctx, sproto, hook.Upload.ID, api.Logger())
 						},
 					),
 					PreFinishResponse: service.TUSDefaultPreFinishResponse(func() core.TusHandler {
@@ -1014,7 +1008,7 @@ func validateCARUpload(upload io.ReadCloser, tus core.TusHandler, ctx core.Conte
 	return true
 }
 
-func getCARUploadHash(upload io.ReadCloser, tus core.TusHandler, ctx core.Context, sproto core.StorageProtocol, uploadId string, logger *core.Logger) (core.StorageHash, error) {
+func getCARUploadHash(upload io.Reader, tus core.TusHandler, ctx core.Context, sproto core.StorageProtocol, uploadId string, logger *core.Logger) (core.StorageHash, error) {
 	reader, err := createCARReader(upload)
 	if err != nil {
 		logger.Error("Failed to create CAR reader", zap.Error(err))
