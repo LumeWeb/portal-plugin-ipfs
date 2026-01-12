@@ -8,7 +8,7 @@ require (
 	github.com/dnslink-std/go v0.6.0
 	github.com/docker/go-units v0.5.0
 	github.com/gammazero/workerpool v1.1.3
-	github.com/go-viper/mapstructure/v2 v2.4.0
+	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/golang/protobuf v1.5.4
 	github.com/google/uuid v1.6.0
 	github.com/h2non/filetype v1.1.3
