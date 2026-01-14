@@ -9,3 +9,4 @@ on:
 jobs:
   build:
     uses: LumeWeb/workflows/.github/workflows/build-plugin.yml@develop
+    secrets: inherit
