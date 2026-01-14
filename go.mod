@@ -9,7 +9,6 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/gammazero/workerpool v1.1.3
 	github.com/go-viper/mapstructure/v2 v2.5.0
-	github.com/golang/protobuf v1.5.4
 	github.com/google/uuid v1.6.0
 	github.com/h2non/filetype v1.1.3
 	github.com/ipfs/boxo v0.35.2
@@ -50,7 +49,7 @@ require (
 	go.lumeweb.com/portal-plugin-quota v0.0.0-20251229183341-d3147a18bb0f
 	go.lumeweb.com/portal-router v0.6.11
 	go.lumeweb.com/queryutil v0.3.15
-	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20251214214019-d4a4411df207
+	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260114102222-f40b5342cc0f
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -139,6 +138,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9 // indirect
 	github.com/golang-sql/sqlexp v0.1.0 // indirect
+	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/gopacket v1.1.19 // indirect
 	github.com/google/pprof v0.0.0-20250607225305-033d6d78b36a // indirect
@@ -304,9 +304,9 @@ require (
 	go.lumeweb.com/configmanager v0.3.24 // indirect
 	go.lumeweb.com/event/v2 v2.1.0 // indirect
 	go.lumeweb.com/gswagger v0.20.10 // indirect
-	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20251007105956-9515ed1f2355 // indirect
-	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20251002232245-a7ec646aadd4 // indirect
-	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20251007105956-9515ed1f2355 // indirect
+	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20260114102222-f40b5342cc0f // indirect
+	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20260114102222-f40b5342cc0f // indirect
+	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20260114102222-f40b5342cc0f // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/bridges/otelzap v0.14.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.64.0 // indirect
