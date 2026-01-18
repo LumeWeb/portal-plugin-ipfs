@@ -1,6 +1,6 @@
 module go.lumeweb.com/portal-plugin-ipfs
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/Oudwins/zog v0.22.0
@@ -28,6 +28,7 @@ require (
 	github.com/knadh/koanf/providers/confmap v1.0.0
 	github.com/knadh/koanf/v2 v2.3.0
 	github.com/labstack/echo/v4 v4.15.0
+	github.com/labstack/echo/v5 v5.0.0
 	github.com/labstack/gommon v0.4.2
 	github.com/libp2p/go-libp2p v0.46.0
 	github.com/libp2p/go-libp2p-kad-dht v0.37.0
