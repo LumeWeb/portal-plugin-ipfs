@@ -89,159 +89,202 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 		return fmt.Errorf("failed to initialize workflow data: %w", err)
 	}
 
+	// Initialize progress tracker with weighted steps
+	tracker, err := h.NewProgressTracker(req.ID, core.ProgressModeWeighted, func(cfg *core.ProgressTrackerConfig) {
+		cfg.Steps = []core.ProgressStep{
+			{
+				Name:        FilePathPhaseProcessing,
+				Description: "Processing CID metadata",
+				Weight:      30,
+			},
+			{
+				Name:        FilePathPhaseBuildingDAG,
+				Description: "Building DAG structure",
+				Weight:      20,
+			},
+			{
+				Name:        FilePathPhaseComputingPaths,
+				Description: "Computing file paths",
+				Weight:      40,
+			},
+			{
+				Name:        FilePathPhaseStoring,
+				Description: "Storing file paths",
+				Weight:      10,
+			},
+		}
+		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypeFilePath)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize progress tracker: %w", err)
+	}
+
+	if err = tracker.Initialize(); err != nil {
+		return fmt.Errorf("failed to initialize tracker: %w", err)
+	}
+
+	helper := core.NewProgressTrackerHelper(tracker, h.Context())
+
 	fileManagerSvc := core.GetService[pluginCore.FileManagerService](h.Context(), pluginCore.FILE_MANAGER_SERVICE)
 	blockSvc := core.GetService[pluginCore.BlockService](h.Context(), pluginCore.BLOCK_SERVICE)
 
 	// Phase 1: Processing
 	h.updateWorkflowPhase(req.ID, &workflowData, FilePathPhaseProcessing, 1)
 
-	// Prune existing file paths for related CIDs before recomputing
-	if len(workflowData.RelatedCIDs) > 0 {
-		err = h.pruneRelatedPaths(ctx, fileManagerSvc, userID, workflowData.RelatedCIDs)
-		if err != nil {
-			h.Logger().Error("Failed to prune related file paths", zap.Error(err))
-			// Continue with path computation even if pruning fails
+	if err = helper.RunStep(FilePathPhaseProcessing, 100, func() error {
+
+		// Prune existing file paths for related CIDs before recomputing
+		if len(workflowData.RelatedCIDs) > 0 {
+			err = h.pruneRelatedPaths(ctx, fileManagerSvc, userID, workflowData.RelatedCIDs)
+			if err != nil {
+				h.Logger().Error("Failed to prune related file paths", zap.Error(err))
+				// Continue with path computation even if pruning fails
+			}
 		}
+
+		// Collect all UnixFS metadata first
+		unixfsMetas := make(map[string]*db.UnixFSNode)
+		failedCIDs := make(map[string]bool)
+		orphanCIDs := make(map[string]bool)
+
+		for i, cidStr := range workflowData.CIDs {
+			c, err := cid.Parse(cidStr)
+			if err != nil {
+				h.Logger().Error("Failed to parse CID", zap.String("cid", cidStr), zap.Error(err))
+				failedCIDs[cidStr] = true
+				continue
+			}
+
+			// Get block metadata to extract UnixFS info
+			unixfsMeta, err := blockSvc.GetBlockMeta(ctx, c)
+			if err != nil {
+				h.Logger().Error("Failed to get block metadata", zap.Stringer("cid", c), zap.Error(err))
+				orphanCIDs[cidStr] = true
+				continue
+			}
+
+			if unixfsMeta == nil || (unixfsMeta.Name == "" && len(unixfsMeta.ChildCID) == 0) {
+				h.Logger().Warn("Incomplete UnixFS metadata", zap.Stringer("cid", c))
+				orphanCIDs[cidStr] = true
+				continue
+			}
+
+			unixfsMetas[cidStr] = unixfsMeta
+
+			// Update processed CIDs count
+			workflowData.ProcessedCIDs = i + 1
+			err = h.UpdateWorkflowDataStruct(req.ID, workflowData)
+			if err != nil {
+				h.Logger().Error("Failed to update workflow data with processed CID count", zap.Error(err))
+			}
+		}
+
+		// Create a set of all child CIDs to filter out non-root CIDs
+		childCIDSet := make(map[string]bool)
+		for _, meta := range unixfsMetas {
+			for _, childCID := range meta.ChildCID {
+				childCIDSet[childCID.String()] = true
+			}
+		}
+
+		// Filter to only root CIDs (CIDs that are not children of other CIDs)
+		rootCIDMetas := make(map[string]*db.UnixFSNode)
+		for cidStr, meta := range unixfsMetas {
+			if !childCIDSet[cidStr] {
+				rootCIDMetas[cidStr] = meta
+			}
+		}
+
+		// Create a map to track processed CIDs and avoid cycles
+		processed := make(map[string]bool)
+
+		// Process only root CID metadata
+		for cidStr, unixfsMeta := range rootCIDMetas {
+			c, err := cid.Parse(cidStr)
+			if err != nil {
+				h.Logger().Error("Failed to parse CID during processing", zap.String("cid", cidStr), zap.Error(err))
+				orphanCIDs[cidStr] = true
+				continue
+			}
+
+			// Compute and store file paths
+			err = h.computeAndStoreFilePaths(ctx, fileManagerSvc, unixfsMeta, userID, c, processed)
+			if err != nil {
+				h.Logger().Error("Failed to compute and store file paths", zap.Stringer("cid", c), zap.Error(err))
+				orphanCIDs[cidStr] = true
+				continue
+			}
+		}
+
+		// Phase 2: Process orphans
+		h.updateWorkflowPhase(req.ID, &workflowData, FilePathPhaseValidation, 2)
+
+		// Process orphan entries
+		for cidStr := range orphanCIDs {
+			c, err := cid.Parse(cidStr)
+			if err != nil {
+				h.Logger().Error("Failed to parse CID for orphan processing", zap.String("cid", cidStr), zap.Error(err))
+				continue
+			}
+
+			// Create orphan entry
+			h.createOrphanEntry(ctx, fileManagerSvc, userID, c, unixfsMetas[cidStr])
+		}
+
+		// Phase 3: Completed
+		h.updateWorkflowPhase(req.ID, &workflowData, FilePathPhaseCompleted, 3)
+
+		// Validate that file paths were created successfully
+		var filePathCount int64
+		var expectedCIDs [][]byte
+
+		// Convert processed CIDs to byte slices for database query
+		for cidStr := range processed {
+			c, err := cid.Parse(cidStr)
+			if err == nil {
+				expectedCIDs = append(expectedCIDs, c.Bytes())
+			}
+		}
+
+		if len(expectedCIDs) > 0 {
+			err = h.Context().DB().WithContext(ctx).
+				Model(&db.FilePath{}).
+				Where("user_id = ? AND cid IN ?", userID, expectedCIDs).
+				Count(&filePathCount).Error
+			if err != nil {
+				h.Logger().Error("Failed to validate file path results", zap.Error(err))
+				return fmt.Errorf("failed to validate file path results: %w", err)
+			}
+
+			// Check if we have at least some file paths for the processed CIDs
+			if filePathCount == 0 {
+				h.Logger().Warn("No file paths created for processed CIDs",
+					zap.Uint("user_id", userID),
+					zap.Int("processed_cids", len(processed)),
+					zap.Strings("cids", workflowData.CIDs))
+			}
+		} else {
+			// If no CIDs were processed successfully, just count total paths for user
+			err = h.Context().DB().WithContext(ctx).
+				Model(&db.FilePath{}).
+				Where("user_id = ?", userID).
+				Count(&filePathCount).Error
+			if err != nil {
+				h.Logger().Error("Failed to validate file path results", zap.Error(err))
+				return fmt.Errorf("failed to validate file path results: %w", err)
+			}
+		}
+
+		h.Logger().Debug("File path operation completed",
+			zap.Uint("user_id", userID),
+			zap.Int("processed_cids", len(processed)),
+			zap.Int("total_cids", workflowData.TotalCIDs),
+			zap.Int64("file_paths_created", filePathCount))
+
+		return nil
+	}); err != nil {
+		return err
 	}
-
-	// Collect all UnixFS metadata first
-	unixfsMetas := make(map[string]*db.UnixFSNode)
-	failedCIDs := make(map[string]bool)
-	orphanCIDs := make(map[string]bool)
-
-	for i, cidStr := range workflowData.CIDs {
-		c, err := cid.Parse(cidStr)
-		if err != nil {
-			h.Logger().Error("Failed to parse CID", zap.String("cid", cidStr), zap.Error(err))
-			failedCIDs[cidStr] = true
-			continue
-		}
-
-		// Get block metadata to extract UnixFS info
-		unixfsMeta, err := blockSvc.GetBlockMeta(ctx, c)
-		if err != nil {
-			h.Logger().Error("Failed to get block metadata", zap.Stringer("cid", c), zap.Error(err))
-			orphanCIDs[cidStr] = true
-			continue
-		}
-
-		if unixfsMeta == nil || (unixfsMeta.Name == "" && len(unixfsMeta.ChildCID) == 0) {
-			h.Logger().Warn("Incomplete UnixFS metadata", zap.Stringer("cid", c))
-			orphanCIDs[cidStr] = true
-			continue
-		}
-
-		unixfsMetas[cidStr] = unixfsMeta
-
-		// Update processed CIDs count
-		workflowData.ProcessedCIDs = i + 1
-		err = h.UpdateWorkflowDataStruct(req.ID, workflowData)
-		if err != nil {
-			h.Logger().Error("Failed to update workflow data with processed CID count", zap.Error(err))
-		}
-	}
-
-	// Create a set of all child CIDs to filter out non-root CIDs
-	childCIDSet := make(map[string]bool)
-	for _, meta := range unixfsMetas {
-		for _, childCID := range meta.ChildCID {
-			childCIDSet[childCID.String()] = true
-		}
-	}
-
-	// Filter to only root CIDs (CIDs that are not children of other CIDs)
-	rootCIDMetas := make(map[string]*db.UnixFSNode)
-	for cidStr, meta := range unixfsMetas {
-		if !childCIDSet[cidStr] {
-			rootCIDMetas[cidStr] = meta
-		}
-	}
-
-	// Create a map to track processed CIDs and avoid cycles
-	processed := make(map[string]bool)
-
-	// Process only root CID metadata
-	for cidStr, unixfsMeta := range rootCIDMetas {
-		c, err := cid.Parse(cidStr)
-		if err != nil {
-			h.Logger().Error("Failed to parse CID during processing", zap.String("cid", cidStr), zap.Error(err))
-			orphanCIDs[cidStr] = true
-			continue
-		}
-
-		// Compute and store file paths
-		err = h.computeAndStoreFilePaths(ctx, fileManagerSvc, unixfsMeta, userID, c, processed)
-		if err != nil {
-			h.Logger().Error("Failed to compute and store file paths", zap.Stringer("cid", c), zap.Error(err))
-			orphanCIDs[cidStr] = true
-			continue
-		}
-	}
-
-	// Phase 2: Process orphans
-	h.updateWorkflowPhase(req.ID, &workflowData, FilePathPhaseValidation, 2)
-
-	// Process orphan entries
-	for cidStr := range orphanCIDs {
-		c, err := cid.Parse(cidStr)
-		if err != nil {
-			h.Logger().Error("Failed to parse CID for orphan processing", zap.String("cid", cidStr), zap.Error(err))
-			continue
-		}
-
-		// Create orphan entry
-		h.createOrphanEntry(ctx, fileManagerSvc, userID, c, unixfsMetas[cidStr])
-	}
-
-	// Phase 3: Completed
-	h.updateWorkflowPhase(req.ID, &workflowData, FilePathPhaseCompleted, 3)
-
-	// Validate that file paths were created successfully
-	var filePathCount int64
-	var expectedCIDs [][]byte
-
-	// Convert processed CIDs to byte slices for database query
-	for cidStr := range processed {
-		c, err := cid.Parse(cidStr)
-		if err == nil {
-			expectedCIDs = append(expectedCIDs, c.Bytes())
-		}
-	}
-
-	if len(expectedCIDs) > 0 {
-		err = h.Context().DB().WithContext(ctx).
-			Model(&db.FilePath{}).
-			Where("user_id = ? AND cid IN ?", userID, expectedCIDs).
-			Count(&filePathCount).Error
-		if err != nil {
-			h.Logger().Error("Failed to validate file path results", zap.Error(err))
-			return fmt.Errorf("failed to validate file path results: %w", err)
-		}
-
-		// Check if we have at least some file paths for the processed CIDs
-		if filePathCount == 0 {
-			h.Logger().Warn("No file paths created for processed CIDs",
-				zap.Uint("user_id", userID),
-				zap.Int("processed_cids", len(processed)),
-				zap.Strings("cids", workflowData.CIDs))
-		}
-	} else {
-		// If no CIDs were processed successfully, just count total paths for user
-		err = h.Context().DB().WithContext(ctx).
-			Model(&db.FilePath{}).
-			Where("user_id = ?", userID).
-			Count(&filePathCount).Error
-		if err != nil {
-			h.Logger().Error("Failed to validate file path results", zap.Error(err))
-			return fmt.Errorf("failed to validate file path results: %w", err)
-		}
-	}
-
-	h.Logger().Debug("File path operation completed",
-		zap.Uint("user_id", userID),
-		zap.Int("processed_cids", len(processed)),
-		zap.Int("total_cids", workflowData.TotalCIDs),
-		zap.Int64("file_paths_created", filePathCount))
 
 	return nil
 }
@@ -508,66 +551,8 @@ func (h *FilePathOperationHandler) pruneRelatedPaths(ctx context.Context, fileMa
 	return nil
 }
 
-func (h *FilePathOperationHandler) GetStatus(ctx context.Context, req *models.Request) (*core.RequestStatus, error) {
-	ctx, span := core.TraceMethod(ctx, "FilePathOperationHandler.GetStatus")
-	defer span.End()
-
-	status := &core.RequestStatus{
-		ProgressPercent: 0,
-	}
-
-	// Extract values from workflow data
-	var workflowData FilePathWorkflowData
-	err := h.StructuredWorkflowData(req.ID, &workflowData)
-	if err != nil {
-		return nil, err
-	}
-
-	currentPhase := workflowData.CurrentPhase
-	completedPhases := float64(workflowData.CompletedPhases)
-	totalPhases := float64(workflowData.TotalPhases)
-	processedCIDs := float64(workflowData.ProcessedCIDs)
-	totalCIDs := float64(workflowData.TotalCIDs)
-
-	// Determine status based on request state
-	status.State = req.Status
-	switch req.Status {
-	case models.RequestStatusPending:
-		status.Message = "File path operation is queued"
-		status.ProgressPercent = 0
-	case models.RequestStatusProcessing:
-		status.Message = "File path operation in progress: " + currentPhase
-
-		// Compute progress based on both phases and CID processing
-		phaseProgress := (completedPhases / totalPhases) * 0.7 // 70% weight for phases
-		cidProgress := float64(0)
-		if totalCIDs > 0 {
-			cidProgress = (processedCIDs / totalCIDs) * 0.3 // 30% weight for CID processing
-		}
-
-		status.ProgressPercent = (phaseProgress + cidProgress) * 100
-
-		// Ensure progress doesn't exceed 100%
-		if status.ProgressPercent > 100 {
-			status.ProgressPercent = 100
-		}
-
-		// Ensure progress is at least 1% if we're processing
-		if status.ProgressPercent < 1 && completedPhases > 0 {
-			status.ProgressPercent = 1
-		}
-	case models.RequestStatusCompleted:
-		status.Message = "File paths computed and stored successfully"
-		status.ProgressPercent = 100
-	case models.RequestStatusFailed:
-		status.Message = "File path operation failed"
-		status.ProgressPercent = 100
-	default:
-		status.Message = "File path operation status unknown"
-		status.ProgressPercent = 0
-	}
-
-	return status, nil
+func (h *FilePathOperationHandler) GetStatus(_ context.Context, req *models.Request) (*core.RequestStatus, error) {
+	return h.GetStatusFromWorkflowData(req.ID, req)
 }
 
 // updateWorkflowPhase updates workflow data with current phase and completed phases count

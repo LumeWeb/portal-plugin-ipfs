@@ -40,9 +40,31 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.Execute")
 	defer span.End()
 
+	// Initialize progress tracker with manual mode for simple milestones
+	tracker, err := h.NewProgressTracker(req.ID, core.ProgressModeManual, func(cfg *core.ProgressTrackerConfig) {
+		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypeUpload)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize progress tracker: %w", err)
+	}
+
+	if err := tracker.Initialize(); err != nil {
+		return fmt.Errorf("failed to initialize tracker: %w", err)
+	}
+
+	// Set initial progress
+	if err := tracker.SetProgress(10); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	workflow, err := h.getWorkflowData(req.ID)
 	if err != nil {
 		return err
+	}
+
+	// Set progress - loading upload
+	if err := tracker.SetProgress(20); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
 	}
 
 	uploadFile, err := h.getUpload(ctx, workflow.UploadID)
@@ -61,11 +83,21 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		return err
 	}
 
+	// Set progress - creating processor
+	if err := tracker.SetProgress(30); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	processor, err := h.createProcessor(uploadFile, uploadedFormat)
 	if err != nil {
 		return err
 	}
 	defer processor.Release()
+
+	// Set progress - processing blocks
+	if err := tracker.SetProgress(40); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
 
 	allCids, rootCids, err := ProcessBlocks(h.Context(), processor)
 	if err != nil {
@@ -83,7 +115,17 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		return err
 	}
 
+	// Set progress - processing metadata
+	if err := tracker.SetProgress(60); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	h.processMetadata(allCids)
+
+	// Set progress - creating root pin
+	if err := tracker.SetProgress(70); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
 
 	ipfsPin, err := h.createRootPin(ctx, rootCids[0], userID)
 	if err != nil {
@@ -96,6 +138,12 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	}
 
 	h.logProcessingResult(allCids, rootCids)
+
+	// Complete
+	if err := tracker.SetProgress(100); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	return nil
 }
 
@@ -273,14 +321,8 @@ func (h *PostUploadOperationHandler) logProcessingResult(allCids, rootCids []cid
 	h.Logger().Debug("Processed upload file", zap.Int("num_cids", len(allCids)), zap.Int("num_roots", len(rootCids)))
 }
 
-func (h *PostUploadOperationHandler) GetStatus(ctx context.Context, req *models.Request) (*core.RequestStatus, error) {
-	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.GetStatus")
-	defer span.End()
-
-	return &core.RequestStatus{
-		ProgressPercent: 100,
-		Message:         "Upload processed successfully",
-	}, nil
+func (h *PostUploadOperationHandler) GetStatus(_ context.Context, req *models.Request) (*core.RequestStatus, error) {
+	return h.GetStatusFromWorkflowData(req.ID, req)
 }
 
 func (h *PostUploadOperationHandler) Cleanup(ctx context.Context, req *models.Request) error {

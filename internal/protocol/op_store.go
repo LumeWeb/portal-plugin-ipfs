@@ -27,6 +27,23 @@ func (h *StoreOperationHandler) Execute(ctx context.Context, req *models.Request
 	ctx, span := core.TraceMethod(ctx, "StoreOperationHandler.Execute")
 	defer span.End()
 
+	// Initialize progress tracker with manual mode for simple milestones
+	tracker, err := h.NewProgressTracker(req.ID, core.ProgressModeManual, func(cfg *core.ProgressTrackerConfig) {
+		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypeStore)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize progress tracker: %w", err)
+	}
+
+	if err := tracker.Initialize(); err != nil {
+		return fmt.Errorf("failed to initialize tracker: %w", err)
+	}
+
+	// Set initial progress
+	if err := tracker.SetProgress(10); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	var workflowData PinWorkflowData
 	err := h.StructuredWorkflowData(req.ID, &workflowData)
 	if err != nil {
@@ -36,6 +53,12 @@ func (h *StoreOperationHandler) Execute(ctx context.Context, req *models.Request
 	// If CIDs are provided in workflow data, mark each block as ready
 	if len(workflowData.Cids) > 0 {
 		store := h.Protocol().(*Protocol).GetMetadataStore()
+
+		// Set progress - marking blocks ready
+		if err := tracker.SetProgress(50); err != nil {
+			h.Logger().Warn("Failed to update progress", zap.Error(err))
+		}
+
 		for _, cidStr := range workflowData.Cids {
 			c, err := cid.Parse(cidStr)
 			if err != nil {
@@ -51,20 +74,16 @@ func (h *StoreOperationHandler) Execute(ctx context.Context, req *models.Request
 		}
 	}
 
+	// Complete
+	if err := tracker.SetProgress(100); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	return nil
 }
 
 func (h *StoreOperationHandler) GetStatus(_ context.Context, req *models.Request) (*core.RequestStatus, error) {
-	status := &core.RequestStatus{
-		ProgressPercent: 100,
-	}
-
-	if req.Status == models.RequestStatusCompleted {
-		status.Message = "Content stored locally"
-		status.ProgressPercent = 100
-	}
-
-	return status, nil
+	return h.GetStatusFromWorkflowData(req.ID, req)
 }
 
 func (h *StoreOperationHandler) Cleanup(_ context.Context, req *models.Request) error {

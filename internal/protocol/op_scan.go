@@ -25,24 +25,35 @@ func (h *ScanOperationHandler) Execute(ctx context.Context, req *models.Request)
 	ctx, span := core.TraceMethod(ctx, "ScanOperationHandler.Execute")
 	defer span.End()
 
+	// Initialize progress tracker with manual mode for simple milestones
+	tracker, err := h.NewProgressTracker(req.ID, core.ProgressModeManual, func(cfg *core.ProgressTrackerConfig) {
+		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypeScan)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize progress tracker: %w", err)
+	}
+
+	if err := tracker.Initialize(); err != nil {
+		return fmt.Errorf("failed to initialize tracker: %w", err)
+	}
+
+	// Set initial progress
+	if err := tracker.SetProgress(10); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	// TODO: implement content scan
+
+	// Complete
+	if err := tracker.SetProgress(100); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	return nil
 }
 
-func (h *ScanOperationHandler) GetStatus(ctx context.Context, req *models.Request) (*core.RequestStatus, error) {
-	ctx, span := core.TraceMethod(ctx, "ScanOperationHandler.GetStatus")
-	defer span.End()
-
-	status := &core.RequestStatus{
-		ProgressPercent: 100,
-	}
-
-	if req.Status == models.RequestStatusCompleted {
-		status.Message = "Content scanned successfully"
-		status.ProgressPercent = 100
-	}
-
-	return status, nil
+func (h *ScanOperationHandler) GetStatus(_ context.Context, req *models.Request) (*core.RequestStatus, error) {
+	return h.GetStatusFromWorkflowData(req.ID, req)
 }
 
 func (h *ScanOperationHandler) Cleanup(_ context.Context, _ *models.Request) error {

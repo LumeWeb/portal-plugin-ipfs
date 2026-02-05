@@ -93,18 +93,74 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 		return fmt.Errorf("failed to initialize workflow data: %w", err)
 	}
 
+	// Initialize progress tracker with weighted steps
+	tracker, err := h.NewProgressTracker(req.ID, core.ProgressModeWeighted, func(cfg *core.ProgressTrackerConfig) {
+		cfg.Steps = []core.ProgressStep{
+			{
+				Name:        UnpinPhaseValidatingDAGBefore,
+				Description: "Validating DAG integrity before unpin",
+				Weight:      5,
+			},
+			{
+				Name:        UnpinPhaseAnalyzingDAGDependencies,
+				Description: "Analyzing DAG dependencies",
+				Weight:      10,
+			},
+			{
+				Name:        UnpinPhasePromotingToRootLevelVisibility,
+				Description: "Promoting to root level visibility",
+				Weight:      10,
+			},
+			{
+				Name:        UnpinPhaseDeletingPin,
+				Description: "Deleting pin",
+				Weight:      5,
+			},
+			{
+				Name:        UnpinPhaseHandlingPathCascading,
+				Description: "Handling path cascading effects",
+				Weight:      40,
+			},
+			{
+				Name:        UnpinPhaseValidatingDAGAfter,
+				Description: "Validating DAG integrity after unpin",
+				Weight:      25,
+			},
+			{
+				Name:        UnpinPhaseCompleted,
+				Description: "Completing unpin operation",
+				Weight:      5,
+			},
+		}
+		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypeUnpin)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize progress tracker: %w", err)
+	}
+
+	if err = tracker.Initialize(); err != nil {
+		return fmt.Errorf("failed to initialize tracker: %w", err)
+	}
+
+	helper := core.NewProgressTrackerHelper(tracker, h.Context())
+
 	// Start a transaction for the entire unpin operation
 	_db := h.Context().DB()
 
 	// Validate DAG integrity before unpinning
 	h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhaseValidatingDAGBefore, 1)
 
-	if err := h.ValidateDAGIntegrityBeforeUnpin(ctx, _db, c, userID); err != nil {
-		h.Logger().Error("DAG integrity validation failed before unpin",
-			zap.Stringer("cid", c),
-			zap.Uint("user_id", userID),
-			zap.Error(err))
-		return fmt.Errorf("DAG integrity validation failed before unpin: %w", err)
+	if err = helper.RunStep(UnpinPhaseValidatingDAGBefore, 100, func() error {
+		if err := h.ValidateDAGIntegrityBeforeUnpin(ctx, _db, c, userID); err != nil {
+			h.Logger().Error("DAG integrity validation failed before unpin",
+				zap.Stringer("cid", c),
+				zap.Uint("user_id", userID),
+				zap.Error(err))
+			return fmt.Errorf("DAG integrity validation failed before unpin: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	txErr := db.RetryableTransaction(h.Context(), _db, func(tx *gorm.DB) *gorm.DB {
@@ -114,164 +170,161 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 		// If found, these children need to be promoted to root-level paths to maintain file UI consistency
 		h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhaseAnalyzingDAGDependencies, 2)
 
-		analysis, err := h.AnalyzeUnpinImpact(ctx, tx, c, userID)
-		if err != nil {
-			h.Logger().Error("Failed to analyze unpin impact",
-				zap.Stringer("cid", c),
-				zap.Uint("user_id", userID),
-				zap.Error(err))
-			_ = tx.AddError(fmt.Errorf("failed to analyze unpin impact: %w", err))
-			return tx
-		}
-
-		// Log the analysis results
-		h.Logger().Info("Unpin impact analysis completed",
-			zap.Stringer("cid", c),
-			zap.Uint("user_id", userID),
-			zap.Bool("would_create_orphans", analysis.WouldCreateOrphans),
-			zap.Int("orphan_candidates_count", len(analysis.RootLevelCandidates)),
-			zap.Int("all_children_count", len(analysis.AllChildren)))
-
-		// If this unpin would create orphans in the file UI, promote those children to root-level visibility
-		// This ensures that even though the parent is being unpinned, users can still access the child files
-		// in the root of their file UI rather than losing access to them entirely
-		if analysis.WouldCreateOrphans {
-			h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhasePromotingToRootLevelVisibility, 3)
-
-			h.Logger().Warn("Unpinning this CID would create orphans in file UI",
-				zap.Stringer("cid", c),
-				zap.Uint("user_id", userID),
-				zap.Strings("root_level_candidates", analysis.RootLevelCandidates))
-
-			// Promote dependent pins to root-level visibility in the file UI
-			// The analysis.RootLevelCandidates list contains child CIDs that are pinned by the user
-			// These children will become orphans when we unpin the parent, so we move them to root-level paths
-			err = h.PromotePinsToRootLevelVisibility(ctx, tx, analysis.RootLevelCandidates, userID)
+		if err = helper.RunStep(UnpinPhaseAnalyzingDAGDependencies, 100, func() error {
+			analysis, err := h.AnalyzeUnpinImpact(ctx, tx, c, userID)
 			if err != nil {
-				h.Logger().Error("Failed to promote pins to root level visibility",
+				h.Logger().Error("Failed to analyze unpin impact",
 					zap.Stringer("cid", c),
 					zap.Uint("user_id", userID),
 					zap.Error(err))
-				_ = tx.AddError(fmt.Errorf("failed to promote pins to root level visibility: %w", err))
-				return tx
+				return fmt.Errorf("failed to analyze unpin impact: %w", err)
 			}
 
-			// Validate root level visibility promotion results
-			if err := h.ValidateRootLevelVisibilityPromotion(ctx, analysis.RootLevelCandidates, userID); err != nil {
-				h.Logger().Error("Root level visibility promotion validation failed",
+			// Log the analysis results
+			h.Logger().Info("Unpin impact analysis completed",
+				zap.Stringer("cid", c),
+				zap.Uint("user_id", userID),
+				zap.Bool("would_create_orphans", analysis.WouldCreateOrphans),
+				zap.Int("orphan_candidates_count", len(analysis.RootLevelCandidates)),
+				zap.Int("all_children_count", len(analysis.AllChildren)))
+
+			// If this unpin would create orphans in the file UI, promote those children to root-level visibility
+			// This ensures that even though the parent is being unpinned, users can still access the child files
+			// in the root of their file UI rather than losing access to them entirely
+			if analysis.WouldCreateOrphans {
+				h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhasePromotingToRootLevelVisibility, 3)
+
+				h.Logger().Warn("Unpinning this CID would create orphans in file UI",
 					zap.Stringer("cid", c),
 					zap.Uint("user_id", userID),
-					zap.Error(err))
-				_ = tx.AddError(fmt.Errorf("root level visibility promotion validation failed: %w", err))
-				return tx
+					zap.Strings("root_level_candidates", analysis.RootLevelCandidates))
+
+				// Promote dependent pins to root-level visibility in the file UI
+				// The analysis.RootLevelCandidates list contains child CIDs that are pinned by the user
+				// These children will become orphans when we unpin the parent, so we move them to root-level paths
+				err = h.PromotePinsToRootLevelVisibility(ctx, tx, analysis.RootLevelCandidates, userID)
+				if err != nil {
+					h.Logger().Error("Failed to promote pins to root level visibility",
+						zap.Stringer("cid", c),
+						zap.Uint("user_id", userID),
+						zap.Error(err))
+					return fmt.Errorf("failed to promote pins to root level visibility: %w", err)
+				}
+
+				// Validate root level visibility promotion results
+				if err := h.ValidateRootLevelVisibilityPromotion(ctx, analysis.RootLevelCandidates, userID); err != nil {
+					h.Logger().Error("Root level visibility promotion validation failed",
+						zap.Stringer("cid", c),
+						zap.Uint("user_id", userID),
+						zap.Error(err))
+					return fmt.Errorf("root level visibility promotion validation failed: %w", err)
+				}
 			}
-		}
 
-		// Analyze file path dependencies
-		h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhaseAnalyzingPathDependencies, 4)
+			// Analyze file path dependencies
+			h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhaseAnalyzingPathDependencies, 4)
 
-		pathAnalysis, err := h.AnalyzePathDependencies(ctx, tx, c, userID)
-		if err != nil {
-			h.Logger().Error("Failed to analyze path dependencies",
-				zap.Stringer("cid", c),
-				zap.Uint("user_id", userID),
-				zap.Error(err))
-			_ = tx.AddError(fmt.Errorf("failed to analyze path dependencies: %w", err))
-			return tx
-		}
-
-		// Log path analysis results
-		h.Logger().Info("Path dependency analysis completed",
-			zap.Stringer("cid", c),
-			zap.Uint("user_id", userID),
-			zap.Int("affected_paths_count", len(pathAnalysis.AffectedPaths)),
-			zap.Bool("would_break_paths", pathAnalysis.WouldBreakPaths))
-
-		// Handle path dependencies if needed
-		if pathAnalysis.WouldBreakPaths {
-			h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhaseHandlingPathCascadingEffects, 5)
-
-			h.Logger().Warn("Unpinning this CID would affect shared path structures",
-				zap.Stringer("cid", c),
-				zap.Uint("user_id", userID),
-				zap.Strings("affected_paths", pathAnalysis.AffectedPaths))
-
-			// Handle cascading effects for shared directory structures
-			err = h.HandlePathCascadingEffects(ctx, tx, c, userID, pathAnalysis)
+			pathAnalysis, err := h.AnalyzePathDependencies(ctx, tx, c, userID)
 			if err != nil {
-				h.Logger().Error("Failed to handle path cascading effects",
+				h.Logger().Error("Failed to analyze path dependencies",
 					zap.Stringer("cid", c),
 					zap.Uint("user_id", userID),
 					zap.Error(err))
-				_ = tx.AddError(fmt.Errorf("failed to handle path cascading effects: %w", err))
-				return tx
+				return fmt.Errorf("failed to analyze path dependencies: %w", err)
 			}
-		}
 
-		// Perform the actual unpin operation
-		h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhaseUnpinning, 6)
+			// Log path analysis results
+			h.Logger().Info("Path dependency analysis completed",
+				zap.Stringer("cid", c),
+				zap.Uint("user_id", userID),
+				zap.Int("affected_paths_count", len(pathAnalysis.AffectedPaths)),
+				zap.Bool("would_break_paths", pathAnalysis.WouldBreakPaths))
 
-		pinSvc := core.GetService[core.PinService](h.Context(), core.PIN_SERVICE)
-		if pinSvc == nil {
-			_ = tx.AddError(fmt.Errorf("pin service not available"))
-			return tx
-		}
+			// Handle path dependencies if needed
+			if pathAnalysis.WouldBreakPaths {
+				h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhaseHandlingPathCascadingEffects, 5)
 
-		// Set client IP in context for quota tracking
-		ctx = store.ClientIPOption(ctx, req.SourceIP)
+				h.Logger().Warn("Unpinning this CID would affect shared path structures",
+					zap.Stringer("cid", c),
+					zap.Uint("user_id", userID),
+					zap.Strings("affected_paths", pathAnalysis.AffectedPaths))
 
-		// Get the core pin before deleting it for event emission
-		corePin, err := pinSvc.GetPinByHash(ctx, internal.NewIPFSHash(c), userID)
-		if err != nil {
-			h.Logger().Warn("Failed to get core pin for unpin event",
-				zap.Error(err),
+				// Handle cascading effects for shared directory structures
+				err = h.HandlePathCascadingEffects(ctx, tx, c, userID, pathAnalysis)
+				if err != nil {
+					h.Logger().Error("Failed to handle path cascading effects",
+						zap.Stringer("cid", c),
+						zap.Uint("user_id", userID),
+						zap.Error(err))
+					return fmt.Errorf("failed to handle path cascading effects: %w", err)
+				}
+			}
+
+			// Perform the actual unpin operation
+			h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhaseUnpinning, 6)
+
+			pinSvc := core.GetService[core.PinService](h.Context(), core.PIN_SERVICE)
+			if pinSvc == nil {
+				return fmt.Errorf("pin service not available")
+			}
+
+			// Set client IP in context for quota tracking
+			ctx = store.ClientIPOption(ctx, req.SourceIP)
+
+			// Get the core pin before deleting it for event emission
+			corePin, err := pinSvc.GetPinByHash(ctx, internal.NewIPFSHash(c), userID)
+			if err != nil {
+				h.Logger().Warn("Failed to get core pin for unpin event",
+					zap.Error(err),
+					zap.Stringer("cid", c),
+					zap.Uint("user_id", userID))
+			}
+
+			err = pinSvc.DeletePinByHash(ctx, internal.NewIPFSHash(c), userID)
+			if err != nil {
+				h.Logger().Error("Failed to unpin CID",
+					zap.Stringer("cid", c),
+					zap.Uint("user_id", userID),
+					zap.Error(err))
+				return fmt.Errorf("failed to unpin CID: %w", err)
+			}
+
+			// Emit storage object unpinned event for quota tracking
+			if corePin != nil {
+				quota.EmitStorageObjectUnpinned(ctx, h.Context(), corePin, req.SourceIP)
+			}
+
+			h.Logger().Debug("Unpinned CID successfully",
 				zap.Stringer("cid", c),
 				zap.Uint("user_id", userID))
-		}
 
-		err = pinSvc.DeletePinByHash(ctx, internal.NewIPFSHash(c), userID)
-		if err != nil {
-			h.Logger().Error("Failed to unpin CID",
-				zap.Stringer("cid", c),
-				zap.Uint("user_id", userID),
-				zap.Error(err))
-			_ = tx.AddError(fmt.Errorf("failed to unpin CID: %w", err))
-			return tx
-		}
+			// Clean up file paths after unpinning
+			fileManagerSvc := core.GetService[pluginCore.FileManagerService](h.Context(), pluginCore.FILE_MANAGER_SERVICE)
+			if fileManagerSvc != nil {
+				// Use smart deletion to properly clean up file paths
+				// This will only delete paths that are no longer referenced by other pins
+				err = fileManagerSvc.DeleteFilePathSmart(ctx, userID, c.Bytes())
+				if err != nil {
+					h.Logger().Error("Failed to clean up file paths after unpin",
+						zap.Stringer("cid", c),
+						zap.Uint("user_id", userID),
+						zap.Error(err))
+					return fmt.Errorf("failed to clean up file paths: %w", err)
+				}
+			}
 
-		// Emit storage object unpinned event for quota tracking
-		if corePin != nil {
-			quota.EmitStorageObjectUnpinned(ctx, h.Context(), corePin, req.SourceIP)
-		}
-
-		h.Logger().Debug("Unpinned CID successfully",
-			zap.Stringer("cid", c),
-			zap.Uint("user_id", userID))
-
-		// Clean up file paths after unpinning
-		fileManagerSvc := core.GetService[pluginCore.FileManagerService](h.Context(), pluginCore.FILE_MANAGER_SERVICE)
-		if fileManagerSvc != nil {
-			// Use smart deletion to properly clean up file paths
-			// This will only delete paths that are no longer referenced by other pins
-			err = fileManagerSvc.DeleteFilePathSmart(ctx, userID, c.Bytes())
-			if err != nil {
-				h.Logger().Error("Failed to clean up file paths after unpin",
+			// Final validation to ensure system consistency
+			if err := h.ValidateSystemConsistency(ctx, c, userID); err != nil {
+				h.Logger().Error("System consistency validation failed",
 					zap.Stringer("cid", c),
 					zap.Uint("user_id", userID),
 					zap.Error(err))
-				_ = tx.AddError(fmt.Errorf("failed to clean up file paths: %w", err))
-				return tx
+				return fmt.Errorf("system consistency validation failed: %w", err)
 			}
-		}
 
-		// Final validation to ensure system consistency
-		if err := h.ValidateSystemConsistency(ctx, c, userID); err != nil {
-			h.Logger().Error("System consistency validation failed",
-				zap.Stringer("cid", c),
-				zap.Uint("user_id", userID),
-				zap.Error(err))
-			_ = tx.AddError(fmt.Errorf("system consistency validation failed: %w", err))
-			return tx
+			return nil
+		}); err != nil {
+			return tx.AddError(err)
 		}
 
 		return tx
@@ -284,17 +337,29 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 	// Validate DAG integrity after unpinning
 	h.updateWorkflowPhase(req.ID, &workflowData, UnpinPhaseValidatingDAGAfter, 7)
 
-	if err := h.ValidateDAGIntegrityAfterUnpin(ctx, _db, c, userID); err != nil {
-		h.Logger().Error("DAG integrity validation failed after unpin",
+	if err = helper.RunStep(UnpinPhaseValidatingDAGAfter, 100, func() error {
+		if err := h.ValidateDAGIntegrityAfterUnpin(ctx, _db, c, userID); err != nil {
+			h.Logger().Error("DAG integrity validation failed after unpin",
+				zap.Stringer("cid", c),
+				zap.Uint("user_id", userID),
+				zap.Error(err))
+			return fmt.Errorf("DAG integrity validation failed after unpin: %w", err)
+		}
+
+		h.Logger().Info("DAG integrity validation completed successfully",
 			zap.Stringer("cid", c),
-			zap.Uint("user_id", userID),
-			zap.Error(err))
-		return fmt.Errorf("DAG integrity validation failed after unpin: %w", err)
+			zap.Uint("user_id", userID))
+
+		return nil
+	}); err != nil {
+		return err
 	}
 
-	h.Logger().Info("DAG integrity validation completed successfully",
-		zap.Stringer("cid", c),
-		zap.Uint("user_id", userID))
+	if err = helper.RunStep(UnpinPhaseCompleted, 100, func() error {
+		return nil
+	}); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -1193,51 +1258,8 @@ func (h *UnpinOperationHandler) updatePathsToRootLevelVisibilityWithDB(ctx conte
 	return nil
 }
 
-func (h *UnpinOperationHandler) GetStatus(ctx context.Context, req *models.Request) (*core.RequestStatus, error) {
-	ctx, span := core.TraceMethod(ctx, "UnpinOperationHandler.GetStatus")
-	defer span.End()
-
-	status := &core.RequestStatus{
-		ProgressPercent: 0,
-	}
-
-	// Extract values from workflow data
-	var unpinData UnpinWorkflowData
-	err := h.StructuredWorkflowData(req.ID, &unpinData)
-	if err != nil {
-		return nil, err
-	}
-
-	currentPhase := unpinData.CurrentPhase
-	completedPhases := float64(unpinData.CompletedPhases)
-	totalPhases := float64(unpinData.TotalPhases)
-
-	// Determine status based on request state
-	status.State = req.Status
-	switch req.Status {
-	case models.RequestStatusPending:
-		status.Message = "Unpin operation is queued"
-		status.ProgressPercent = 0
-	case models.RequestStatusProcessing:
-		status.Message = "Unpin operation in progress: " + currentPhase
-		// Compute real progress based on completed phases
-		if totalPhases > 0 {
-			status.ProgressPercent = float64(int((completedPhases * 100) / totalPhases))
-		} else {
-			status.ProgressPercent = 0
-		}
-	case models.RequestStatusCompleted:
-		status.Message = "Unpin operation completed successfully"
-		status.ProgressPercent = 100
-	case models.RequestStatusFailed:
-		status.Message = "Unpin operation failed"
-		status.ProgressPercent = 100
-	default:
-		status.Message = "Unpin operation status unknown"
-		status.ProgressPercent = 0
-	}
-
-	return status, nil
+func (h *UnpinOperationHandler) GetStatus(_ context.Context, req *models.Request) (*core.RequestStatus, error) {
+	return h.GetStatusFromWorkflowData(req.ID, req)
 }
 
 // updateWorkflowPhase updates the workflow data with the current phase and completed phases count

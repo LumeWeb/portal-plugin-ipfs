@@ -24,21 +24,37 @@ func (h *PublishOperationHandler) ValidateRequest(ctx context.Context, req *mode
 	return nil
 }
 
-func (h *PublishOperationHandler) Execute(_ context.Context, _ *models.Request) error {
+func (h *PublishOperationHandler) Execute(ctx context.Context, req *models.Request) error {
+	// Initialize progress tracker with manual mode for simple milestones
+	tracker, err := h.NewProgressTracker(req.ID, core.ProgressModeManual, func(cfg *core.ProgressTrackerConfig) {
+		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypePublish)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize progress tracker: %w", err)
+	}
+
+	if err := tracker.Initialize(); err != nil {
+		return fmt.Errorf("failed to initialize tracker: %w", err)
+	}
+
+	// Set initial progress
+	if err := tracker.SetProgress(10); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	// Trigger the reprovider to announce the content
 	h.Protocol().(*Protocol).GetNode().TriggerReprovider()
+
+	// Complete
+	if err := tracker.SetProgress(100); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	return nil
 }
 
 func (h *PublishOperationHandler) GetStatus(_ context.Context, req *models.Request) (*core.RequestStatus, error) {
-	status := &core.RequestStatus{}
-
-	if req.Status == models.RequestStatusCompleted {
-		status.Message = "Content published to network"
-		status.ProgressPercent = 100
-	}
-
-	return status, nil
+	return h.GetStatusFromWorkflowData(req.ID, req)
 }
 
 func (h *PublishOperationHandler) Cleanup(_ context.Context, _ *models.Request) error {
