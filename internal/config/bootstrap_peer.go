@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	_ yaml.Marshaler                     = (*IPFSPeer)(nil)
-	_ mapstructure.UnmarshalMapstructure = (*IPFSPeer)(nil)
+	_ yaml.Marshaler           = (*IPFSPeer)(nil)
+	_ mapstructure.Unmarshaler = (*IPFSPeer)(nil)
 )
 
 func init() {
@@ -25,7 +25,7 @@ type IPFSPeer struct {
 	ai peer.AddrInfo
 }
 
-func (pi IPFSPeer) MarshalYAML() (interface{}, error) {
+func (pi IPFSPeer) MarshalYAML() (any, error) {
 	addrs, err := peer.AddrInfoToP2pAddrs(&pi.ai)
 	if err != nil {
 		return nil, err
@@ -38,7 +38,7 @@ func (pi IPFSPeer) MarshalYAML() (interface{}, error) {
 	return addrs[0].String(), nil
 }
 
-func (pi *IPFSPeer) DecodeMapstructure(value interface{}) error {
+func (pi *IPFSPeer) UnmarshalMapstructure(value any) error {
 	var addr *peer.AddrInfo
 	var err error
 
