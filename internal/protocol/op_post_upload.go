@@ -41,20 +41,9 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	defer span.End()
 
 	// Initialize progress tracker with manual mode for simple milestones
-	tracker, err := h.NewProgressTracker(req.ID, core.ProgressModeManual, func(cfg *core.ProgressTrackerConfig) {
-		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypeUpload)
-	})
+	tracker, err := InitializeManualProgressTracker(h, req.ID, core.OpTypeUpload, 10)
 	if err != nil {
-		return fmt.Errorf("failed to initialize progress tracker: %w", err)
-	}
-
-	if err := tracker.Initialize(); err != nil {
-		return fmt.Errorf("failed to initialize tracker: %w", err)
-	}
-
-	// Set initial progress
-	if err := tracker.SetProgress(10); err != nil {
-		h.Logger().Warn("Failed to update progress", zap.Error(err))
+		return err
 	}
 
 	workflow, err := h.getWorkflowData(req.ID)
@@ -321,7 +310,10 @@ func (h *PostUploadOperationHandler) logProcessingResult(allCids, rootCids []cid
 	h.Logger().Debug("Processed upload file", zap.Int("num_cids", len(allCids)), zap.Int("num_roots", len(rootCids)))
 }
 
-func (h *PostUploadOperationHandler) GetStatus(_ context.Context, req *models.Request) (*core.RequestStatus, error) {
+func (h *PostUploadOperationHandler) GetStatus(ctx context.Context, req *models.Request) (*core.RequestStatus, error) {
+	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.GetStatus")
+	defer span.End()
+
 	return h.GetStatusFromWorkflowData(req.ID, req)
 }
 

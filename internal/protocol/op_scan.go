@@ -7,6 +7,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
+	"go.uber.org/zap"
 )
 
 // ScanOperationHandler handles content validation/scanning
@@ -26,20 +27,9 @@ func (h *ScanOperationHandler) Execute(ctx context.Context, req *models.Request)
 	defer span.End()
 
 	// Initialize progress tracker with manual mode for simple milestones
-	tracker, err := h.NewProgressTracker(req.ID, core.ProgressModeManual, func(cfg *core.ProgressTrackerConfig) {
-		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypeScan)
-	})
+	tracker, err := InitializeManualProgressTracker(h, req.ID, core.OpTypeScan, 10)
 	if err != nil {
-		return fmt.Errorf("failed to initialize progress tracker: %w", err)
-	}
-
-	if err := tracker.Initialize(); err != nil {
-		return fmt.Errorf("failed to initialize tracker: %w", err)
-	}
-
-	// Set initial progress
-	if err := tracker.SetProgress(10); err != nil {
-		h.Logger().Warn("Failed to update progress", zap.Error(err))
+		return err
 	}
 
 	// TODO: implement content scan

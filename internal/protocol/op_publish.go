@@ -7,6 +7,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
+	"go.uber.org/zap"
 )
 
 // PublishOperationHandler handles announcing content to the IPFS network
@@ -26,20 +27,9 @@ func (h *PublishOperationHandler) ValidateRequest(ctx context.Context, req *mode
 
 func (h *PublishOperationHandler) Execute(ctx context.Context, req *models.Request) error {
 	// Initialize progress tracker with manual mode for simple milestones
-	tracker, err := h.NewProgressTracker(req.ID, core.ProgressModeManual, func(cfg *core.ProgressTrackerConfig) {
-		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypePublish)
-	})
+	tracker, err := InitializeManualProgressTracker(h, req.ID, core.OpTypePublish, 10)
 	if err != nil {
-		return fmt.Errorf("failed to initialize progress tracker: %w", err)
-	}
-
-	if err := tracker.Initialize(); err != nil {
-		return fmt.Errorf("failed to initialize tracker: %w", err)
-	}
-
-	// Set initial progress
-	if err := tracker.SetProgress(10); err != nil {
-		h.Logger().Warn("Failed to update progress", zap.Error(err))
+		return err
 	}
 
 	// Trigger the reprovider to announce the content

@@ -33,24 +33,13 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 	defer span.End()
 
 	// Initialize progress tracker with manual mode for simple milestones
-	tracker, err := h.NewProgressTracker(req.ID, core.ProgressModeManual, func(cfg *core.ProgressTrackerConfig) {
-		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypePin)
-	})
+	tracker, err := InitializeManualProgressTracker(h, req.ID, core.OpTypeStore, 10)
 	if err != nil {
-		return fmt.Errorf("failed to initialize progress tracker: %w", err)
-	}
-
-	if err := tracker.Initialize(); err != nil {
-		return fmt.Errorf("failed to initialize tracker: %w", err)
-	}
-
-	// Set initial progress
-	if err := tracker.SetProgress(10); err != nil {
-		h.Logger().Warn("Failed to update progress", zap.Error(err))
+		return err
 	}
 
 	var workflowData PinWorkflowData
-	err := h.StructuredWorkflowData(req.ID, &workflowData)
+	err = h.StructuredWorkflowData(req.ID, &workflowData)
 	if err != nil {
 		return fmt.Errorf("failed to get workflow data: %w", err)
 	}

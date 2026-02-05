@@ -89,31 +89,16 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 		return fmt.Errorf("failed to initialize workflow data: %w", err)
 	}
 
-	// Initialize progress tracker with weighted steps
+	// Initialize progress tracker with single step since all work is done together
 	tracker, err := h.NewProgressTracker(req.ID, core.ProgressModeWeighted, func(cfg *core.ProgressTrackerConfig) {
 		cfg.Steps = []core.ProgressStep{
 			{
 				Name:        FilePathPhaseProcessing,
-				Description: "Processing CID metadata",
-				Weight:      30,
-			},
-			{
-				Name:        FilePathPhaseBuildingDAG,
-				Description: "Building DAG structure",
-				Weight:      20,
-			},
-			{
-				Name:        FilePathPhaseComputingPaths,
-				Description: "Computing file paths",
-				Weight:      40,
-			},
-			{
-				Name:        FilePathPhaseStoring,
-				Description: "Storing file paths",
-				Weight:      10,
+				Description: "Processing CID metadata and computing file paths",
+				Weight:      100,
 			},
 		}
-		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypeFilePath)
+		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypeStore)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to initialize progress tracker: %w", err)

@@ -27,8 +27,10 @@ const (
 	UnpinPhasePromotingToRootLevelVisibility = "promoting_to_root_level_visibility"
 	UnpinPhaseAnalyzingPathDependencies      = "analyzing_path_dependencies"
 	UnpinPhaseHandlingPathCascadingEffects   = "handling_path_cascading_effects"
+	UnpinPhaseDeletingPin                    = "deleting_pin"
 	UnpinPhaseUnpinning                      = "unpinning"
 	UnpinPhaseValidatingDAGAfter             = "validating_dag_after"
+	UnpinPhaseCompleted                      = "completed"
 )
 
 // UnpinWorkflowData represents the workflow data for unpin operations
@@ -117,7 +119,7 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 				Weight:      5,
 			},
 			{
-				Name:        UnpinPhaseHandlingPathCascading,
+				Name:        UnpinPhaseHandlingPathCascadingEffects,
 				Description: "Handling path cascading effects",
 				Weight:      40,
 			},
@@ -132,7 +134,7 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 				Weight:      5,
 			},
 		}
-		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypeUnpin)
+		cfg.MessageProvider = h.NewDefaultProgressMessageProvider(core.OpTypeUnstore)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to initialize progress tracker: %w", err)
@@ -324,7 +326,7 @@ func (h *UnpinOperationHandler) Execute(ctx context.Context, req *models.Request
 
 			return nil
 		}); err != nil {
-			return tx.AddError(err)
+			return nil
 		}
 
 		return tx
