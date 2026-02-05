@@ -2,16 +2,17 @@ package config
 
 import (
 	"errors"
+	"reflect"
+
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/mitchellh/copystructure"
 	"gopkg.in/yaml.v3"
-	"reflect"
 )
 
 var (
-	_ yaml.Marshaler           = (*IPFSPeer)(nil)
-	_ mapstructure.Unmarshaler = (*IPFSPeer)(nil)
+	_ yaml.Marshaler                     = (*IPFSPeer)(nil)
+	_ mapstructure.UnmarshalMapstructure = (*IPFSPeer)(nil)
 )
 
 func init() {
