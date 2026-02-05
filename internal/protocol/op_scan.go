@@ -7,6 +7,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
+	"go.uber.org/zap"
 )
 
 // ScanOperationHandler handles content validation/scanning
@@ -25,24 +26,24 @@ func (h *ScanOperationHandler) Execute(ctx context.Context, req *models.Request)
 	ctx, span := core.TraceMethod(ctx, "ScanOperationHandler.Execute")
 	defer span.End()
 
+	// Initialize progress tracker with manual mode for simple milestones
+	tracker, err := InitializeManualProgressTracker(h, req.ID, core.OpTypeScan, 10)
+	if err != nil {
+		return err
+	}
+
 	// TODO: implement content scan
+
+	// Complete
+	if err := tracker.SetProgress(100); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	return nil
 }
 
-func (h *ScanOperationHandler) GetStatus(ctx context.Context, req *models.Request) (*core.RequestStatus, error) {
-	ctx, span := core.TraceMethod(ctx, "ScanOperationHandler.GetStatus")
-	defer span.End()
-
-	status := &core.RequestStatus{
-		ProgressPercent: 100,
-	}
-
-	if req.Status == models.RequestStatusCompleted {
-		status.Message = "Content scanned successfully"
-		status.ProgressPercent = 100
-	}
-
-	return status, nil
+func (h *ScanOperationHandler) GetStatus(_ context.Context, req *models.Request) (*core.RequestStatus, error) {
+	return h.GetStatusFromWorkflowData(req.ID, req)
 }
 
 func (h *ScanOperationHandler) Cleanup(_ context.Context, _ *models.Request) error {

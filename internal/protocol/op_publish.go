@@ -7,6 +7,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
+	"go.uber.org/zap"
 )
 
 // PublishOperationHandler handles announcing content to the IPFS network
@@ -24,21 +25,26 @@ func (h *PublishOperationHandler) ValidateRequest(ctx context.Context, req *mode
 	return nil
 }
 
-func (h *PublishOperationHandler) Execute(_ context.Context, _ *models.Request) error {
+func (h *PublishOperationHandler) Execute(ctx context.Context, req *models.Request) error {
+	// Initialize progress tracker with manual mode for simple milestones
+	tracker, err := InitializeManualProgressTracker(h, req.ID, core.OpTypePublish, 10)
+	if err != nil {
+		return err
+	}
+
 	// Trigger the reprovider to announce the content
 	h.Protocol().(*Protocol).GetNode().TriggerReprovider()
+
+	// Complete
+	if err := tracker.SetProgress(100); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	return nil
 }
 
 func (h *PublishOperationHandler) GetStatus(_ context.Context, req *models.Request) (*core.RequestStatus, error) {
-	status := &core.RequestStatus{}
-
-	if req.Status == models.RequestStatusCompleted {
-		status.Message = "Content published to network"
-		status.ProgressPercent = 100
-	}
-
-	return status, nil
+	return h.GetStatusFromWorkflowData(req.ID, req)
 }
 
 func (h *PublishOperationHandler) Cleanup(_ context.Context, _ *models.Request) error {

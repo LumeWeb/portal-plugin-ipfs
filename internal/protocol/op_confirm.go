@@ -32,8 +32,14 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 	ctx, span := core.TraceMethod(ctx, "ConfirmOperationHandler.Execute")
 	defer span.End()
 
+	// Initialize progress tracker with manual mode for simple milestones
+	tracker, err := InitializeManualProgressTracker(h, req.ID, core.OpTypeStore, 10)
+	if err != nil {
+		return err
+	}
+
 	var workflowData PinWorkflowData
-	err := h.StructuredWorkflowData(req.ID, &workflowData)
+	err = h.StructuredWorkflowData(req.ID, &workflowData)
 	if err != nil {
 		return fmt.Errorf("failed to get workflow data: %w", err)
 	}
@@ -65,6 +71,11 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 
 	// Process all CIDs to create upload/core pin records for all CIDs
 	if len(cidList) > 0 {
+		// Set progress - processing CIDs
+		if err := tracker.SetProgress(30); err != nil {
+			h.Logger().Warn("Failed to update progress", zap.Error(err))
+		}
+
 		uploadSvc := core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE)
 		if uploadSvc == nil {
 			h.Logger().Error("Upload service not available")
@@ -82,11 +93,21 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 			h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
 		}
 
+		// Set progress - creating root pin
+		if err := tracker.SetProgress(60); err != nil {
+			h.Logger().Warn("Failed to update progress", zap.Error(err))
+		}
+
 		// Create IPFS pin record for the root CID (first CID in the list)
 		_, err = uploadSvc.CreateRootPin(ctx, cidList[0], lo.FromPtrOr(req.UserID, 0))
 		if err != nil {
 			return fmt.Errorf("failed to create root pin: %w", err)
 		}
+	}
+
+	// Set progress - updating pin status
+	if err := tracker.SetProgress(80); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
 	}
 
 	err = pinSvc.UpdatePinStatus(ctx, types.FromUUID(workflowData.PinRequestID), db.PinningStatusPinned, nil)
@@ -109,14 +130,16 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 		// Don't fail the whole operation for DAG validation failure
 	}
 
+	// Complete
+	if err := tracker.SetProgress(100); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	return nil
 }
 
-func (h *ConfirmOperationHandler) GetStatus(_ context.Context, _ *models.Request) (*core.RequestStatus, error) {
-	return &core.RequestStatus{
-		ProgressPercent: 100,
-		Message:         "All blocks confirmed ready",
-	}, nil
+func (h *ConfirmOperationHandler) GetStatus(_ context.Context, req *models.Request) (*core.RequestStatus, error) {
+	return h.GetStatusFromWorkflowData(req.ID, req)
 }
 
 func (h *ConfirmOperationHandler) Cleanup(_ context.Context, _ *models.Request) error {

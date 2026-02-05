@@ -37,8 +37,14 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 	ctx, span := core.TraceMethod(ctx, "RetrieveOperationHandler.Execute")
 	defer span.End()
 
+	// Initialize progress tracker with manual mode for simple milestones
+	tracker, err := InitializeManualProgressTracker(h, req.ID, core.OpTypeRetrieve, 10)
+	if err != nil {
+		return err
+	}
+
 	var workflowData PinWorkflowData
-	err := h.StructuredWorkflowData(req.ID, &workflowData)
+	err = h.StructuredWorkflowData(req.ID, &workflowData)
 	if err != nil {
 		return err
 	}
@@ -79,6 +85,11 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		return fmt.Errorf("failed to collect cids: %w", err)
 	}
 
+	// Set progress - collecting DAG CIDs
+	if err := tracker.SetProgress(30); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	childCids := lo.Filter(cids, func(item cid.Cid, _ int) bool {
 		return !item.Equals(c)
 	})
@@ -103,7 +114,17 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		return err
 	}
 
+	// Set progress - updating workflow data
+	if err := tracker.SetProgress(50); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	if len(childCids) > 0 {
+		// Set progress - processing child blocks
+		if err := tracker.SetProgress(70); err != nil {
+			h.Logger().Warn("Failed to update progress", zap.Error(err))
+		}
+
 		uploadSvc := core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE)
 		if uploadSvc == nil {
 			h.Logger().Error("Upload service not available")
@@ -154,24 +175,16 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		}
 	}
 
+	// Complete
+	if err := tracker.SetProgress(100); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
 	return nil
 }
 
-func (h *RetrieveOperationHandler) GetStatus(ctx context.Context, req *models.Request) (*core.RequestStatus, error) {
-	ctx, span := core.TraceMethod(ctx, "RetrieveOperationHandler.GetStatus")
-	defer span.End()
-
-	// For now just return a simple status since retrieval is synchronous
-	status := &core.RequestStatus{
-		ProgressPercent: 100,
-	}
-
-	if req.Status == models.RequestStatusCompleted {
-		status.Message = "Content retrieved from network"
-		status.ProgressPercent = 100
-	}
-
-	return status, nil
+func (h *RetrieveOperationHandler) GetStatus(_ context.Context, req *models.Request) (*core.RequestStatus, error) {
+	return h.GetStatusFromWorkflowData(req.ID, req)
 }
 
 func (h *RetrieveOperationHandler) Cleanup(_ context.Context, _ *models.Request) error {
