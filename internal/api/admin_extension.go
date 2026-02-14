@@ -7,23 +7,23 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"go.lumeweb.com/httputil"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
-	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	"go.lumeweb.com/portal/core"
-	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal-router"
+	"go.lumeweb.com/portal/config"
+	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 // AdminExtension extends the Admin API with IPFS website management functionality
 type AdminExtension struct {
-	ctx             core.Context
-	logger          *core.Logger
-	config          config.Manager
-	db              *gorm.DB
-	websiteService  pluginCore.WebsiteService
+	ctx            core.Context
+	logger         *core.Logger
+	config         config.Manager
+	db             *gorm.DB
+	websiteService pluginCore.WebsiteService
 }
 
 // NewAdminExtension creates a new Admin API extension for IPFS website management
@@ -146,19 +146,28 @@ func (e *AdminExtension) registerWebsiteHandlers(gRouter router.Router, accessSv
 	return nil
 }
 
+// parsePathID extracts and parses a uint ID from the path parameter
+func (e *AdminExtension) parsePathID(c echo.Context, param string) (uint, error) {
+	id, err := strconv.ParseUint(c.Param(param), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return uint(id), nil
+}
+
 // blockWebsite blocks a website by setting its status to 'blocked'
 func (e *AdminExtension) blockWebsite(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
 
-	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	websiteID, err := e.parsePathID(c, "id")
 	if err != nil {
 		apiErr := NewError(ErrKeyInvalidUUIDFormat, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	if err := e.websiteService.BlockWebsite(reqCtx, uint(websiteID)); err != nil {
-		e.logger.Error("Failed to block website", zap.Error(err), zap.Uint("website_id", uint(websiteID)))
+	if err := e.websiteService.BlockWebsite(reqCtx, websiteID); err != nil {
+		e.logger.Error("Failed to block website", zap.Error(err), zap.Uint("website_id", websiteID))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
@@ -171,14 +180,14 @@ func (e *AdminExtension) unblockWebsite(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
 
-	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	websiteID, err := e.parsePathID(c, "id")
 	if err != nil {
 		apiErr := NewError(ErrKeyInvalidUUIDFormat, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	if err := e.websiteService.UnblockWebsite(reqCtx, uint(websiteID)); err != nil {
-		e.logger.Error("Failed to unblock website", zap.Error(err), zap.Uint("website_id", uint(websiteID)))
+	if err := e.websiteService.UnblockWebsite(reqCtx, websiteID); err != nil {
+		e.logger.Error("Failed to unblock website", zap.Error(err), zap.Uint("website_id", websiteID))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}

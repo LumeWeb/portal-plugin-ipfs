@@ -138,15 +138,15 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 	// Check target based on type
 	switch website.TargetType {
 	case string(pluginDb.WebsiteTargetTypeIPFS):
-		valid, err := j.validateCIDTarget(ctx, website.TargetHash)
+		valid, err := j.validateCIDTarget(ctx, website.TargetHash())
 		if err != nil {
 			j.logger.Warn("Failed to validate CID target",
 				zap.Error(err),
-				zap.String("target", website.TargetHash))
+				zap.String("target", website.TargetHash()))
 			newStatus = pluginDb.WebsiteStatusBroken
 		} else if !valid {
 			j.logger.Debug("CID target is not valid or not pinned",
-				zap.String("target", website.TargetHash))
+				zap.String("target", website.TargetHash()))
 			newStatus = pluginDb.WebsiteStatusBroken
 		}
 
@@ -155,7 +155,7 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 		if err != nil {
 			j.logger.Warn("Failed to validate IPNS target",
 				zap.Error(err),
-				zap.String("target", website.TargetHash))
+				zap.String("target", website.TargetHash()))
 			newStatus = pluginDb.WebsiteStatusBroken
 		}
 		// validateIPNSTarget handles status and LastCheckedAt updates internally
@@ -236,13 +236,13 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	defer span.End()
 
 	// Check if IPNS key exists in database by trying to get the private key
-	privKey, userID, err := j.ipnsKeyService.GetPrivateKeyByPeerID(ctx, website.TargetHash)
+	privKey, userID, err := j.ipnsKeyService.GetPrivateKeyByPeerID(ctx, website.TargetHash())
 	if err != nil {
 		j.logger.Error("IPNS key not found in database",
 			zap.Error(err),
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", website.Domain),
-			zap.String("peer_id", website.TargetHash),
+			zap.String("peer_id", website.TargetHash()),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
 		now := time.Now()
@@ -267,13 +267,13 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	_ = privKey
 
 	// Resolve IPNS record via IPNSPublisherService
-	record, err := j.ipnsPublisherService.GetPublished(ctx, website.TargetHash, true)
+	record, err := j.ipnsPublisherService.GetPublished(ctx, website.TargetHash(), true)
 	if err != nil {
 		j.logger.Error("Failed to resolve IPNS record",
 			zap.Error(err),
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", website.Domain),
-			zap.String("peer_id", website.TargetHash),
+			zap.String("peer_id", website.TargetHash()),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
 		now := time.Now()
@@ -288,7 +288,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.Error(err),
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", website.Domain),
-			zap.String("peer_id", website.TargetHash),
+			zap.String("peer_id", website.TargetHash()),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
 		now := time.Now()
@@ -330,7 +330,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.Error(err),
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", website.Domain),
-			zap.String("peer_id", website.TargetHash),
+			zap.String("peer_id", website.TargetHash()),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
 		now := time.Now()
@@ -342,7 +342,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 		j.logger.Warn("IPNS record has expired",
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", website.Domain),
-			zap.String("peer_id", website.TargetHash),
+			zap.String("peer_id", website.TargetHash()),
 			zap.Time("validity", validity),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
@@ -359,7 +359,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	j.logger.Debug("IPNS target validated successfully",
 		zap.Uint("website_id", website.ID),
 		zap.String("domain", website.Domain),
-		zap.String("peer_id", website.TargetHash),
+		zap.String("peer_id", website.TargetHash()),
 	)
 
 	return nil

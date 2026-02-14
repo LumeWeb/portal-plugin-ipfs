@@ -12,16 +12,16 @@ import (
 
 	dnslink "github.com/dnslink-std/go"
 	"github.com/ipfs/go-cid"
-	"golang.org/x/net/idna"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
 	"go.uber.org/zap"
+	"golang.org/x/net/idna"
 	"gorm.io/gorm"
 )
 
@@ -88,7 +88,7 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 			}
 
 			// Validate target type and hash
-			if err := s.validateTarget(website.TargetType, website.TargetHash); err != nil {
+			if err := s.validateTarget(website.TargetType, website.TargetHash()); err != nil {
 				return nil, fmt.Errorf("invalid target: %w", err)
 			}
 
@@ -132,7 +132,7 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				zap.String("domain", website.Domain),
 				zap.Uint("user_id", website.UserID),
 				zap.String("target_type", website.TargetType),
-				zap.String("target_hash", website.TargetHash))
+				zap.String("target_hash", website.TargetHash()))
 
 			// Send notification to admin
 			if err := s.notifyAdminWebsiteCreated(ctx, website, ""); err != nil {
@@ -307,17 +307,41 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 					}
 				}
 
-				// Validate target if being updated
-				if targetType, ok := updates["target_type"].(string); ok {
-					targetHash, ok := updates["target_hash"].(string)
-					if !ok {
-						// If target type changed but hash not provided, use existing
-						targetHash = website.TargetHash
+				// Validate and convert target if being updated
+				if targetHashStr, ok := updates["target_hash"].(string); ok {
+					targetType := website.TargetType
+					if tt, ok := updates["target_type"].(string); ok {
+						targetType = tt
 					}
-					if err := s.validateTarget(targetType, targetHash); err != nil {
+
+					// Validate target hash
+					if err := s.validateTarget(targetType, targetHashStr); err != nil {
 						_ = tx.AddError(fmt.Errorf("invalid target: %w", err))
 						return tx
 					}
+
+					// Convert string to multihash and CID version
+					if targetType == string(pluginDb.WebsiteTargetTypeIPFS) {
+						c, err := cid.Decode(targetHashStr)
+						if err != nil {
+							_ = tx.AddError(fmt.Errorf("failed to decode CID: %w", err))
+							return tx
+						}
+						updates["target_multihash"] = c.Hash()
+						version := uint8(c.Version())
+						updates["cid_version"] = &version
+					} else {
+						target, err := pluginDb.NewIPNSTargetFromString(targetHashStr)
+						if err != nil {
+							_ = tx.AddError(fmt.Errorf("failed to parse IPNS target: %w", err))
+							return tx
+						}
+						updates["target_multihash"] = target.ToMultihash()
+						updates["cid_version"] = nil
+					}
+
+					// Remove old target_hash from updates
+					delete(updates, "target_hash")
 				}
 
 				// Apply updates
@@ -552,9 +576,9 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				var expectedDNSlink string
 				switch pluginDb.WebsiteTargetType(website.TargetType) {
 				case pluginDb.WebsiteTargetTypeIPFS:
-					expectedDNSlink = "/ipfs/" + website.TargetHash
+					expectedDNSlink = "/ipfs/" + website.TargetHash()
 				case pluginDb.WebsiteTargetTypeIPNS:
-					expectedDNSlink = "/ipns/" + website.TargetHash
+					expectedDNSlink = "/ipns/" + website.TargetHash()
 				default:
 					_ = tx.AddError(fmt.Errorf("invalid target type: %s", website.TargetType))
 					return tx
@@ -661,11 +685,11 @@ func (s *WebsiteServiceDefault) CheckStatus(ctx context.Context, website *plugin
 			switch pluginDb.WebsiteTargetType(website.TargetType) {
 			case pluginDb.WebsiteTargetTypeIPFS:
 				// For IPFS targets, check if the CID is pinned
-				valid, err := s.validateIPFSTarget(ctx, website.TargetHash)
+				valid, err := s.validateIPFSTarget(ctx, website.TargetHash())
 				if err != nil {
 					s.Logger().Error("Failed to validate IPFS target",
 						zap.Error(err),
-						zap.String("target_hash", website.TargetHash))
+						zap.String("target_hash", website.TargetHash()))
 					return pluginDb.WebsiteStatusBroken, fmt.Errorf("failed to validate IPFS target: %w", err)
 				}
 				if valid {
@@ -676,11 +700,11 @@ func (s *WebsiteServiceDefault) CheckStatus(ctx context.Context, website *plugin
 
 			case pluginDb.WebsiteTargetTypeIPNS:
 				// For IPNS targets, check if the key exists
-				valid, err := s.validateIPNSTarget(ctx, website.TargetHash)
+				valid, err := s.validateIPNSTarget(ctx, website.TargetHash())
 				if err != nil {
 					s.Logger().Error("Failed to validate IPNS target",
 						zap.Error(err),
-						zap.String("target_hash", website.TargetHash))
+						zap.String("target_hash", website.TargetHash()))
 					return pluginDb.WebsiteStatusBroken, fmt.Errorf("failed to validate IPNS target: %w", err)
 				}
 				if valid {
@@ -806,7 +830,7 @@ func (s *WebsiteServiceDefault) notifyAdminWebsiteCreated(ctx context.Context, w
 		"Domain":     website.Domain,
 		"UserEmail":  userEmail,
 		"TargetType": website.TargetType,
-		"TargetHash": website.TargetHash,
+		"TargetHash": website.TargetHash(),
 		"Status":     website.Status,
 		"CreatedAt":  website.CreatedAt.Format(time.RFC3339),
 	}
@@ -840,7 +864,7 @@ func (s *WebsiteServiceDefault) notifyAdminWebsiteUpdated(ctx context.Context, w
 		"Domain":     website.Domain,
 		"UserEmail":  userEmail,
 		"TargetType": website.TargetType,
-		"TargetHash": website.TargetHash,
+		"TargetHash": website.TargetHash(),
 		"Status":     website.Status,
 		"UpdatedAt":  website.UpdatedAt.Format(time.RFC3339),
 		"Changes":    changes,
@@ -878,7 +902,7 @@ func (s *WebsiteServiceDefault) notifyUserStatusChanged(ctx context.Context, web
 		"NewStatus":  string(newStatus),
 		"ChangedAt":  time.Now().Format(time.RFC3339),
 		"TargetType": website.TargetType,
-		"TargetHash": website.TargetHash,
+		"TargetHash": website.TargetHash(),
 	}
 
 	if err := s.mailerSvc.TemplateSend("website_status_changed_user", vars, vars, userEmail); err != nil {

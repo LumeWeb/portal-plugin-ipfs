@@ -13,15 +13,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ipfs/go-block-format"
-	"github.com/ipfs/go-cid"
 	"github.com/ipfs/boxo/ipns"
 	"github.com/ipfs/boxo/path"
+	"github.com/ipfs/go-block-format"
+	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
 	"github.com/ipld/go-car/v2/blockstore"
-	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multicodec"
-	"github.com/multiformats/go-multihash"
+	mh "github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -195,12 +195,13 @@ func (m *mockHelper) SetupIPNSServiceMocksWithOptions(userID uint, withDefaults 
 	mockIPNSPublisherService := core.GetService[*mocks.MockIPNSPublisherService](m.ctx, pluginCore.IPNS_PUBLISHER_SERVICE)
 
 	// Create mock IPNS key
+	testPeerID, _ := peer.Decode(TestPeerID)
+	testPeerIDMultihash := mh.Multihash(testPeerID)
 	mockKey := &pluginDb.IPFSIPNSKey{
-		ID:       1,
-		UserID:   userID,
-		Name:     "test-key",
-		IPNSName: TestIPNSName,
-		PeerID:   TestPeerID,
+		ID:              1,
+		UserID:          userID,
+		Name:            "test-key",
+		PeerIDMultihash: testPeerIDMultihash,
 	}
 
 	if withDefaults {

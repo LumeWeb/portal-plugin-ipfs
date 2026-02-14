@@ -15,13 +15,13 @@ import (
 
 const (
 	// IPNS_KEY_SERVICE is the service ID for the IPNS key management service
-	IPNS_KEY_SERVICE = "IPNS_KEY_SERVICE"
+	IPNS_KEY_SERVICE = "ipfs.ipns.key"
 
 	// IPNS_PUBLISHER_SERVICE is the service ID for the IPNS publisher service
-	IPNS_PUBLISHER_SERVICE = "IPNS_PUBLISHER_SERVICE"
+	IPNS_PUBLISHER_SERVICE = "ipfs.ipns.publisher"
 
 	// IPNS_REPUBLISHER_SERVICE is the service ID for the IPNS republisher service
-	IPNS_REPUBLISHER_SERVICE = "IPNS_REPUBLISHER_SERVICE"
+	IPNS_REPUBLISHER_SERVICE = "ipfs.ipns.republisher"
 )
 
 // IPNSNodeAccess provides access to IPFS node components needed for IPNS operations

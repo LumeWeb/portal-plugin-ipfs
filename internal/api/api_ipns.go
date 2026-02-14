@@ -209,7 +209,7 @@ func (a *API) publishIPNS(c echo.Context) error {
 	}
 
 	// Publish the CID to IPNS using the peer ID
-	err = ipnsPublisherService.PublishCID(a.Context(), key.PeerID, req.CID, ttl)
+	err = ipnsPublisherService.PublishCID(a.Context(), key.PeerID().String(), req.CID, ttl)
 	if err != nil {
 		a.Logger().Error("Failed to publish IPNS record", zap.Error(err), zap.Uint("key_id", req.KeyID), zap.String("cid", req.CID))
 		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to publish IPNS record: %w", err))
@@ -217,12 +217,12 @@ func (a *API) publishIPNS(c echo.Context) error {
 	}
 
 	// Get the published record to return details
-	record, err := ipnsPublisherService.GetPublished(a.Context(), key.PeerID, false)
+	record, err := ipnsPublisherService.GetPublished(a.Context(), key.PeerID().String(), false)
 	if err != nil {
-		a.Logger().Error("Failed to get published IPNS record", zap.Error(err), zap.String("peer_id", key.PeerID))
+		a.Logger().Error("Failed to get published IPNS record", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
 		// Don't fail the request if we can't retrieve the record, just return a basic response
 		resp := dto.IPNSPublishResponse{
-			Name:      key.PeerID,
+			Name:      key.PeerID().String(),
 			Value:     req.CID,
 			Published: time.Now(),
 		}
@@ -255,7 +255,7 @@ func (a *API) publishIPNS(c echo.Context) error {
 	}
 
 	resp := dto.IPNSPublishResponse{
-		Name:      key.PeerID,
+		Name:      key.PeerID().String(),
 		Value:     valuePath.String(),
 		Sequence:  sequence,
 		Validity:  validity,
@@ -371,9 +371,9 @@ func (a *API) republishIPNS(c echo.Context) error {
 		}
 
 		// Get the current published record
-		record, err := ipnsPublisherService.GetPublished(a.Context(), key.PeerID, false)
+		record, err := ipnsPublisherService.GetPublished(a.Context(), key.PeerID().String(), false)
 		if err != nil {
-			a.Logger().Error("Failed to get published record for republish", zap.Error(err), zap.String("peer_id", key.PeerID))
+			a.Logger().Error("Failed to get published record for republish", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
 			apiErr := NewError(ErrKeyPinFetchFailed, fmt.Errorf("failed to get published record: %w", err))
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
@@ -381,15 +381,15 @@ func (a *API) republishIPNS(c echo.Context) error {
 		// Get the value from the record
 		valuePath, err := record.Value()
 		if err != nil {
-			a.Logger().Error("Failed to get IPNS record value for republish", zap.Error(err), zap.String("peer_id", key.PeerID))
+			a.Logger().Error("Failed to get IPNS record value for republish", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
 			apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to get IPNS record value: %w", err))
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
 
 		// Get the private key and republish
-		privKey, _, err := a.ipnsKeyService.GetPrivateKeyByPeerID(reqCtx, key.PeerID)
+		privKey, _, err := a.ipnsKeyService.GetPrivateKeyByPeerID(reqCtx, key.PeerID().String())
 		if err != nil {
-			a.Logger().Error("Failed to get private key for republish", zap.Error(err), zap.String("peer_id", key.PeerID))
+			a.Logger().Error("Failed to get private key for republish", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
 			apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to get private key: %w", err))
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
@@ -397,7 +397,7 @@ func (a *API) republishIPNS(c echo.Context) error {
 		// Republish with the same value
 		err = ipnsPublisherService.PublishWithKey(a.Context(), privKey, valuePath.String(), 0)
 		if err != nil {
-			a.Logger().Error("Failed to republish IPNS record", zap.Error(err), zap.String("peer_id", key.PeerID))
+			a.Logger().Error("Failed to republish IPNS record", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
 			apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to republish IPNS record: %w", err))
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}

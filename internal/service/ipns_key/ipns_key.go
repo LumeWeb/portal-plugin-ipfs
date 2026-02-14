@@ -11,9 +11,9 @@ import (
 	"fmt"
 	"io"
 
+	mh "github.com/multiformats/go-multihash"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"golang.org/x/crypto/hkdf"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
@@ -21,6 +21,7 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/hkdf"
 	"gorm.io/gorm"
 )
 
@@ -109,11 +110,13 @@ func (s *IPNSKeyServiceDefault) CreateKey(ctx context.Context, userID uint, name
 		return nil, fmt.Errorf("failed to encrypt private key: %w", err)
 	}
 
+	// Get the multihash from peer ID
+	peerIDMultihash := mh.Multihash(peerID)
+
 	key := &pluginDb.IPFSIPNSKey{
 		UserID:              userID,
 		Name:                name,
-		IPNSName:            peerID.String(),
-		PeerID:              peerID.String(),
+		PeerIDMultihash:     peerIDMultihash,
 		PrivateKeyEncrypted: encryptedKey,
 	}
 
@@ -131,12 +134,12 @@ func (s *IPNSKeyServiceDefault) CreateKey(ctx context.Context, userID uint, name
 		s.Logger().Warn("Failed to sync new IPNS key to boxo keystore (key saved to database)",
 			zap.Error(err),
 			zap.Uint("key_id", key.ID),
-			zap.String("peer_id", peerID.String()),
+			zap.Stringer("peer_id", key.PeerID()),
 		)
 		// Don't fail the operation - the key is saved in the database
 	}
 
-	s.Logger().Debug("Created IPNS key", zap.Uint("user_id", userID), zap.String("name", name), zap.String("peer_id", peerID.String()))
+	s.Logger().Debug("Created IPNS key", zap.Uint("user_id", userID), zap.String("name", name), zap.Stringer("peer_id", key.PeerID()))
 	return key, nil
 }
 
@@ -165,8 +168,9 @@ func (s *IPNSKeyServiceDefault) ImportKey(ctx context.Context, userID uint, name
 
 	// Check if peer ID already exists for this user
 	var existingKey pluginDb.IPFSIPNSKey
+	peerIDMultihash := mh.Multihash(peerID)
 	err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		return tx.Where("user_id = ? AND peer_id = ?", userID, peerID.String()).First(&existingKey)
+		return tx.Where("user_id = ? AND peer_id_multihash = ?", userID, peerIDMultihash).First(&existingKey)
 	})
 	if err == nil {
 		return nil, fmt.Errorf("IPNS key with peer ID %s already exists for this user", peerID.String())
@@ -184,8 +188,7 @@ func (s *IPNSKeyServiceDefault) ImportKey(ctx context.Context, userID uint, name
 	key := &pluginDb.IPFSIPNSKey{
 		UserID:              userID,
 		Name:                name,
-		IPNSName:            peerID.String(),
-		PeerID:              peerID.String(),
+		PeerIDMultihash:     peerIDMultihash,
 		PrivateKeyEncrypted: encryptedKey,
 	}
 
@@ -203,12 +206,12 @@ func (s *IPNSKeyServiceDefault) ImportKey(ctx context.Context, userID uint, name
 		s.Logger().Warn("Failed to sync imported IPNS key to boxo keystore (key saved to database)",
 			zap.Error(err),
 			zap.Uint("key_id", key.ID),
-			zap.String("peer_id", peerID.String()),
+			zap.Stringer("peer_id", peerID),
 		)
 		// Don't fail the operation - the key is saved in the database
 	}
 
-	s.Logger().Debug("Imported IPNS key", zap.Uint("user_id", userID), zap.String("name", name), zap.String("peer_id", peerID.String()))
+	s.Logger().Debug("Imported IPNS key", zap.Uint("user_id", userID), zap.String("name", name), zap.Stringer("peer_id", peerID))
 	return key, nil
 }
 
@@ -296,7 +299,7 @@ func (s *IPNSKeyServiceDefault) DeleteKey(ctx context.Context, userID uint, keyI
 	var websiteCount int64
 	checkErr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		return tx.Table("ipfs_websites").
-			Where("target_hash = ? AND target_type = ? AND status = ?", key.PeerID, "ipns", "active").
+			Where("target_multihash = ? AND target_type = ? AND status = ?", key.PeerIDMultihash, "ipns", "active").
 			Count(&websiteCount)
 	})
 	if checkErr != nil {
@@ -323,12 +326,12 @@ func (s *IPNSKeyServiceDefault) DeleteKey(ctx context.Context, userID uint, keyI
 			if node != nil {
 				boxoKS := node.GetKeystore()
 				if boxoKS != nil {
-					keyName := key.PeerID
+					keyName := key.PeerID().String()
 					has, err := boxoKS.Has(keyName)
 					if err != nil {
 						s.Logger().Warn("Failed to check if key exists in boxo keystore",
 							zap.Error(err),
-							zap.String("peer_id", key.PeerID),
+							zap.Stringer("peer_id", key.PeerID()),
 							zap.Uint("user_id", userID),
 						)
 					} else if has {
@@ -336,12 +339,12 @@ func (s *IPNSKeyServiceDefault) DeleteKey(ctx context.Context, userID uint, keyI
 						if err != nil {
 							s.Logger().Warn("Failed to delete key from boxo keystore",
 								zap.Error(err),
-								zap.String("peer_id", key.PeerID),
+								zap.Stringer("peer_id", key.PeerID()),
 								zap.Uint("user_id", userID),
 							)
 						} else {
 							s.Logger().Debug("Deleted IPNS key from boxo keystore",
-								zap.String("peer_id", key.PeerID),
+								zap.Stringer("peer_id", key.PeerID()),
 								zap.Uint("user_id", userID),
 							)
 						}
@@ -383,7 +386,7 @@ func (s *IPNSKeyServiceDefault) syncKeyToBoxoKeystore(ctx context.Context, key *
 	}
 
 	// Use peer ID as the key name in the keystore
-	keyName := key.PeerID
+	keyName := key.PeerID().String()
 
 	// Check if key already exists in keystore
 	has, err := boxoKS.Has(keyName)
@@ -394,7 +397,7 @@ func (s *IPNSKeyServiceDefault) syncKeyToBoxoKeystore(ctx context.Context, key *
 	if has {
 		// Key already exists in keystore, skip
 		s.Logger().Debug("Key already exists in boxo keystore, skipping sync",
-			zap.String("peer_id", key.PeerID),
+			zap.Stringer("peer_id", key.PeerID()),
 		)
 		return nil
 	}
@@ -407,7 +410,7 @@ func (s *IPNSKeyServiceDefault) syncKeyToBoxoKeystore(ctx context.Context, key *
 
 	s.Logger().Debug("Synced IPNS key to boxo keystore",
 		zap.Uint("key_id", key.ID),
-		zap.String("peer_id", key.PeerID),
+		zap.Stringer("peer_id", key.PeerID()),
 		zap.String("name", key.Name),
 	)
 
@@ -456,14 +459,14 @@ func (s *IPNSKeyServiceDefault) SyncToBoxoKeystore(ctx context.Context) error {
 
 	for _, key := range keys {
 		// Use peer ID as the key name in the keystore
-		keyName := key.PeerID
+		keyName := key.PeerID().String()
 
 		// Check if key already exists in keystore
 		has, err := boxoKS.Has(keyName)
 		if err != nil {
 			s.Logger().Warn("Failed to check if key exists in keystore",
 				zap.Error(err),
-				zap.String("peer_id", key.PeerID),
+				zap.Stringer("peer_id", key.PeerID()),
 			)
 			continue
 		}
@@ -480,7 +483,7 @@ func (s *IPNSKeyServiceDefault) SyncToBoxoKeystore(ctx context.Context) error {
 			s.Logger().Error("Failed to decrypt private key for sync",
 				zap.Error(err),
 				zap.Uint("key_id", key.ID),
-				zap.String("peer_id", key.PeerID),
+				zap.Stringer("peer_id", key.PeerID()),
 			)
 			continue
 		}
@@ -491,7 +494,7 @@ func (s *IPNSKeyServiceDefault) SyncToBoxoKeystore(ctx context.Context) error {
 			s.Logger().Error("Failed to import key into boxo keystore",
 				zap.Error(err),
 				zap.Uint("key_id", key.ID),
-				zap.String("peer_id", key.PeerID),
+				zap.Stringer("peer_id", key.PeerID()),
 			)
 			continue
 		}
@@ -499,7 +502,7 @@ func (s *IPNSKeyServiceDefault) SyncToBoxoKeystore(ctx context.Context) error {
 		syncedCount++
 		s.Logger().Debug("Synced IPNS key to boxo keystore",
 			zap.Uint("key_id", key.ID),
-			zap.String("peer_id", key.PeerID),
+			zap.Stringer("peer_id", key.PeerID()),
 			zap.String("name", key.Name),
 		)
 	}
@@ -518,9 +521,16 @@ func (s *IPNSKeyServiceDefault) GetPrivateKeyByPeerID(ctx context.Context, peerI
 	ctx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.GetPrivateKeyByPeerID")
 	defer span.End()
 
+	// Parse peer ID string to multihash
+	pid, err := peer.Decode(peerIDStr)
+	if err != nil {
+		return nil, 0, fmt.Errorf("invalid peer ID: %w", err)
+	}
+	peerIDMultihash := mh.Multihash(pid)
+
 	var key pluginDb.IPFSIPNSKey
-	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		return tx.Where("peer_id = ?", peerIDStr).First(&key)
+	err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		return tx.Where("peer_id_multihash = ?", peerIDMultihash).First(&key)
 	})
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -683,7 +693,7 @@ func (s *IPNSKeyServiceDefault) MigrateEncryptionSeed(ctx core.Context) error {
 			s.Logger().Warn("Failed to decrypt key with old seed during migration",
 				zap.Error(err),
 				zap.Uint("key_id", key.ID),
-				zap.String("peer_id", key.PeerID),
+				zap.Stringer("peer_id", key.PeerID()),
 			)
 			failedCount++
 			continue
@@ -694,7 +704,7 @@ func (s *IPNSKeyServiceDefault) MigrateEncryptionSeed(ctx core.Context) error {
 			s.Logger().Error("Failed to encrypt key with new seed during migration",
 				zap.Error(err),
 				zap.Uint("key_id", key.ID),
-				zap.String("peer_id", key.PeerID),
+				zap.Stringer("peer_id", key.PeerID()),
 			)
 			failedCount++
 			continue
@@ -709,7 +719,7 @@ func (s *IPNSKeyServiceDefault) MigrateEncryptionSeed(ctx core.Context) error {
 			s.Logger().Error("Failed to update encrypted key in database",
 				zap.Error(updateErr),
 				zap.Uint("key_id", key.ID),
-				zap.String("peer_id", key.PeerID),
+				zap.Stringer("peer_id", key.PeerID()),
 			)
 			failedCount++
 			continue
@@ -718,7 +728,7 @@ func (s *IPNSKeyServiceDefault) MigrateEncryptionSeed(ctx core.Context) error {
 		migratedCount++
 		s.Logger().Debug("Migrated IPNS key",
 			zap.Uint("key_id", key.ID),
-			zap.String("peer_id", key.PeerID),
+			zap.Stringer("peer_id", key.PeerID()),
 			zap.String("name", key.Name),
 		)
 	}

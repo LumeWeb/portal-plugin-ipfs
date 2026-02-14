@@ -1,9 +1,12 @@
 package db
 
 import (
+	"fmt"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/peer"
+	mh "github.com/multiformats/go-multihash"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
@@ -15,8 +18,7 @@ type IPFSIPNSKey struct {
 	ID                  uint           `gorm:"primaryKey;autoIncrement"`
 	UserID              uint           `gorm:"index:idx_ipfs_ipns_keys_user_id;not null"`
 	Name                string         `gorm:"type:varchar(255);not null"` // User-friendly name
-	IPNSName            string         `gorm:"column:ipns_name;type:varchar(255);index;not null"` // CIDv1 format
-	PeerID              string         `gorm:"type:varchar(255);uniqueIndex:user_peer;not null"` // For uniqueness per user
+	PeerIDMultihash     mh.Multihash   `gorm:"type:varbinary(64);uniqueIndex:user_peer;not null"`
 	PrivateKeyEncrypted []byte         `gorm:"type:blob;not null"` // Encrypted with portal seed
 	CreatedAt           time.Time      `gorm:"autoCreateTime"`
 	DeletedAt           gorm.DeletedAt `gorm:"index:idx_ipfs_ipns_keys_deleted_at"`
@@ -26,15 +28,26 @@ func (I IPFSIPNSKey) TableName() string {
 	return "ipfs_ipns_keys"
 }
 
-// BeforeSave hook to validate peer ID format
+// BeforeSave hook to validate multihash format
 func (key *IPFSIPNSKey) BeforeSave(_ *gorm.DB) error {
-	if _, err := peer.Decode(key.PeerID); err != nil {
-		return err
+	if key.PeerIDMultihash == nil || len(key.PeerIDMultihash) == 0 {
+		return fmt.Errorf("peer_id_multihash cannot be empty")
 	}
 	return nil
 }
 
-// GetPeerID returns the peer ID as a libp2p peer.ID
-func (key *IPFSIPNSKey) GetPeerID() (peer.ID, error) {
-	return peer.Decode(key.PeerID)
+// PeerID returns the peer ID as a libp2p peer.ID
+func (key *IPFSIPNSKey) PeerID() peer.ID {
+	return peer.ID(key.PeerIDMultihash)
+}
+
+// IPNSName returns the IPNS name (CIDv1 with libp2p-key codec)
+func (key *IPFSIPNSKey) IPNSName() string {
+	c := cid.NewCidV1(cid.Libp2pKey, key.PeerIDMultihash)
+	return c.String()
+}
+
+// GetPeerID alias for backward compatibility
+func (key *IPFSIPNSKey) GetPeerID() peer.ID {
+	return key.PeerID()
 }

@@ -6,9 +6,9 @@ import (
 
 	"github.com/Oudwins/zog"
 	"github.com/ipfs/go-cid"
-	"github.com/libp2p/go-libp2p/core/peer"
 	"go.lumeweb.com/httputil"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal/config"
 )
 
 // IPNS Key DTOs
@@ -42,8 +42,8 @@ type IPNSKeyResponse struct {
 func (r *IPNSKeyResponse) FromModel(model *db.IPFSIPNSKey) error {
 	r.ID = model.ID
 	r.Name = model.Name
-	r.IPNSName = model.IPNSName
-	r.PeerID = model.PeerID
+	r.IPNSName = model.IPNSName()
+	r.PeerID = model.PeerID().String()
 	r.Created = model.CreatedAt
 	return nil
 }
@@ -107,46 +107,55 @@ type IPNSRepublishResponse struct {
 // WebsiteRequest represents a request to create or update a website
 type WebsiteRequest struct {
 	Domain     string `json:"domain"`
-	TargetType string `json:"target_type"` // "ipfs" or "ipns"
+	TargetType string `json:"target_type"` // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
 	TargetHash string `json:"target_hash"` // CID or IPNS peer ID
 }
 
 func (r WebsiteRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
-		"Domain":     zog.String().Required().Min(1).Max(255),
-		"TargetType": zog.String().Required().OneOf([]string{"ipfs", "ipns"}),
+		"Domain": zog.String().Required().Min(1).Max(255),
+		"TargetType": config.ZogStringLike[db.WebsiteTargetType]().OneOf([]db.WebsiteTargetType{
+			db.WebsiteTargetTypeIPFS,
+			db.WebsiteTargetTypeIPNS,
+		}).Required(),
 		"TargetHash": zog.String().Required().Min(1).Max(255),
 	})
 }
 
 func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 	// Validate target type
-	if r.TargetType != "ipfs" && r.TargetType != "ipns" {
-		return nil, fmt.Errorf("invalid target type: must be 'ipfs' or 'ipns'")
+	if r.TargetType != string(db.WebsiteTargetTypeIPFS) && r.TargetType != string(db.WebsiteTargetTypeIPNS) {
+		return nil, fmt.Errorf("invalid target type: must be '%s' or '%s'", db.WebsiteTargetTypeIPFS, db.WebsiteTargetTypeIPNS)
 	}
 
-	// Validate CID for IPFS targets
-	if r.TargetType == "ipfs" {
-		_, err := cid.Parse(r.TargetHash)
+	website := &db.Website{
+		Domain:     r.Domain,
+		TargetType: r.TargetType,
+		Status:     string(db.WebsiteStatusPendingValidation),
+	}
+
+	// Validate and parse CID for IPFS targets
+	if r.TargetType == string(db.WebsiteTargetTypeIPFS) {
+		c, err := cid.Parse(r.TargetHash)
 		if err != nil {
 			return nil, fmt.Errorf("invalid CID: %w", err)
 		}
+		website.TargetMultihash = c.Hash()
+		version := uint8(c.Version())
+		website.CIDVersion = &version
 	}
 
 	// Validate peer ID for IPNS targets
-	if r.TargetType == "ipns" {
-		_, err := peer.Decode(r.TargetHash)
+	if r.TargetType == string(db.WebsiteTargetTypeIPNS) {
+		target, err := db.NewIPNSTargetFromString(r.TargetHash)
 		if err != nil {
-			return nil, fmt.Errorf("invalid peer ID: %w", err)
+			return nil, fmt.Errorf("invalid IPNS target: %w", err)
 		}
+		website.TargetMultihash = target.ToMultihash()
+		website.CIDVersion = nil // NULL for IPNS
 	}
 
-	return &db.Website{
-		Domain:     r.Domain,
-		TargetType: r.TargetType,
-		TargetHash: r.TargetHash,
-		Status:     string(db.WebsiteStatusPendingValidation),
-	}, nil
+	return website, nil
 }
 
 // WebsiteResponse represents a website response
@@ -168,7 +177,7 @@ func (r *WebsiteResponse) FromModel(model *db.Website) error {
 	r.ID = model.ID
 	r.Domain = model.Domain
 	r.TargetType = model.TargetType
-	r.TargetHash = model.TargetHash
+	r.TargetHash = model.TargetHash() // Use helper to generate string from multihash
 	r.Status = model.Status
 	r.ValidationToken = model.ValidationToken
 	r.ValidationExpiresAt = model.ValidationExpiresAt
@@ -199,13 +208,16 @@ type WebsiteFilter struct {
 
 func (f WebsiteFilter) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
-		"Domain":     zog.Ptr(zog.String().Optional()),
-		"TargetType": zog.Ptr(zog.String().OneOf([]string{"ipfs", "ipns"}).Optional()),
-		"Status":     zog.Ptr(zog.String().OneOf([]string{
-			string(db.WebsiteStatusPendingValidation),
-			string(db.WebsiteStatusActive),
-			string(db.WebsiteStatusBroken),
-			string(db.WebsiteStatusBlocked),
+		"Domain": zog.Ptr(zog.String().Optional()),
+		"TargetType": zog.Ptr(config.ZogStringLike[db.WebsiteTargetType]().OneOf([]db.WebsiteTargetType{
+			db.WebsiteTargetTypeIPFS,
+			db.WebsiteTargetTypeIPNS,
+		}).Optional()),
+		"Status": zog.Ptr(config.ZogStringLike[db.WebsiteStatus]().OneOf([]db.WebsiteStatus{
+			db.WebsiteStatusPendingValidation,
+			db.WebsiteStatusActive,
+			db.WebsiteStatusBroken,
+			db.WebsiteStatusBlocked,
 		}).Optional()),
 	})
 }

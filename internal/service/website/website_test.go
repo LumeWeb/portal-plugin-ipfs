@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
@@ -19,6 +20,56 @@ import (
 	"go.lumeweb.com/queryutil"
 )
 
+// Helper function to create a test website with IPFS target
+func createTestIPFSWebsite(userID uint, domain string, cidStr string) *pluginDb.Website {
+	c := cid.MustParse(cidStr)
+	version := uint8(c.Version())
+	return &pluginDb.Website{
+		UserID:          userID,
+		Domain:          domain,
+		TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+		TargetMultihash: c.Hash(),
+		CIDVersion:      &version,
+	}
+}
+
+// Helper function to create a test website with IPNS target
+func createTestIPNSWebsite(userID uint, domain string, ipnsStr string) *pluginDb.Website {
+	target, _ := pluginDb.NewIPNSTargetFromString(ipnsStr)
+	return &pluginDb.Website{
+		UserID:          userID,
+		Domain:          domain,
+		TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
+		TargetMultihash: target.ToMultihash(),
+		CIDVersion:      nil,
+	}
+}
+
+// Helper function to create a test website with IPFS target
+func createTestIPFSWebsite(userID uint, domain string, cidStr string) *pluginDb.Website {
+	cid := util.GenerateTestCIDFromStr(cidStr)
+	version := uint8(cid.Version())
+	return &pluginDb.Website{
+		UserID:          userID,
+		Domain:          domain,
+		TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+		TargetMultihash: cid.Hash(),
+		CIDVersion:      &version,
+	}
+}
+
+// Helper function to create a test website with IPNS target
+func createTestIPNSWebsite(userID uint, domain string, ipnsStr string) *pluginDb.Website {
+	target, _ := pluginDb.NewIPNSTargetFromString(ipnsStr)
+	return &pluginDb.Website{
+		UserID:          userID,
+		Domain:          domain,
+		TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
+		TargetMultihash: target.ToMultihash(),
+		CIDVersion:      nil,
+	}
+}
+
 var TestOptions = coreTesting.CombineOptions(
 	// Use mock IPNS key service since website service depends on it
 	coreTesting.WithMockServiceFactory(pluginCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService),
@@ -31,7 +82,7 @@ var TestOptions = coreTesting.CombineOptions(
 	coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{
 		Website: pluginConfig.WebsiteConfig{
 			NotificationsEnabled: false,
-			AdminEmail:          "",
+			AdminEmail:           "",
 		},
 	}),
 	coreTesting.WithSQLitePluginMigrations(
@@ -48,12 +99,7 @@ func TestWebsiteService_CreateWebsite_IPFSTarget(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "example.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "example.com", testCID.String())
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -64,7 +110,7 @@ func TestWebsiteService_CreateWebsite_IPFSTarget(t *testing.T) {
 		assert.Equal(tb, userID, createdWebsite.UserID)
 		assert.Equal(tb, "example.com", createdWebsite.Domain)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPFS), createdWebsite.TargetType)
-		assert.Equal(tb, testCID.String(), createdWebsite.TargetHash)
+		assert.Equal(tb, testCID.String(), createdWebsite.TargetHash())
 		assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), createdWebsite.Status)
 		assert.NotEmpty(tb, createdWebsite.ValidationToken)
 		assert.NotNil(tb, createdWebsite.ValidationExpiresAt)
@@ -84,15 +130,10 @@ func TestWebsiteService_CreateWebsite_IPNSTarget(t *testing.T) {
 		require.NotNil(tb, websiteService)
 
 		userID := uint(1)
-		// Use GenerateTestCID to create a valid CID (IPNS names are CIDs)
-		ipnsCID := util.GenerateTestCID(t, "ipns test data")
+		// Use a valid IPNS name (CIDv1 with libp2p-key codec)
+		ipnsName := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "ipns-example.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPNS),
-			TargetHash: ipnsCID.String(),
-		}
+		website := createTestIPNSWebsite(userID, "ipns-example.com", ipnsName)
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -103,7 +144,7 @@ func TestWebsiteService_CreateWebsite_IPNSTarget(t *testing.T) {
 		assert.Equal(tb, userID, createdWebsite.UserID)
 		assert.Equal(tb, "ipns-example.com", createdWebsite.Domain)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType)
-		assert.Equal(tb, ipnsCID.String(), createdWebsite.TargetHash)
+		assert.Equal(tb, ipnsName, createdWebsite.TargetHash())
 		assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), createdWebsite.Status)
 	}, TestOptions)
 }
