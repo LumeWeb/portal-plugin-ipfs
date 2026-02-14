@@ -46,12 +46,12 @@ func TestIPNSKeyService_CreateKey(t *testing.T) {
 		assert.NotNil(tb, createdKey)
 		assert.Equal(tb, userID, createdKey.UserID)
 		assert.Equal(tb, keyName, createdKey.Name)
-		assert.NotEmpty(tb, createdKey.PeerID)
+		assert.NotEmpty(tb, createdKey.PeerID().String())
 		assert.NotEmpty(tb, createdKey.PrivateKeyEncrypted)
 		assert.NotZero(tb, createdKey.ID)
 
 		// Verify peer ID is valid
-		peerID, err := peer.Decode(createdKey.PeerID)
+		peerID, err := peer.Decode(createdKey.PeerID().String())
 		require.NoError(tb, err)
 		assert.NotEmpty(tb, peerID)
 
@@ -59,7 +59,7 @@ func TestIPNSKeyService_CreateKey(t *testing.T) {
 		retrievedKey, err := keyService.GetKeyByID(context.Background(), userID, createdKey.ID)
 		require.NoError(tb, err)
 		assert.Equal(tb, createdKey.ID, retrievedKey.ID)
-		assert.Equal(tb, createdKey.PeerID, retrievedKey.PeerID)
+		assert.Equal(tb, createdKey.PeerID(), retrievedKey.PeerID())
 	}, TestOptions)
 }
 
@@ -80,7 +80,7 @@ func TestIPNSKeyService_CreateKey_RSA(t *testing.T) {
 		assert.NotNil(tb, createdKey)
 		assert.Equal(tb, userID, createdKey.UserID)
 		assert.Equal(tb, keyName, createdKey.Name)
-		assert.NotEmpty(tb, createdKey.PeerID)
+		assert.NotEmpty(tb, createdKey.PeerID().String())
 		assert.NotEmpty(tb, createdKey.PrivateKeyEncrypted)
 	}, TestOptions)
 }
@@ -102,7 +102,7 @@ func TestIPNSKeyService_CreateKey_DefaultKeyType(t *testing.T) {
 		assert.NotNil(tb, createdKey)
 		assert.Equal(tb, userID, createdKey.UserID)
 		assert.Equal(tb, keyName, createdKey.Name)
-		assert.NotEmpty(tb, createdKey.PeerID)
+		assert.NotEmpty(tb, createdKey.PeerID().String())
 	}, TestOptions)
 }
 
@@ -244,7 +244,7 @@ func TestIPNSKeyService_GetKeyByID(t *testing.T) {
 		assert.NotNil(tb, retrievedKey)
 		assert.Equal(tb, createdKey.ID, retrievedKey.ID)
 		assert.Equal(tb, createdKey.Name, retrievedKey.Name)
-		assert.Equal(tb, createdKey.PeerID, retrievedKey.PeerID)
+		assert.Equal(tb, createdKey.PeerID(), retrievedKey.PeerID())
 		assert.Equal(tb, createdKey.UserID, retrievedKey.UserID)
 	}, TestOptions)
 }
@@ -391,7 +391,7 @@ func TestIPNSKeyService_GetPrivateKey(t *testing.T) {
 		pubKey := privKey.GetPublic()
 		derivedPeerID, err := peer.IDFromPublicKey(pubKey)
 		require.NoError(tb, err)
-		assert.Equal(tb, createdKey.PeerID, derivedPeerID.String())
+		assert.Equal(tb, createdKey.PeerID().String(), derivedPeerID.String())
 	}, TestOptions)
 }
 
@@ -426,7 +426,7 @@ func TestIPNSKeyService_GetPrivateKeyByPeerID(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Act
-		privKey, retrievedUserID, err := keyService.GetPrivateKeyByPeerID(context.Background(), createdKey.PeerID)
+		privKey, retrievedUserID, err := keyService.GetPrivateKeyByPeerID(context.Background(), createdKey.PeerID().String())
 
 		// Assert
 		require.NoError(tb, err)
@@ -437,7 +437,7 @@ func TestIPNSKeyService_GetPrivateKeyByPeerID(t *testing.T) {
 		pubKey := privKey.GetPublic()
 		derivedPeerID, err := peer.IDFromPublicKey(pubKey)
 		require.NoError(tb, err)
-		assert.Equal(tb, createdKey.PeerID, derivedPeerID.String())
+		assert.Equal(tb, createdKey.PeerID().String(), derivedPeerID.String())
 	}, TestOptions)
 }
 
@@ -537,6 +537,6 @@ func TestIPNSKeyService_UniquePeerID_DifferentUsers(t *testing.T) {
 		assert.NotNil(tb, importedKey)
 		assert.Equal(tb, userID2, importedKey.UserID)
 		assert.Equal(tb, "user2-imported-key", importedKey.Name)
-		assert.Equal(tb, createdKey.PeerID, importedKey.PeerID)
+		assert.Equal(tb, createdKey.PeerID(), importedKey.PeerID())
 	}, TestOptions)
 }

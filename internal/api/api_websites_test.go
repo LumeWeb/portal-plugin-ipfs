@@ -21,6 +21,37 @@ import (
 	"gorm.io/gorm"
 )
 
+// Helper function to create a mock IPFS website
+func createMockIPFSWebsite(id, userID uint, domain string, testCID string, status db.WebsiteStatus, token string) *db.Website {
+	c := cid.MustParse(testCID)
+	version := uint8(c.Version())
+	return &db.Website{
+		ID:              id,
+		UserID:          userID,
+		Domain:          domain,
+		TargetType:      string(db.WebsiteTargetTypeIPFS),
+		TargetMultihash: c.Hash(),
+		CIDVersion:      &version,
+		Status:          string(status),
+		ValidationToken: token,
+	}
+}
+
+// Helper function to create a mock IPNS website
+func createMockIPNSWebsite(id, userID uint, domain string, peerIDStr string, status db.WebsiteStatus, token string) *db.Website {
+	target, _ := db.NewIPNSTargetFromString(peerIDStr)
+	return &db.Website{
+		ID:              id,
+		UserID:          userID,
+		Domain:          domain,
+		TargetType:      string(db.WebsiteTargetTypeIPNS),
+		TargetMultihash: target.ToMultihash(),
+		CIDVersion:      nil,
+		Status:          string(status),
+		ValidationToken: token,
+	}
+}
+
 // Website API Tests
 //
 // NOTE: AuthService mock configuration issues affecting all Phase 3 tests
@@ -37,15 +68,7 @@ func TestAPI_CreateWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := &db.Website{
-				ID:              1,
-				UserID:          userID,
-				Domain:          TestDomain,
-				TargetType:      "ipfs",
-				TargetHash:      TestCID,
-				Status:          string(db.WebsiteStatusPendingValidation),
-				ValidationToken: "test-token",
-			}
+			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusPendingValidation, "test-token")
 
 			mockWebsiteService.EXPECT().CreateWebsite(mock.Anything, mock.AnythingOfType("*db.Website")).Return(mockWebsite, nil)
 

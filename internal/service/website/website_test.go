@@ -45,31 +45,6 @@ func createTestIPNSWebsite(userID uint, domain string, ipnsStr string) *pluginDb
 	}
 }
 
-// Helper function to create a test website with IPFS target
-func createTestIPFSWebsite(userID uint, domain string, cidStr string) *pluginDb.Website {
-	cid := util.GenerateTestCIDFromStr(cidStr)
-	version := uint8(cid.Version())
-	return &pluginDb.Website{
-		UserID:          userID,
-		Domain:          domain,
-		TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
-		TargetMultihash: cid.Hash(),
-		CIDVersion:      &version,
-	}
-}
-
-// Helper function to create a test website with IPNS target
-func createTestIPNSWebsite(userID uint, domain string, ipnsStr string) *pluginDb.Website {
-	target, _ := pluginDb.NewIPNSTargetFromString(ipnsStr)
-	return &pluginDb.Website{
-		UserID:          userID,
-		Domain:          domain,
-		TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
-		TargetMultihash: target.ToMultihash(),
-		CIDVersion:      nil,
-	}
-}
-
 var TestOptions = coreTesting.CombineOptions(
 	// Use mock IPNS key service since website service depends on it
 	coreTesting.WithMockServiceFactory(pluginCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService),

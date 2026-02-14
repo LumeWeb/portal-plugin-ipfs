@@ -25,6 +25,37 @@ import (
 	"gorm.io/gorm"
 )
 
+// Helper function to create a test website with IPFS target
+func createTestIPFSGatewayWebsite(id, userID uint, domain string, testCID cid.Cid, status pluginDb.WebsiteStatus) *pluginDb.Website {
+	version := uint8(testCID.Version())
+	return &pluginDb.Website{
+		ID:              id,
+		UserID:          userID,
+		Domain:          domain,
+		TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+		TargetMultihash: testCID.Hash(),
+		CIDVersion:      &version,
+		Status:          string(status),
+		CreatedAt:       time.Now(),
+	}
+}
+
+// Helper function to create a deleted test website
+func createTestDeletedIPFSGatewayWebsite(id, userID uint, domain string, testCID cid.Cid, status pluginDb.WebsiteStatus, deletedTime time.Time) *pluginDb.Website {
+	version := uint8(testCID.Version())
+	return &pluginDb.Website{
+		ID:              id,
+		UserID:          userID,
+		Domain:          domain,
+		TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+		TargetMultihash: testCID.Hash(),
+		CIDVersion:      &version,
+		Status:          string(status),
+		CreatedAt:       time.Now(),
+		DeletedAt:       gorm.DeletedAt{Time: deletedTime, Valid: true},
+	}
+}
+
 func TestAPI_GetGatewayWebsite(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
@@ -32,15 +63,7 @@ func TestAPI_GetGatewayWebsite(t *testing.T) {
 		domain := TestDomain
 		testCID := cid.MustParse(TestCID)
 
-		website := &pluginDb.Website{
-			ID:         1,
-			UserID:     1,
-			Domain:     domain,
-			TargetType: "ipfs",
-			TargetHash: testCID.String(),
-			Status:     string(pluginDb.WebsiteStatusActive),
-			CreatedAt:  time.Now(),
-		}
+		website := createTestIPFSGatewayWebsite(1, 1, domain, testCID, pluginDb.WebsiteStatusActive)
 
 		helper.SetupWebsiteServiceMocks(domain, website)
 
@@ -110,17 +133,9 @@ func TestAPI_GetGatewayWebsite_BrokenSite(t *testing.T) {
 		helper := newMockHelper(t, ctx)
 		domain := "broken.example.com"
 		testCID := cid.MustParse(TestCID)
-		
-		website := &pluginDb.Website{
-			ID:         2,
-			UserID:     1,
-			Domain:     domain,
-			TargetType: "ipfs",
-			TargetHash: testCID.String(),
-			Status:     string(pluginDb.WebsiteStatusBroken),
-			CreatedAt:  time.Now(),
-		}
-		
+
+		website := createTestIPFSGatewayWebsite(2, 1, domain, testCID, pluginDb.WebsiteStatusBroken)
+
 		helper.SetupWebsiteServiceMocks(domain, website)
 		
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/websites/"+domain, nil)
@@ -147,21 +162,11 @@ func TestAPI_GetGatewayWebsite_DeletedSite(t *testing.T) {
 		helper := newMockHelper(t, ctx)
 		domain := "deleted.example.com"
 		testCID := cid.MustParse(TestCID)
-		
+
 		deletedTime := time.Now()
-		website := &pluginDb.Website{
-			ID:         3,
-			UserID:     1,
-			Domain:     domain,
-			TargetType: "ipfs",
-			TargetHash: testCID.String(),
-			Status:     string(pluginDb.WebsiteStatusActive),
-			CreatedAt:  time.Now(),
-			DeletedAt:  gorm.DeletedAt{Time: deletedTime, Valid: true},
-		}
-		
+		website := createTestDeletedIPFSGatewayWebsite(3, 1, domain, testCID, string(pluginDb.WebsiteStatusActive), deletedTime)
+
 		helper.SetupWebsiteServiceMocks(domain, website)
-		
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/websites/"+domain, nil)
 		req.Header.Set("X-Gateway-Secret", "test-secret")
 
@@ -205,17 +210,9 @@ func TestAPI_GetGatewayWebsiteStatus(t *testing.T) {
 		helper := newMockHelper(t, ctx)
 		domain := TestDomain
 		testCID := cid.MustParse(TestCID)
-		
-		website := &pluginDb.Website{
-			ID:         1,
-			UserID:     1,
-			Domain:     domain,
-			TargetType: "ipfs",
-			TargetHash: testCID.String(),
-			Status:     string(pluginDb.WebsiteStatusActive),
-			CreatedAt:  time.Now(),
-		}
-		
+
+		website := createTestIPFSGatewayWebsite(1, 1, domain, testCID, pluginDb.WebsiteStatusActive)
+
 		helper.SetupWebsiteServiceMocks(domain, website)
 		
 		req := ctx.NewAPIRequest(http.MethodGet, fmt.Sprintf("/internal/websites/%s/status", domain), nil)
@@ -242,17 +239,10 @@ func TestAPI_GetGatewayWebsiteStatus_BrokenSite(t *testing.T) {
 		helper := newMockHelper(t, ctx)
 		domain := "broken.example.com"
 		testCID := cid.MustParse(TestCID)
-		
-		website := &pluginDb.Website{
-			ID:         2,
-			UserID:     1,
-			Domain:     domain,
-			TargetType: "ipfs",
-			TargetHash: testCID.String(),
-			Status:     string(pluginDb.WebsiteStatusBroken),
-			CreatedAt:  time.Now(),
-		}
-		
+
+		website := createTestIPFSGatewayWebsite(2, 1, domain, testCID, pluginDb.WebsiteStatusBroken)
+
+		helper.SetupWebsiteServiceMocks(domain, website)
 		helper.SetupWebsiteServiceMocks(domain, website)
 		
 		req := ctx.NewAPIRequest(http.MethodGet, fmt.Sprintf("/internal/websites/%s/status", domain), nil)
