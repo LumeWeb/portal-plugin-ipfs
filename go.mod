@@ -305,7 +305,10 @@ require (
 	go.lumeweb.com/configmanager v0.3.24 // indirect
 	go.lumeweb.com/event/v2 v2.1.0 // indirect
 	go.lumeweb.com/gswagger v0.20.10 // indirect
+	go.lumeweb.com/portal-plugin-admin v0.0.0-20260209143631-0383363d31df
+	go.lumeweb.com/web/go/portal-admin v0.0.0-20250722120319-c81bf3620eef // indirect
 	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20260123053442-479cd558a2fc // indirect
+	go.lumeweb.com/web/go/portal-plugin-admin v0.0.0-20250722120319-c81bf3620eef // indirect
 	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20260123053442-479cd558a2fc // indirect
 	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20260123053442-479cd558a2fc // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
