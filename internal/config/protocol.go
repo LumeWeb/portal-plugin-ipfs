@@ -13,6 +13,7 @@ type ProtocolConfig struct {
 	BootstrapPeers          []IPFSPeer   `config:"bootstrap_peers"`
 	Provider                IPFSProvider `config:"provider"`
 	BlockStore              BlockStore   `config:"blockstore"`
+	Website                 WebsiteConfig `config:"website"`
 	LogLevel                string       `config:"log_level"`
 	AutoScaleResourceLimits bool         `config:"auto_scale_resource_limits"`
 }

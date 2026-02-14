@@ -1,0 +1,224 @@
+package dto
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/Oudwins/zog"
+	"github.com/ipfs/go-cid"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"go.lumeweb.com/httputil"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+)
+
+// IPNS Key DTOs
+
+// IPNSKeyRequest represents a request to create or import an IPNS key
+type IPNSKeyRequest struct {
+	Name string `json:"name"`
+	Key  string `json:"key,omitempty"` // Base64-encoded private key (optional for import)
+}
+
+func (r IPNSKeyRequest) Schema() *zog.StructSchema {
+	return zog.Struct(zog.Shape{
+		"Name": zog.String().Required().Min(1).Max(255),
+		"Key":  zog.String().Optional(),
+	})
+}
+
+func (r *IPNSKeyRequest) ToModel() (*IPNSKeyRequest, error) {
+	return r, nil
+}
+
+// IPNSKeyResponse represents an IPNS key response
+type IPNSKeyResponse struct {
+	ID       uint      `json:"id"`
+	Name     string    `json:"name"`
+	IPNSName string    `json:"ipns_name"`
+	PeerID   string    `json:"peer_id"`
+	Created  time.Time `json:"created"`
+}
+
+func (r *IPNSKeyResponse) FromModel(model *db.IPFSIPNSKey) error {
+	r.ID = model.ID
+	r.Name = model.Name
+	r.IPNSName = model.IPNSName
+	r.PeerID = model.PeerID
+	r.Created = model.CreatedAt
+	return nil
+}
+
+// IPNSKeyExportResponse represents an IPNS key export response
+type IPNSKeyExportResponse struct {
+	PrivateKey string `json:"private_key"` // Base64-encoded private key
+}
+
+// IPNSPublishRequest represents a request to publish a CID to IPNS
+type IPNSPublishRequest struct {
+	KeyID uint   `json:"key_id"`
+	CID   string `json:"cid"`
+	TTL   string `json:"ttl,omitempty"` // Duration string (e.g., "24h")
+}
+
+func (r IPNSPublishRequest) Schema() *zog.StructSchema {
+	return zog.Struct(zog.Shape{
+		"KeyID": zog.UintLike[uint]().Required(),
+		"CID":   zog.String().Required(),
+		"TTL":   zog.String().Optional(),
+	})
+}
+
+func (r *IPNSPublishRequest) ToModel() (*IPNSPublishRequest, error) {
+	// Validate CID
+	_, err := cid.Parse(r.CID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid CID: %w", err)
+	}
+	return r, nil
+}
+
+// IPNSPublishResponse represents an IPNS publish response
+type IPNSPublishResponse struct {
+	Name      string    `json:"name"`      // IPNS name (peer ID)
+	Value     string    `json:"value"`     // CID
+	Sequence  uint64    `json:"sequence"`  // IPNS sequence number
+	Validity  time.Time `json:"validity"`  // Valid until
+	Published time.Time `json:"published"` // Published at
+}
+
+// IPNSResolveResponse represents an IPNS resolve response
+type IPNSResolveResponse struct {
+	Name     string    `json:"name"`     // IPNS name
+	Value    string    `json:"value"`    // Resolved CID
+	Sequence uint64    `json:"sequence"` // IPNS sequence number
+	Path     string    `json:"path"`     // Full IPFS path
+	Expired  bool      `json:"expired"`  // Whether the record is expired
+	Expires  time.Time `json:"expires"`  // Expiration time
+}
+
+// IPNSRepublishResponse represents an IPNS republish response
+type IPNSRepublishResponse struct {
+	Count   int    `json:"count"`   // Number of records republished
+	Message string `json:"message"` // Status message
+}
+
+// Website DTOs
+
+// WebsiteRequest represents a request to create or update a website
+type WebsiteRequest struct {
+	Domain     string `json:"domain"`
+	TargetType string `json:"target_type"` // "ipfs" or "ipns"
+	TargetHash string `json:"target_hash"` // CID or IPNS peer ID
+}
+
+func (r WebsiteRequest) Schema() *zog.StructSchema {
+	return zog.Struct(zog.Shape{
+		"Domain":     zog.String().Required().Min(1).Max(255),
+		"TargetType": zog.String().Required().OneOf([]string{"ipfs", "ipns"}),
+		"TargetHash": zog.String().Required().Min(1).Max(255),
+	})
+}
+
+func (r *WebsiteRequest) ToModel() (*db.Website, error) {
+	// Validate target type
+	if r.TargetType != "ipfs" && r.TargetType != "ipns" {
+		return nil, fmt.Errorf("invalid target type: must be 'ipfs' or 'ipns'")
+	}
+
+	// Validate CID for IPFS targets
+	if r.TargetType == "ipfs" {
+		_, err := cid.Parse(r.TargetHash)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CID: %w", err)
+		}
+	}
+
+	// Validate peer ID for IPNS targets
+	if r.TargetType == "ipns" {
+		_, err := peer.Decode(r.TargetHash)
+		if err != nil {
+			return nil, fmt.Errorf("invalid peer ID: %w", err)
+		}
+	}
+
+	return &db.Website{
+		Domain:     r.Domain,
+		TargetType: r.TargetType,
+		TargetHash: r.TargetHash,
+		Status:     string(db.WebsiteStatusPendingValidation),
+	}, nil
+}
+
+// WebsiteResponse represents a website response
+type WebsiteResponse struct {
+	ID                  uint       `json:"id"`
+	Domain              string     `json:"domain"`
+	TargetType          string     `json:"target_type"`
+	TargetHash          string     `json:"target_hash"`
+	Status              string     `json:"status"`
+	ValidationToken     string     `json:"validation_token"`
+	ValidationExpiresAt *time.Time `json:"validation_expires_at,omitempty"`
+	LastCheckedAt       *time.Time `json:"last_checked_at,omitempty"`
+	Created             time.Time  `json:"created"`
+	Updated             time.Time  `json:"updated"`
+	Expired             bool       `json:"expired"` // Whether validation token has expired
+}
+
+func (r *WebsiteResponse) FromModel(model *db.Website) error {
+	r.ID = model.ID
+	r.Domain = model.Domain
+	r.TargetType = model.TargetType
+	r.TargetHash = model.TargetHash
+	r.Status = model.Status
+	r.ValidationToken = model.ValidationToken
+	r.ValidationExpiresAt = model.ValidationExpiresAt
+	r.LastCheckedAt = model.LastCheckedAt
+	r.Created = model.CreatedAt
+	r.Updated = model.UpdatedAt
+	r.Expired = model.IsExpired()
+	return nil
+}
+
+// WebsiteValidateResponse represents a website validation response
+type WebsiteValidateResponse struct {
+	ID      uint   `json:"id"`
+	Domain  string `json:"domain"`
+	Valid   bool   `json:"valid"`
+	Message string `json:"message"`
+}
+
+// WebsiteItem represents a website listing item (used in list responses)
+type WebsiteItem WebsiteResponse
+
+// WebsiteFilter represents filtering options for website listings
+type WebsiteFilter struct {
+	Domain     *string `json:"domain,omitempty" query:"domain"`
+	TargetType *string `json:"target_type,omitempty" query:"target_type"`
+	Status     *string `json:"status,omitempty" query:"status"`
+}
+
+func (f WebsiteFilter) Schema() *zog.StructSchema {
+	return zog.Struct(zog.Shape{
+		"Domain":     zog.Ptr(zog.String().Optional()),
+		"TargetType": zog.Ptr(zog.String().OneOf([]string{"ipfs", "ipns"}).Optional()),
+		"Status":     zog.Ptr(zog.String().OneOf([]string{
+			string(db.WebsiteStatusPendingValidation),
+			string(db.WebsiteStatusActive),
+			string(db.WebsiteStatusBroken),
+			string(db.WebsiteStatusBlocked),
+		}).Optional()),
+	})
+}
+
+func (f WebsiteFilter) ToModel() (WebsiteFilter, error) {
+	return f, nil
+}
+
+// Ensure DTOs implement httputil interfaces
+var _ httputil.DTOValidator = (*IPNSKeyRequest)(nil)
+var _ httputil.DTOValidator = (*IPNSPublishRequest)(nil)
+var _ httputil.DTORequest[*IPNSPublishRequest] = (*IPNSPublishRequest)(nil)
+var _ httputil.DTOValidator = (*WebsiteRequest)(nil)
+var _ httputil.DTORequest[*db.Website] = (*WebsiteRequest)(nil)
+var _ httputil.DTOValidator = (*WebsiteFilter)(nil)
+var _ httputil.DTORequest[WebsiteFilter] = (*WebsiteFilter)(nil)

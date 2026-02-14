@@ -29,6 +29,8 @@ import (
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/boxo/exchange"
 	"github.com/ipfs/boxo/ipld/merkledag"
+	"github.com/ipfs/boxo/keystore"
+	"github.com/ipfs/boxo/namesys"
 	blocks "github.com/ipfs/go-block-format"
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/libp2p/go-libp2p"
@@ -59,6 +61,9 @@ type IPFSNode interface {
 	AddPeer(addr peer.AddrInfo)
 	Pin(ctx context.Context, root cid.Cid, recursive bool) error
 	TriggerReprovider()
+	GetPublisher() *namesys.IPNSPublisher
+	GetKeystore() keystore.Keystore
+	GetDatastore() datastore.Datastore
 }
 
 // NopExchange wraps an exchange.Interface and disables NotifyNewBlocks.
@@ -86,6 +91,9 @@ type Node struct {
 	dagService       format.DAGService
 	bitswap          *bitswap.Bitswap
 	reproviderCancel context.CancelFunc
+	datastore        datastore.Batching
+	keystore         keystore.Keystore
+	publisher        *namesys.IPNSPublisher
 }
 
 // Close closes the node
@@ -336,6 +344,12 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	reproviderCtx, reproviderCancel := context.WithCancel(ctx)
 	go rp.Run(reproviderCtx, cfg.Provider.Interval, cfg.Provider.Timeout, cfg.Provider.BatchSize)
 
+	// Create boxo keystore for IPNS key management
+	boxoKeystore := keystore.NewMemKeystore()
+
+	// Create boxo IPNS publisher
+	boxoPublisher := namesys.NewIPNSPublisher(frt, ds)
+
 	return &Node{
 		log:              ctx.Logger(),
 		frt:              frt,
@@ -345,6 +359,9 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		dagService:       dagService,
 		reprovider:       rp,
 		reproviderCancel: reproviderCancel,
+		datastore:        ds,
+		keystore:         boxoKeystore,
+		publisher:        boxoPublisher,
 	}, nil
 }
 func (n *Node) TriggerReprovider() {
@@ -396,6 +413,21 @@ func ConnectionAddresses(node IPFSNode) ([]multiaddr.Multiaddr, error) {
 	}
 
 	return connAddrs, nil
+}
+
+// GetKeystore returns the node's keystore
+func (n *Node) GetKeystore() keystore.Keystore {
+	return n.keystore
+}
+
+// GetPublisher returns the node's IPNS publisher
+func (n *Node) GetPublisher() *namesys.IPNSPublisher {
+	return n.publisher
+}
+
+// GetDatastore returns the node's datastore
+func (n *Node) GetDatastore() datastore.Datastore {
+	return n.datastore
 }
 
 func isIPv4PrivateRange(addr multiaddr.Multiaddr) bool {
