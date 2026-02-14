@@ -1,0 +1,1 @@
+New Website Created: {{.Domain}}

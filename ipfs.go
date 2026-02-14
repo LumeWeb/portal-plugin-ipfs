@@ -1,6 +1,9 @@
 package ipfs
 
 import (
+	"embed"
+	_ "embed"
+
 	"github.com/prometheus/client_golang/prometheus"
 	_ "github.com/dnslink-std/go"
 	_ "github.com/ipfs/boxo/namesys"
@@ -13,12 +16,19 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/metrics/adapter"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/block"
+	boxo "go.lumeweb.com/portal-plugin-ipfs/internal/service/boxo"
 	filemanager "go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/ipns_key"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/upload"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/website"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal/service"
 	"go.lumeweb.com/web/go/portal-plugin-ipfs"
 )
+
+//go:embed templates/*
+var mailerTemplates embed.FS
 
 // GetCollectors returns all Prometheus collectors from all services merged at the plugin level
 func GetCollectors() []prometheus.Collector {
@@ -28,6 +38,7 @@ func GetCollectors() []prometheus.Collector {
 	collectors = append(collectors, upload.GetCollectors()...)
 	collectors = append(collectors, block.GetCollectors()...)
 	collectors = append(collectors, filemanager.GetCollectors()...)
+	collectors = append(collectors, website.GetCollectors()...)
 
 	return collectors
 }
@@ -42,10 +53,20 @@ func init() {
 		// Note: We can't log here since logger isn't available yet
 	}
 
+	templates, err := service.MailerTemplatesFromEmbed(&mailerTemplates, "")
+	if err != nil {
+		panic(err)
+	}
+
 	core.RegisterPlugin(core.PluginInfo{
 		ID:       internal.ProtocolName,
 		Version:  build.GetInfo(),
 		API:      api.NewAPI,
+		APIExtensions: func(ctx core.Context) ([]core.APIExtensionFactory, error) {
+			return []core.APIExtensionFactory{
+				api.NewAdminExtension(),
+			}, nil
+		},
 		Protocol: protocol.NewProtocol,
 		Services: func() ([]core.ServiceInfo, error) {
 			return []core.ServiceInfo{
@@ -68,13 +89,42 @@ func init() {
 					ID:      pluginCore.FILE_MANAGER_SERVICE,
 					Factory: filemanager.NewFileManagerService,
 				},
+				{
+					ID:      pluginCore.IPNS_KEY_SERVICE,
+					Factory: ipns_key.NewIPNSKeyService,
+				},
+				{
+					ID:      pluginCore.IPNS_PUBLISHER_SERVICE,
+					Factory: boxo.NewIPNSPublisherService,
+					Depends: []string{internal.ProtocolName},
+				},
+				{
+					ID:      pluginCore.IPNS_REPUBLISHER_SERVICE,
+					Factory: boxo.NewIPNSRepublisherService,
+					Depends: []string{pluginCore.IPNS_PUBLISHER_SERVICE, pluginCore.IPNS_KEY_SERVICE, internal.ProtocolName},
+				},
+				{
+					ID:      pluginCore.WEBSITE_SERVICE,
+					Factory: website.NewWebsiteService,
+					Depends: []string{pluginCore.PIN_SERVICE, pluginCore.IPNS_KEY_SERVICE},
+				},
 			}, nil
+		},
+		CronJobs: []core.PluginCronJob{
+			{
+				Name:    core.GetCronJobIdentifier(core.JobOriginPlugin, "ipfs.website_janitor"),
+				Factory: func() (core.CronJob, error) { return website.NewWebsiteJanitorJob(), nil },
+				Schedule: core.NewCronScheduleDefinition(core.CronScheduleTypeCron).
+					WithCronExpression("*/30 * * * *"), // Every 30 minutes
+			},
 		},
 		Models: []any{
 			&db.IPFSPin{},
 			&db.IPFSBlock{},
 			&db.IPFSLinkedBlock{},
 			&db.UnixFSNode{},
+			&db.IPFSIPNSKey{},
+			&db.Website{},
 		},
 		Metrics: GetCollectors(),
 		Migrations: core.DBMigration{
@@ -82,6 +132,7 @@ func init() {
 			core.DB_TYPE_MYSQL:  migrations.GetMySQL(),
 		},
 		WebBundles: core.NewWebBundles(core.NewWebBundle(portal_plugin_ipfs.GetFS(), core.WithWebBundleTargetApps("dashboard"))),
+		MailerTemplates: templates,
 	})
 
 	internal.RegisterHashes()
