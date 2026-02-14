@@ -20,4 +20,8 @@ const (
 	ErrKeyEmptyZIP          core.ErrorType = "ErrEmptyZIP"
 	ErrKeyPasswordProtected core.ErrorType = "ErrPasswordProtected"
 	ErrKeyFileUploadFailed  core.ErrorType = "ErrFileUploadFailed"
+
+	// Website error types
+	ErrInvalidWebsiteStatus core.ErrorType = "INVALID_WEBSITE_STATUS"
+	ErrInvalidTargetType    core.ErrorType = "INVALID_TARGET_TYPE"
 )

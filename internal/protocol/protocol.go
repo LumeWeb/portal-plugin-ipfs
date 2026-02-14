@@ -48,12 +48,20 @@ type ProtoNode interface {
 	GetNode() ipfs.IPFSNode
 }
 
+// Ensure Protocol implements IPNSBoxoServices
+var _ pluginCore.IPNSBoxoServices = (*Protocol)(nil)
+
 type Protocol struct {
 	*core.BaseComponent
 	node          ipfs.IPFSNode
 	metadataStore *store.MetadataStoreDefault
 	pin           core.PinService
 	coordinator   core.WorkflowCoordinator
+}
+
+// GetIPNSNode returns the IPNS node access interface for IPNS operations
+func (p *Protocol) GetIPNSNode() pluginCore.IPNSNodeAccess {
+	return p.node
 }
 
 type pinHandler struct {

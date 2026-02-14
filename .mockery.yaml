@@ -15,6 +15,9 @@ packages:
       UploadService: {}
       BlockService: {}
       FileManagerService: {}
+      IPNSKeyService: {}
+      WebsiteService: {}
+      IPNSPublisherService: {}
   go.lumeweb.com/portal-plugin-ipfs/internal/protocol:
     interfaces:
       ProtoNode: {}
