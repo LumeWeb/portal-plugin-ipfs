@@ -8,8 +8,11 @@ import (
 	"context"
 
 	"github.com/ipfs/boxo/blockstore"
+	"github.com/ipfs/boxo/keystore"
+	"github.com/ipfs/boxo/namesys"
 	"github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
+	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-ipld-format"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
@@ -450,6 +453,144 @@ func (_c *MockIPFSNode_GetBlockstore_Call) Return(blockstore1 blockstore.Blockst
 }
 
 func (_c *MockIPFSNode_GetBlockstore_Call) RunAndReturn(run func() blockstore.Blockstore) *MockIPFSNode_GetBlockstore_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetDatastore provides a mock function for the type MockIPFSNode
+func (_mock *MockIPFSNode) GetDatastore() datastore.Datastore {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetDatastore")
+	}
+
+	var r0 datastore.Datastore
+	if returnFunc, ok := ret.Get(0).(func() datastore.Datastore); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(datastore.Datastore)
+		}
+	}
+	return r0
+}
+
+// MockIPFSNode_GetDatastore_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetDatastore'
+type MockIPFSNode_GetDatastore_Call struct {
+	*mock.Call
+}
+
+// GetDatastore is a helper method to define mock.On call
+func (_e *MockIPFSNode_Expecter) GetDatastore() *MockIPFSNode_GetDatastore_Call {
+	return &MockIPFSNode_GetDatastore_Call{Call: _e.mock.On("GetDatastore")}
+}
+
+func (_c *MockIPFSNode_GetDatastore_Call) Run(run func()) *MockIPFSNode_GetDatastore_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockIPFSNode_GetDatastore_Call) Return(datastore1 datastore.Datastore) *MockIPFSNode_GetDatastore_Call {
+	_c.Call.Return(datastore1)
+	return _c
+}
+
+func (_c *MockIPFSNode_GetDatastore_Call) RunAndReturn(run func() datastore.Datastore) *MockIPFSNode_GetDatastore_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetKeystore provides a mock function for the type MockIPFSNode
+func (_mock *MockIPFSNode) GetKeystore() keystore.Keystore {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetKeystore")
+	}
+
+	var r0 keystore.Keystore
+	if returnFunc, ok := ret.Get(0).(func() keystore.Keystore); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(keystore.Keystore)
+		}
+	}
+	return r0
+}
+
+// MockIPFSNode_GetKeystore_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetKeystore'
+type MockIPFSNode_GetKeystore_Call struct {
+	*mock.Call
+}
+
+// GetKeystore is a helper method to define mock.On call
+func (_e *MockIPFSNode_Expecter) GetKeystore() *MockIPFSNode_GetKeystore_Call {
+	return &MockIPFSNode_GetKeystore_Call{Call: _e.mock.On("GetKeystore")}
+}
+
+func (_c *MockIPFSNode_GetKeystore_Call) Run(run func()) *MockIPFSNode_GetKeystore_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockIPFSNode_GetKeystore_Call) Return(keystore1 keystore.Keystore) *MockIPFSNode_GetKeystore_Call {
+	_c.Call.Return(keystore1)
+	return _c
+}
+
+func (_c *MockIPFSNode_GetKeystore_Call) RunAndReturn(run func() keystore.Keystore) *MockIPFSNode_GetKeystore_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetPublisher provides a mock function for the type MockIPFSNode
+func (_mock *MockIPFSNode) GetPublisher() *namesys.IPNSPublisher {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetPublisher")
+	}
+
+	var r0 *namesys.IPNSPublisher
+	if returnFunc, ok := ret.Get(0).(func() *namesys.IPNSPublisher); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*namesys.IPNSPublisher)
+		}
+	}
+	return r0
+}
+
+// MockIPFSNode_GetPublisher_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetPublisher'
+type MockIPFSNode_GetPublisher_Call struct {
+	*mock.Call
+}
+
+// GetPublisher is a helper method to define mock.On call
+func (_e *MockIPFSNode_Expecter) GetPublisher() *MockIPFSNode_GetPublisher_Call {
+	return &MockIPFSNode_GetPublisher_Call{Call: _e.mock.On("GetPublisher")}
+}
+
+func (_c *MockIPFSNode_GetPublisher_Call) Run(run func()) *MockIPFSNode_GetPublisher_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockIPFSNode_GetPublisher_Call) Return(iPNSPublisher *namesys.IPNSPublisher) *MockIPFSNode_GetPublisher_Call {
+	_c.Call.Return(iPNSPublisher)
+	return _c
+}
+
+func (_c *MockIPFSNode_GetPublisher_Call) RunAndReturn(run func() *namesys.IPNSPublisher) *MockIPFSNode_GetPublisher_Call {
 	_c.Call.Return(run)
 	return _c
 }

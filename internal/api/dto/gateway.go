@@ -9,7 +9,7 @@ import (
 // GatewayWebsiteResponse contains website configuration for the gateway
 type GatewayWebsiteResponse struct {
 	Domain     string `json:"domain"`
-	TargetType string `json:"target_type"` // "ipfs" or "ipns"
+	TargetType string `json:"target_type"` // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
 	TargetHash string `json:"target_hash"` // CID or IPNS name
 	Status     string `json:"status"`      // pending_validation, active, broken
 }
@@ -25,7 +25,7 @@ type GatewayWebsiteStatusResponse struct {
 func (r *GatewayWebsiteResponse) FromModel(model *db.Website) error {
 	r.Domain = model.Domain
 	r.TargetType = model.TargetType
-	r.TargetHash = model.TargetHash
+	r.TargetHash = model.TargetHash()
 	r.Status = model.Status
 	return nil
 }
