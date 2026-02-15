@@ -96,15 +96,7 @@ func TestAPI_CreateWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := &db.Website{
-				ID:              1,
-				UserID:          userID,
-				Domain:          TestDomain,
-				TargetType:      "ipns",
-				TargetHash:      TestPeerID,
-				Status:          string(db.WebsiteStatusPendingValidation),
-				ValidationToken: "test-token",
-			}
+			mockWebsite := createMockIPNSWebsite(1, userID, TestDomain, TestPeerID, db.WebsiteStatusPendingValidation, "test-token")
 
 			mockWebsiteService.EXPECT().CreateWebsite(mock.Anything, mock.AnythingOfType("*db.Website")).Return(mockWebsite, nil)
 
@@ -193,15 +185,7 @@ func TestAPI_CreateWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := &db.Website{
-				ID:              1,
-				UserID:          userID,
-				Domain:          TestDomain,
-				TargetType:      "ipfs",
-				TargetHash:      TestCID,
-				Status:          string(db.WebsiteStatusBroken),
-				ValidationToken: "test-token",
-			}
+			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusBroken, "test-token")
 
 			mockWebsiteService.EXPECT().CreateWebsite(mock.Anything, mock.AnythingOfType("*db.Website")).Return(mockWebsite, nil)
 
@@ -232,22 +216,8 @@ func TestAPI_ListWebsites(t *testing.T) {
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			mockWebsites := []*db.Website{
-				{
-					ID:         1,
-					UserID:     userID,
-					Domain:     "example1.com",
-					TargetType: "ipfs",
-					TargetHash: TestCID,
-					Status:     string(db.WebsiteStatusActive),
-				},
-				{
-					ID:         2,
-					UserID:     userID,
-					Domain:     "example2.com",
-					TargetType: "ipns",
-					TargetHash: TestPeerID,
-					Status:     string(db.WebsiteStatusPendingValidation),
-				},
+				createMockIPFSWebsite(1, userID, "example1.com", TestCID, db.WebsiteStatusActive, ""),
+				createMockIPNSWebsite(2, userID, "example2.com", TestPeerID, db.WebsiteStatusPendingValidation, ""),
 			}
 
 			mockWebsiteService.EXPECT().ListWebsites(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return(mockWebsites, int64(2), nil)
@@ -274,14 +244,7 @@ func TestAPI_ListWebsites(t *testing.T) {
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			mockWebsites := []*db.Website{
-				{
-					ID:         1,
-					UserID:     userID,
-					Domain:     TestDomain,
-					TargetType: "ipfs",
-					TargetHash: TestCID,
-					Status:     string(db.WebsiteStatusActive),
-				},
+				createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusActive, ""),
 			}
 
 			mockWebsiteService.EXPECT().ListWebsites(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return(mockWebsites, int64(1), nil)
@@ -327,22 +290,8 @@ func TestAPI_ListWebsites(t *testing.T) {
 
 			// Create 5 websites, but return only 2 for page 1
 			mockWebsites := []*db.Website{
-				{
-					ID:         1,
-					UserID:     userID,
-					Domain:     "example1.com",
-					TargetType: "ipfs",
-					TargetHash: TestCID,
-					Status:     string(db.WebsiteStatusActive),
-				},
-				{
-					ID:         2,
-					UserID:     userID,
-					Domain:     "example2.com",
-					TargetType: "ipns",
-					TargetHash: TestPeerID,
-					Status:     string(db.WebsiteStatusPendingValidation),
-				},
+				createMockIPFSWebsite(1, userID, "example1.com", TestCID, db.WebsiteStatusActive, ""),
+				createMockIPNSWebsite(2, userID, "example2.com", TestPeerID, db.WebsiteStatusPendingValidation, ""),
 			}
 
 			mockWebsiteService.EXPECT().ListWebsites(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return(mockWebsites, int64(5), nil)
@@ -394,14 +343,7 @@ func TestAPI_GetWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := &db.Website{
-				ID:         1,
-				UserID:     userID,
-				Domain:     TestDomain,
-				TargetType: "ipfs",
-				TargetHash: TestCID,
-				Status:     string(db.WebsiteStatusActive),
-			}
+			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusActive, "")
 
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)
 
@@ -450,14 +392,7 @@ func TestAPI_GetWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := &db.Website{
-				ID:         1,
-				UserID:     userID,
-				Domain:     TestDomain,
-				TargetType: "ipfs",
-				TargetHash: TestCID,
-				Status:     string(db.WebsiteStatusBroken),
-			}
+			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusBroken, "")
 
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)
 
@@ -485,14 +420,7 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := &db.Website{
-				ID:         1,
-				UserID:     userID,
-				Domain:     "updated-example.com",
-				TargetType: "ipfs",
-				TargetHash: TestCID,
-				Status:     string(db.WebsiteStatusActive),
-			}
+			mockWebsite := createMockIPFSWebsite(1, userID, "updated-example.com", TestCID, db.WebsiteStatusActive, "")
 
 			mockWebsiteService.EXPECT().UpdateWebsite(mock.Anything, userID, uint(1), mock.AnythingOfType("map[string]interface {}")).Return(mockWebsite, nil)
 
@@ -676,14 +604,7 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := &db.Website{
-				ID:         1,
-				UserID:     userID,
-				Domain:     TestDomain,
-				TargetType: "ipfs",
-				TargetHash: TestCID,
-				Status:     string(db.WebsiteStatusActive),
-			}
+			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusActive, "")
 
 			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(true, nil)
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)
@@ -709,14 +630,7 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := &db.Website{
-				ID:         1,
-				UserID:     userID,
-				Domain:     TestDomain,
-				TargetType: "ipfs",
-				TargetHash: TestCID,
-				Status:     string(db.WebsiteStatusPendingValidation),
-			}
+			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusPendingValidation, "")
 
 			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(false, nil)
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)

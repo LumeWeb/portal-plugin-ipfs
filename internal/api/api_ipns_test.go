@@ -69,15 +69,15 @@ func TestAPI_CreateIPNSKey(t *testing.T) {
 
 			mockIPNSKeyService, _ := helper.SetupIPNSServiceMocksNoDefaults(userID)
 
+			testPeerID, _ := peer.Decode(TestPeerID)
 			mockKey := &db.IPFSIPNSKey{
-				ID:       1,
-				UserID:   userID,
-				Name:     "imported-key",
-				IPNSName: TestIPNSName,
-				PeerID:   TestPeerID,
+				ID:              1,
+				UserID:          userID,
+				Name:            "imported-key",
+				PeerIDMultihash: mh.Multihash(testPeerID),
 			}
 
-			mockIPNSKeyService.EXPECT().ImportKey(mock.Anything, userID, "imported-key", mock.AnythingOfType("string")).Return(&mockKey, nil)
+			mockIPNSKeyService.EXPECT().ImportKey(mock.Anything, userID, "imported-key", mock.AnythingOfType("string")).Return(mockKey, nil)
 
 			reqBody := `{"name":"imported-key","key":"CAESQAoY8f9K8u0p9c0f1e2d3c4b5a6987654321fedcba"}`
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/ipns/keys", token, []byte(reqBody))
