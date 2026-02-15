@@ -2,16 +2,105 @@ package boxo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/ipfs/boxo/ipns"
+	"github.com/ipfs/boxo/keystore"
 	boxoRepublisher "github.com/ipfs/boxo/namesys/republisher"
+	ic "github.com/libp2p/go-libp2p/core/crypto"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.uber.org/zap"
 )
+
+// SafeRepublisherKeystore wraps a keystore with additional validation for the republisher
+// It ensures that all keys returned to the republisher are non-nil
+type SafeRepublisherKeystore struct {
+	inner keystore.Keystore
+	log   *core.Logger
+}
+
+// NewSafeRepublisherKeystore creates a new safe republisher keystore wrapper
+func NewSafeRepublisherKeystore(inner keystore.Keystore, log *core.Logger) keystore.Keystore {
+	return &SafeRepublisherKeystore{
+		inner: inner,
+		log:   log,
+	}
+}
+
+// Has returns whether or not a key exists in the Keystore
+func (srk *SafeRepublisherKeystore) Has(name string) (bool, error) {
+	return srk.inner.Has(name)
+}
+
+// Put stores a key in the Keystore with nil validation
+func (srk *SafeRepublisherKeystore) Put(name string, k ic.PrivKey) error {
+	if k == nil {
+		srk.log.Error("Refusing to put nil key into republisher keystore",
+			zap.String("key_name", name),
+		)
+		return errors.New("cannot put nil key into keystore")
+	}
+	return srk.inner.Put(name, k)
+}
+
+// Get retrieves a key from the Keystore
+// Returns the key if it exists, and ErrNoSuchKey otherwise
+func (srk *SafeRepublisherKeystore) Get(name string) (ic.PrivKey, error) {
+	key, err := srk.inner.Get(name)
+	if err != nil {
+		return nil, err
+	}
+	// Defensive check: validate on retrieval to catch any edge cases
+	if key == nil {
+		srk.log.Error("Retrieved nil key from republisher keystore",
+			zap.String("key_name", name),
+		)
+		return nil, fmt.Errorf("key %s exists but is nil in keystore", name)
+	}
+	return key, nil
+}
+
+// Delete removes a key from the Keystore
+func (srk *SafeRepublisherKeystore) Delete(name string) error {
+	return srk.inner.Delete(name)
+}
+
+// List returns a list of key identifiers with validation
+func (srk *SafeRepublisherKeystore) List() ([]string, error) {
+	names, err := srk.inner.List()
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate that all listed keys are non-nil and filter out corrupted entries
+	validNames := make([]string, 0, len(names))
+	for _, name := range names {
+		key, err := srk.Get(name)
+		if err != nil {
+			srk.log.Warn("Failed to get key during republisher list validation",
+				zap.String("key_name", name),
+				zap.Error(err),
+			)
+			// Skip keys that can't be retrieved
+			continue
+		}
+		if key == nil {
+			srk.log.Error("Found nil key during republisher list, attempting to delete",
+				zap.String("key_name", name),
+			)
+			// Try to delete the corrupted entry
+			_ = srk.Delete(name)
+			continue
+		}
+		validNames = append(validNames, name)
+	}
+
+	return validNames, nil
+}
 
 // IPNSRepublisherService wraps boxo/namesys/republisher.Republisher for automatic IPNS republishing
 type IPNSRepublisherService struct {
@@ -60,10 +149,14 @@ func NewIPNSRepublisherService() (core.Service, []core.ContextBuilderOption, err
 				return fmt.Errorf("IPFS keystore not found")
 			}
 
+			// Wrap the keystore with SafeRepublisherKeystore to filter out nil keys
+			// This prevents the republisher from crashing on corrupted keystore entries
+			safeKS := NewSafeRepublisherKeystore(ks, ctx.Logger())
+
 			// Create the boxo republisher with default settings
 			// Note: We pass nil for selfKey since we don't need to republish the node's own record
 			// The republisher will still republish all keys from the keystore
-			repub := boxoRepublisher.NewRepublisher(publisher, ds, nil, ks)
+			repub := boxoRepublisher.NewRepublisher(publisher, ds, nil, safeKS)
 
 			// Configure with defaults (4-hour interval, 24-hour record lifetime)
 			repub.Interval = boxoRepublisher.DefaultRebroadcastInterval

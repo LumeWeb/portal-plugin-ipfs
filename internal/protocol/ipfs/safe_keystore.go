@@ -74,6 +74,7 @@ func (sk *SafeKeystore) List() ([]string, error) {
 
 	// Validate that all listed keys are non-nil
 	// This is a defensive check to catch any corruption
+	validNames := make([]string, 0, len(names))
 	for _, name := range names {
 		key, err := sk.Get(name)
 		if err != nil {
@@ -81,7 +82,8 @@ func (sk *SafeKeystore) List() ([]string, error) {
 				zap.String("key_name", name),
 				zap.Error(err),
 			)
-			// Continue to list other keys, but log the issue
+			// Skip keys that can't be retrieved
+			continue
 		}
 		if key == nil {
 			sk.log.Error("Found nil key during list, attempting to delete",
@@ -89,8 +91,10 @@ func (sk *SafeKeystore) List() ([]string, error) {
 			)
 			// Try to delete the corrupted entry
 			_ = sk.Delete(name)
+			continue
 		}
+		validNames = append(validNames, name)
 	}
 
-	return names, nil
+	return validNames, nil
 }
