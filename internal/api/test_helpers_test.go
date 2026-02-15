@@ -19,6 +19,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
 	"github.com/ipld/go-car/v2/blockstore"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multicodec"
 	mh "github.com/multiformats/go-multihash"
@@ -376,7 +377,7 @@ func createTestCAR(t *testing.T) ([]byte, cid.Cid) {
 	pref := cid.Prefix{
 		Version:  1,
 		Codec:    uint64(multicodec.Raw),
-		MhType:   multihash.SHA2_256,
+		MhType:   mh.SHA2_256,
 		MhLength: -1,
 	}
 

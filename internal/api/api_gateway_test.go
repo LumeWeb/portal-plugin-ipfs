@@ -164,7 +164,7 @@ func TestAPI_GetGatewayWebsite_DeletedSite(t *testing.T) {
 		testCID := cid.MustParse(TestCID)
 
 		deletedTime := time.Now()
-		website := createTestDeletedIPFSGatewayWebsite(3, 1, domain, testCID, string(pluginDb.WebsiteStatusActive), deletedTime)
+		website := createTestDeletedIPFSGatewayWebsite(3, 1, domain, testCID, pluginDb.WebsiteStatusActive, deletedTime)
 
 		helper.SetupWebsiteServiceMocks(domain, website)
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/websites/"+domain, nil)
