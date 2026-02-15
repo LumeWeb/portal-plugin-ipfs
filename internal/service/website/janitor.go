@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	JanitorJobType = "plugin.ipfs.website_janitor"
+	JanitorJobSourceID = "ipfs.website_janitor"
 )
 
 // WebsiteJanitorJob implements core.CronJob for periodic website validation
@@ -43,7 +43,7 @@ func NewWebsiteJanitorJob() core.CronJob {
 	job.BaseCronJob = core.NewBaseCronJob(
 		jobID,
 		core.JobOriginPlugin,
-		"ipfs",
+		JanitorJobSourceID,
 		"IPFS Website Janitor",
 		scheduleDef,
 		nil,

@@ -140,5 +140,5 @@ func TestWebsiteJanitorJob_SourceID(t *testing.T) {
 	sourceID := job.SourceID()
 
 	// Assert
-	assert.Equal(t, "ipfs", sourceID)
+	assert.Equal(t, "ipfs.website_janitor", sourceID)
 }

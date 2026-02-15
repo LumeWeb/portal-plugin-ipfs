@@ -133,12 +133,9 @@ func TestWebsiteService_CreateWebsite_InvalidDomain(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "invalid domain with spaces",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "invalid domain with spaces", testCID.String())
+		website.Status = "" // Clear for validation error test
+
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -159,23 +156,13 @@ func TestWebsiteService_CreateWebsite_DuplicateDomain(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website1 := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "duplicate.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website1 := createTestIPFSWebsite(userID, "duplicate.com", testCID.String())
 
 		// Create first website
 		_, err := websiteService.CreateWebsite(context.Background(), website1)
 		require.NoError(tb, err)
 
-		website2 := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "duplicate.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website2 := createTestIPFSWebsite(userID, "duplicate.com", testCID.String())
 
 		// Act - Try to create duplicate
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website2)
@@ -199,7 +186,6 @@ func TestWebsiteService_CreateWebsite_InvalidTargetType(t *testing.T) {
 			UserID:     userID,
 			Domain:     "example.com",
 			TargetType: "invalid_type",
-			TargetHash: "some-hash",
 		}
 
 		// Act
@@ -221,12 +207,7 @@ func TestWebsiteService_GetWebsite(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "get-test.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "get-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -240,7 +221,7 @@ func TestWebsiteService_GetWebsite(t *testing.T) {
 		assert.Equal(tb, createdWebsite.ID, retrievedWebsite.ID)
 		assert.Equal(tb, createdWebsite.Domain, retrievedWebsite.Domain)
 		assert.Equal(tb, createdWebsite.TargetType, retrievedWebsite.TargetType)
-		assert.Equal(tb, createdWebsite.TargetHash, retrievedWebsite.TargetHash)
+		assert.Equal(tb, createdWebsite.TargetHash(), retrievedWebsite.TargetHash())
 	}, TestOptions)
 }
 
@@ -271,12 +252,7 @@ func TestWebsiteService_GetWebsiteByDomain(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "domain-test.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "domain-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -317,18 +293,8 @@ func TestWebsiteService_ListWebsites(t *testing.T) {
 		userID2 := uint(2)
 
 		// Create websites for user 1
-		website1 := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "list1.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: util.GenerateTestCID(t, "data1").String(),
-		}
-		website2 := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "list2.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: util.GenerateTestCID(t, "data2").String(),
-		}
+		website1 := createTestIPFSWebsite(userID, "list1.com", util.GenerateTestCID(t, "data1").String())
+		website2 := createTestIPFSWebsite(userID, "list2.com", util.GenerateTestCID(t, "data2").String())
 
 		created1, err := websiteService.CreateWebsite(context.Background(), website1)
 		require.NoError(tb, err)
@@ -336,12 +302,7 @@ func TestWebsiteService_ListWebsites(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Create a website for user 2
-		website3 := &pluginDb.Website{
-			UserID:     userID2,
-			Domain:     "list3.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: util.GenerateTestCID(t, "data3").String(),
-		}
+		website3 := createTestIPFSWebsite(userID2, "list3.com", util.GenerateTestCID(t, "data3").String())
 		_, err = websiteService.CreateWebsite(context.Background(), website3)
 		require.NoError(tb, err)
 
@@ -377,20 +338,17 @@ func TestWebsiteService_UpdateWebsite(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "update-test.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "update-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
 		newCID := util.GenerateTestCID(t, "new data")
+		newVersion := uint8(newCID.Version())
 		updates := map[string]interface{}{
-			"target_hash": newCID.String(),
-			"status":      string(pluginDb.WebsiteStatusActive),
+			"target_multihash": newCID.Hash(),
+			"cid_version":      &newVersion,
+			"status":           string(pluginDb.WebsiteStatusActive),
 		}
 
 		// Act
@@ -400,7 +358,7 @@ func TestWebsiteService_UpdateWebsite(t *testing.T) {
 		require.NoError(tb, err)
 		assert.NotNil(tb, updatedWebsite)
 		assert.Equal(tb, createdWebsite.ID, updatedWebsite.ID)
-		assert.Equal(tb, newCID.String(), updatedWebsite.TargetHash)
+		assert.Equal(tb, newCID.String(), updatedWebsite.TargetHash())
 		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), updatedWebsite.Status)
 		assert.Equal(tb, "update-test.com", updatedWebsite.Domain)
 	}, TestOptions)
@@ -437,12 +395,7 @@ func TestWebsiteService_DeleteWebsite(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "delete-test.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "delete-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -491,12 +444,7 @@ func TestWebsiteService_ValidationTokenExpiration(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "expire-test.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "expire-test.com", testCID.String())
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -524,12 +472,7 @@ func TestWebsiteService_StatusTransitions(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "status-test.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "status-test.com", testCID.String())
 
 		// Create website (should be pending_validation)
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -561,12 +504,7 @@ func TestWebsiteService_ShouldCheck(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "check-test.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "check-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -595,12 +533,7 @@ func TestWebsiteService_IsExpired(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "expire-test.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "expire-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -628,12 +561,7 @@ func TestWebsiteService_BlockWebsite(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "block-test.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "block-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -662,12 +590,7 @@ func TestWebsiteService_UnblockWebsite(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "unblock-test.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "unblock-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -704,12 +627,7 @@ func TestWebsiteService_DeleteWebsite_Blocked(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "blocked-delete-test.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "blocked-delete-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -747,12 +665,7 @@ func TestWebsiteService_DeleteWebsite_Active(t *testing.T) {
 		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := &pluginDb.Website{
-			UserID:     userID,
-			Domain:     "active-delete-test.com",
-			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
-			TargetHash: testCID.String(),
-		}
+		website := createTestIPFSWebsite(userID, "active-delete-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
