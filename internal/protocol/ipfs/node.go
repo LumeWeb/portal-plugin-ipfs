@@ -346,6 +346,8 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 
 	// Create boxo keystore for IPNS key management
 	boxoKeystore := keystore.NewMemKeystore()
+	// Wrap with safe keystore to prevent nil keys from being stored
+	safeKeystore := NewSafeKeystore(boxoKeystore, ctx.Logger())
 
 	// Create boxo IPNS publisher
 	boxoPublisher := namesys.NewIPNSPublisher(frt, ds)
@@ -360,7 +362,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		reprovider:       rp,
 		reproviderCancel: reproviderCancel,
 		datastore:        ds,
-		keystore:         boxoKeystore,
+		keystore:         safeKeystore,
 		publisher:        boxoPublisher,
 	}, nil
 }
