@@ -402,6 +402,15 @@ func (s *IPNSKeyServiceDefault) syncKeyToBoxoKeystore(ctx context.Context, key *
 		return nil
 	}
 
+	// Validate private key is not nil before putting in keystore
+	if privKey == nil {
+		s.Logger().Error("Private key is nil, cannot sync to keystore",
+			zap.Uint("key_id", key.ID),
+			zap.Stringer("peer_id", key.PeerID()),
+		)
+		return fmt.Errorf("private key is nil")
+	}
+
 	// Import into boxo keystore
 	err = boxoKS.Put(keyName, privKey)
 	if err != nil {
@@ -482,6 +491,15 @@ func (s *IPNSKeyServiceDefault) SyncToBoxoKeystore(ctx context.Context) error {
 		if err != nil {
 			s.Logger().Error("Failed to decrypt private key for sync",
 				zap.Error(err),
+				zap.Uint("key_id", key.ID),
+				zap.Stringer("peer_id", key.PeerID()),
+			)
+			continue
+		}
+
+		// Validate private key is not nil before putting in keystore
+		if privKey == nil {
+			s.Logger().Error("Decrypted private key is nil, cannot sync to keystore",
 				zap.Uint("key_id", key.ID),
 				zap.Stringer("peer_id", key.PeerID()),
 			)
