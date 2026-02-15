@@ -42,13 +42,13 @@ func TestReprovider_Run(t *testing.T) {
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 	}
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return(testCIDs, nil).Times(2)
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Times(2)
 
 	// Mock provider ProvideMany - expect multiple calls
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(nil).Times(2)
 
 	// Mock store SetLastAnnouncement - expect multiple calls
-	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything).Return(nil).Times(2)
+	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
 
 	go reprovider.Run(ctx, interval, timeout, batchSize)
 
@@ -90,7 +90,7 @@ func TestReprovider_Run_ProvideCIDsError(t *testing.T) {
 	mockProvider.EXPECT().Ready().Return(true)
 
 	// Mock store returning error
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return(nil, errors.New("test error")).Once()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(nil, errors.New("test error")).Once()
 
 	go reprovider.Run(ctx, interval, timeout, batchSize)
 
@@ -116,7 +116,7 @@ func TestReprovider_Run_ProvideManyError(t *testing.T) {
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 	}
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return(testCIDs, nil).Once()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Once()
 
 	// Mock provider ProvideMany returning error
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
@@ -145,13 +145,13 @@ func TestReprovider_Run_SetLastAnnouncementError(t *testing.T) {
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 	}
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return(testCIDs, nil).Once()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Once()
 
 	// Mock provider ProvideMany
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(nil).Once()
 
 	// Mock store SetLastAnnouncement returning error
-	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
+	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
 
 	go reprovider.Run(ctx, interval, timeout, batchSize)
 
@@ -181,13 +181,13 @@ func TestReprovider_Trigger(t *testing.T) {
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 	}
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return(testCIDs, nil).Times(2)
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Times(2)
 
 	// Mock provider ProvideMany
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(nil).Times(2)
 
 	// Mock store SetLastAnnouncement
-	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything).Return(nil).Times(2)
+	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2)
 
 	go reprovider.Run(ctx, interval, timeout, batchSize)
 
@@ -233,7 +233,7 @@ func TestReprovider_performProvide_NoCIDs(t *testing.T) {
 	}
 
 	// Mock store returning no CIDs
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return([]core.PinnedCID{}, nil).Once()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return([]core.PinnedCID{}, nil).Once()
 
 	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
 
@@ -262,7 +262,7 @@ func TestReprovider_performProvide_ProvideCIDsError(t *testing.T) {
 	}
 
 	// Mock store returning error
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return(nil, errors.New("test error")).Once()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(nil, errors.New("test error")).Once()
 
 	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
 
@@ -293,7 +293,7 @@ func TestReprovider_performProvide_WaitingForNextInterval(t *testing.T) {
 	// Mock store returning CIDs with future LastAnnouncement
 	futureTime := time.Now().Add(2 * interval)
 	testCIDs := []core.PinnedCID{{CID: cid.Cid{}, LastAnnouncement: futureTime}}
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return(testCIDs, nil).Once()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Once()
 
 	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
 
@@ -326,13 +326,13 @@ func TestReprovider_performProvide_Success(t *testing.T) {
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 	}
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return(testCIDs, nil).Once()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Once()
 
 	// Mock provider ProvideMany
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(nil).Once()
 
 	// Mock store SetLastAnnouncement
-	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything).Return(nil).Once()
+	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
 	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
 
@@ -366,13 +366,13 @@ func TestReprovider_performProvide_Success_NotAllAnnounced(t *testing.T) {
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(2 * interval)}, // Future announcement
 	}
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return(testCIDs, nil).Once()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Once()
 
 	// Mock provider ProvideMany
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(nil).Once()
 
 	// Mock store SetLastAnnouncement
-	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything).Return(nil).Once()
+	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
 	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
 
@@ -405,7 +405,7 @@ func TestReprovider_performProvide_ProvideManyError(t *testing.T) {
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 	}
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return(testCIDs, nil).Once()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Once()
 
 	// Mock provider ProvideMany returning error
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
@@ -441,13 +441,13 @@ func TestReprovider_performProvide_SetLastAnnouncementError(t *testing.T) {
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 	}
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return(testCIDs, nil).Once()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Once()
 
 	// Mock provider ProvideMany
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(nil).Once()
 
 	// Mock store SetLastAnnouncement returning error
-	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
+	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
 
 	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
 
@@ -480,13 +480,13 @@ func TestReprovider_performProvide_MinAnnouncement(t *testing.T) {
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 	}
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return(testCIDs, nil).Once()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Once()
 
 	// Mock provider ProvideMany
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(nil).Once()
 
 	// Mock store SetLastAnnouncement
-	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything).Return(nil).Once()
+	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
 	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
 
@@ -520,13 +520,13 @@ func TestReprovider_performProvide_MinAnnouncement_NotAllAnnounced(t *testing.T)
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(2 * interval)}, // Future announcement
 	}
-	mockStore.EXPECT().ProvideCIDs(batchSize).Return(testCIDs, nil).Once()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Once()
 
 	// Mock provider ProvideMany
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(nil).Once()
 
 	// Mock store SetLastAnnouncement
-	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything).Return(nil).Once()
+	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
 	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
 

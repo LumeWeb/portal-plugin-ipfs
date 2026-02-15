@@ -153,10 +153,16 @@ func NewIPNSRepublisherService() (core.Service, []core.ContextBuilderOption, err
 			// This prevents the republisher from crashing on corrupted keystore entries
 			safeKS := NewSafeRepublisherKeystore(ks, ctx.Logger())
 
+			// Get the node's private key for the republisher's self key
+			// The vendor code always tries to republish the self key first
+			selfKey := node.GetPrivateKey()
+			if selfKey == nil {
+				return fmt.Errorf("node private key is nil")
+			}
+
 			// Create the boxo republisher with default settings
-			// Note: We pass nil for selfKey since we don't need to republish the node's own record
-			// The republisher will still republish all keys from the keystore
-			repub := boxoRepublisher.NewRepublisher(publisher, ds, nil, safeKS)
+			// Pass the node's private key as the self key to satisfy vendor code requirements
+			repub := boxoRepublisher.NewRepublisher(publisher, ds, selfKey, safeKS)
 
 			// Configure with defaults (4-hour interval, 24-hour record lifetime)
 			repub.Interval = boxoRepublisher.DefaultRebroadcastInterval

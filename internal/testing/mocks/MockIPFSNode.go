@@ -14,6 +14,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	"github.com/ipfs/go-ipld-format"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	mock "github.com/stretchr/testify/mock"
@@ -545,6 +546,52 @@ func (_c *MockIPFSNode_GetKeystore_Call) Return(keystore1 keystore.Keystore) *Mo
 }
 
 func (_c *MockIPFSNode_GetKeystore_Call) RunAndReturn(run func() keystore.Keystore) *MockIPFSNode_GetKeystore_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetPrivateKey provides a mock function for the type MockIPFSNode
+func (_mock *MockIPFSNode) GetPrivateKey() crypto.PrivKey {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetPrivateKey")
+	}
+
+	var r0 crypto.PrivKey
+	if returnFunc, ok := ret.Get(0).(func() crypto.PrivKey); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(crypto.PrivKey)
+		}
+	}
+	return r0
+}
+
+// MockIPFSNode_GetPrivateKey_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetPrivateKey'
+type MockIPFSNode_GetPrivateKey_Call struct {
+	*mock.Call
+}
+
+// GetPrivateKey is a helper method to define mock.On call
+func (_e *MockIPFSNode_Expecter) GetPrivateKey() *MockIPFSNode_GetPrivateKey_Call {
+	return &MockIPFSNode_GetPrivateKey_Call{Call: _e.mock.On("GetPrivateKey")}
+}
+
+func (_c *MockIPFSNode_GetPrivateKey_Call) Run(run func()) *MockIPFSNode_GetPrivateKey_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockIPFSNode_GetPrivateKey_Call) Return(privKey crypto.PrivKey) *MockIPFSNode_GetPrivateKey_Call {
+	_c.Call.Return(privKey)
+	return _c
+}
+
+func (_c *MockIPFSNode_GetPrivateKey_Call) RunAndReturn(run func() crypto.PrivKey) *MockIPFSNode_GetPrivateKey_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -64,6 +64,7 @@ type IPFSNode interface {
 	GetPublisher() *namesys.IPNSPublisher
 	GetKeystore() keystore.Keystore
 	GetDatastore() datastore.Datastore
+	GetPrivateKey() crypto.PrivKey
 }
 
 // NopExchange wraps an exchange.Interface and disables NotifyNewBlocks.
@@ -430,6 +431,11 @@ func (n *Node) GetPublisher() *namesys.IPNSPublisher {
 // GetDatastore returns the node's datastore
 func (n *Node) GetDatastore() datastore.Datastore {
 	return n.datastore
+}
+
+// GetPrivateKey returns the node's private key
+func (n *Node) GetPrivateKey() crypto.PrivKey {
+	return n.host.Peerstore().PrivKey(n.host.ID())
 }
 
 func isIPv4PrivateRange(addr multiaddr.Multiaddr) bool {

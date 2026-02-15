@@ -29,6 +29,7 @@ type IPNSNodeAccess interface {
 	GetPublisher() *namesys.IPNSPublisher
 	GetKeystore() keystore.Keystore
 	GetDatastore() datastore.Datastore
+	GetPrivateKey() crypto.PrivKey
 }
 
 // IPNSBoxoServices provides access to Boxo IPNS services
