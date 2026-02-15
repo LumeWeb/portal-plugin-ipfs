@@ -96,12 +96,11 @@ func init() {
 				{
 					ID:      pluginCore.IPNS_PUBLISHER_SERVICE,
 					Factory: boxo.NewIPNSPublisherService,
-					Depends: []string{internal.ProtocolName},
 				},
 				{
 					ID:      pluginCore.IPNS_REPUBLISHER_SERVICE,
 					Factory: boxo.NewIPNSRepublisherService,
-					Depends: []string{pluginCore.IPNS_PUBLISHER_SERVICE, pluginCore.IPNS_KEY_SERVICE, internal.ProtocolName},
+					Depends: []string{pluginCore.IPNS_PUBLISHER_SERVICE, pluginCore.IPNS_KEY_SERVICE},
 				},
 				{
 					ID:      pluginCore.WEBSITE_SERVICE,
