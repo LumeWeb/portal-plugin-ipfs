@@ -16,7 +16,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks/protocol" "protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks" "mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	coreMocks "go.lumeweb.com/portal/core/testing/mocks"
 	"go.lumeweb.com/portal/core"
@@ -107,7 +108,7 @@ func TestAPI_handleIPFSGet(t *testing.T) {
 		token, _, testCID, _ := helper.SetupAuthenticatedTest()
 
 		// Setup IPFS node mock expectations for HasBlock
-		protoMock := core.GetProtocol(internal.ProtocolName).(*mocks.MockProtoNode)
+		protoMock := core.GetProtocol(internal.ProtocolName).(*protocol.MockProtoNode)
 		mockIPFSNode := protoMock.GetNode().(*mocks.MockIPFSNode)
 
 		// Mock HasBlock to return true for the test CID

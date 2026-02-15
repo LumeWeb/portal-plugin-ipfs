@@ -17,7 +17,8 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/block"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks/protocol" "protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks" "mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
@@ -186,7 +187,7 @@ func TestFilePathOperationHandler_Execute_WithIncompleteMetadata(t *testing.T) {
 		workflowSvc.On("UpdateWorkflowDataStruct", ctx, req.ID, mock.AnythingOfType("protocol.FilePathWorkflowData"), "json").Return(nil)
 
 		// Mock the IPFS node's GetBlockstore method to prevent the unexpected call error
-		protoMock := core.GetProtocol(internal.ProtocolName).(*mocks.MockProtoNode)
+		protoMock := core.GetProtocol(internal.ProtocolName).(*protocol.MockProtoNode)
 		mockIPFSNode := protoMock.GetNode().(*mocks.MockIPFSNode)
 		mockBlockstore := mocks.NewMockMockBlockstore(t)
 		mockIPFSNode.EXPECT().GetBlockstore().Return(mockBlockstore).Maybe()
@@ -244,7 +245,7 @@ func TestFilePathOperationHandler_Execute_WithMissingMetadata(t *testing.T) {
 		workflowSvc.On("UpdateWorkflowDataStruct", ctx, req.ID, mock.AnythingOfType("protocol.FilePathWorkflowData"), "json").Return(nil)
 
 		// Mock the IPFS node's GetBlockstore method to prevent the unexpected call error
-		protoMock := core.GetProtocol(internal.ProtocolName).(*mocks.MockProtoNode)
+		protoMock := core.GetProtocol(internal.ProtocolName).(*protocol.MockProtoNode)
 		mockIPFSNode := protoMock.GetNode().(*mocks.MockIPFSNode)
 		mockBlockstore := mocks.NewMockMockBlockstore(t)
 		mockIPFSNode.EXPECT().GetBlockstore().Return(mockBlockstore).Maybe()
@@ -280,7 +281,7 @@ func TestFilePathOperationHandler_CreateOrphanEntriesForPins(t *testing.T) {
 		}
 
 		// Mock the IPFS node's GetBlockstore method to prevent the unexpected call error
-		protoMock := core.GetProtocol(internal.ProtocolName).(*mocks.MockProtoNode)
+		protoMock := core.GetProtocol(internal.ProtocolName).(*protocol.MockProtoNode)
 		mockIPFSNode := protoMock.GetNode().(*mocks.MockIPFSNode)
 		mockBlockstore := mocks.NewMockMockBlockstore(t)
 		mockIPFSNode.EXPECT().GetBlockstore().Return(mockBlockstore).Maybe()
