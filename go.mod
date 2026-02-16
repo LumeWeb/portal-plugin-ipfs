@@ -24,7 +24,7 @@ require (
 	github.com/ipld/go-car/v2 v2.16.0
 	github.com/ipld/go-codec-dagpb v1.7.0
 	github.com/ipld/go-ipld-prime v0.21.0
-	github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260211045705-2fe6c72cfa47
+	github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260216055925-75f643e10510
 	github.com/knadh/koanf/providers/confmap v1.0.0
 	github.com/knadh/koanf/v2 v2.3.2
 	github.com/labstack/echo/v4 v4.15.0
