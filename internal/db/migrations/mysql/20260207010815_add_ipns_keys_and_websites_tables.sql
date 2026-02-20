@@ -13,7 +13,9 @@ CREATE TABLE IF NOT EXISTS ipfs_ipns_keys (
     KEY idx_ipfs_ipns_keys_user_id (user_id),
     KEY idx_ipfs_ipns_keys_deleted_at (deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS ipfs_websites (
     id INTEGER PRIMARY KEY AUTO_INCREMENT,
     user_id INTEGER NOT NULL,
@@ -46,5 +48,8 @@ CREATE TABLE IF NOT EXISTS ipfs_websites (
 -- +goose Down
 -- +goose StatementBegin
 DROP TABLE IF EXISTS ipfs_websites;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
 DROP TABLE IF EXISTS ipfs_ipns_keys;
 -- +goose StatementEnd
