@@ -154,14 +154,7 @@ func (a *API) getWebsite(c echo.Context) error {
 		}
 	}
 
-	var resp dto.WebsiteResponse
-	if err := resp.FromModel(website); err != nil {
-		a.Logger().Error("Failed to convert website to response", zap.Error(err))
-		apiErr := NewError(ErrKeyFileProcessingFailed, err)
-		return ctx.Error(apiErr, apiErr.HttpStatus())
-	}
-
-	return httputil.EncodeResponse(ctx, website, &resp)
+	return httputil.EncodeResponse(ctx, website, &dto.WebsiteResponse{})
 }
 
 func (a *API) updateWebsite(c echo.Context) error {
@@ -274,6 +267,35 @@ func (a *API) validateWebsiteDNS(c echo.Context) error {
 	return ctx.JSON(http.StatusOK, resp)
 }
 
+func (a *API) getSSLStatus(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	domain := c.Param("domain")
+	if domain == "" {
+		apiErr := NewError(errors.ErrInvalidDomain, fmt.Errorf("domain is required"))
+		return ctx.Error(apiErr, http.StatusBadRequest)
+	}
+
+	website, err := a.websiteService.GetWebsiteByDomain(reqCtx, domain)
+	if err != nil {
+		if strings.Contains(err.Error(), "website not found") {
+			apiErr := NewError(errors.ErrWebsiteNotFound, err)
+			return ctx.Error(apiErr, http.StatusNotFound)
+		}
+		a.Logger().Error("Failed to get website SSL status", zap.Error(err), zap.String("domain", domain))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	if website == nil {
+		apiErr := NewError(errors.ErrWebsiteNotFound, fmt.Errorf("website not found: %s", domain))
+		return ctx.Error(apiErr, http.StatusNotFound)
+	}
+
+	return httputil.EncodeResponse(ctx, website, &dto.WebsiteResponse{})
+}
+
 func (a *API) updateSSLStatus(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
@@ -310,12 +332,5 @@ func (a *API) updateSSLStatus(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	var resp dto.WebsiteResponse
-	if err := resp.FromModel(website); err != nil {
-		a.Logger().Error("Failed to convert website to response", zap.Error(err))
-		apiErr := NewError(ErrKeyFileProcessingFailed, err)
-		return ctx.Error(apiErr, apiErr.HttpStatus())
-	}
-
-	return httputil.EncodeResponse(ctx, website, &resp)
+	return httputil.EncodeResponse(ctx, website, &dto.WebsiteResponse{})
 }

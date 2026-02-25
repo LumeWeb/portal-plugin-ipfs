@@ -588,13 +588,36 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		return fmt.Errorf("failed to register gateway routes: %w", err)
 	}
 
-	// SSL status webhook routes with gateway auth (for Caddy plugin)
-	sslStatusRoutes := router.DefineRoutes(
-		router.NewRoute(http.MethodPost, "/websites/:domain/ssl-status", a.updateSSLStatus,
+	// SSL status routes
+	// Public GET endpoint for developers to query SSL status
+	publicSSLStatusRoutes := router.DefineRoutes(
+		router.NewRoute(http.MethodGet, "/websites/:domain/ssl-status", a.getSSLStatus,
+			router.WithSwagger(
+				router.WithSummary("Get SSL status"),
+				router.WithDescription("Retrieves SSL certificate status for a website domain. Public endpoint for developers."),
+				router.WithTags("websites"),
+				router.WithPathParam("domain", "The domain name of the website", ""),
+				router.WithSuccessResponse(http.StatusOK, "SSL status", router.WithJSONContent(dto.WebsiteResponse{})),
+				router.WithErrorResponses(router.DefineSwaggerErrorResponses(
+					router.DefineSwaggerErrorResponse(http.StatusBadRequest, "Bad request - invalid domain"),
+					router.DefineSwaggerErrorResponse(http.StatusNotFound, "Website not found"),
+					router.DefineSwaggerErrorResponse(http.StatusInternalServerError, "Internal server error"),
+				)),
+			),
+		),
+	)
+
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), publicSSLStatusRoutes, router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register public SSL status routes: %w", err)
+	}
+
+	// Internal POST endpoint for Caddy webhook with gateway auth
+	internalSSLStatusRoutes := router.DefineRoutes(
+		router.NewRoute(http.MethodPost, "/internal/websites/:domain/ssl-status", a.updateSSLStatus,
 			router.WithSwagger(
 				router.WithSummary("Update SSL status"),
 				router.WithDescription("Webhook endpoint for Caddy plugin to update SSL certificate status. Requires X-Gateway-Secret header for authentication."),
-				router.WithTags("websites", "webhooks"),
+				router.WithTags("internal", "webhooks"),
 				router.WithPathParam("domain", "The domain name of the website", ""),
 				router.WithRequestBody(&dto.SSLStatusUpdateRequest{}, "SSL status update", true),
 				router.WithSuccessResponse(http.StatusOK, "SSL status updated", router.WithJSONContent(dto.WebsiteResponse{})),
@@ -609,10 +632,10 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		),
 	)
 
-	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), sslStatusRoutes,
+	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), internalSSLStatusRoutes,
 		router.WithMiddlewares(gatewayAuthMw),  // Use gateway auth, not user auth
 		router.WithCors()); err != nil {
-		return fmt.Errorf("failed to register SSL status routes: %w", err)
+		return fmt.Errorf("failed to register internal SSL status routes: %w", err)
 	}
 
 	err = a.tus.SetupRoute(r, a.Subdomain(), true, false, TUS_HTTP_ROUTE)
