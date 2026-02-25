@@ -32,6 +32,16 @@ const (
 	WebsiteTargetTypeIPNS WebsiteTargetType = "ipns"
 )
 
+// SSLStatus represents the SSL certificate status
+type SSLStatus string
+
+const (
+	SSLStatusPending SSLStatus = "pending"
+	SSLStatusIssuing SSLStatus = "issuing"
+	SSLStatusReady   SSLStatus = "ready"
+	SSLStatusFailed  SSLStatus = "failed"
+)
+
 // validStatuses is a map of valid website statuses
 var validWebsiteStatuses = map[WebsiteStatus]struct{}{
 	WebsiteStatusPendingValidation: {},
@@ -46,6 +56,14 @@ var validTargetTypes = map[WebsiteTargetType]struct{}{
 	WebsiteTargetTypeIPNS: {},
 }
 
+// validSSLStatuses is a map of valid SSL statuses
+var validSSLStatuses = map[SSLStatus]struct{}{
+	SSLStatusPending: {},
+	SSLStatusIssuing: {},
+	SSLStatusReady:   {},
+	SSLStatusFailed:  {},
+}
+
 // Website represents a website configuration in the database
 type Website struct {
 	ID                  uint           `gorm:"primaryKey;autoIncrement"`
@@ -53,11 +71,15 @@ type Website struct {
 	Domain              string         `gorm:"type:varchar(255);index:idx_ipfs_websites_domain;not null"`
 	TargetType          string         `gorm:"type:varchar(50);index:idx_ipfs_websites_status;not null"` // WebsiteTargetTypeIPFS or WebsiteTargetTypeIPNS
 	TargetMultihash     mh.Multihash   `gorm:"type:varbinary(64);not null"`                              // CID multihash (IPFS) or peer ID multihash (IPNS)
-	CIDVersion          *uint8         `gorm:"type:tinyint unsigned"`                                    // 0 = CIDv0, 1 = CIDv1; NULL for IPNS
+	CIDVersion          *uint8         `gorm:"column:cid_version;type:tinyint unsigned"`                // 0 = CIDv0, 1 = CIDv1; NULL for IPNS
 	Status              string         `gorm:"type:varchar(50);index:idx_ipfs_websites_status;not null"` // pending_validation, active, broken
 	ValidationToken     string         `gorm:"type:varchar(255);not null"`
 	ValidationExpiresAt *time.Time     `gorm:"index"`
 	LastCheckedAt       *time.Time     `gorm:"index:idx_ipfs_websites_last_checked_at"`
+	SSLStatus           string         `gorm:"column:ssl_status;type:varchar(50);index:idx_ipfs_websites_ssl_status;default:'pending'"`
+	SSLError            string         `gorm:"column:ssl_error;type:text"`
+	SSLIssuedAt         *time.Time     `gorm:"column:ssl_issued_at;index:idx_ipfs_websites_ssl_issued_at"`
+	SSLLastUpdatedAt    *time.Time     `gorm:"column:ssl_last_updated_at;index:idx_ipfs_websites_ssl_last_updated_at"`
 	CreatedAt           time.Time      `gorm:"autoCreateTime"`
 	UpdatedAt           time.Time      `gorm:"autoUpdateTime"`
 	DeletedAt           gorm.DeletedAt `gorm:"index:idx_ipfs_websites_deleted_at"`
@@ -77,6 +99,14 @@ func (w *Website) BeforeSave(_ *gorm.DB) error {
 	// Validate status
 	if _, ok := validWebsiteStatuses[WebsiteStatus(w.Status)]; !ok {
 		return fmt.Errorf("%s: %s", errors.ErrInvalidWebsiteStatus, w.Status)
+	}
+
+	// Validate SSL status
+	if w.SSLStatus == "" {
+		w.SSLStatus = string(SSLStatusPending)
+	}
+	if _, ok := validSSLStatuses[SSLStatus(w.SSLStatus)]; !ok {
+		return fmt.Errorf("%s: %s", errors.ErrInvalidSSLStatus, w.SSLStatus)
 	}
 
 	// Validate multihash is set

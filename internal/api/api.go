@@ -549,6 +549,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 				router.WithSuccessResponse(http.StatusOK, "Validation result", router.WithJSONContent(dto.WebsiteValidateResponse{})),
 			),
 		),
+
 	)
 
 	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), websiteRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
@@ -585,6 +586,33 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 
 	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), gatewayRoutes, router.WithMiddlewares(gatewayAuthMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register gateway routes: %w", err)
+	}
+
+	// SSL status webhook routes with gateway auth (for Caddy plugin)
+	sslStatusRoutes := router.DefineRoutes(
+		router.NewRoute(http.MethodPost, "/websites/:domain/ssl-status", a.updateSSLStatus,
+			router.WithSwagger(
+				router.WithSummary("Update SSL status"),
+				router.WithDescription("Webhook endpoint for Caddy plugin to update SSL certificate status. Requires X-Gateway-Secret header for authentication."),
+				router.WithTags("websites", "webhooks"),
+				router.WithPathParam("domain", "The domain name of the website", ""),
+				router.WithRequestBody(&dto.SSLStatusUpdateRequest{}, "SSL status update", true),
+				router.WithSuccessResponse(http.StatusOK, "SSL status updated", router.WithJSONContent(dto.WebsiteResponse{})),
+				router.WithErrorResponses(router.DefineSwaggerErrorResponses(
+					router.DefineSwaggerErrorResponse(http.StatusBadRequest, "Bad request - invalid domain or malformed request"),
+					router.DefineSwaggerErrorResponse(http.StatusUnauthorized, "Unauthorized - missing or invalid X-Gateway-Secret header"),
+					router.DefineSwaggerErrorResponse(http.StatusNotFound, "Website not found"),
+					router.DefineSwaggerErrorResponse(http.StatusUnprocessableEntity, "Unprocessable entity - invalid status or timestamp format"),
+					router.DefineSwaggerErrorResponse(http.StatusInternalServerError, "Internal server error"),
+				)),
+			),
+		),
+	)
+
+	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), sslStatusRoutes,
+		router.WithMiddlewares(gatewayAuthMw),  // Use gateway auth, not user auth
+		router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register SSL status routes: %w", err)
 	}
 
 	err = a.tus.SetupRoute(r, a.Subdomain(), true, false, TUS_HTTP_ROUTE)

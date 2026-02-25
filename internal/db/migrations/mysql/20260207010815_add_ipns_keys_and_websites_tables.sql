@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS ipfs_websites (
     validation_token VARCHAR(255) NOT NULL,
     validation_expires_at TIMESTAMP NULL DEFAULT NULL,
     last_checked_at TIMESTAMP NULL DEFAULT NULL,
+    ssl_status VARCHAR(50) DEFAULT 'pending',
+    ssl_error TEXT,
+    ssl_issued_at TIMESTAMP NULL DEFAULT NULL,
+    ssl_last_updated_at TIMESTAMP NULL DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP NULL DEFAULT NULL,
@@ -35,6 +39,9 @@ CREATE TABLE IF NOT EXISTS ipfs_websites (
     KEY idx_ipfs_websites_domain (domain),
     KEY idx_ipfs_websites_status (status),
     KEY idx_ipfs_websites_last_checked_at (last_checked_at),
+    KEY idx_ipfs_websites_ssl_status (ssl_status),
+    KEY idx_ipfs_websites_ssl_issued_at (ssl_issued_at),
+    KEY idx_ipfs_websites_ssl_last_updated_at (ssl_last_updated_at),
     KEY idx_ipfs_websites_deleted_at (deleted_at),
 
     -- Enforce: IPFS -> cid_version set, IPNS -> cid_version NULL

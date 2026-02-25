@@ -286,6 +286,15 @@ func (m *mockHelper) makeAuthenticatedRequest(method, url string, token string, 
 	return rec
 }
 
+// makeGatewayAuthenticatedRequest creates and executes a gateway-authenticated API request, returning the response
+func (m *mockHelper) makeGatewayAuthenticatedRequest(method, url string, gatewaySecret string, body []byte) *httptest.ResponseRecorder {
+	req := m.ctx.NewAPIRequest(method, url, body)
+	req.Header.Set("X-Gateway-Secret", gatewaySecret)
+	rec := httptest.NewRecorder()
+	m.ctx.Router().ServeHTTP(rec, req)
+	return rec
+}
+
 // assertJSONResponse is a helper to assert JSON response structure
 func (m *mockHelper) assertJSONResponse(t *testing.T, rec *httptest.ResponseRecorder, expectedStatus int, target interface{}) {
 	assert.Equal(t, expectedStatus, rec.Code)

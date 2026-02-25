@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"go.lumeweb.com/httputil"
 	mcontext "go.lumeweb.com/portal-middleware/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/errors"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
@@ -269,4 +272,50 @@ func (a *API) validateWebsiteDNS(c echo.Context) error {
 	}
 
 	return ctx.JSON(http.StatusOK, resp)
+}
+
+func (a *API) updateSSLStatus(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	domain := c.Param("domain")
+	if domain == "" {
+		apiErr := NewError(errors.ErrInvalidDomain, fmt.Errorf("domain is required"))
+		return ctx.Error(apiErr, http.StatusBadRequest)
+	}
+
+	var req dto.SSLStatusUpdateRequest
+	if _, ok := httputil.DecodeAndValidateRequest(ctx, &req); !ok {
+		return nil
+	}
+
+	var timestamp *time.Time
+	if req.Timestamp != "" {
+		parsed, err := time.Parse(time.RFC3339, req.Timestamp)
+		if err != nil {
+			apiErr := NewError(errors.ErrInvalidTimestamp, err)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		timestamp = &parsed
+	}
+
+	website, err := a.websiteService.UpdateSSLStatus(reqCtx, domain, req.Status, req.Error, timestamp)
+	if err != nil {
+		if strings.Contains(err.Error(), "website not found") {
+			apiErr := NewError(errors.ErrWebsiteNotFound, err)
+			return ctx.Error(apiErr, http.StatusNotFound)
+		}
+		a.Logger().Error("Failed to update SSL status", zap.Error(err), zap.String("domain", domain))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	var resp dto.WebsiteResponse
+	if err := resp.FromModel(website); err != nil {
+		a.Logger().Error("Failed to convert website to response", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	return httputil.EncodeResponse(ctx, website, &resp)
 }
