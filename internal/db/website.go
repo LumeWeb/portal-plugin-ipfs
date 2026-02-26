@@ -76,6 +76,8 @@ type Website struct {
 	ValidationToken     string         `gorm:"type:varchar(255);not null"`
 	ValidationExpiresAt *time.Time     `gorm:"index"`
 	LastCheckedAt       *time.Time     `gorm:"index:idx_ipfs_websites_last_checked_at"`
+	DNSZoneID           *uint          `gorm:"column:dns_zone_id;index:idx_ipfs_websites_dns_zone_id"`    // Foreign key to DNS zone (if DNS hosting enabled)
+	Enabled             bool           `gorm:"column:dns_hosting_enabled;default:false"`                // Whether DNS hosting is enabled
 	SSLStatus           string         `gorm:"column:ssl_status;type:varchar(50);index:idx_ipfs_websites_ssl_status;default:'pending'"`
 	SSLError            string         `gorm:"column:ssl_error;type:text"`
 	SSLIssuedAt         *time.Time     `gorm:"column:ssl_issued_at;index:idx_ipfs_websites_ssl_issued_at"`

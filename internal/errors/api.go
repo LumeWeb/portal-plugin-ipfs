@@ -27,6 +27,7 @@ const (
 	ErrInvalidSSLStatus       core.ErrorType = "INVALID_SSL_STATUS"
 	ErrSSLStatusUpdateFailed  core.ErrorType = "SSL_STATUS_UPDATE_FAILED"
 	ErrInvalidDomain          core.ErrorType = "INVALID_DOMAIN"
+	ErrInvalidZoneStatus      core.ErrorType = "INVALID_ZONE_STATUS"
 	ErrWebsiteNotFound        core.ErrorType = "WEBSITE_NOT_FOUND"
 	ErrInvalidTimestamp       core.ErrorType = "INVALID_TIMESTAMP"
 )

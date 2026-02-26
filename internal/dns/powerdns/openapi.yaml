@@ -1,0 +1,208 @@
+openapi: 3.0.0
+info:
+  title: PowerDNS Authoritative API
+  version: 1.0.0
+servers:
+  - url: http://localhost:8081/api/v1
+security:
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  schemas:
+
+    Zone:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+        kind:
+          type: string
+          enum: [Native, Master, Slave]
+        rrsets:
+          type: array
+          items:
+            $ref: '#/components/schemas/RRSet'
+        serial:
+          type: integer
+        notified_serial:
+          type: integer
+        edited_serial:
+          type: integer
+
+    ZoneCreate:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [Native, Master]
+        nameservers:
+          type: array
+          items:
+            type: string
+        rrsets:
+          type: array
+          items:
+            $ref: '#/components/schemas/RRSet'
+
+    ZonePatch:
+      type: object
+      properties:
+        rrsets:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/RRSet'
+              - type: object
+                required:
+                  - changetype
+                properties:
+                  changetype:
+                    type: string
+                    enum: [REPLACE, DELETE]
+
+    RRSet:
+      type: object
+      required:
+        - name
+        - type
+        - records
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        ttl:
+          type: integer
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/Record'
+
+    Record:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+        disabled:
+          type: boolean
+
+paths:
+  /servers/{server_id}/zones:
+    get:
+      summary: List all zones
+      operationId: listZones
+      parameters:
+        - name: server_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of zones
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Zone'
+    post:
+      summary: Create a new zone
+      operationId: createZone
+      parameters:
+        - name: server_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ZoneCreate'
+      responses:
+        '201':
+          description: Zone created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Zone'
+
+  /servers/{server_id}/zones/{zone_id}:
+    get:
+      summary: Get a zone
+      operationId: getZone
+      parameters:
+        - name: server_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: zone_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Zone details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Zone'
+    patch:
+      summary: Update zone RRSets
+      operationId: updateZoneRRSets
+      parameters:
+        - name: server_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: zone_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ZonePatch'
+      responses:
+        '204':
+          description: Zone updated
+    delete:
+      summary: Delete a zone
+      operationId: deleteZone
+      parameters:
+        - name: server_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: zone_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Zone deleted

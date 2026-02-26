@@ -1,0 +1,12 @@
+package: powerdns
+output: internal/dns/powerdns/client.go
+generate:
+  models: true
+  client: true
+output-options:
+  skip-prune: true
+additional-imports:
+  - package: github.com/go-openapi/runtime
+    alias: runtime
+  - package: github.com/go-openapi/strfmt
+    alias: strfmt
