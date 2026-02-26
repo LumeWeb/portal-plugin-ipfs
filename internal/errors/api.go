@@ -22,6 +22,11 @@ const (
 	ErrKeyFileUploadFailed  core.ErrorType = "ErrFileUploadFailed"
 
 	// Website error types
-	ErrInvalidWebsiteStatus core.ErrorType = "INVALID_WEBSITE_STATUS"
-	ErrInvalidTargetType    core.ErrorType = "INVALID_TARGET_TYPE"
+	ErrInvalidWebsiteStatus   core.ErrorType = "INVALID_WEBSITE_STATUS"
+	ErrInvalidTargetType      core.ErrorType = "INVALID_TARGET_TYPE"
+	ErrInvalidSSLStatus       core.ErrorType = "INVALID_SSL_STATUS"
+	ErrSSLStatusUpdateFailed  core.ErrorType = "SSL_STATUS_UPDATE_FAILED"
+	ErrInvalidDomain          core.ErrorType = "INVALID_DOMAIN"
+	ErrWebsiteNotFound        core.ErrorType = "WEBSITE_NOT_FOUND"
+	ErrInvalidTimestamp       core.ErrorType = "INVALID_TIMESTAMP"
 )

@@ -158,19 +158,28 @@ func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 	return website, nil
 }
 
+// SSLStatusInfo represents SSL certificate status information
+type SSLStatusInfo struct {
+	Status         string     `json:"status"`
+	Error          string     `json:"error,omitempty"`
+	IssuedAt       *time.Time `json:"issued_at,omitempty"`
+	LastUpdatedAt  *time.Time `json:"last_updated_at,omitempty"`
+}
+
 // WebsiteResponse represents a website response
 type WebsiteResponse struct {
-	ID                  uint       `json:"id"`
-	Domain              string     `json:"domain"`
-	TargetType          string     `json:"target_type"`
-	TargetHash          string     `json:"target_hash"`
-	Status              string     `json:"status"`
-	ValidationToken     string     `json:"validation_token"`
-	ValidationExpiresAt *time.Time `json:"validation_expires_at,omitempty"`
-	LastCheckedAt       *time.Time `json:"last_checked_at,omitempty"`
-	Created             time.Time  `json:"created"`
-	Updated             time.Time  `json:"updated"`
-	Expired             bool       `json:"expired"` // Whether validation token has expired
+	ID                  uint           `json:"id"`
+	Domain              string         `json:"domain"`
+	TargetType          string         `json:"target_type"`
+	TargetHash          string         `json:"target_hash"`
+	Status              string         `json:"status"`
+	ValidationToken     string         `json:"validation_token"`
+	ValidationExpiresAt *time.Time     `json:"validation_expires_at,omitempty"`
+	LastCheckedAt       *time.Time     `json:"last_checked_at,omitempty"`
+	Created             time.Time      `json:"created"`
+	Updated             time.Time      `json:"updated"`
+	Expired             bool            `json:"expired"` // Whether validation token has expired
+	SSL                 *SSLStatusInfo  `json:"ssl,omitempty"`
 }
 
 func (r *WebsiteResponse) FromModel(model *db.Website) error {
@@ -185,6 +194,26 @@ func (r *WebsiteResponse) FromModel(model *db.Website) error {
 	r.Created = model.CreatedAt
 	r.Updated = model.UpdatedAt
 	r.Expired = model.IsExpired()
+
+	if model.SSLStatus != "" {
+		var lastUpdated *time.Time
+		if model.SSLLastUpdatedAt != nil {
+			v := *model.SSLLastUpdatedAt
+			lastUpdated = &v
+		}
+		var issuedAt *time.Time
+		if model.SSLIssuedAt != nil {
+			v := *model.SSLIssuedAt
+			issuedAt = &v
+		}
+		r.SSL = &SSLStatusInfo{
+			Status:        model.SSLStatus,
+			Error:         model.SSLError,
+			IssuedAt:      issuedAt,
+			LastUpdatedAt: lastUpdated,
+		}
+	}
+
 	return nil
 }
 
@@ -226,6 +255,39 @@ func (f WebsiteFilter) ToModel() (WebsiteFilter, error) {
 	return f, nil
 }
 
+// SSLStatusUpdateRequest represents a request to update SSL certificate status from Caddy webhook
+type SSLStatusUpdateRequest struct {
+	Status    db.SSLStatus `json:"status"`
+	Error     string       `json:"error,omitempty"`
+	Timestamp string       `json:"timestamp,omitempty"`
+}
+
+func (r SSLStatusUpdateRequest) Schema() *zog.StructSchema {
+	return zog.Struct(zog.Shape{
+		"Status": config.ZogStringLike[db.SSLStatus]().OneOf([]db.SSLStatus{
+			db.SSLStatusPending,
+			db.SSLStatusIssuing,
+			db.SSLStatusReady,
+			db.SSLStatusFailed,
+		}).Required(),
+		"Error":     zog.String().Optional().Max(1000),
+		"Timestamp": zog.String().Optional().Transform(func(val *string, ctx zog.Ctx) error {
+			if *val == "" {
+				return fmt.Errorf("timestamp cannot be an empty string")
+			}
+			_, err := time.Parse(time.RFC3339, *val)
+			if err != nil {
+				return fmt.Errorf("timestamp must be in RFC3339 format: %w", err)
+			}
+			return nil
+		}),
+	})
+}
+
+func (r *SSLStatusUpdateRequest) ToModel() (*SSLStatusUpdateRequest, error) {
+	return r, nil
+}
+
 // Ensure DTOs implement httputil interfaces
 var _ httputil.DTOValidator = (*IPNSKeyRequest)(nil)
 var _ httputil.DTOValidator = (*IPNSPublishRequest)(nil)
@@ -234,3 +296,4 @@ var _ httputil.DTOValidator = (*WebsiteRequest)(nil)
 var _ httputil.DTORequest[*db.Website] = (*WebsiteRequest)(nil)
 var _ httputil.DTOValidator = (*WebsiteFilter)(nil)
 var _ httputil.DTORequest[WebsiteFilter] = (*WebsiteFilter)(nil)
+var _ httputil.DTOValidator = (*SSLStatusUpdateRequest)(nil)

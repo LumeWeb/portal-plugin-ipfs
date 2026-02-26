@@ -23,6 +23,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/net/idna"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // WebsiteServiceDefault implements the WebsiteService interface
@@ -919,4 +920,78 @@ func (s *WebsiteServiceDefault) notifyUserStatusChanged(ctx context.Context, web
 		zap.String("old_status", string(oldStatus)),
 		zap.String("new_status", string(newStatus)))
 	return nil
+}
+
+// UpdateSSLStatus updates the SSL certificate status for a website domain
+func (s *WebsiteServiceDefault) UpdateSSLStatus(ctx context.Context, domain string, status pluginDb.SSLStatus, sslError string, timestamp *time.Time) (*pluginDb.Website, error) {
+	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.UpdateSSLStatus")
+	defer span.End()
+
+	var website pluginDb.Website
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		// Lock row for update
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("domain = ?", domain).
+			First(&website).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				_ = tx.AddError(fmt.Errorf("website not found"))
+				return tx
+			}
+			_ = tx.AddError(fmt.Errorf("failed to get website: %w", err))
+			return tx
+		}
+
+		// Use provided timestamp or current time
+		updateTime := time.Now()
+		if timestamp != nil {
+			updateTime = *timestamp
+		}
+
+		// Prepare updates
+		updates := map[string]interface{}{
+			"SSLStatus":        string(status),
+			"SSLLastUpdatedAt": updateTime,
+		}
+
+		// Set issued_at only when transitioning to ready
+		if status == pluginDb.SSLStatusReady && website.SSLStatus != string(pluginDb.SSLStatusReady) {
+			updates["SSLIssuedAt"] = &updateTime
+		}
+
+		// Clear issued_at when transitioning away from ready
+		if status != pluginDb.SSLStatusReady && website.SSLStatus == string(pluginDb.SSLStatusReady) {
+			updates["SSLIssuedAt"] = nil
+		}
+
+		// Set or clear error based on status
+		if status == pluginDb.SSLStatusFailed {
+			updates["SSLError"] = sslError
+		} else {
+			updates["SSLError"] = ""
+		}
+
+		// Update website
+		if err := tx.Model(&website).Updates(updates).Error; err != nil {
+			_ = tx.AddError(fmt.Errorf("failed to update SSL status: %w", err))
+			return tx
+		}
+
+		// Reload the website to get updated values
+		if err := tx.First(&website, website.ID).Error; err != nil {
+			_ = tx.AddError(fmt.Errorf("failed to reload website after update: %w", err))
+			return tx
+		}
+
+		return tx
+	})
+
+	if err != nil {
+		s.Logger().Error("Failed to update SSL status",
+			zap.Error(err),
+			zap.String("domain", domain),
+			zap.String("ssl_status", string(status)))
+		return nil, fmt.Errorf("failed to update SSL status: %w", err)
+	}
+
+	return &website, nil
 }

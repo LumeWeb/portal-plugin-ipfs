@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"time"
 
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
@@ -44,4 +45,7 @@ type WebsiteService interface {
 
 	// CheckStatus checks the status of a website by validating its target
 	CheckStatus(ctx context.Context, website *pluginDb.Website) (pluginDb.WebsiteStatus, error)
+
+	// UpdateSSLStatus updates the SSL certificate status for a website domain
+	UpdateSSLStatus(ctx context.Context, domain string, status pluginDb.SSLStatus, sslError string, timestamp *time.Time) (*pluginDb.Website, error)
 }

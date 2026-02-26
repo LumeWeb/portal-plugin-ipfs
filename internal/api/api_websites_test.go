@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/assert"
@@ -203,6 +204,511 @@ func TestAPI_CreateWebsite(t *testing.T) {
 			rec := httptest.NewRecorder()
 			ctx.Router().ServeHTTP(rec, req)
 			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		}, TestOptions)
+	})
+}
+
+// Webhook SSL Status Integration Tests
+// These tests verify the webhook endpoint for SSL status updates from Caddy
+
+func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
+	t.Run("success_status_ready", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			userID := uint(1)
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			timestamp := time.Now().UTC()
+			mockWebsite := &db.Website{
+				ID:              1,
+				UserID:          userID,
+				Domain:          TestDomain,
+				TargetType:      string(db.WebsiteTargetTypeIPFS),
+				Status:          string(db.WebsiteStatusActive),
+				SSLStatus:       string(db.SSLStatusReady),
+				SSLLastUpdatedAt: &timestamp,
+			}
+
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+
+			reqBody := fmt.Sprintf(`{"status":"ready","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
+			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "test-secret", []byte(reqBody))
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			var response dto.WebsiteResponse
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Equal(t, uint(1), response.ID)
+			assert.Equal(t, TestDomain, response.Domain)
+			assert.Equal(t, "ready", response.SSL.Status)
+		}, TestOptions)
+	})
+
+	t.Run("success_status_failed_with_error", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			userID := uint(1)
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			timestamp := time.Now().UTC()
+			mockWebsite := &db.Website{
+				ID:              1,
+				UserID:          userID,
+				Domain:          TestDomain,
+				TargetType:      string(db.WebsiteTargetTypeIPFS),
+				Status:          string(db.WebsiteStatusActive),
+				SSLStatus:       string(db.SSLStatusFailed),
+				SSLError:        "certificate validation failed",
+				SSLLastUpdatedAt: &timestamp,
+			}
+
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusFailed, "certificate validation failed", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+
+			reqBody := fmt.Sprintf(`{"status":"failed","error":"certificate validation failed","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
+			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "test-secret", []byte(reqBody))
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			var response dto.WebsiteResponse
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Equal(t, uint(1), response.ID)
+			assert.Equal(t, TestDomain, response.Domain)
+			assert.Equal(t, "failed", response.SSL.Status)
+			assert.Equal(t, "certificate validation failed", response.SSL.Error)
+		}, TestOptions)
+	})
+
+	t.Run("success_status_pending", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			userID := uint(1)
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			timestamp := time.Now().UTC()
+			mockWebsite := &db.Website{
+				ID:              1,
+				UserID:          userID,
+				Domain:          TestDomain,
+				TargetType:      string(db.WebsiteTargetTypeIPFS),
+				Status:          string(db.WebsiteStatusActive),
+				SSLStatus:       string(db.SSLStatusPending),
+				SSLLastUpdatedAt: &timestamp,
+			}
+
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusPending, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+
+			reqBody := fmt.Sprintf(`{"status":"pending","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
+			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "test-secret", []byte(reqBody))
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			var response dto.WebsiteResponse
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Equal(t, uint(1), response.ID)
+			assert.Equal(t, TestDomain, response.Domain)
+			assert.Equal(t, "pending", response.SSL.Status)
+		}, TestOptions)
+	})
+
+	t.Run("success_status_issuing", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			userID := uint(1)
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			timestamp := time.Now().UTC()
+			mockWebsite := &db.Website{
+				ID:              1,
+				UserID:          userID,
+				Domain:          TestDomain,
+				TargetType:      string(db.WebsiteTargetTypeIPFS),
+				Status:          string(db.WebsiteStatusActive),
+				SSLStatus:       string(db.SSLStatusIssuing),
+				SSLLastUpdatedAt: &timestamp,
+			}
+
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusIssuing, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+
+			reqBody := fmt.Sprintf(`{"status":"issuing","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
+			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "test-secret", []byte(reqBody))
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			var response dto.WebsiteResponse
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Equal(t, uint(1), response.ID)
+			assert.Equal(t, TestDomain, response.Domain)
+			assert.Equal(t, "issuing", response.SSL.Status)
+		}, TestOptions)
+	})
+
+	t.Run("error_invalid_gateway_secret", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+
+			reqBody := `{"status":"ready"}`
+			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "wrong-secret", []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("error_missing_gateway_secret", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			req := ctx.NewAPIRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", []byte(`{"status":"ready"}`))
+			rec := httptest.NewRecorder()
+			ctx.Router().ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("error_invalid_domain_empty", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+
+			reqBody := `{"status":"ready"}`
+			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites//ssl-status", "test-secret", []byte(reqBody))
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("error_invalid_status_value", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+
+			reqBody := `{"status":"invalid_status"}`
+			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "test-secret", []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("error_invalid_timestamp_format", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+
+			reqBody := `{"status":"ready","timestamp":"invalid-timestamp"}`
+			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "test-secret", []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("error_website_not_found", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusReady, "", (*time.Time)(nil)).Return(nil, errors.New("website not found"))
+
+			reqBody := `{"status":"ready"}`
+			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "test-secret", []byte(reqBody))
+
+			assert.Equal(t, http.StatusNotFound, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("error_update_failed", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusReady, "", (*time.Time)(nil)).Return(nil, errors.New("database error"))
+
+			reqBody := `{"status":"ready"}`
+			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "test-secret", []byte(reqBody))
+
+			assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("idempotent_duplicate_requests", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			userID := uint(1)
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			timestamp := time.Now().UTC()
+			mockWebsite := &db.Website{
+				ID:              1,
+				UserID:          userID,
+				Domain:          TestDomain,
+				TargetType:      string(db.WebsiteTargetTypeIPFS),
+				Status:          string(db.WebsiteStatusActive),
+				SSLStatus:       string(db.SSLStatusReady),
+				SSLLastUpdatedAt: &timestamp,
+			}
+
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil).Times(2)
+
+			reqBody := fmt.Sprintf(`{"status":"ready","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
+
+			rec1 := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "test-secret", []byte(reqBody))
+			assert.Equal(t, http.StatusOK, rec1.Code)
+
+			rec2 := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "test-secret", []byte(reqBody))
+			assert.Equal(t, http.StatusOK, rec2.Code)
+		}, TestOptions)
+	})
+
+	t.Run("status_transition_pending_to_issuing_to_ready", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			userID := uint(1)
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			timestamp1 := time.Now().UTC()
+			timestamp2 := timestamp1.Add(time.Minute)
+			timestamp3 := timestamp2.Add(time.Hour)
+
+			mockWebsitePending := &db.Website{
+				ID:              1,
+				UserID:          userID,
+				Domain:          TestDomain,
+				TargetType:      string(db.WebsiteTargetTypeIPFS),
+				Status:          string(db.WebsiteStatusActive),
+				SSLStatus:       string(db.SSLStatusPending),
+				SSLLastUpdatedAt: &timestamp1,
+			}
+
+			mockWebsiteIssuing := &db.Website{
+				ID:              1,
+				UserID:          userID,
+				Domain:          TestDomain,
+				TargetType:      string(db.WebsiteTargetTypeIPFS),
+				Status:          string(db.WebsiteStatusActive),
+				SSLStatus:       string(db.SSLStatusIssuing),
+				SSLLastUpdatedAt: &timestamp2,
+			}
+
+			mockWebsiteReady := &db.Website{
+				ID:              1,
+				UserID:          userID,
+				Domain:          TestDomain,
+				TargetType:      string(db.WebsiteTargetTypeIPFS),
+				Status:          string(db.WebsiteStatusActive),
+				SSLStatus:       string(db.SSLStatusReady),
+				SSLLastUpdatedAt: &timestamp3,
+			}
+
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusPending, "", mock.AnythingOfType("*time.Time")).Return(mockWebsitePending, nil)
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusIssuing, "", mock.AnythingOfType("*time.Time")).Return(mockWebsiteIssuing, nil)
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockWebsiteReady, nil)
+
+			reqBody1 := fmt.Sprintf(`{"status":"pending","timestamp":"%s"}`, timestamp1.Format(time.RFC3339))
+			rec1 := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "test-secret", []byte(reqBody1))
+			assert.Equal(t, http.StatusOK, rec1.Code)
+
+			var response1 dto.WebsiteResponse
+			err := json.Unmarshal(rec1.Body.Bytes(), &response1)
+			require.NoError(t, err)
+			assert.Equal(t, "pending", response1.SSL.Status)
+
+			reqBody2 := fmt.Sprintf(`{"status":"issuing","timestamp":"%s"}`, timestamp2.Format(time.RFC3339))
+			rec2 := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "test-secret", []byte(reqBody2))
+			assert.Equal(t, http.StatusOK, rec2.Code)
+
+			var response2 dto.WebsiteResponse
+			err = json.Unmarshal(rec2.Body.Bytes(), &response2)
+			require.NoError(t, err)
+			assert.Equal(t, "issuing", response2.SSL.Status)
+
+			reqBody3 := fmt.Sprintf(`{"status":"ready","timestamp":"%s"}`, timestamp3.Format(time.RFC3339))
+			rec3 := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", "test-secret", []byte(reqBody3))
+			assert.Equal(t, http.StatusOK, rec3.Code)
+
+			var response3 dto.WebsiteResponse
+			err = json.Unmarshal(rec3.Body.Bytes(), &response3)
+			require.NoError(t, err)
+			assert.Equal(t, "ready", response3.SSL.Status)
+		}, TestOptions)
+	})
+}
+
+func TestAPI_UpdateSSLStatus(t *testing.T) {
+	t.Run("success_with_status_ready", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			timestamp := time.Now().UTC()
+			mockWebsite := &db.Website{
+				ID:              1,
+				UserID:          userID,
+				Domain:          TestDomain,
+				TargetType:      string(db.WebsiteTargetTypeIPFS),
+				Status:          string(db.WebsiteStatusActive),
+				SSLStatus:       string(db.SSLStatusReady),
+				SSLLastUpdatedAt: &timestamp,
+			}
+
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+
+			reqBody := fmt.Sprintf(`{"status":"ready","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/domain/"+TestDomain+"/ssl", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			var response dto.WebsiteResponse
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Equal(t, uint(1), response.ID)
+			assert.Equal(t, TestDomain, response.Domain)
+			assert.Equal(t, "ready", response.SSL.Status)
+		}, TestOptions)
+	})
+
+	t.Run("success_with_status_failed_and_error", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			timestamp := time.Now().UTC()
+			mockWebsite := &db.Website{
+				ID:              1,
+				UserID:          userID,
+				Domain:          TestDomain,
+				TargetType:      string(db.WebsiteTargetTypeIPFS),
+				Status:          string(db.WebsiteStatusActive),
+				SSLStatus:       string(db.SSLStatusFailed),
+				SSLError:        "certificate validation failed",
+				SSLLastUpdatedAt: &timestamp,
+			}
+
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusFailed, "certificate validation failed", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+
+			reqBody := fmt.Sprintf(`{"status":"failed","error":"certificate validation failed","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/domain/"+TestDomain+"/ssl", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			var response dto.WebsiteResponse
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Equal(t, uint(1), response.ID)
+			assert.Equal(t, TestDomain, response.Domain)
+			assert.Equal(t, "failed", response.SSL.Status)
+			assert.Equal(t, "certificate validation failed", response.SSL.Error)
+		}, TestOptions)
+	})
+
+	t.Run("success_with_status_pending", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			timestamp := time.Now().UTC()
+			mockWebsite := &db.Website{
+				ID:                1,
+				UserID:            userID,
+				Domain:            TestDomain,
+				TargetType:        string(db.WebsiteTargetTypeIPFS),
+				Status:            string(db.WebsiteStatusActive),
+				SSLStatus:         string(db.SSLStatusPending),
+				SSLLastUpdatedAt:  &timestamp,
+			}
+
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusPending, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+
+			reqBody := fmt.Sprintf(`{"status":"pending","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/domain/"+TestDomain+"/ssl", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			var response dto.WebsiteResponse
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Equal(t, uint(1), response.ID)
+			assert.Equal(t, TestDomain, response.Domain)
+			assert.Equal(t, "pending", response.SSL.Status)
+		}, TestOptions)
+	})
+
+	t.Run("error_invalid_domain_empty", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, _ := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			reqBody := `{"status":"ready"}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/domain//ssl", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("error_invalid_status_value", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, _ := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			reqBody := `{"status":"invalid_status"}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/domain/"+TestDomain+"/ssl", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("error_invalid_timestamp_format", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, _ := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			reqBody := `{"status":"ready","timestamp":"invalid-timestamp"}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/domain/"+TestDomain+"/ssl", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("error_website_not_found", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, _ := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusReady, "", (*time.Time)(nil)).Return(nil, errors.New("website not found"))
+
+			reqBody := `{"status":"ready"}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/domain/"+TestDomain+"/ssl", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusNotFound, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("error_update_failed", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, _ := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusReady, "", (*time.Time)(nil)).Return(nil, errors.New("database error"))
+
+			reqBody := `{"status":"ready"}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/domain/"+TestDomain+"/ssl", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusInternalServerError, rec.Code)
 		}, TestOptions)
 	})
 }
