@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS ipfs_websites (
     validation_token VARCHAR(255) NOT NULL,
     validation_expires_at TIMESTAMP NULL DEFAULT NULL,
     last_checked_at TIMESTAMP NULL DEFAULT NULL,
-    ssl_status VARCHAR(50) DEFAULT 'pending',
+    ssl_status VARCHAR(50) NOT NULL DEFAULT 'pending',
     ssl_error TEXT,
     ssl_issued_at TIMESTAMP NULL DEFAULT NULL,
     ssl_last_updated_at TIMESTAMP NULL DEFAULT NULL,
