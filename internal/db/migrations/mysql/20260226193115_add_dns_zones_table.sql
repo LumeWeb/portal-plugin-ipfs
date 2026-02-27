@@ -1,8 +1,8 @@
 -- +goose Up
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS ipfs_dns_zones (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    user_id INTEGER NOT NULL,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED NOT NULL,
     domain VARCHAR(255) NOT NULL,
     status VARCHAR(50) NOT NULL,
     powerdns_zone_id VARCHAR(255),
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS ipfs_dns_zones (
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-ALTER TABLE ipfs_websites ADD COLUMN dns_zone_id INTEGER NULL;
+ALTER TABLE ipfs_websites ADD COLUMN dns_zone_id BIGINT UNSIGNED NULL;
 CREATE INDEX idx_websites_dns_zone_id ON ipfs_websites(dns_zone_id);
 ALTER TABLE ipfs_websites ADD CONSTRAINT fk_websites_dns_zone FOREIGN KEY (dns_zone_id) REFERENCES ipfs_dns_zones(id);
 -- +goose StatementEnd

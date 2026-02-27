@@ -1,8 +1,8 @@
 -- +goose Up
 CREATE TABLE IF NOT EXISTS ipfs_pins (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
     request_id BINARY(16) UNIQUE,
-    user_id INTEGER,
+    user_id BIGINT UNSIGNED,
     status VARCHAR(50),
     cid VARBINARY(64),
     name TEXT,
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS ipfs_pins (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS ipfs_blocks (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
     cid VARBINARY(64) UNIQUE,
     size INTEGER,
     last_announcement TIMESTAMP NULL DEFAULT NULL,
@@ -35,9 +35,9 @@ CREATE INDEX idx_ipfs_pins_created_at ON ipfs_pins (created_at);
 CREATE INDEX idx_ipfs_pins_status_user_created_at ON ipfs_pins (status, user_id, created_at);
 
 CREATE TABLE IF NOT EXISTS ipfs_linked_blocks (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    parent_id INTEGER,
-    child_id INTEGER,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    parent_id BIGINT UNSIGNED,
+    child_id BIGINT UNSIGNED,
     link_index INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS ipfs_linked_blocks (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS ipfs_requests (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
     request_id BIGINT UNSIGNED UNIQUE,
     pin_request_id VARBINARY(64),
     parent_pin_request_id VARBINARY(64),
@@ -61,8 +61,8 @@ CREATE INDEX idx_ipfs_requests_pin_request_id ON ipfs_requests (pin_request_id);
 CREATE INDEX idx_ipfs_requests_parent_pin_request_id ON ipfs_requests (parent_pin_request_id);
 
 CREATE TABLE IF NOT EXISTS ipfs_unixfs_nodes (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    block_id INTEGER UNIQUE,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    block_id BIGINT UNSIGNED UNIQUE,
     name TEXT,
     type INTEGER,
     block_size INTEGER,
@@ -74,8 +74,8 @@ CREATE TABLE IF NOT EXISTS ipfs_unixfs_nodes (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS ipfs_file_paths (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    user_id INTEGER NOT NULL,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED NOT NULL,
     cid VARBINARY(64) NOT NULL,
     path VARCHAR(1000) NOT NULL,
     name VARCHAR(255) NOT NULL,

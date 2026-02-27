@@ -1,8 +1,8 @@
 -- +goose Up
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS ipfs_ipns_keys (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    user_id INTEGER NOT NULL,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED NOT NULL,
     name VARCHAR(255) NOT NULL,
     peer_id_multihash VARBINARY(64) NOT NULL,
     private_key_encrypted BLOB NOT NULL,
@@ -17,8 +17,8 @@ CREATE TABLE IF NOT EXISTS ipfs_ipns_keys (
 
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS ipfs_websites (
-    id INTEGER PRIMARY KEY AUTO_INCREMENT,
-    user_id INTEGER NOT NULL,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED NOT NULL,
     domain VARCHAR(255) NOT NULL,
     target_type VARCHAR(50) NOT NULL,
     target_multihash VARBINARY(64) NOT NULL,
