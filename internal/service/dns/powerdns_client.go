@@ -38,7 +38,8 @@ func (c *PowerDNSClient) CreateZone(ctx context.Context, domain string, nameserv
 	serverID := "localhost"
 
 	zoneCreate := powerdns.ZoneCreate{
-		Name: domain,
+		Name:        domain,
+		Nameservers: &nameservers,
 	}
 
 	kind := powerdns.ZoneCreateKindNative
@@ -92,10 +93,11 @@ func (c *PowerDNSClient) UpdateZoneRRSets(ctx context.Context, zoneID string, rr
 		Rrsets: &rrsets,
 	}
 
-	_, err := c.client.UpdateZoneRRSets(ctx, serverID, zoneID, zonePatch)
+	resp, err := c.client.UpdateZoneRRSets(ctx, serverID, zoneID, zonePatch)
 	if err != nil {
 		return fmt.Errorf("failed to update zone: %w", err)
 	}
+	defer resp.Body.Close()
 
 	c.logger.Info("Zone RRsets updated in PowerDNS",
 		zap.String("zone_id", zoneID),

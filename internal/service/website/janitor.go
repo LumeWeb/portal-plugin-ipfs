@@ -415,7 +415,7 @@ func (j *WebsiteJanitorJob) validateDNSZones(ctx context.Context) error {
 				zap.String("domain", zone.Domain))
 			// Still save the timestamp to prevent a fast retry loop
 			zone.LastNameserverCheckAt = &now
-			if err := j.db.Model(&zone).Select("LastNameserverCheckAt").Updates(&zone).Error; err != nil {
+			if err := j.db.WithContext(ctx).Model(&zone).Select("LastNameserverCheckAt").Updates(&zone).Error; err != nil {
 				j.logger.Error("Failed to update zone timestamp", zap.Error(err), zap.Uint("zone_id", zone.ID))
 			}
 			continue
@@ -428,11 +428,11 @@ func (j *WebsiteJanitorJob) validateDNSZones(ctx context.Context) error {
 			j.logger.Info("DNS zone nameservers validated",
 				zap.Uint("zone_id", zone.ID),
 				zap.String("domain", zone.Domain))
-			zone.Status = pluginDb.DNSZoneStatusActive
+			zone.Status = string(pluginDb.DNSZoneStatusActive)
 			updateCols = append(updateCols, "Status")
 		}
 
-		if err := j.db.Model(&zone).Select(updateCols).Updates(&zone).Error; err != nil {
+		if err := j.db.WithContext(ctx).Model(&zone).Select(updateCols).Updates(&zone).Error; err != nil {
 			j.logger.Error("Failed to update DNS zone", zap.Error(err), zap.Uint("zone_id", zone.ID))
 		}
 	}

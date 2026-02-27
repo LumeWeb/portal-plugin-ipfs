@@ -63,7 +63,7 @@ func (s *DNSService) CreateZone(ctx context.Context, domain string, userID uint)
 		return nil, fmt.Errorf("failed to create zone in database: %w", err)
 	}
 
-	s.Logger().Info("DNS zone created",
+	s.Logger().Debug("DNS zone created",
 		zap.Uint("id", dnsZone.ID),
 		zap.String("domain", domain),
 		zap.Uint("user_id", userID),
