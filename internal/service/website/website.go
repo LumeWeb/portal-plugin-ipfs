@@ -32,6 +32,7 @@ type WebsiteServiceDefault struct {
 	pinSvc     pluginCore.IPFSPinService
 	ipnsKeySvc pluginCore.IPNSKeyService
 	mailerSvc  core.MailerService
+	dnsSvc     pluginCore.DNSService
 	config     pluginConfig.WebsiteConfig
 }
 
@@ -57,6 +58,11 @@ func NewWebsiteService() (core.Service, []core.ContextBuilderOption, error) {
 			svc.mailerSvc = core.GetService[core.MailerService](ctx, core.MAILER_SERVICE)
 			if svc.mailerSvc == nil {
 				svc.Logger().Warn("Mailer service not available, email notifications will be disabled")
+			}
+
+			svc.dnsSvc = core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+			if svc.dnsSvc == nil {
+				svc.Logger().Warn("DNS service not available, DNS hosting will be disabled")
 			}
 
 			// Load configuration from protocol config
@@ -128,12 +134,52 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				return nil, fmt.Errorf("failed to create website: %w", err)
 			}
 
+			// Create DNS zone if hosting is enabled
+			if website.Enabled && s.dnsSvc != nil {
+				dnsZone, err := s.dnsSvc.CreateZone(ctx, website.Domain, website.UserID)
+				if err != nil {
+					s.Logger().Warn("Failed to create DNS zone for website",
+						zap.Error(err),
+						zap.String("domain", website.Domain))
+					// Continue without DNS zone - website is still created
+				} else {
+					// Update website with DNS zone ID
+					website.DNSZoneID = &dnsZone.ID
+					err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+						return tx.Save(website)
+					})
+					if err != nil {
+						s.Logger().Error("Failed to update website with DNS zone ID, attempting to clean up DNS zone",
+							zap.Error(err),
+							zap.Uint("website_id", website.ID),
+							zap.Uint("dns_zone_id", dnsZone.ID))
+
+						// Attempt to clean up the created zone to prevent orphans.
+						if cleanupErr := s.dnsSvc.DeleteZone(ctx, dnsZone.ID); cleanupErr != nil {
+							s.Logger().Error("Failed to clean up orphaned DNS zone",
+								zap.Error(cleanupErr),
+								zap.Uint("dns_zone_id", dnsZone.ID))
+							// Return a wrapped error to inform the caller that cleanup failed and a resource may be orphaned.
+							return nil, fmt.Errorf("failed to associate DNS zone with website (and cleanup failed: %w): %w", cleanupErr, err)
+						}
+
+						return nil, fmt.Errorf("failed to associate DNS zone with website: %w", err)
+					}
+
+					s.Logger().Info("DNS zone created for website",
+						zap.Uint("website_id", website.ID),
+						zap.Uint("dns_zone_id", dnsZone.ID),
+						zap.String("domain", website.Domain))
+				}
+			}
+
 			s.Logger().Info("Website created",
 				zap.Uint("id", website.ID),
 				zap.String("domain", website.Domain),
 				zap.Uint("user_id", website.UserID),
 				zap.String("target_type", website.TargetType),
-				zap.String("target_hash", website.TargetHash()))
+				zap.String("target_hash", website.TargetHash()),
+				zap.Bool("dns_hosting_enabled", website.Enabled))
 
 			// Send notification to admin
 			if err := s.notifyAdminWebsiteCreated(ctx, website, ""); err != nil {
@@ -294,6 +340,10 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 					return tx
 				}
 
+				// Store old values for DNS update
+				oldTargetHash := website.TargetHash()
+				targetHashChanged := false
+
 				// Validate domain if being updated
 				if domain, ok := updates["domain"].(string); ok {
 					if err := s.validateDomain(domain); err != nil {
@@ -319,6 +369,11 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 					if err := s.validateTarget(targetType, targetHashStr); err != nil {
 						_ = tx.AddError(fmt.Errorf("invalid target: %w", err))
 						return tx
+					}
+
+					// Check if target hash changed
+					if targetHashStr != oldTargetHash {
+						targetHashChanged = true
 					}
 
 					// Convert string to multihash and CID version
@@ -352,6 +407,19 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				}
 
 				updatedWebsite = &website
+
+				// Update DNS records if target changed and DNS hosting is enabled
+				if targetHashChanged && website.Enabled && website.DNSZoneID != nil && s.dnsSvc != nil {
+					newTargetHash := website.TargetHash()
+					newTargetType := website.TargetType
+					if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *website.DNSZoneID, newTargetHash, newTargetType); err != nil {
+						s.Logger().Warn("Failed to update DNS records for website",
+							zap.Error(err),
+							zap.Uint("website_id", websiteID),
+							zap.Uint("dns_zone_id", *website.DNSZoneID))
+					}
+				}
+
 				return tx
 			})
 
@@ -385,6 +453,7 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 		DeleteWebsiteTotal.WithLabelValues(LabelStatusError),
 		func() error {
 			var count int64
+			var dnsZoneID *uint
 
 			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 				// First, check if the website exists and is not blocked
@@ -403,6 +472,9 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 					_ = tx.AddError(fmt.Errorf("cannot delete blocked website"))
 					return tx
 				}
+
+				// Store DNS zone ID for cleanup
+				dnsZoneID = website.DNSZoneID
 
 				// Perform the soft delete
 				result := tx.Delete(&website)
@@ -425,6 +497,25 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 			s.Logger().Info("Website deleted",
 				zap.Uint("id", websiteID),
 				zap.Uint("user_id", userID))
+
+			// Clean up DNS records and zone if DNS hosting was enabled
+			if dnsZoneID != nil && s.dnsSvc != nil {
+				// Delete DNS records first
+				if err := s.dnsSvc.DeleteWebsiteDNSRecords(ctx, *dnsZoneID); err != nil {
+					s.Logger().Warn("Failed to delete DNS records for website",
+						zap.Error(err),
+						zap.Uint("website_id", websiteID),
+						zap.Uint("dns_zone_id", *dnsZoneID))
+				}
+
+				// Delete the DNS zone
+				if err := s.dnsSvc.DeleteZone(ctx, *dnsZoneID); err != nil {
+					s.Logger().Warn("Failed to delete DNS zone for website",
+						zap.Error(err),
+						zap.Uint("website_id", websiteID),
+						zap.Uint("dns_zone_id", *dnsZoneID))
+				}
+			}
 
 			return nil
 		},

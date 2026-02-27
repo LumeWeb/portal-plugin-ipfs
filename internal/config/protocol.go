@@ -8,14 +8,15 @@ import (
 var _ config.Defaults = (*ProtocolConfig)(nil)
 
 type ProtocolConfig struct {
-	ListenAddresses         []string     `config:"listen_addresses"`
-	Peers                   []IPFSPeer   `config:"peers"`
-	BootstrapPeers          []IPFSPeer   `config:"bootstrap_peers"`
-	Provider                IPFSProvider `config:"provider"`
-	BlockStore              BlockStore   `config:"blockstore"`
-	Website                 WebsiteConfig `config:"website"`
-	LogLevel                string       `config:"log_level"`
-	AutoScaleResourceLimits bool         `config:"auto_scale_resource_limits"`
+	ListenAddresses         []string        `config:"listen_addresses"`
+	Peers                   []IPFSPeer      `config:"peers"`
+	BootstrapPeers          []IPFSPeer      `config:"bootstrap_peers"`
+	Provider                IPFSProvider    `config:"provider"`
+	BlockStore              BlockStore      `config:"blockstore"`
+	Website                 WebsiteConfig   `config:"website"`
+	DnsHosting              Config `config:"dns_hosting"`
+	LogLevel                string          `config:"log_level"`
+	AutoScaleResourceLimits bool            `config:"auto_scale_resource_limits"`
 }
 
 func (c ProtocolConfig) Defaults() map[string]any {

@@ -27,6 +27,7 @@ type WebsiteJanitorJob struct {
 	pinService          pluginCore.IPFSPinService
 	ipnsKeyService      pluginCore.IPNSKeyService
 	ipnsPublisherService pluginCore.IPNSPublisherService
+	dnsService          pluginCore.DNSService
 	db                  *gorm.DB
 	logger              *core.Logger
 }
@@ -92,6 +93,14 @@ func (j *WebsiteJanitorJob) Run(ctx core.Context, eventCtx context.Context) erro
 	}
 
 	j.logger.Info("Processing websites for validation", zap.Int("count", len(websites)))
+
+	// Validate DNS zones if DNS service is available
+	if j.dnsService != nil {
+		if err := j.validateDNSZones(eventCtx); err != nil {
+			j.logger.Warn("Failed to validate DNS zones",
+				zap.Error(err))
+		}
+	}
 
 	// Create worker pool for parallel processing
 	wp := workerpool.New(j.config.JanitorWorkerCount)
@@ -365,6 +374,72 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	return nil
 }
 
+// validateDNSZones validates DNS zones that are pending nameserver verification
+func (j *WebsiteJanitorJob) validateDNSZones(ctx context.Context) error {
+	ctx, span := core.TraceMethod(ctx, "WebsiteJanitorJob.validateDNSZones")
+	defer span.End()
+
+	if j.dnsService == nil {
+		return nil
+	}
+
+	// Query DNS zones that are pending nameserver validation
+	var zones []*pluginDb.DNSZone
+	err := j.db.WithContext(ctx).
+		Where("status = ?", pluginDb.DNSZoneStatusPendingNameserver).
+		Where("last_nameserver_check_at IS NULL OR last_nameserver_check_at < ?", time.Now().Add(-5*time.Minute)).
+		Find(&zones).Error
+
+	if err != nil {
+		return fmt.Errorf("failed to query DNS zones: %w", err)
+	}
+
+	if len(zones) == 0 {
+		j.logger.Debug("No DNS zones need validation")
+		return nil
+	}
+
+	j.logger.Info("Validating DNS zones", zap.Int("count", len(zones)))
+
+	for _, zone := range zones {
+		// Validate nameservers
+		validated, err := j.dnsService.ValidateNameservers(ctx, zone.ID)
+
+		// Always update the timestamp to avoid re-checking immediately
+		now := time.Now()
+
+		if err != nil {
+			j.logger.Warn("Failed to validate DNS zone nameservers",
+				zap.Error(err),
+				zap.Uint("zone_id", zone.ID),
+				zap.String("domain", zone.Domain))
+			// Still save the timestamp to prevent a fast retry loop
+			zone.LastNameserverCheckAt = &now
+			if err := j.db.WithContext(ctx).Model(&zone).Select("LastNameserverCheckAt").Updates(&zone).Error; err != nil {
+				j.logger.Error("Failed to update zone timestamp", zap.Error(err), zap.Uint("zone_id", zone.ID))
+			}
+			continue
+		}
+
+		zone.LastNameserverCheckAt = &now
+		updateCols := []string{"LastNameserverCheckAt"}
+
+		if validated {
+			j.logger.Info("DNS zone nameservers validated",
+				zap.Uint("zone_id", zone.ID),
+				zap.String("domain", zone.Domain))
+			zone.Status = string(pluginDb.DNSZoneStatusActive)
+			updateCols = append(updateCols, "Status")
+		}
+
+		if err := j.db.WithContext(ctx).Model(&zone).Select(updateCols).Updates(&zone).Error; err != nil {
+			j.logger.Error("Failed to update DNS zone", zap.Error(err), zap.Uint("zone_id", zone.ID))
+		}
+	}
+
+	return nil
+}
+
 // initializeJob sets up the job dependencies
 func (j *WebsiteJanitorJob) initializeJob(ctx core.Context) error {
 	// Get configuration
@@ -388,6 +463,12 @@ func (j *WebsiteJanitorJob) initializeJob(ctx core.Context) error {
 	j.ipnsPublisherService = core.GetService[pluginCore.IPNSPublisherService](ctx, pluginCore.IPNS_PUBLISHER_SERVICE)
 	if j.ipnsPublisherService == nil {
 		return fmt.Errorf("IPNS publisher service not available")
+	}
+
+	// Get DNS service (optional - for DNS hosting validation)
+	j.dnsService = core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+	if j.dnsService == nil {
+		j.logger.Debug("DNS service not available, skipping DNS validation")
 	}
 
 	// Get database

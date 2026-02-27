@@ -106,9 +106,10 @@ type IPNSRepublishResponse struct {
 
 // WebsiteRequest represents a request to create or update a website
 type WebsiteRequest struct {
-	Domain     string `json:"domain"`
-	TargetType string `json:"target_type"` // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
-	TargetHash string `json:"target_hash"` // CID or IPNS peer ID
+	Domain          string              `json:"domain"`
+	TargetType      db.WebsiteTargetType `json:"target_type"` // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
+	TargetHash      string              `json:"target_hash"` // CID or IPNS peer ID
+	DNSEnabled      bool                `json:"dns_hosting_enabled"` // Whether DNS hosting is enabled for this website
 }
 
 func (r WebsiteRequest) Schema() *zog.StructSchema {
@@ -119,23 +120,27 @@ func (r WebsiteRequest) Schema() *zog.StructSchema {
 			db.WebsiteTargetTypeIPNS,
 		}).Required(),
 		"TargetHash": zog.String().Required().Min(1).Max(255),
+		"DNSEnabled": zog.Bool(),
 	})
 }
 
 func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 	// Validate target type
-	if r.TargetType != string(db.WebsiteTargetTypeIPFS) && r.TargetType != string(db.WebsiteTargetTypeIPNS) {
+	if r.TargetType != db.WebsiteTargetTypeIPFS && r.TargetType != db.WebsiteTargetTypeIPNS {
 		return nil, fmt.Errorf("invalid target type: must be '%s' or '%s'", db.WebsiteTargetTypeIPFS, db.WebsiteTargetTypeIPNS)
 	}
 
 	website := &db.Website{
 		Domain:     r.Domain,
-		TargetType: r.TargetType,
+		TargetType: string(r.TargetType),
 		Status:     string(db.WebsiteStatusPendingValidation),
 	}
 
+	// Set DNS hosting enabled flag
+	website.Enabled = r.DNSEnabled
+
 	// Validate and parse CID for IPFS targets
-	if r.TargetType == string(db.WebsiteTargetTypeIPFS) {
+	if r.TargetType == db.WebsiteTargetTypeIPFS {
 		c, err := cid.Parse(r.TargetHash)
 		if err != nil {
 			return nil, fmt.Errorf("invalid CID: %w", err)
@@ -146,7 +151,7 @@ func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 	}
 
 	// Validate peer ID for IPNS targets
-	if r.TargetType == string(db.WebsiteTargetTypeIPNS) {
+	if r.TargetType == db.WebsiteTargetTypeIPNS {
 		target, err := db.NewIPNSTargetFromString(r.TargetHash)
 		if err != nil {
 			return nil, fmt.Errorf("invalid IPNS target: %w", err)
@@ -176,6 +181,8 @@ type WebsiteResponse struct {
 	ValidationToken     string         `json:"validation_token"`
 	ValidationExpiresAt *time.Time     `json:"validation_expires_at,omitempty"`
 	LastCheckedAt       *time.Time     `json:"last_checked_at,omitempty"`
+	DNSZoneID           *uint          `json:"dns_zone_id,omitempty"`
+	Enabled             bool           `json:"dns_hosting_enabled"`
 	Created             time.Time      `json:"created"`
 	Updated             time.Time      `json:"updated"`
 	Expired             bool            `json:"expired"` // Whether validation token has expired
@@ -191,6 +198,8 @@ func (r *WebsiteResponse) FromModel(model *db.Website) error {
 	r.ValidationToken = model.ValidationToken
 	r.ValidationExpiresAt = model.ValidationExpiresAt
 	r.LastCheckedAt = model.LastCheckedAt
+	r.DNSZoneID = model.DNSZoneID
+	r.Enabled = model.Enabled
 	r.Created = model.CreatedAt
 	r.Updated = model.UpdatedAt
 	r.Expired = model.IsExpired()

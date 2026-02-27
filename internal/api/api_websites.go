@@ -37,6 +37,9 @@ func (a *API) createWebsite(c echo.Context) error {
 	// Set user ID
 	model.UserID = user
 
+	// Website is enabled by default regardless of DNS configuration
+	model.Enabled = true
+
 	website, err := a.websiteService.CreateWebsite(reqCtx, model)
 	if err != nil {
 		a.Logger().Error("Failed to create website", zap.Error(err), zap.Uint("user_id", user), zap.String("domain", req.Domain))
