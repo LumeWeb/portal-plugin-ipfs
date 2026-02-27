@@ -4,13 +4,10 @@ import (
 	"fmt"
 
 	"go.lumeweb.com/portal/core"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.uber.org/zap"
-)
-
-const (
-	DNS_SERVICE = "dns_service"
 )
 
 // DNSServiceOptions holds configuration options for DNSService
@@ -95,7 +92,7 @@ func NewDNSServiceWithOptions(options ...DNSServiceOption) (core.Service, []core
 }
 
 func (s *DNSService) ID() string {
-	return DNS_SERVICE
+	return pluginCore.DNS_SERVICE
 }
 
 // SetPowerDNSClient sets the PowerDNS client (for testing)
