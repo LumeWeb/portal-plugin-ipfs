@@ -17,6 +17,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/block"
 	boxo "go.lumeweb.com/portal-plugin-ipfs/internal/service/boxo"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/dns"
 	filemanager "go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/ipns_key"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
@@ -105,7 +106,11 @@ func init() {
 				{
 					ID:      pluginCore.WEBSITE_SERVICE,
 					Factory: website.NewWebsiteService,
-					Depends: []string{pluginCore.PIN_SERVICE, pluginCore.IPNS_KEY_SERVICE},
+					Depends: []string{pluginCore.PIN_SERVICE, pluginCore.IPNS_KEY_SERVICE, pluginCore.DNS_SERVICE},
+				},
+				{
+					ID:      pluginCore.DNS_SERVICE,
+					Factory: dns.NewDNSService,
 				},
 			}, nil
 		},
@@ -124,6 +129,7 @@ func init() {
 			&db.UnixFSNode{},
 			&db.IPFSIPNSKey{},
 			&db.Website{},
+			&db.DNSZone{},
 		},
 		Metrics: GetCollectors(),
 		Migrations: core.DBMigration{
