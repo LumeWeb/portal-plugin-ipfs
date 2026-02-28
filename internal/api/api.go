@@ -760,7 +760,7 @@ See also:.*`),
 Internal webhook called by Caddy when SSL certificates are issued or updated. Requires X-Gateway-Secret header for authentication.
 
 See also:.*`),
-				router.WithTags("internal", "webhooks"),
+				router.WithTags("internal"),
 				router.WithPathParam("domain", "Domain name for the website. Example: example.com", ""),
 				router.WithRequestBody(&dto.SSLStatusUpdateRequest{}, "SSL status update", true),
 				router.WithSuccessResponse(http.StatusOK, "SSL status updated", router.WithJSONContent(dto.WebsiteResponse{})),
