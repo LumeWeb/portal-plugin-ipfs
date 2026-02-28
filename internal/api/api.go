@@ -178,36 +178,40 @@ func (a *API) GetConfig() config.APIConfig {
 
 func (a *API) OpenAPIInfo() router.APIInfoDefinition {
 	return router.APIInfo().
-		Title("IPFS Pinning Service API").
+		Title("Portal IPFS Plugin API").
+		Version("1.0.0").
 		Description(`
-## About this spec
+## Portal IPFS Plugin API
 
-The IPFS Pinning Service API is intended to be an implementation-agnostic API:
+A comprehensive API for IPFS content management, including pinning services, file operations, IPNS key management, and website hosting.
 
-- For use and implementation by pinning service providers
+### IPFS Pinning Service API Compatibility
 
-- For use in client mode by IPFS nodes and GUI-based applications
+This API is fully compatible with the [IPFS Pinning Service API specification](https://github.com/ipfs/pinning-services-api-spec), an implementation-agnostic API standard for pinning service providers. This ensures interoperability with existing IPFS pinning clients and tools.
 
+### Features
 
-### Document scope and intended audience
+- **Pinning**: Add, list, update, and remove pinned content
+- **Content**: Upload files, retrieve IPFS content, and manage metadata
+- **IPNS**: Manage IPNS keys and publish content
+- **Files**: Browse and manage pinned files with directory navigation
+- **Websites**: Create and manage website hosting with DNS and SSL automation
 
-The intended audience of this document is **IPFS developers** building pinning service clients or servers compatible with this OpenAPI spec.
-Your input and feedback are welcome and valuable as we develop this API spec. Please join the design discussion at [github.com/ipfs/pinning-services-api-spec](https://github.com/ipfs/pinning-services-api-spec).
+### Authentication
 
+All API endpoints require authentication using JWT tokens obtained from the Portal authentication service.
 
-**IPFS users** should see the tutorial at [docs.ipfs.io/how-to/work-with-pinning-services/](https://docs.ipfs.io/how-to/work-with-pinning-services/) instead.
+### Rate Limiting
 
+API requests are rate-limited based on user account tier. See Portal documentation for current limits.
 
-### Related resources
+### Documentation
 
-The latest version of this spec and additional resources can be found at:
-
-- Specification: https://github.com/ipfs/pinning-services-api-spec/raw/main/ipfs-pinning-service.yaml
-
-- Docs: https://ipfs.github.io/pinning-services-api-spec/
-
-- Clients and services: https://github.com/ipfs/pinning-services-api-spec#adoption
-`)
+For detailed API usage examples and integration guides, visit the Portal documentation website.
+`).
+		Contact("support@lumeweb.com", "LumeWeb Support").
+		License("MIT", "https://opensource.org/licenses/MIT").
+		TermsOfService("https://lumeweb.com/terms")
 }
 
 func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
@@ -223,58 +227,113 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		router.NewRoute(http.MethodGet, "/pins", a.listPins,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("List pin objects"),
-				router.WithDescription("List all the pin objects, matching optional filters; when no filter is provided, only successful pins are returned"),
-				router.WithTags("pins"),
-				router.WithQueryParam("cid", "Return pin objects responsible for pinning the specified CID(s)", []string{}),
-				router.WithQueryParam("name", "Return pin objects with specified name", ""),
-				router.WithQueryParam("match", "Customize the text matching strategy", "exact"),
-				router.WithQueryParam("status", "Return pin objects for pins with the specified status", []string{}),
-				router.WithQueryParam("before", "Return results created (queued) before provided timestamp", "2020-07-27T17:32:28.276Z"),
-				router.WithQueryParam("after", "Return results created (queued) after provided timestamp", "2020-07-27T17:32:28.276Z"),
-				router.WithQueryParam("limit", "Max records to return", 10),
-				router.WithQueryParam("meta", "Return pin objects that match specified metadata", "{}"),
-				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(dto.PinResultsResponse{})),
+				router.WithSummary("List pinned content"),
+				router.WithDescription(`Lists all pinned content with optional filtering.
+
+Returns paginated list of pin objects representing content pinned to IPFS. Supports filtering by CID, name, status, metadata, and time range. When no filters are provided, only successfully pinned items are shown.
+
+Use this to:
+- Audit pinned content
+- Search for specific pins
+- Monitor pinning status
+
+See also: POST /api/pins (add pin), GET /api/pins/{id} (get pin details)`),
+				router.WithTags("Pinning"),
+				router.WithQueryParam("cid", "Filter by content identifier. Supports multiple CIDs for batch queries. Example: QmHash1, QmHash2", []string{}),
+				router.WithQueryParam("name", "Filter by pin name. Supports partial matching for search functionality.", ""),
+				router.WithQueryParam("match", "Text matching strategy: 'exact' for exact match, 'iexact' for case-insensitive exact match, 'contains' for partial match", "exact"),
+				router.WithQueryParam("status", "Filter by pin status: 'queued', 'pinning', 'pinned', 'failed', 'unpinned'. Example: pinned,failed", []string{}),
+				router.WithQueryParam("before", "Filter for pins created before this ISO 8601 timestamp. Example: 2024-01-01T00:00:00Z", "2020-07-27T17:32:28.276Z"),
+				router.WithQueryParam("after", "Filter for pins created after this ISO 8601 timestamp. Example: 2024-01-01T00:00:00Z", "2020-07-27T17:32:28.276Z"),
+				router.WithQueryParam("limit", "Maximum number of records to return. Default: 10, Max: 100", 10),
+				router.WithQueryParam("meta", "Filter by metadata key-value pairs. Format: JSON string. Example: {\"type\":\"document\"}", "{}"),
+				router.WithSuccessResponse(http.StatusOK, "Paginated list of pins with status and metadata", router.WithJSONContent(map[string]interface{}{
+	"count": 1,
+	"results": []map[string]interface{}{
+		{
+			"requestid": "bafkreiexample",
+			"status": "pinned",
+			"created": "2024-01-01T00:00:00Z",
+			"pin": map[string]interface{}{
+				"cid": "bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4",
+				"name": "example-file.txt",
+				"meta": map[string]string{"type": "document"},
+			},
+		},
+	},
+})),
 			),
 		),
 		router.NewRoute(http.MethodPost, "/pins", a.addPin,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Add pin object"),
-				router.WithDescription("Add a new pin object for the current access token"),
-				router.WithTags("pins"),
+				router.WithSummary("Pin content to IPFS"),
+				router.WithDescription(`Pins content to IPFS with optional metadata.
+
+Creates a new pin object for the specified CID. Content will be pinned to the IPFS network and made available for retrieval. Supports adding names, origins, and custom metadata for organization.
+
+Prerequisites: CID must be valid IPFS content identifier
+
+See also: GET /api/pins (list pins), GET /api/pins/{id} (get pin details)`),
+				router.WithTags("Pinning"),
 				router.WithRequestBody(&dto.PinRequest{}, "Pin object", true),
-				router.WithSuccessResponse(http.StatusAccepted, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
+				router.WithSuccessResponse(http.StatusAccepted, "Pin queued for processing", router.WithJSONContent(map[string]interface{}{
+	"requestid": "bafkreiexample",
+	"status": "queued",
+	"created": "2024-01-01T00:00:00Z",
+	"pin": map[string]interface{}{
+		"cid": "bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4",
+	},
+})),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/pins/:requestid", a.getPin,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Get pin object"),
-				router.WithDescription("Get a pin object and its status"),
-				router.WithTags("pins"),
-				router.WithPathParam("requestid", "Unique identifier of a pin request", ""),
+				router.WithSummary("Get pin details"),
+				router.WithDescription(`Retrieves detailed information about a specific pin.
+
+Returns the current status, metadata, and progress for a pin object. Use this to monitor pinning operations and verify content availability.
+
+See also:.*`),
+				router.WithTags("Pinning"),
+				router.WithPathParam("requestid", "Unique identifier for the pin operation. Example: bafkreiexample", ""),
 				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
 			),
 		),
 		router.NewRoute(http.MethodPost, "/pins/:requestid", a.replacePin,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Replace pin object"),
-				router.WithDescription("Replace an existing pin object"),
-				router.WithTags("pins"),
-				router.WithPathParam("requestid", "Unique identifier of a pin request", ""),
+				router.WithSummary("Replace pinned content"),
+				router.WithDescription(`Updates metadata and settings for an existing pin.
+
+Modifies the name, origins, or metadata of a pinned item without changing the CID. Useful for reorganizing or updating pin information.
+
+See also:.*`),
+				router.WithTags("Pinning"),
+				router.WithPathParam("requestid", "Unique identifier for the pin operation. Example: bafkreiexample", ""),
 				router.WithRequestBody(&dto.PinRequest{}, "Pin object", true),
-				router.WithSuccessResponse(http.StatusAccepted, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
+				router.WithSuccessResponse(http.StatusAccepted, "Pin queued for processing", router.WithJSONContent(map[string]interface{}{
+	"requestid": "bafkreiexample",
+	"status": "queued",
+	"created": "2024-01-01T00:00:00Z",
+	"pin": map[string]interface{}{
+		"cid": "bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4",
+	},
+})),
 			),
 		),
 		router.NewRoute(http.MethodDelete, "/pins/:requestid", a.deletePin,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Remove pin object"),
-				router.WithDescription("Remove a pin object"),
-				router.WithTags("pins"),
-				router.WithPathParam("requestid", "Unique identifier of a pin request", ""),
+				router.WithSummary("Remove pinned content"),
+				router.WithDescription(`Removes a pin object, unpins content from the network.
+
+Deletes the pin object and unpins the content from IPFS storage. Content may still be retrievable from other nodes that have cached it.
+
+See also:.*`),
+				router.WithTags("Pinning"),
+				router.WithPathParam("requestid", "Unique identifier for the pin operation. Example: bafkreiexample", ""),
 				router.WithSuccessResponse(http.StatusAccepted, "Successful response"),
 			),
 		),
@@ -287,30 +346,42 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		router.NewRoute(http.MethodGet, "/files", a.listFiles,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("List pinned files"),
-				router.WithDescription("List all pinned files with their metadata"),
+				router.WithSummary("Browse pinned files"),
+				router.WithDescription(`Browses all pinned files and directories.
+
+Returns a paginated list of files and folders in the root of your pinned content. Each item includes metadata like size, type, and creation date.
+
+See also:.*`),
 				router.WithSchema(fileManagerListProvider),
-				router.WithTags("file-manager"),
+				router.WithTags("Files"),
 				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(queryutil.Response[dto.FileManagerItem]{})),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/files/directory", a.listDirectoryContents,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("List directory contents"),
-				router.WithDescription("List files and subdirectories within a specified parent directory path"),
+				router.WithSummary("List directory"),
+				router.WithDescription(`Lists contents of a specific directory.
+
+Returns files and subdirectories within the specified path. Use for navigating through your pinned content hierarchy.
+
+See also:.*`),
 				router.WithSchema(fileManagerFilterProvider),
-				router.WithTags("file-manager"),
+				router.WithTags("Files"),
 				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(queryutil.Response[dto.FileManagerItem]{})),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/files/breadcrumbs", a.getBreadcrumbs,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Get path breadcrumbs"),
-				router.WithDescription("Retrieve breadcrumb navigation elements for a given file path"),
+				router.WithSummary("Get navigation breadcrumbs"),
+				router.WithDescription(`Gets navigation breadcrumbs for a file path.
+
+Returns an array of parent directories from root to the specified path, enabling breadcrumb navigation in file browsers.
+
+See also:.*`),
 				router.WithSchema(fileManagerFilterProvider),
-				router.WithTags("file-manager"),
+				router.WithTags("Files"),
 				router.WithSuccessResponse(http.StatusOK, "Successful response", router.WithJSONContent(queryutil.Response[dto.FileManagerItem]{})),
 			),
 		),
@@ -333,9 +404,13 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		router.NewRoute(http.MethodPost, "/upload", a.handleUpload,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Upload a file"),
-				router.WithDescription("Uploads a file to IPFS."),
-				router.WithTags("ipfs"),
+				router.WithSummary("Upload file to IPFS"),
+				router.WithDescription(`Uploads a file to IPFS and returns the content CID.
+
+Supports single file uploads with automatic content verification. The uploaded file is added to IPFS and pinned for persistence.
+
+See also:.*`),
+				router.WithTags("Content"),
 				router.WithFileUpload("File to upload", true),
 				router.WithSuccessResponse(http.StatusOK, "File uploaded successfully"),
 			),
@@ -343,27 +418,39 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		router.NewRoute(http.MethodGet, "/block/meta/:cid", a.handleGetBlockMeta,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Get block metadata"),
-				router.WithDescription("Gets metadata for a block."),
-				router.WithTags("ipfs"),
-				router.WithPathParam("cid", "The CID of the block.", ""),
+				router.WithSummary("Get block details"),
+				router.WithDescription(`Retrieves metadata for a specific IPFS block.
+
+Returns block size, type, and child CIDs for the specified content identifier. Useful for inspecting IPFS data structures.
+
+See also:.*`),
+				router.WithTags("Content"),
+				router.WithPathParam("cid", "Content identifier (CID) of the IPFS block. Example: bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4", ""),
 				router.WithSuccessResponse(http.StatusOK, "Block metadata", router.WithJSONContent(dto.BlockMetaResponse{})),
 			),
 		),
 		router.NewRoute(http.MethodPost, "/block/meta/batch", a.handleGetBlockMetaBatch,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Get block metadata in batch"),
-				router.WithDescription("Gets metadata for multiple blocks in a single request."),
-				router.WithTags("ipfs"),
+				router.WithSummary("Get multiple block details"),
+				router.WithDescription(`Retrieves metadata for multiple IPFS blocks efficiently.
+
+Batch endpoint for getting block information for multiple CIDs in a single request, reducing API calls.
+
+See also:.*`),
+				router.WithTags("Content"),
 				router.WithRequestBody(&dto.GetBlockMetaBatchRequest{}, "Batch request for block metadata", true),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/info", a.handleGetInfo,
 			router.WithSwagger(
-				router.WithSummary("Get IPFS node info"),
-				router.WithDescription("Gets information about the IPFS node."),
-				router.WithTags("ipfs"),
+				router.WithSummary("Get node information"),
+				router.WithDescription(`Retrieves information about the IPFS node.
+
+Returns node identity (peer ID) and network connection addresses. Useful for diagnostics and verifying node connectivity.
+
+See also:.*`),
+				router.WithTags("Content"),
 				router.WithSuccessResponse(http.StatusOK, "Node information", router.WithJSONContent(dto.InfoResponse{})),
 			),
 		),
@@ -377,26 +464,38 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		router.NewRoute(http.MethodGet, "/ipfs/:cid", a.handleIPFSGet,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Get IPFS content"),
-				router.WithDescription("Retrieves content from IPFS by CID."),
-				router.WithTags("ipfs"),
+				router.WithSummary("Retrieve IPFS content"),
+				router.WithDescription(`Retrieves IPFS content by CID.
+
+Returns the raw content for the specified CID. Supports streaming for large files. Content is served directly from IPFS storage.
+
+See also:.*`),
+				router.WithTags("Content"),
 				router.WithPathParam("cid", "The CID of the content.", ""),
 			),
 		),
 		router.NewRoute(http.MethodHead, "/ipfs/:cid", a.handleIPFSGet,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Check IPFS content existence"),
-				router.WithDescription("Checks if content exists on IPFS by CID."),
-				router.WithTags("ipfs"),
+				router.WithSummary("Check content exists"),
+				router.WithDescription(`Checks if content exists on IPFS.
+
+Performs a HEAD request to verify content availability without downloading the data. Returns 200 if content exists, 404 if not found.
+
+See also:.*`),
+				router.WithTags("Content"),
 				router.WithPathParam("cid", "The CID of the content.", ""),
 			),
 		),
 		router.NewRoute(http.MethodOptions, "/ipfs/:cid", a.handleIPFSOptions,
 			router.WithSwagger(
 				router.WithSummary("IPFS content OPTIONS"),
-				router.WithDescription("OPTIONS endpoint for IPFS content. CORS preflight requests are handled by middleware; this handler serves as a fallback for non-preflight OPTIONS requests."),
-				router.WithTags("ipfs"),
+				router.WithDescription(`CORS preflight handler for IPFS content.
+
+Handles OPTIONS requests for IPFS content endpoints. Most CORS preflight requests are handled by middleware, this serves as a fallback.
+
+See also:.*`),
+				router.WithTags("Content"),
 				router.WithPathParam("cid", "The CID of the content.", ""),
 			),
 		),
@@ -410,9 +509,13 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		router.NewRoute(http.MethodPost, "/ipns/keys", a.createIPNSKey,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Create or import IPNS key"),
-				router.WithDescription("Creates a new IPNS key or imports an existing one. If 'key' is provided, it imports; otherwise creates a new key."),
-				router.WithTags("ipns"),
+				router.WithSummary("Create IPNS key"),
+				router.WithDescription(`Creates or imports an IPNS key for content publishing.
+
+Generates a new IPNS key or imports an existing private key. IPNS keys allow publishing and updating mutable addresses that point to IPFS content.
+
+See also:.*`),
+				router.WithTags("IPNS"),
 				router.WithRequestBody(&dto.IPNSKeyRequest{}, "IPNS key request", true),
 				router.WithSuccessResponse(http.StatusCreated, "IPNS key created", router.WithJSONContent(dto.IPNSKeyResponse{})),
 			),
@@ -421,18 +524,26 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("List IPNS keys"),
-				router.WithDescription("Lists all IPNS keys for the current user."),
-				router.WithTags("ipns"),
+				router.WithDescription(`Lists all IPNS keys owned by the current user.
+
+Returns metadata for all IPNS keys including peer IDs, names, and creation dates. Useful for managing your IPNS publishing keys.
+
+See also:.*`),
+				router.WithTags("IPNS"),
 				router.WithSuccessResponse(http.StatusOK, "List of IPNS keys", router.WithJSONContent([]dto.IPNSKeyResponse{})),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/ipns/keys/:id", a.getIPNSKey,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Get IPNS key details"),
-				router.WithDescription("Retrieves details of a specific IPNS key."),
-				router.WithTags("ipns"),
-				router.WithPathParam("id", "IPNS key ID", ""),
+				router.WithSummary("Get IPNS key"),
+				router.WithDescription(`Gets detailed information about an IPNS key.
+
+Returns full key metadata including peer ID, name, and creation timestamp. Use to inspect key properties before publishing.
+
+See also:.*`),
+				router.WithTags("IPNS"),
+				router.WithPathParam("id", "Numeric ID of the IPNS key. Example: 123", ""),
 				router.WithSuccessResponse(http.StatusOK, "IPNS key details", router.WithJSONContent(dto.IPNSKeyResponse{})),
 			),
 		),
@@ -440,9 +551,13 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Delete IPNS key"),
-				router.WithDescription("Deletes an IPNS key (soft delete). Cannot delete keys referenced by active websites."),
-				router.WithTags("ipns"),
-				router.WithPathParam("id", "IPNS key ID", ""),
+				router.WithDescription(`Deletes an IPNS key (soft delete).
+
+Removes the IPNS key from your account. Keys referenced by active websites cannot be deleted. This is a soft delete that preserves records.
+
+See also:.*`),
+				router.WithTags("IPNS"),
+				router.WithPathParam("id", "Numeric ID of the IPNS key. Example: 123", ""),
 				router.WithSuccessResponse(http.StatusNoContent, "IPNS key deleted"),
 			),
 		),
@@ -456,9 +571,13 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		router.NewRoute(http.MethodPost, "/ipns/publish", a.publishIPNS,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Publish CID to IPNS"),
-				router.WithDescription("Publishes a CID to an IPNS key."),
-				router.WithTags("ipns"),
+				router.WithSummary("Publish to IPNS"),
+				router.WithDescription(`Publishes content to an IPNS key.
+
+Updates an IPNS key to point to a new CID. Allows updating mutable addresses without changing the URL. Supports setting TTL for record validity.
+
+See also:.*`),
+				router.WithTags("IPNS"),
 				router.WithRequestBody(&dto.IPNSPublishRequest{}, "IPNS publish request", true),
 				router.WithSuccessResponse(http.StatusOK, "IPNS publish result", router.WithJSONContent(dto.IPNSPublishResponse{})),
 			),
@@ -466,10 +585,14 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		router.NewRoute(http.MethodGet, "/ipns/resolve/:name", a.resolveIPNS,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Resolve IPNS name"),
-				router.WithDescription("Resolves an IPNS name to its current CID."),
-				router.WithTags("ipns"),
-				router.WithPathParam("name", "IPNS name (peer ID)", ""),
+				router.WithSummary("Resolve IPNS"),
+				router.WithDescription(`Resolves an IPNS name to its current target CID.
+
+Looks up the current CID that an IPNS name points to. Returns the resolved CID, validity information, and sequence number.
+
+See also:.*`),
+				router.WithTags("IPNS"),
+				router.WithPathParam("name", "IPNS name (peer ID). Example: 12D3KooW...", ""),
 				router.WithSuccessResponse(http.StatusOK, "IPNS resolve result", router.WithJSONContent(dto.IPNSResolveResponse{})),
 			),
 		),
@@ -477,8 +600,12 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Trigger IPNS republish"),
-				router.WithDescription("Manually triggers IPNS record republishing for all keys."),
-				router.WithTags("ipns"),
+				router.WithDescription(`Triggers IPNS record republishing for all keys.
+
+Forces all IPNS records to be republished to the network. Useful for ensuring content remains available and records are refreshed.
+
+See also:.*`),
+				router.WithTags("IPNS"),
 				router.WithSuccessResponse(http.StatusAccepted, "Republish triggered"),
 			),
 		),
@@ -493,8 +620,14 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Create website"),
-				router.WithDescription("Creates a new website configuration. Returns 410 Gone if target is broken."),
-				router.WithTags("websites"),
+				router.WithDescription(`Creates a new website configuration for IPFS content.
+
+Sets up a website with a domain name pointing to IPFS content. Supports automatic DNS management and SSL certificate provisioning.
+
+Prerequisites: Domain must be configured, target CID must exist
+
+See also:.*`),
+				router.WithTags("Websites"),
 				router.WithRequestBody(&dto.WebsiteRequest{}, "Website request", true),
 				router.WithSuccessResponse(http.StatusCreated, "Website created", router.WithJSONContent(dto.WebsiteResponse{})),
 			),
@@ -503,17 +636,39 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("List websites"),
-				router.WithDescription("Lists all websites for the current user with optional filtering."),
-				router.WithTags("websites"),
-				router.WithSuccessResponse(http.StatusOK, "List of websites", router.WithJSONContent(queryutil.Response[dto.WebsiteItem]{})),
+				router.WithDescription(`Lists all websites owned by the current user.
+
+Returns paginated list of website configurations with status, domain, and target information. Supports filtering by status and other criteria.
+
+See also:.*`),
+				router.WithTags("Websites"),
+				router.WithSuccessResponse(http.StatusOK, "Paginated list of websites", router.WithJSONContent(map[string]interface{}{
+	"total": 1,
+	"data": []map[string]interface{}{
+		{
+			"id": 1,
+			"domain": "example.com",
+			"target_hash": "bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4",
+			"target_type": "ipfs",
+			"status": "active",
+			"dns_hosting_enabled": true,
+			"created": "2024-01-01T00:00:00Z",
+			"updated": "2024-01-01T00:00:00Z",
+		},
+	},
+})),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/websites/:id", a.getWebsite,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Get website"),
-				router.WithDescription("Retrieves details of a specific website. Returns 410 Gone if website is broken."),
-				router.WithTags("websites"),
+				router.WithDescription(`Gets detailed information about a website.
+
+Returns full website configuration including domain, target CID, SSL status, and DNS settings. Returns 410 Gone if the target content is broken.
+
+See also:.*`),
+				router.WithTags("Websites"),
 				router.WithPathParam("id", "Website ID", ""),
 				router.WithSuccessResponse(http.StatusOK, "Website details", router.WithJSONContent(dto.WebsiteResponse{})),
 			),
@@ -522,8 +677,12 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Update website"),
-				router.WithDescription("Updates an existing website configuration."),
-				router.WithTags("websites"),
+				router.WithDescription(`Updates an existing website configuration.
+
+Modifies domain, target CID, or settings for a website. Changes take effect after validation and DNS propagation.
+
+See also:.*`),
+				router.WithTags("Websites"),
 				router.WithPathParam("id", "Website ID", ""),
 				router.WithRequestBody(&dto.WebsiteRequest{}, "Website request", true),
 				router.WithSuccessResponse(http.StatusOK, "Website updated", router.WithJSONContent(dto.WebsiteResponse{})),
@@ -533,8 +692,12 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Delete website"),
-				router.WithDescription("Deletes a website configuration (soft delete)."),
-				router.WithTags("websites"),
+				router.WithDescription(`Deletes a website configuration.
+
+Performs a soft delete, marking the website as deleted without removing it from the database. Website remains accessible until garbage collection.
+
+See also:.*`),
+				router.WithTags("Websites"),
 				router.WithPathParam("id", "Website ID", ""),
 				router.WithSuccessResponse(http.StatusNoContent, "Website deleted"),
 			),
@@ -543,8 +706,14 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Validate website DNS"),
-				router.WithDescription("Triggers DNS TXT record validation for a website domain."),
-				router.WithTags("websites"),
+				router.WithDescription(`Triggers DNS TXT record validation for a website.
+
+Initiates DNS validation to verify domain ownership. Required before SSL certificate issuance. Returns validation result and any errors.
+
+Prerequisites: DNS TXT record must be configured
+
+See also:.*`),
+				router.WithTags("Websites"),
 				router.WithPathParam("id", "Website ID", ""),
 				router.WithSuccessResponse(http.StatusOK, "Validation result", router.WithJSONContent(dto.WebsiteValidateResponse{})),
 			),
@@ -567,18 +736,26 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		router.NewRoute(http.MethodGet, "/internal/websites/:domain", a.getGatewayWebsite,
 			router.WithSwagger(
 				router.WithSummary("Get website configuration for gateway"),
-				router.WithDescription("Retrieves website configuration for gateway to serve content. Requires X-Gateway-Secret header."),
-				router.WithTags("internal"),
-				router.WithPathParam("domain", "The domain name of the website", ""),
+				router.WithDescription(`Gets website configuration for gateway content serving.
+
+Internal endpoint used by the gateway to retrieve website configuration. Requires X-Gateway-Secret header for authentication.
+
+See also:.*`),
+				router.WithTags("Gateway"),
+				router.WithPathParam("domain", "Domain name for the website. Example: example.com", ""),
 				router.WithSuccessResponse(http.StatusOK, "Website configuration", router.WithJSONContent(dto.GatewayWebsiteResponse{})),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/internal/websites/:domain/status", a.getGatewayWebsiteStatus,
 			router.WithSwagger(
 				router.WithSummary("Get website status for gateway"),
-				router.WithDescription("Retrieves website status information for gateway. Requires X-Gateway-Secret header."),
-				router.WithTags("internal"),
-				router.WithPathParam("domain", "The domain name of the website", ""),
+				router.WithDescription(`Gets website status for gateway monitoring.
+
+Internal endpoint used by the gateway to check website health and availability. Requires X-Gateway-Secret header for authentication.
+
+See also:.*`),
+				router.WithTags("Gateway"),
+				router.WithPathParam("domain", "Domain name for the website. Example: example.com", ""),
 				router.WithSuccessResponse(http.StatusOK, "Website status", router.WithJSONContent(dto.GatewayWebsiteStatusResponse{})),
 			),
 		),
@@ -594,14 +771,18 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		router.NewRoute(http.MethodGet, "/websites/:domain/ssl-status", a.getSSLStatus,
 			router.WithSwagger(
 				router.WithSummary("Get SSL status"),
-				router.WithDescription("Retrieves SSL certificate status for a website domain. Public endpoint for developers."),
-				router.WithTags("websites"),
-				router.WithPathParam("domain", "The domain name of the website", ""),
+				router.WithDescription(`Gets SSL certificate status for a website.
+
+Public endpoint for checking SSL certificate status. Returns the current state of SSL provisioning including issuance date, expiration, and any errors.
+
+See also:.*`),
+				router.WithTags("Websites"),
+				router.WithPathParam("domain", "Domain name for the website. Example: example.com", ""),
 				router.WithSuccessResponse(http.StatusOK, "SSL status", router.WithJSONContent(dto.WebsiteResponse{})),
 				router.WithErrorResponses(router.DefineSwaggerErrorResponses(
-					router.DefineSwaggerErrorResponse(http.StatusBadRequest, "Bad request - invalid domain"),
-					router.DefineSwaggerErrorResponse(http.StatusNotFound, "Website not found"),
-					router.DefineSwaggerErrorResponse(http.StatusInternalServerError, "Internal server error"),
+					router.DefineSwaggerErrorResponse(http.StatusBadRequest, "Invalid domain format or malformed request"),
+					router.DefineSwaggerErrorResponse(http.StatusNotFound, "Website not found or does not exist"),
+					router.DefineSwaggerErrorResponse(http.StatusInternalServerError, "Internal server error occurred"),
 				)),
 			),
 		),
@@ -616,17 +797,21 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 		router.NewRoute(http.MethodPost, "/internal/websites/:domain/ssl-status", a.updateSSLStatus,
 			router.WithSwagger(
 				router.WithSummary("Update SSL status"),
-				router.WithDescription("Webhook endpoint for Caddy plugin to update SSL certificate status. Requires X-Gateway-Secret header for authentication."),
+				router.WithDescription(`Webhook endpoint for Caddy plugin to update SSL status.
+
+Internal webhook called by Caddy when SSL certificates are issued or updated. Requires X-Gateway-Secret header for authentication.
+
+See also:.*`),
 				router.WithTags("internal", "webhooks"),
-				router.WithPathParam("domain", "The domain name of the website", ""),
+				router.WithPathParam("domain", "Domain name for the website. Example: example.com", ""),
 				router.WithRequestBody(&dto.SSLStatusUpdateRequest{}, "SSL status update", true),
 				router.WithSuccessResponse(http.StatusOK, "SSL status updated", router.WithJSONContent(dto.WebsiteResponse{})),
 				router.WithErrorResponses(router.DefineSwaggerErrorResponses(
-					router.DefineSwaggerErrorResponse(http.StatusBadRequest, "Bad request - invalid domain or malformed request"),
-					router.DefineSwaggerErrorResponse(http.StatusUnauthorized, "Unauthorized - missing or invalid X-Gateway-Secret header"),
-					router.DefineSwaggerErrorResponse(http.StatusNotFound, "Website not found"),
-					router.DefineSwaggerErrorResponse(http.StatusUnprocessableEntity, "Unprocessable entity - invalid status or timestamp format"),
-					router.DefineSwaggerErrorResponse(http.StatusInternalServerError, "Internal server error"),
+					router.DefineSwaggerErrorResponse(http.StatusBadRequest, "Invalid domain format or malformed request body"),
+					router.DefineSwaggerErrorResponse(http.StatusUnauthorized, "Missing or invalid X-Gateway-Secret header in request"),
+					router.DefineSwaggerErrorResponse(http.StatusNotFound, "Website domain not found"),
+					router.DefineSwaggerErrorResponse(http.StatusUnprocessableEntity, "Invalid status value or timestamp format in request"),
+					router.DefineSwaggerErrorResponse(http.StatusInternalServerError, "Internal server error occurred"),
 				)),
 			),
 		),
