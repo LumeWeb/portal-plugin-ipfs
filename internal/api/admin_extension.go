@@ -120,8 +120,14 @@ func (e *AdminExtension) registerWebsiteHandlers(gRouter router.Router, accessSv
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Block website"),
-				router.WithDescription("Blocks a website by setting its status to 'blocked'. Blocked websites cannot be deleted by users (admin operation)."),
-				router.WithTags("admin", "websites", "ipfs"),
+				router.WithDescription(`Blocks a website by setting status to 'blocked'.
+
+Admin-only operation that prevents deletion of problematic websites. Blocked websites remain in the system but cannot be modified or removed by users.
+
+Prerequisites: Admin access required
+
+See also: POST /websites/:id/unblock (unblock website)`),
+				router.WithTags("Admin", "Websites", "Content"),
 				router.WithPathParam("id", "Website ID", ""),
 				router.WithSuccessResponse(http.StatusOK, "Website blocked", router.WithJSONContent(dto.WebsiteResponse{})),
 			),
@@ -130,8 +136,14 @@ func (e *AdminExtension) registerWebsiteHandlers(gRouter router.Router, accessSv
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Unblock website"),
-				router.WithDescription("Unblocks a website by setting its status back to 'active' (admin operation)."),
-				router.WithTags("admin", "websites", "ipfs"),
+				router.WithDescription(`Unblocks a website by restoring status to 'active'.
+
+Admin-only operation that re-enables a previously blocked website, allowing users to manage it again.
+
+Prerequisites: Admin access required
+
+See also: POST /websites/:id/block (block website)`),
+				router.WithTags("Admin", "Websites", "Content"),
 				router.WithPathParam("id", "Website ID", ""),
 				router.WithSuccessResponse(http.StatusOK, "Website unblocked", router.WithJSONContent(dto.WebsiteResponse{})),
 			),
