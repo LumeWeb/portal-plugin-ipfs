@@ -209,9 +209,7 @@ API requests are rate-limited based on user account tier. See Portal documentati
 
 For detailed API usage examples and integration guides, visit the Portal documentation website.
 `).
-		Contact("support@lumeweb.com", "LumeWeb Support").
-		License("MIT", "https://opensource.org/licenses/MIT").
-		TermsOfService("https://lumeweb.com/terms")
+		License("MIT", "https://opensource.org/licenses/MIT")
 }
 
 func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
