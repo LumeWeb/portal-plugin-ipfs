@@ -53,6 +53,9 @@ type IPNSKeyService interface {
 	// ListKeys lists all IPNS keys for a user
 	ListKeys(ctx context.Context, userID uint) ([]pluginDb.IPFSIPNSKey, error)
 
+	// GetKeyByName retrieves a single IPNS key by name for a user
+	GetKeyByName(ctx context.Context, userID uint, name string) (*pluginDb.IPFSIPNSKey, error)
+
 	// GetKeyByID retrieves a single IPNS key by ID
 	GetKeyByID(ctx context.Context, userID uint, keyID uint) (*pluginDb.IPFSIPNSKey, error)
 
