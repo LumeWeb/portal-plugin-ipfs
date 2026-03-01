@@ -21,16 +21,11 @@ CREATE TABLE IF NOT EXISTS ipfs_dns_zones (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- +goose StatementEnd
 
--- +goose StatementBegin
-ALTER TABLE ipfs_websites ADD COLUMN dns_zone_id BIGINT UNSIGNED NULL;
--- +goose StatementEnd
-
--- +goose StatementBegin
-CREATE INDEX idx_websites_dns_zone_id ON ipfs_websites(dns_zone_id);
--- +goose StatementEnd
-
+-- Note: dns_zone_id column and ipns_key_id column already exist in ipfs_websites from migration 20260207010815
+-- Foreign key constraints added here
 -- +goose StatementBegin
 ALTER TABLE ipfs_websites ADD CONSTRAINT fk_websites_dns_zone FOREIGN KEY (dns_zone_id) REFERENCES ipfs_dns_zones(id);
+ALTER TABLE ipfs_websites ADD CONSTRAINT fk_websites_ipns_key FOREIGN KEY (ipns_key_id) REFERENCES ipfs_ipns_keys(id) ON DELETE SET NULL;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
@@ -40,6 +35,7 @@ ALTER TABLE ipfs_websites ADD CONSTRAINT fk_websites_ipns_key FOREIGN KEY (ipns_
 -- +goose Down
 -- +goose StatementBegin
 ALTER TABLE ipfs_websites DROP FOREIGN KEY fk_websites_dns_zone;
+<<<<<<< HEAD
 -- +goose StatementEnd
 
 -- +goose StatementBegin
@@ -52,6 +48,9 @@ DROP INDEX IF EXISTS idx_websites_dns_zone_id ON ipfs_websites;
 
 -- +goose StatementBegin
 ALTER TABLE ipfs_websites DROP COLUMN dns_zone_id;
+=======
+ALTER TABLE ipfs_websites DROP FOREIGN KEY fk_websites_ipns_key;
+>>>>>>> de08024f (feat(dns): add database migrations for DNS zones)
 -- +goose StatementEnd
 
 -- +goose StatementBegin
