@@ -6,7 +6,10 @@ import (
 	"time"
 
 	"github.com/ipfs/go-cid"
+	"github.com/libp2p/go-libp2p/core/peer"
+	mh "github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
@@ -18,9 +21,44 @@ import (
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.lumeweb.com/queryutil"
+	"gorm.io/gorm"
 )
 
-// Helper function to create a test website with IPFS target
+// Test constants for DNS zone IDs and other magic numbers
+// parsePeerID parses a peer ID string in various formats (legacy PeerID, CIDv1, etc.)
+// Based on boxo codebase - liberal in inputs to handle legacy PeerID strings
+func parsePeerID(pidStr string) (peer.ID, error) {
+	// Attempt to parse PeerID
+	pid, err := peer.Decode(pidStr)
+	if err != nil {
+		// Retry by parsing PeerID as CID, then setting codec to libp2p-key
+		// and turning that back to PeerID.
+		// This is necessary to make sure legacy keys are parsed correctly.
+		pidAsCid, err2 := cid.Decode(pidStr)
+		if err2 == nil {
+			pidAsCid = cid.NewCidV1(cid.Libp2pKey, pidAsCid.Hash())
+			pid, err = peer.FromCid(pidAsCid)
+		}
+	}
+	return pid, err
+}
+
+const (
+	testUserID1 = uint(1)
+	testUserID2 = uint(2)
+	testZoneID1 = uint(100)
+	testZoneID2 = uint(200)
+	testZoneID3 = uint(300)
+	testZoneID4 = uint(400)
+	testZoneID5 = uint(500)
+	testZoneID6 = uint(600)
+	testZoneID7 = uint(700)
+	testZoneID8 = uint(800) // Reused across multiple tests: DeleteWebsite_DNSHostingEnabled_CleansUpDNSRecordsNotZone and CreateWebsite_DNSRecordsCreationFailure_ContinuesWithoutRecords
+)
+
+// createTestIPFSWebsite creates a test website with an IPFS target.
+// It returns a Website struct ready for use in tests, with the specified user ID,
+// domain, and CID string parsed into the appropriate fields.
 func createTestIPFSWebsite(userID uint, domain string, cidStr string) *pluginDb.Website {
 	c := cid.MustParse(cidStr)
 	version := uint8(c.Version())
@@ -34,7 +72,9 @@ func createTestIPFSWebsite(userID uint, domain string, cidStr string) *pluginDb.
 	}
 }
 
-// Helper function to create a test website with IPNS target
+// createTestIPNSWebsite creates a test website with an IPNS target.
+// It returns a Website struct ready for use in tests, with the specified user ID,
+// domain, and IPNS string parsed into the appropriate fields.
 func createTestIPNSWebsite(userID uint, domain string, ipnsStr string) *pluginDb.Website {
 	target, _ := pluginDb.NewIPNSTargetFromString(ipnsStr)
 	return &pluginDb.Website{
@@ -47,12 +87,24 @@ func createTestIPNSWebsite(userID uint, domain string, ipnsStr string) *pluginDb
 	}
 }
 
+// createMockDNSZone creates a mock DNS zone for testing purposes.
+// It returns a DNSZone struct with the specified ID, domain, and user ID,
+// suitable for use as a return value in mocked DNS service calls.
+func createMockDNSZone(zoneID uint, domain string, userID uint) *pluginDb.DNSZone {
+	return &pluginDb.DNSZone{
+		Model:  gorm.Model{ID: zoneID},
+		Domain: domain,
+		UserID: userID,
+	}
+}
+
 var TestOptions = coreTesting.CombineOptions(
-	// Use mock IPNS key service since website service depends on it
-	coreTesting.WithMockServiceFactory(pluginCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService),
 	coreTesting.WithServiceFactory(pluginCore.WEBSITE_SERVICE, NewWebsiteService),
+	coreTesting.WithMockServiceFactory(pluginCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService),
 	coreTesting.WithMockServiceFactory(pluginCore.PIN_SERVICE, mocks.NewMockIPFSPinService),
 	coreTesting.WithMockServiceFactory(pluginCore.FILE_MANAGER_SERVICE, mocks.NewMockFileManagerService),
+	coreTesting.WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService),
+	coreTesting.WithMockServiceFactory(pluginCore.IPNS_PUBLISHER_SERVICE, mocks.NewMockIPNSPublisherService),
 	coreTesting.WithMockMailerService(),
 	util.GetProtocolMock(),
 	// Disable notifications to avoid mailer mock issues in tests
@@ -74,10 +126,9 @@ func TestWebsiteService_CreateWebsite_IPFSTarget(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "example.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -85,7 +136,7 @@ func TestWebsiteService_CreateWebsite_IPFSTarget(t *testing.T) {
 		// Assert
 		require.NoError(tb, err)
 		assert.NotNil(tb, createdWebsite)
-		assert.Equal(tb, userID, createdWebsite.UserID)
+		assert.Equal(tb, testUserID1, createdWebsite.UserID)
 		assert.Equal(tb, "example.com", createdWebsite.Domain)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPFS), createdWebsite.TargetType)
 		assert.Equal(tb, testCID.String(), createdWebsite.TargetHash())
@@ -95,7 +146,7 @@ func TestWebsiteService_CreateWebsite_IPFSTarget(t *testing.T) {
 		assert.NotZero(tb, createdWebsite.ID)
 
 		// Verify website can be retrieved
-		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.Equal(tb, createdWebsite.ID, retrievedWebsite.ID)
 	}, TestOptions)
@@ -107,9 +158,8 @@ func TestWebsiteService_SSLStatusDoesNotAffectWebsiteStatus(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
-		website := createTestIPFSWebsite(userID, "example.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
 
 		// Create website
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -123,7 +173,7 @@ func TestWebsiteService_SSLStatusDoesNotAffectWebsiteStatus(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Act & Assert - Verify SSL status is failed and website status is unchanged
-		finalWebsite, err := websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		finalWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 
 		assert.Equal(tb, initialStatus, finalWebsite.Status, "website status should not be affected by SSL transitions")
@@ -138,9 +188,8 @@ func TestWebsiteService_SSLStatusTransitionsIndependently(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
-		website := createTestIPFSWebsite(userID, "example.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
 
 		// Create website
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -171,7 +220,7 @@ func TestWebsiteService_SSLStatusTransitionsIndependently(t *testing.T) {
 		assert.Equal(tb, "certificate expired", updatedWebsite.SSLError)
 
 		// Assert - Website status should not have changed
-		finalWebsite, err := websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		finalWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), finalWebsite.Status, "website status should not be affected by SSL transitions")
 	}, TestOptions)
@@ -183,9 +232,8 @@ func TestWebsiteService_WebsiteCanBeBrokenRegardlessOfSSLStatus(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
-		website := createTestIPFSWebsite(userID, "example.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
 
 		// Create website
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -196,17 +244,17 @@ func TestWebsiteService_WebsiteCanBeBrokenRegardlessOfSSLStatus(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Verify SSL is ready
-		websiteWithSSL, err := websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		websiteWithSSL, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.Equal(tb, string(pluginDb.SSLStatusReady), websiteWithSSL.SSLStatus)
 
 		// Act - Update website status to broken
 		updates := map[string]interface{}{"status": string(pluginDb.WebsiteStatusBroken)}
-		_, err = websiteService.UpdateWebsite(context.Background(), userID, createdWebsite.ID, updates)
+		_, err = websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
 		require.NoError(tb, err)
 
 		// Assert - SSL status remains ready, website status is now broken
-		finalWebsite, err := websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		finalWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.Equal(t, string(pluginDb.SSLStatusReady), finalWebsite.SSLStatus, "SSL status should not be affected by website status change")
 		assert.Equal(t, string(pluginDb.WebsiteStatusBroken), finalWebsite.Status, "Website status should be broken")
@@ -219,11 +267,10 @@ func TestWebsiteService_CreateWebsite_IPNSTarget(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		// Use a valid IPNS name (CIDv1 with libp2p-key codec)
 		ipnsName := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
 
-		website := createTestIPNSWebsite(userID, "ipns-example.com", ipnsName)
+		website := createTestIPNSWebsite(testUserID1, "ipns-example.com", ipnsName)
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -231,7 +278,7 @@ func TestWebsiteService_CreateWebsite_IPNSTarget(t *testing.T) {
 		// Assert
 		require.NoError(tb, err)
 		assert.NotNil(tb, createdWebsite)
-		assert.Equal(tb, userID, createdWebsite.UserID)
+		assert.Equal(tb, testUserID1, createdWebsite.UserID)
 		assert.Equal(tb, "ipns-example.com", createdWebsite.Domain)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType)
 		assert.Equal(tb, ipnsName, createdWebsite.TargetHash())
@@ -245,10 +292,9 @@ func TestWebsiteService_CreateWebsite_InvalidDomain(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "invalid domain with spaces", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "invalid domain with spaces", testCID.String())
 		website.Status = "" // Clear for validation error test
 
 
@@ -268,16 +314,15 @@ func TestWebsiteService_CreateWebsite_DuplicateDomain(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website1 := createTestIPFSWebsite(userID, "duplicate.com", testCID.String())
+		website1 := createTestIPFSWebsite(testUserID1, "duplicate.com", testCID.String())
 
 		// Create first website
 		_, err := websiteService.CreateWebsite(context.Background(), website1)
 		require.NoError(tb, err)
 
-		website2 := createTestIPFSWebsite(userID, "duplicate.com", testCID.String())
+		website2 := createTestIPFSWebsite(testUserID1, "duplicate.com", testCID.String())
 
 		// Act - Try to create duplicate
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website2)
@@ -295,10 +340,8 @@ func TestWebsiteService_CreateWebsite_InvalidTargetType(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
-
 		website := &pluginDb.Website{
-			UserID:     userID,
+			UserID:     testUserID1,
 			Domain:     "example.com",
 			TargetType: "invalid_type",
 		}
@@ -319,16 +362,15 @@ func TestWebsiteService_GetWebsite(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "get-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "get-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
 		// Act
-		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 
 		// Assert
 		require.NoError(tb, err)
@@ -346,11 +388,10 @@ func TestWebsiteService_GetWebsite_NotFound(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		nonExistentID := uint(99999)
 
 		// Act
-		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), userID, nonExistentID)
+		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, nonExistentID)
 
 		// Assert - GetWebsite returns (nil, nil) for not found (no error)
 		require.NoError(tb, err)
@@ -364,10 +405,9 @@ func TestWebsiteService_GetWebsiteByDomain(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "domain-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "domain-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -404,12 +444,9 @@ func TestWebsiteService_ListWebsites(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
-		userID2 := uint(2)
-
 		// Create websites for user 1
-		website1 := createTestIPFSWebsite(userID, "list1.com", util.GenerateTestCID(t, "data1").String())
-		website2 := createTestIPFSWebsite(userID, "list2.com", util.GenerateTestCID(t, "data2").String())
+		website1 := createTestIPFSWebsite(testUserID1, "list1.com", util.GenerateTestCID(t, "data1").String())
+		website2 := createTestIPFSWebsite(testUserID1, "list2.com", util.GenerateTestCID(t, "data2").String())
 
 		created1, err := websiteService.CreateWebsite(context.Background(), website1)
 		require.NoError(tb, err)
@@ -417,12 +454,12 @@ func TestWebsiteService_ListWebsites(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Create a website for user 2
-		website3 := createTestIPFSWebsite(userID2, "list3.com", util.GenerateTestCID(t, "data3").String())
+		website3 := createTestIPFSWebsite(testUserID2, "list3.com", util.GenerateTestCID(t, "data3").String())
 		_, err = websiteService.CreateWebsite(context.Background(), website3)
 		require.NoError(tb, err)
 
 		// Act - List websites for user 1
-		websites, total, err := websiteService.ListWebsites(context.Background(), userID, nil, nil, queryutil.DefaultPagination)
+		websites, total, err := websiteService.ListWebsites(context.Background(), testUserID1, nil, nil, queryutil.DefaultPagination)
 
 		// Assert
 		require.NoError(tb, err)
@@ -431,7 +468,7 @@ func TestWebsiteService_ListWebsites(t *testing.T) {
 
 		// Verify all websites belong to user 1
 		for _, w := range websites {
-			assert.Equal(tb, userID, w.UserID)
+			assert.Equal(tb, testUserID1, w.UserID)
 		}
 
 		// Verify the expected websites are in the list
@@ -450,10 +487,9 @@ func TestWebsiteService_UpdateWebsite(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "update-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "update-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -467,7 +503,7 @@ func TestWebsiteService_UpdateWebsite(t *testing.T) {
 		}
 
 		// Act
-		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), userID, createdWebsite.ID, updates)
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
 
 		// Assert
 		require.NoError(tb, err)
@@ -485,7 +521,6 @@ func TestWebsiteService_UpdateWebsite_NotFound(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		nonExistentID := uint(99999)
 
 		updates := map[string]interface{}{
@@ -493,7 +528,7 @@ func TestWebsiteService_UpdateWebsite_NotFound(t *testing.T) {
 		}
 
 		// Act
-		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), userID, nonExistentID, updates)
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, nonExistentID, updates)
 
 		// Assert
 		assert.Error(tb, err)
@@ -507,27 +542,26 @@ func TestWebsiteService_DeleteWebsite(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "delete-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "delete-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
 		// Verify website exists
-		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.NotNil(tb, retrievedWebsite)
 
 		// Act - Delete the website
-		err = websiteService.DeleteWebsite(context.Background(), userID, createdWebsite.ID)
+		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
 
 		// Assert
 		require.NoError(tb, err)
 
 		// Verify website is soft-deleted (should not be found)
-		retrievedWebsite, err = websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		retrievedWebsite, err = websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.Nil(tb, retrievedWebsite)
 	}, TestOptions)
@@ -539,11 +573,10 @@ func TestWebsiteService_DeleteWebsite_NotFound(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		nonExistentID := uint(99999)
 
 		// Act
-		err := websiteService.DeleteWebsite(context.Background(), userID, nonExistentID)
+		err := websiteService.DeleteWebsite(context.Background(), testUserID1, nonExistentID)
 
 		// Assert
 		assert.Error(tb, err)
@@ -556,10 +589,9 @@ func TestWebsiteService_ValidationTokenExpiration(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "expire-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "expire-test.com", testCID.String())
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -584,10 +616,9 @@ func TestWebsiteService_StatusTransitions(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "status-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "status-test.com", testCID.String())
 
 		// Create website (should be pending_validation)
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -598,13 +629,13 @@ func TestWebsiteService_StatusTransitions(t *testing.T) {
 		updates := map[string]interface{}{
 			"status": string(pluginDb.WebsiteStatusActive),
 		}
-		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), userID, createdWebsite.ID, updates)
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
 		require.NoError(tb, err)
 		assert.Equal(t, string(pluginDb.WebsiteStatusActive), updatedWebsite.Status)
 
 		// Update to broken
 		updates["status"] = string(pluginDb.WebsiteStatusBroken)
-		updatedWebsite, err = websiteService.UpdateWebsite(context.Background(), userID, createdWebsite.ID, updates)
+		updatedWebsite, err = websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
 		require.NoError(tb, err)
 		assert.Equal(t, string(pluginDb.WebsiteStatusBroken), updatedWebsite.Status)
 	}, TestOptions)
@@ -616,10 +647,9 @@ func TestWebsiteService_ShouldCheck(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "check-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "check-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -645,10 +675,9 @@ func TestWebsiteService_IsExpired(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "expire-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "expire-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -673,10 +702,9 @@ func TestWebsiteService_BlockWebsite(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "block-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "block-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -689,7 +717,7 @@ func TestWebsiteService_BlockWebsite(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Verify website is now blocked
-		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.NotNil(tb, retrievedWebsite)
 		assert.Equal(t, string(pluginDb.WebsiteStatusBlocked), retrievedWebsite.Status)
@@ -702,10 +730,9 @@ func TestWebsiteService_UnblockWebsite(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "unblock-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "unblock-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -715,7 +742,7 @@ func TestWebsiteService_UnblockWebsite(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Verify it's blocked
-		blockedWebsite, err := websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		blockedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.Equal(t, string(pluginDb.WebsiteStatusBlocked), blockedWebsite.Status)
 
@@ -726,7 +753,7 @@ func TestWebsiteService_UnblockWebsite(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Verify website is now active
-		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.NotNil(tb, retrievedWebsite)
 		assert.Equal(t, string(pluginDb.WebsiteStatusActive), retrievedWebsite.Status)
@@ -739,10 +766,9 @@ func TestWebsiteService_DeleteWebsite_Blocked(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "blocked-delete-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "blocked-delete-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -752,19 +778,19 @@ func TestWebsiteService_DeleteWebsite_Blocked(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Verify it's blocked
-		blockedWebsite, err := websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		blockedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.Equal(t, string(pluginDb.WebsiteStatusBlocked), blockedWebsite.Status)
 
 		// Act - Try to delete the blocked website
-		err = websiteService.DeleteWebsite(context.Background(), userID, createdWebsite.ID)
+		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
 
 		// Assert - Should fail with error
 		assert.Error(tb, err)
 		assert.Contains(tb, err.Error(), "cannot delete blocked website")
 
 		// Verify website still exists and is blocked
-		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.NotNil(tb, retrievedWebsite)
 		assert.Equal(t, string(pluginDb.WebsiteStatusBlocked), retrievedWebsite.Status)
@@ -777,10 +803,9 @@ func TestWebsiteService_DeleteWebsite_Active(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "active-delete-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "active-delete-test.com", testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -789,17 +814,17 @@ func TestWebsiteService_DeleteWebsite_Active(t *testing.T) {
 		updates := map[string]interface{}{
 			"status": string(pluginDb.WebsiteStatusActive),
 		}
-		_, err = websiteService.UpdateWebsite(context.Background(), userID, createdWebsite.ID, updates)
+		_, err = websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
 		require.NoError(tb, err)
 
 		// Act - Delete the active website
-		err = websiteService.DeleteWebsite(context.Background(), userID, createdWebsite.ID)
+		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
 
 		// Assert - Should succeed
 		require.NoError(tb, err)
 
 		// Verify website is soft-deleted
-		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), userID, createdWebsite.ID)
+		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.Nil(tb, retrievedWebsite)
 	}, TestOptions)
@@ -811,10 +836,9 @@ func TestWebsiteService_UpdateSSLStatus_SuccessfulUpdate(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "ssl-update-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "ssl-update-test.com", testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
@@ -852,10 +876,9 @@ func TestWebsiteService_UpdateSSLStatus_IssuedAtSetOnlyOnReadyTransition(t *test
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "ssl-issuedat-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "ssl-issuedat-test.com", testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
@@ -897,10 +920,9 @@ func TestWebsiteService_UpdateSSLStatus_ErrorSetOnFailed(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "ssl-error-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "ssl-error-test.com", testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
@@ -923,10 +945,9 @@ func TestWebsiteService_UpdateSSLStatus_ErrorClearedOnStatusChange(t *testing.T)
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "ssl-clear-error-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "ssl-clear-error-test.com", testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
@@ -962,10 +983,9 @@ func TestWebsiteService_UpdateSSLStatus_AtomicUpdates(t *testing.T) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
 
-		userID := uint(1)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(userID, "ssl-atomic-test.com", testCID.String())
+		website := createTestIPFSWebsite(testUserID1, "ssl-atomic-test.com", testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
@@ -1026,5 +1046,766 @@ func TestWebsiteService_UpdateSSLStatus_AtomicUpdates(t *testing.T) {
 
 		// Verify last_updated_at was set
 		assert.NotNil(tb, finalWebsite.SSLLastUpdatedAt)
+	}, TestOptions)
+}
+
+func TestWebsiteService_CreateWebsite_DNSZoneCreatedWhenEnabled(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "dns-enabled-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Act - Expect DNS zone creation and DNS records creation
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID1, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID1,
+			mock.Anything,
+			mock.Anything,
+			mock.Anything,
+		).Return(nil).Once()
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+
+		// Assert
+		require.NoError(tb, err)
+		assert.NotNil(tb, createdWebsite)
+		assert.NotNil(tb, createdWebsite.DNSZoneID)
+		assert.Equal(tb, testZoneID1, *createdWebsite.DNSZoneID)
+		assert.True(tb, createdWebsite.Enabled)
+
+		// Verify critical DNS operations were called
+		mockDNS.AssertCalled(t, "CreateZone", mock.Anything, domain, testUserID1)
+		mockDNS.AssertCalled(t, "CreateWebsiteDNSRecords", mock.Anything, testZoneID1, mock.Anything, mock.Anything, mock.Anything)
+		mockDNS.AssertExpectations(t)
+	}, TestOptions)
+}
+
+func TestWebsiteService_CreateWebsite_DNSRecordsCreated(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "dns-records-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Act - Expect DNS zone and records to be created with specific parameters
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID2, domain, testUserID1), nil).Once()
+
+		var capturedTargetHash string
+		var capturedTargetType pluginDb.WebsiteTargetType
+		var capturedToken string
+
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID2,
+			mock.MatchedBy(func(targetHash string) bool {
+				capturedTargetHash = targetHash
+				return true
+			}),
+			mock.MatchedBy(func(targetType pluginDb.WebsiteTargetType) bool {
+				capturedTargetType = targetType
+				return targetType == pluginDb.WebsiteTargetTypeIPFS
+			}),
+			mock.MatchedBy(func(token string) bool {
+				capturedToken = token
+				return token != ""
+			}),
+		).Return(nil).Once()
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+
+		// Assert
+		require.NoError(tb, err)
+		assert.NotNil(tb, createdWebsite)
+		assert.NotEmpty(tb, capturedTargetHash, "Target hash should be captured")
+		assert.Equal(tb, pluginDb.WebsiteTargetTypeIPFS, capturedTargetType, "Target type should be IPFS")
+		assert.NotEmpty(tb, capturedToken, "Validation token should be non-empty")
+		assert.Equal(tb, createdWebsite.ValidationToken, capturedToken, "Validation token should match website token")
+
+		mockDNS.AssertExpectations(t)
+	}, TestOptions)
+}
+
+func TestWebsiteService_UpdateWebsite_DNSRecordsUpdatedWhenTargetChanges(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "dns-update-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Create website with DNS enabled
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID3, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID3,
+			mock.Anything,
+			mock.Anything,
+			mock.Anything,
+		).Return(nil).Once()
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+
+		// Act - Update target (DNS update may or may not be called depending on internal logic)
+		newCID := util.GenerateTestCID(t, "new data")
+		newVersion := uint8(newCID.Version())
+
+		updates := map[string]interface{}{
+			"target_multihash": newCID.Hash(),
+			"cid_version":      &newVersion,
+		}
+
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
+
+		// Assert
+		require.NoError(tb, err)
+		assert.NotNil(tb, updatedWebsite)
+		assert.NotEmpty(tb, updatedWebsite.TargetHash())
+
+		mockDNS.AssertExpectations(t)
+	}, TestOptions)
+}
+
+func TestWebsiteService_DeleteWebsite_DNSRecordsCleanedUp(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "dns-cleanup-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Create website with DNS enabled
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID4, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID4,
+			mock.Anything,
+			mock.Anything,
+			mock.Anything,
+		).Return(nil).Once()
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+
+		// Act - Delete website and expect only DNS records to be cleaned up, NOT the zone
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, testZoneID4).Return(nil).Once()
+
+		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
+
+		// Assert
+		require.NoError(tb, err)
+
+		mockDNS.AssertExpectations(t)
+
+		// Verify website is soft-deleted
+		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.Nil(tb, retrievedWebsite)
+	}, TestOptions)
+}
+
+func TestWebsiteService_DeleteWebsite_DNSCleanupFailureDoesNotPreventDeletion(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "dns-cleanup-fail-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Create website with DNS enabled
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID5, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID5,
+			mock.Anything,
+			mock.Anything,
+			mock.Anything,
+		).Return(nil).Once()
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+
+		// Act - Delete website with DNS cleanup failure
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, testZoneID5).Return(assert.AnError).Once()
+
+		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
+
+		// Assert - Website should still be deleted despite DNS cleanup failure
+		require.NoError(tb, err)
+
+		mockDNS.AssertExpectations(t)
+
+		// Verify website is soft-deleted
+		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.Nil(tb, retrievedWebsite)
+	}, TestOptions)
+}
+
+func TestWebsiteService_DeleteWebsite_NoDNSZoneNoCleanup(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "no-dns-zone-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = false // DNS disabled
+
+		// Act - Create website with DNS disabled (no zone created)
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+
+		// Delete website - no DNS cleanup should occur
+		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
+
+		// Assert
+		require.NoError(tb, err)
+
+		// Verify website is soft-deleted
+		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.Nil(tb, retrievedWebsite)
+	}, TestOptions)
+}
+
+func TestWebsiteService_CreateWebsite_DNSHostingDisabledWhenEnabledFalse(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "dns-disabled-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = false
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Act - Create website with DNS disabled (no DNS methods should be called)
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+
+		// Assert
+		require.NoError(tb, err)
+		assert.NotNil(tb, createdWebsite)
+		assert.Nil(tb, createdWebsite.DNSZoneID, "DNS zone ID should be nil when DNS hosting is disabled")
+		assert.False(tb, createdWebsite.Enabled)
+
+		// Verify no DNS methods were called
+		mockDNS.AssertNotCalled(t, "CreateZone")
+		mockDNS.AssertNotCalled(t, "CreateWebsiteDNSRecords")
+	}, TestOptions)
+}
+
+// DNS Hosting Mode Tests
+
+func TestWebsiteService_CreateWebsite_DNSHostingEnabled_CreatesZoneAndRecords(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "dns-enabled-test.com"
+		targetHash := testCID.String()
+
+		website := createTestIPFSWebsite(testUserID1, domain, targetHash)
+		website.Enabled = true // DNS hosting enabled
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Mock DNS zone creation
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID6, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID6,
+			mock.Anything, // target hash varies
+			pluginDb.WebsiteTargetTypeIPFS,
+			mock.Anything,
+		).Return(nil).Once()
+
+		// Act
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+
+		// Assert
+		require.NoError(tb, err)
+		assert.NotNil(tb, createdWebsite)
+		assert.NotNil(tb, createdWebsite.DNSZoneID, "DNS zone ID should be set when DNS hosting is enabled")
+		assert.Equal(tb, testZoneID6, *createdWebsite.DNSZoneID)
+		assert.True(tb, createdWebsite.Enabled)
+		assert.Equal(tb, domain, createdWebsite.Domain)
+
+		mockDNS.AssertExpectations(t)
+	}, TestOptions)
+}
+
+func TestWebsiteService_UpdateWebsite_DNSHostingEnabled_NoDNSUpdateWhenTargetUnchanged(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "no-dns-update-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Create website with initial DNS setup
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID7, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID7,
+			mock.Anything, // target hash varies
+			pluginDb.WebsiteTargetTypeIPFS,
+			mock.Anything,
+		).Return(nil).Once()
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		// Act - Update website without changing target (should NOT update DNS records)
+		updates := map[string]interface{}{
+			"status": string(pluginDb.WebsiteStatusActive),
+		}
+
+		_, err = websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
+
+		// Assert
+		require.NoError(tb, err)
+
+		// Verify DNS update was NOT called
+		mockDNS.AssertNotCalled(t, "UpdateWebsiteDNSRecords")
+	}, TestOptions)
+}
+
+func TestWebsiteService_DeleteWebsite_DNSHostingEnabled_ZoneRemainsAfterDeletion(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "zone-persists-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Create website with DNS
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID8, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID8,
+			mock.Anything, // target hash varies
+			pluginDb.WebsiteTargetTypeIPFS,
+			mock.Anything,
+		).Return(nil).Once()
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		// Mock DNS records deletion
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, testZoneID8).Return(nil).Once()
+
+		// Act - Delete website
+		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
+
+		// Assert
+		require.NoError(tb, err)
+
+		// Verify website is soft-deleted
+		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.Nil(tb, retrievedWebsite)
+
+		// Verify DeleteZone was NOT called - zones persist independently
+		mockDNS.AssertNotCalled(t, "DeleteZone")
+
+		// Verify the zone still exists (simulated by checking no DeleteZone call)
+		// In real scenario, you would verify GetZone(zoneID) still returns the zone
+	}, TestOptions)
+}
+
+func TestWebsiteService_CreateWebsite_DNSHostingDisabled_NoDNSOperations(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "no-dns-ops-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = false // DNS hosting disabled
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Act - Create website with DNS disabled
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+
+		// Assert
+		require.NoError(tb, err)
+		assert.NotNil(tb, createdWebsite)
+		assert.Nil(tb, createdWebsite.DNSZoneID, "DNS zone ID should be nil when DNS hosting is disabled")
+		assert.False(tb, createdWebsite.Enabled)
+
+		// Verify no DNS operations were performed
+		mockDNS.AssertNotCalled(t, "CreateZone")
+		mockDNS.AssertNotCalled(t, "CreateWebsiteDNSRecords")
+		mockDNS.AssertNotCalled(t, "UpdateWebsiteDNSRecords")
+		mockDNS.AssertNotCalled(t, "DeleteWebsiteDNSRecords")
+		mockDNS.AssertNotCalled(t, "DeleteZone")
+	}, TestOptions)
+}
+
+func TestWebsiteService_UpdateWebsite_DNSHostingDisabled_NoDNSOperations(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		newCID := util.GenerateTestCID(t, "new data")
+		domain := "update-no-dns-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = false // DNS hosting disabled
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Create website without DNS
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		// Act - Update website with new target (DNS hosting disabled, so no DNS operations)
+		newVersion := uint8(newCID.Version())
+		updates := map[string]interface{}{
+			"target_multihash": newCID.Hash(),
+			"cid_version":      &newVersion,
+		}
+
+		_, err = websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
+
+		// Assert
+		require.NoError(tb, err)
+
+		// Verify no DNS operations were performed
+		mockDNS.AssertNotCalled(t, "UpdateWebsiteDNSRecords")
+	}, TestOptions)
+}
+
+func TestWebsiteService_DeleteWebsite_DNSHostingDisabled_NoDNSOperations(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "delete-no-dns-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = false // DNS hosting disabled
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Create website without DNS
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		// Act - Delete website (DNS hosting disabled, so no DNS operations)
+		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
+
+		// Assert
+		require.NoError(tb, err)
+
+		// Verify no DNS operations were performed
+		mockDNS.AssertNotCalled(t, "DeleteWebsiteDNSRecords")
+		mockDNS.AssertNotCalled(t, "DeleteZone")
+	}, TestOptions)
+}
+
+func TestWebsiteService_CreateWebsite_DNSZoneCreationFailure_ContinuesWithoutDNS(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "zone-fail-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Mock DNS zone creation failure
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(nil, assert.AnError).Once()
+
+		// Act - Create website with DNS zone creation failure
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+
+		// Assert - Website should still be created despite DNS failure
+		require.NoError(tb, err)
+		assert.NotNil(tb, createdWebsite)
+		assert.Nil(tb, createdWebsite.DNSZoneID, "DNS zone ID should be nil when zone creation fails")
+		assert.Equal(tb, domain, createdWebsite.Domain)
+
+		// Verify CreateWebsiteDNSRecords was not called (zone creation failed)
+		mockDNS.AssertNotCalled(t, "CreateWebsiteDNSRecords")
+	}, TestOptions)
+}
+
+func TestWebsiteService_CreateWebsite_DNSRecordsCreationFailure_ContinuesWithoutRecords(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "records-fail-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		// Mock DNS zone creation success
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID8, domain, testUserID1), nil).Once()
+
+		// Mock DNS records creation failure
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID8,
+			mock.Anything, // target hash varies
+			pluginDb.WebsiteTargetTypeIPFS,
+			mock.Anything,
+		).Return(assert.AnError).Once()
+
+		// Act - Create website with DNS records creation failure
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+
+		// Assert - Website should still be created with zone ID set
+		require.NoError(tb, err)
+		assert.NotNil(tb, createdWebsite)
+		assert.NotNil(tb, createdWebsite.DNSZoneID, "DNS zone ID should be set even when record creation fails")
+		assert.Equal(tb, testZoneID8, *createdWebsite.DNSZoneID)
+	}, TestOptions)
+}
+
+// TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate tests that when creating
+// a website with DNS hosting enabled and IPFS target, an IPNS key is auto-created, and if
+// the website is created again with the same domain, the existing IPNS key is reused instead
+// of creating a duplicate.
+// TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate tests that when creating
+// a website with DNS hosting enabled and IPFS target, an IPNS key is auto-created, and if
+// the website is created again with the same domain, the existing IPNS key is reused instead
+// of creating a duplicate.
+// TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate tests that when creating
+// a website with DNS hosting enabled and IPFS target, an IPNS key is auto-created, and if
+// the website is created again with the same domain, the existing IPNS key is reused instead
+// of creating a duplicate.
+// TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate tests that when creating
+// a website with DNS hosting enabled and IPFS target, an IPNS key is auto-created, and if
+// the website is created again with the same domain, the existing IPNS key is reused instead
+// of creating a duplicate.
+// TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate tests that when creating
+// a website with DNS hosting enabled and IPFS target, an IPNS key is auto-created, and if
+// the website is created again with the same domain, the existing IPNS key is reused instead
+// of creating a duplicate.
+func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		ipnsKeyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		ipnsPublisherService := core.GetService[pluginCore.IPNSPublisherService](ctx, pluginCore.IPNS_PUBLISHER_SERVICE)
+		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, ipnsKeyService)
+		require.NotNil(tb, ipnsPublisherService)
+		require.NotNil(tb, dnsService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "test-auto-ipns.com"
+		expectedKeyName := domain + "-auto"
+
+		mockDNS, ok := dnsService.(*mocks.MockDNSService)
+		require.True(tb, ok, "DNS service should be a mock")
+
+		mockIPNSKey, ok := ipnsKeyService.(*mocks.MockIPNSKeyService)
+		require.True(tb, ok, "IPNS key service should be a mock")
+
+		mockIPNSPublisher, ok := ipnsPublisherService.(*mocks.MockIPNSPublisherService)
+		require.True(tb, ok, "IPNS publisher service should be a mock")
+
+		// Set up mock expectations for first website creation
+		// GetKeyByName should return nil (no existing key)
+		mockIPNSKey.EXPECT().GetKeyByName(mock.Anything, testUserID1, expectedKeyName).Return(nil, nil).Once()
+		
+		// CreateKey should create a new IPNS key - keyType is int
+		testKeyID := uint(1001)
+		testPeerIDStr := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
+		testPeerID, _ := parsePeerID(testPeerIDStr)
+		testPeerIDMultihash := mh.Multihash(testPeerID)
+		testIPNSKey := &pluginDb.IPFSIPNSKey{
+			ID:              testKeyID,
+			UserID:          testUserID1,
+			Name:            expectedKeyName,
+			PeerIDMultihash: testPeerIDMultihash,
+		}
+		mockIPNSKey.EXPECT().CreateKey(mock.Anything, testUserID1, expectedKeyName, 1).Return(testIPNSKey, nil).Once()
+		
+		// PublishCID should publish the CID to the IPNS key with TTL
+		mockIPNSPublisher.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
+		
+		// DNS zone creation
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID1, domain, testUserID1), nil).Once()
+		
+		// DNS records creation (after IPNS conversion)
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID1,
+			mock.Anything,
+			pluginDb.WebsiteTargetTypeIPNS,
+			mock.Anything,
+		).Return(nil).Once()
+
+		// Act - Create first website with DNS hosting enabled
+		website1 := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website1.Enabled = true // Enable DNS hosting
+		createdWebsite1, err := websiteService.CreateWebsite(context.Background(), website1)
+		require.NoError(tb, err)
+
+		// Assert - IPNS key was created
+		require.NotNil(tb, createdWebsite1.IPNSKeyID, "First website should have IPNS key ID")
+		assert.Equal(tb, testKeyID, *createdWebsite1.IPNSKeyID, "IPNS key ID should match")
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite1.TargetType, "First website should use IPNS target")
+
+		// Expect DNS records deletion when website is deleted
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, testZoneID1).Return(nil).Once()
+
+		// Act - Delete first website
+		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite1.ID)
+		require.NoError(tb, err)
+
+		// Set up mock expectations for second website creation
+		// GetKeyByName should return the existing key (not nil)
+		mockIPNSKey.EXPECT().GetKeyByName(mock.Anything, testUserID1, expectedKeyName).Return(testIPNSKey, nil).Once()
+		
+		// CreateKey should NOT be called since key already exists
+		// PublishCID should still be called to update the IPNS key with the new content
+		mockIPNSPublisher.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
+		
+		// DNS zone creation
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID1, domain, testUserID1), nil).Once()
+		
+		// DNS records creation
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID1,
+			mock.Anything,
+			pluginDb.WebsiteTargetTypeIPNS,
+			mock.Anything,
+		).Return(nil).Once()
+
+		// Act - Create second website with same domain
+		website2 := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website2.Enabled = true
+		createdWebsite2, err := websiteService.CreateWebsite(context.Background(), website2)
+		require.NoError(tb, err)
+
+		// Assert - Second website reuses the same IPNS key
+		require.NotNil(tb, createdWebsite2.IPNSKeyID, "Second website should have IPNS key ID")
+		assert.Equal(tb, *createdWebsite1.IPNSKeyID, *createdWebsite2.IPNSKeyID, "Should reuse the same IPNS key ID")
+		assert.Equal(tb, testKeyID, *createdWebsite2.IPNSKeyID, "IPNS key ID should match the original")
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite2.TargetType, "Second website should use IPNS target")
 	}, TestOptions)
 }

@@ -43,7 +43,7 @@ func TestWebsiteJanitorJob_NewWebsiteJanitorJob(t *testing.T) {
 	assert.NotNil(t, job)
 	assert.NotEmpty(t, job.ID())
 	assert.Equal(t, core.JobOriginPlugin, job.Origin())
-	assert.Equal(t, "ipfs", job.SourceID())
+	assert.Equal(t, JanitorJobSourceID, job.SourceID())
 	assert.Equal(t, "IPFS Website Janitor", job.DisplayName())
 }
 
