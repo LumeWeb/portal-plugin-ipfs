@@ -3,15 +3,20 @@ package dns
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
+	"go.lumeweb.com/queryutil"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
+
+// DNSLinkTarget represents a DNSLink target path
+type DNSLinkTarget string
 
 // CreateZone creates a new DNS zone
 func (s *DNSService) CreateZone(ctx context.Context, domain string, userID uint) (*pluginDb.DNSZone, error) {
@@ -86,7 +91,7 @@ func (s *DNSService) GetZone(ctx context.Context, zoneID uint) (*pluginDb.DNSZon
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			s.Logger().Debug("DNS zone not found", zap.Uint("zone_id", zoneID))
-			return nil, nil
+			return nil, err
 		}
 		s.Logger().Error("Failed to get zone",
 			zap.Error(err),
@@ -118,25 +123,39 @@ func (s *DNSService) GetZoneByDomain(ctx context.Context, domain string) (*plugi
 	return &zone, nil
 }
 
-// ListZones retrieves zones for a user
-func (s *DNSService) ListZones(ctx context.Context, userID uint) ([]*pluginDb.DNSZone, error) {
+// ListZones retrieves zones for a user with filtering, sorting, and pagination
+func (s *DNSService) ListZones(ctx context.Context, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.DNSZone, int64, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.ListZones")
 	defer span.End()
 
 	var zones []*pluginDb.DNSZone
+	var total int64
 
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		return tx.Where("user_id = ?", userID).Find(&zones)
+		query := tx.Model(&pluginDb.DNSZone{})
+
+		// Apply filters, sorting, and pagination using queryutil helpers
+		query = queryutil.ApplyFilters(query, filters, nil)
+		query = queryutil.ApplySort(query, sorts)
+		query = queryutil.ApplyPagination(query, pagination)
+
+		// Count total matching records after applying filters (before pagination)
+		countQuery := query.Session(&gorm.Session{})
+		if err := countQuery.Count(&total).Error; err != nil {
+			_ = tx.AddError(err)
+			return tx
+		}
+
+		return query.Find(&zones)
 	})
 
 	if err != nil {
 		s.Logger().Error("Failed to list zones",
-			zap.Error(err),
-			zap.Uint("user_id", userID))
-		return nil, fmt.Errorf("failed to list zones: %w", err)
+			zap.Error(err))
+		return nil, 0, fmt.Errorf("failed to list zones: %w", err)
 	}
 
-	return zones, nil
+	return zones, total, nil
 }
 
 // UpdateZone updates zone status
@@ -224,8 +243,37 @@ func (s *DNSService) ValidateNameservers(ctx context.Context, zoneID uint) (bool
 		return false, fmt.Errorf("zone not found")
 	}
 
-	// TODO: Implement actual nameserver validation via DNS lookup
-	// For now, mark as validated since we created the zone with approved nameservers
+	// Perform actual nameserver validation via DNS lookup
+	// Query DNS for the domain's nameservers and compare against approved nameservers
+	approvedNameservers := s.config.Nameservers
+	if len(approvedNameservers) == 0 {
+		return false, fmt.Errorf("no approved nameservers configured for validation")
+	}
+
+	// Lookup nameservers for the domain using DNS lookup interface
+	dnsNameservers, err := s.dnsLookup.LookupNS(zone.Domain)
+	if err != nil {
+		return false, fmt.Errorf("failed to lookup nameservers for domain %s: %w", zone.Domain, err)
+	}
+
+	// Check if at least one approved nameserver is present in DNS response
+	valid := false
+	for _, approvedNS := range approvedNameservers {
+		for _, dnsNS := range dnsNameservers {
+			if dnsNS.Host == approvedNS {
+				valid = true
+				break
+			}
+		}
+		if valid {
+			break
+		}
+	}
+
+	if !valid {
+		return false, fmt.Errorf("no approved nameservers found in DNS for domain %s", zone.Domain)
+	}
+
 	now := time.Now()
 	zone.NameserversVerifiedAt = &now
 
@@ -244,8 +292,89 @@ func (s *DNSService) ValidateNameservers(ctx context.Context, zoneID uint) (bool
 	return true, nil
 }
 
+// buildTargetPath constructs the DNSLink target path based on target type
+func buildTargetPath(targetHash string, targetType pluginDb.WebsiteTargetType) DNSLinkTarget {
+	return DNSLinkTarget(targetType.ToDNSLinkPath(targetHash))
+}
+
+// CreateWebsiteDNSRecords creates initial DNS records for a new website
+func (s *DNSService) CreateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType pluginDb.WebsiteTargetType, validationToken string) error {
+	ctx, span := core.TraceMethod(ctx, "DNSService.CreateWebsiteDNSRecords")
+	defer span.End()
+
+	zone, err := s.GetZone(ctx, zoneID)
+	if err != nil {
+		return fmt.Errorf("failed to get zone: %w", err)
+	}
+	if zone == nil {
+		return fmt.Errorf("zone not found")
+	}
+
+	if s.pdnsClient == nil {
+		return fmt.Errorf("DNS hosting not enabled")
+	}
+
+	ttl := 300
+	disabled := false
+	targetPath := string(buildTargetPath(targetHash, targetType))
+
+	rrsets := []powerdns.RRSet{
+		// _dnslink.domain.com TXT record → DNSLink path
+		{
+			Name:       "_dnslink." + zone.Domain + ".",
+			Type:       "TXT",
+			Changetype: "REPLACE",
+			Ttl:        &ttl,
+			Records: []powerdns.Record{
+				{
+					Content:  targetPath,
+					Disabled: &disabled,
+				},
+			},
+		},
+		// domain.com TXT record → lumeweb-verify=TOKEN (for validation)
+		{
+			Name:       zone.Domain + ".",
+			Type:       "TXT",
+			Changetype: "REPLACE",
+			Ttl:        &ttl,
+			Records: []powerdns.Record{
+				{
+					Content:  "lumeweb-verify=" + validationToken,
+					Disabled: &disabled,
+				},
+			},
+		},
+		// www.domain.com CNAME → domain.com (flattening support)
+		{
+			Name:       "www." + zone.Domain + ".",
+			Type:       "CNAME",
+			Changetype: "REPLACE",
+			Ttl:        &ttl,
+			Records: []powerdns.Record{
+				{
+					Content:  zone.Domain + ".",
+					Disabled: &disabled,
+				},
+			},
+		},
+	}
+
+	if err := s.pdnsClient.UpdateZoneRRSets(ctx, zone.PowerDNSZoneID, rrsets); err != nil {
+		return fmt.Errorf("failed to create DNS records: %w", err)
+	}
+
+	s.Logger().Info("DNS records created for website",
+		zap.Uint("zone_id", zoneID),
+		zap.String("domain", zone.Domain),
+		zap.String("target_hash", targetHash),
+		zap.String("target_type", string(targetType)))
+
+	return nil
+}
+
 // UpdateWebsiteDNSRecords updates DNS records for a website
-func (s *DNSService) UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType string) error {
+func (s *DNSService) UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType pluginDb.WebsiteTargetType) error {
 	ctx, span := core.TraceMethod(ctx, "DNSService.UpdateWebsiteDNSRecords")
 	defer span.End()
 
@@ -261,21 +390,20 @@ func (s *DNSService) UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, t
 		return fmt.Errorf("DNS hosting not enabled")
 	}
 
-	// Create A/AAAA records for the domain pointing to gateway
-	// For now, we'll just create a CNAME or A record
-	// TODO: Integrate with gateway configuration to get proper IP addresses
-
 	ttl := 300
 	disabled := false
+	targetPath := string(buildTargetPath(targetHash, targetType))
+
 	rrsets := []powerdns.RRSet{
+		// Update _dnslink.domain.com TXT record with new target
 		{
-			Name:       zone.Domain + ".",
-			Type:       "A",
+			Name:       "_dnslink." + zone.Domain + ".",
+			Type:       "TXT",
 			Changetype: "REPLACE",
 			Ttl:        &ttl,
 			Records: []powerdns.Record{
 				{
-					Content:  "127.0.0.1",
+					Content:  targetPath,
 					Disabled: &disabled,
 				},
 			},
@@ -311,11 +439,24 @@ func (s *DNSService) DeleteWebsiteDNSRecords(ctx context.Context, zoneID uint) e
 		return fmt.Errorf("DNS hosting not enabled")
 	}
 
-	// Remove all records for the domain
+	// Delete all DNS records created by CreateWebsiteDNSRecords
 	rrsets := []powerdns.RRSet{
+		// Delete _dnslink.domain.com TXT record
+		{
+			Name:       "_dnslink." + zone.Domain + ".",
+			Type:       "TXT",
+			Changetype: "DELETE",
+		},
+		// Delete domain.com TXT record (validation token)
 		{
 			Name:       zone.Domain + ".",
-			Type:       "A",
+			Type:       "TXT",
+			Changetype: "DELETE",
+		},
+		// Delete www.domain.com CNAME record
+		{
+			Name:       "www." + zone.Domain + ".",
+			Type:       "CNAME",
 			Changetype: "DELETE",
 		},
 	}
@@ -324,7 +465,7 @@ func (s *DNSService) DeleteWebsiteDNSRecords(ctx context.Context, zoneID uint) e
 		s.Logger().Warn("Failed to delete DNS records",
 			zap.Error(err),
 			zap.Uint("zone_id", zoneID))
-		// Continue with zone deletion
+		// Continue despite DNS cleanup failure
 	}
 
 	s.Logger().Info("DNS records deleted for website",
@@ -343,6 +484,26 @@ func (s *DNSService) validateDomain(domain string) error {
 		return fmt.Errorf("domain too long (max 255 characters)")
 	}
 
-	// TODO: Add more sophisticated domain validation (IDNA, RFC 1035, etc.)
+	// Strip trailing dot if present (FQDN format)
+	trimmedDomain := strings.TrimSuffix(domain, ".")
+
+	// Validate domain format according to RFC 1035
+	// Domain labels must be 1-63 characters, alphanumeric or hyphen, cannot start/end with hyphen
+	labels := strings.Split(trimmedDomain, ".")
+
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 {
+			return fmt.Errorf("domain label must be 1-63 characters")
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return fmt.Errorf("domain label cannot start or end with hyphen")
+		}
+		for _, c := range label {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
+				return fmt.Errorf("domain label contains invalid character: %c", c)
+			}
+		}
+	}
+
 	return nil
 }

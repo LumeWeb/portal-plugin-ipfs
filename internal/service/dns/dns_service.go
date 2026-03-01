@@ -2,6 +2,7 @@ package dns
 
 import (
 	"fmt"
+	"net"
 
 	"go.lumeweb.com/portal/core"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
@@ -10,10 +11,26 @@ import (
 	"go.uber.org/zap"
 )
 
+// DNSLookup defines the interface for DNS lookup operations
+type DNSLookup interface {
+	// LookupNS returns the nameservers for the given domain
+	LookupNS(domain string) ([]*net.NS, error)
+}
+
+// DefaultDNSLookup is the default implementation using net.LookupNS
+type DefaultDNSLookup struct{}
+
+// LookupNS performs actual DNS lookup using net.LookupNS
+func (d *DefaultDNSLookup) LookupNS(domain string) ([]*net.NS, error) {
+	return net.LookupNS(domain)
+}
+
 // DNSServiceOptions holds configuration options for DNSService
 type DNSServiceOptions struct {
 	// PowerDNSClient is the PowerDNS client (for testing)
 	PowerDNSClient *PowerDNSClient
+	// DNSLookup is the DNS lookup implementation (for testing)
+	DNSLookup DNSLookup
 }
 
 // DNSServiceOption is a function that configures DNSServiceOptions
@@ -26,11 +43,29 @@ func WithPowerDNSClient(client *PowerDNSClient) DNSServiceOption {
 	}
 }
 
+// WithDNSLookup sets the DNS lookup implementation for the DNS service (for testing)
+func WithDNSLookup(lookup DNSLookup) DNSServiceOption {
+	return func(opts *DNSServiceOptions) {
+		opts.DNSLookup = lookup
+	}
+}
+
 // DNSService manages DNS zones and PowerDNS integration
 type DNSService struct {
 	*core.BaseComponent
 	config     pluginConfig.Config
 	pdnsClient *PowerDNSClient
+	dnsLookup  DNSLookup
+}
+
+// GetDNSLookup returns the DNS lookup implementation (for testing)
+func (s *DNSService) GetDNSLookup() DNSLookup {
+	return s.dnsLookup
+}
+
+// SetDNSLookup sets the DNS lookup implementation (for testing)
+func (s *DNSService) SetDNSLookup(lookup DNSLookup) {
+	s.dnsLookup = lookup
 }
 
 // NewDNSService creates a new DNS service
@@ -43,10 +78,13 @@ func NewDNSServiceWithOptions(options ...DNSServiceOption) (core.Service, []core
 	svc := &DNSService{BaseComponent: &core.BaseComponent{}}
 
 	// Apply options to default struct
-	serviceOpts := &DNSServiceOptions{}
+	serviceOpts := &DNSServiceOptions{
+		DNSLookup: &DefaultDNSLookup{}, // Default to real DNS lookups
+	}
 	for _, option := range options {
 		option(serviceOpts)
 	}
+	svc.dnsLookup = serviceOpts.DNSLookup
 
 	opts := core.ContextOptions(
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
@@ -95,7 +133,4 @@ func (s *DNSService) ID() string {
 	return pluginCore.DNS_SERVICE
 }
 
-// SetPowerDNSClient sets the PowerDNS client (for testing)
-func (s *DNSService) SetPowerDNSClient(client *PowerDNSClient) {
-	s.pdnsClient = client
-}
+
