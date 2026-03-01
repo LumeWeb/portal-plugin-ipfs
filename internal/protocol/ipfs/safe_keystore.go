@@ -6,6 +6,7 @@ import (
 
 	"github.com/ipfs/boxo/keystore"
 	ic "github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/samber/lo"
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 )
@@ -74,27 +75,24 @@ func (sk *SafeKeystore) List() ([]string, error) {
 
 	// Validate that all listed keys are non-nil
 	// This is a defensive check to catch any corruption
-	validNames := make([]string, 0, len(names))
-	for _, name := range names {
+	validNames := lo.Filter(names, func(name string, _ int) bool {
 		key, err := sk.Get(name)
 		if err != nil {
 			sk.log.Warn("Failed to get key during list validation",
 				zap.String("key_name", name),
 				zap.Error(err),
 			)
-			// Skip keys that can't be retrieved
-			continue
+			return false
 		}
 		if key == nil {
 			sk.log.Error("Found nil key during list, attempting to delete",
 				zap.String("key_name", name),
 			)
-			// Try to delete the corrupted entry
 			_ = sk.Delete(name)
-			continue
+			return false
 		}
-		validNames = append(validNames, name)
-	}
+		return true
+	})
 
 	return validNames, nil
 }
