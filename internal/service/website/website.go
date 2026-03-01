@@ -29,11 +29,12 @@ import (
 // WebsiteServiceDefault implements the WebsiteService interface
 type WebsiteServiceDefault struct {
 	*core.BaseComponent
-	pinSvc     pluginCore.IPFSPinService
-	ipnsKeySvc pluginCore.IPNSKeyService
-	mailerSvc  core.MailerService
-	dnsSvc     pluginCore.DNSService
-	config     pluginConfig.WebsiteConfig
+	pinSvc          pluginCore.IPFSPinService
+	ipnsKeySvc      pluginCore.IPNSKeyService
+	ipnsPublisherSvc pluginCore.IPNSPublisherService
+	mailerSvc       core.MailerService
+	dnsSvc          pluginCore.DNSService
+	config          pluginConfig.WebsiteConfig
 }
 
 // Ensure WebsiteServiceDefault implements the interface
@@ -53,6 +54,11 @@ func NewWebsiteService() (core.Service, []core.ContextBuilderOption, error) {
 			svc.ipnsKeySvc = core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 			if svc.ipnsKeySvc == nil {
 				return fmt.Errorf("IPNS key service (IPNS_KEY_SERVICE) is not registered")
+			}
+
+			svc.ipnsPublisherSvc = core.GetService[pluginCore.IPNSPublisherService](ctx, pluginCore.IPNS_PUBLISHER_SERVICE)
+			if svc.ipnsPublisherSvc == nil {
+				svc.Logger().Warn("IPNS publisher service not available, IPNS publishing will be disabled")
 			}
 
 			svc.mailerSvc = core.GetService[core.MailerService](ctx, core.MAILER_SERVICE)
@@ -134,6 +140,83 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				return nil, fmt.Errorf("failed to create website: %w", err)
 			}
 
+			// Auto-create IPNS key for managed DNS when using IPFS target
+			var ipnsKey *pluginDb.IPFSIPNSKey
+			if website.Enabled && website.TargetType == string(pluginDb.WebsiteTargetTypeIPFS) {
+				// Generate IPNS key name based on domain
+				keyName := fmt.Sprintf("%s-auto", website.Domain)
+				
+				// Check if IPNS key with this name already exists
+				ipnsKey, err = s.ipnsKeySvc.GetKeyByName(ctx, website.UserID, keyName)
+				if err != nil {
+					s.Logger().Error("Failed to check for existing IPNS key",
+						zap.Error(err),
+						zap.String("domain", website.Domain))
+					return nil, fmt.Errorf("failed to check for existing IPNS key: %w", err)
+				}
+				
+				// Create IPNS key if it doesn't exist
+				if ipnsKey == nil {
+					ipnsKey, err = s.ipnsKeySvc.CreateKey(ctx, website.UserID, keyName, 1)
+					if err != nil {
+						s.Logger().Error("Failed to create IPNS key for managed DNS",
+							zap.Error(err),
+							zap.String("domain", website.Domain))
+						return nil, fmt.Errorf("failed to create IPNS key: %w", err)
+					}
+					s.Logger().Info("Created new IPNS key for managed DNS",
+						zap.String("domain", website.Domain),
+						zap.String("key_name", keyName),
+						zap.Stringer("peer_id", ipnsKey.PeerID()))
+				} else {
+					s.Logger().Info("Reusing existing IPNS key for managed DNS",
+						zap.String("domain", website.Domain),
+						zap.String("key_name", keyName),
+						zap.Stringer("peer_id", ipnsKey.PeerID()))
+				}
+				if err != nil {
+					s.Logger().Error("Failed to create IPNS key for managed DNS",
+						zap.Error(err),
+						zap.String("domain", website.Domain))
+					return nil, fmt.Errorf("failed to create IPNS key: %w", err)
+				}
+
+				// Publish the IPFS CID to the IPNS key
+				if s.ipnsPublisherSvc != nil {
+					// Use default TTL (24 hours)
+					ttl := 24 * time.Hour
+					err = s.ipnsPublisherSvc.PublishCID(ctx, ipnsKey.PeerID().String(), website.TargetHash(), ttl)
+					if err != nil {
+						s.Logger().Warn("Failed to publish CID to IPNS key for managed DNS",
+							zap.Error(err),
+							zap.String("domain", website.Domain),
+							zap.String("peer_id", ipnsKey.PeerID().String()))
+						// Continue - DNS records will still be created
+					} else {
+						s.Logger().Info("Published CID to IPNS key for managed DNS",
+							zap.String("domain", website.Domain),
+							zap.String("peer_id", ipnsKey.PeerID().String()),
+							zap.String("cid", website.TargetHash()))
+					}
+				}
+
+				// Update website to use IPNS target instead of IPFS
+				website.TargetType = string(pluginDb.WebsiteTargetTypeIPNS)
+				website.TargetMultihash = ipnsKey.PeerIDMultihash
+				website.CIDVersion = nil
+				website.IPNSKeyID = &ipnsKey.ID
+				
+				err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+					return tx.Save(website)
+				})
+				if err != nil {
+					s.Logger().Error("Failed to update website with IPNS target",
+						zap.Error(err),
+						zap.Uint("website_id", website.ID))
+					return nil, fmt.Errorf("failed to update website with IPNS target: %w", err)
+				}
+			}
+
 			// Create DNS zone if hosting is enabled
 			if website.Enabled && s.dnsSvc != nil {
 				dnsZone, err := s.dnsSvc.CreateZone(ctx, website.Domain, website.UserID)
@@ -170,6 +253,15 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 						zap.Uint("website_id", website.ID),
 						zap.Uint("dns_zone_id", dnsZone.ID),
 						zap.String("domain", website.Domain))
+
+					// Create DNS records for the website
+					if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, dnsZone.ID, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), website.ValidationToken); err != nil {
+						s.Logger().Error("Failed to create DNS records for website",
+							zap.Error(err),
+							zap.Uint("website_id", website.ID),
+							zap.Uint("dns_zone_id", dnsZone.ID))
+						// Continue without DNS records - website is still created
+					}
 				}
 			}
 
@@ -179,7 +271,7 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				zap.Uint("user_id", website.UserID),
 				zap.String("target_type", website.TargetType),
 				zap.String("target_hash", website.TargetHash()),
-				zap.Bool("dns_hosting_enabled", website.Enabled))
+				zap.Bool("dns_enabled", website.Enabled))
 
 			// Send notification to admin
 			if err := s.notifyAdminWebsiteCreated(ctx, website, ""); err != nil {
@@ -408,15 +500,54 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 
 				updatedWebsite = &website
 
-				// Update DNS records if target changed and DNS hosting is enabled
-				if targetHashChanged && website.Enabled && website.DNSZoneID != nil && s.dnsSvc != nil {
-					newTargetHash := website.TargetHash()
-					newTargetType := website.TargetType
-					if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *website.DNSZoneID, newTargetHash, newTargetType); err != nil {
-						s.Logger().Warn("Failed to update DNS records for website",
+				// If target hash changed and website has auto-created IPNS key, republish to IPNS
+				if targetHashChanged && website.IPNSKeyID != nil {
+					ipnsKey, err := s.ipnsKeySvc.GetKeyByID(ctx, website.UserID, *website.IPNSKeyID)
+					if err != nil {
+						s.Logger().Warn("Failed to get IPNS key for republishing",
 							zap.Error(err),
 							zap.Uint("website_id", websiteID),
-							zap.Uint("dns_zone_id", *website.DNSZoneID))
+							zap.Uint("ipns_key_id", *website.IPNSKeyID))
+					} else {
+						// Get the new target hash (from updates, since website was just updated)
+						newTargetHash := oldTargetHash
+						if targetHashStr, ok := updates["target_hash"].(string); ok {
+							newTargetHash = targetHashStr
+						}
+
+						// Publish the new CID to the IPNS key
+						if s.ipnsPublisherSvc != nil {
+							ttl := 24 * time.Hour
+							err = s.ipnsPublisherSvc.PublishCID(ctx, ipnsKey.PeerID().String(), newTargetHash, ttl)
+							if err != nil {
+								s.Logger().Warn("Failed to republish new CID to IPNS key",
+									zap.Error(err),
+									zap.String("domain", website.Domain),
+									zap.String("peer_id", ipnsKey.PeerID().String()),
+									zap.String("cid", newTargetHash))
+							} else {
+								s.Logger().Info("Republished new CID to IPNS key",
+									zap.String("domain", website.Domain),
+									zap.String("peer_id", ipnsKey.PeerID().String()),
+									zap.String("cid", newTargetHash))
+							}
+						}
+					}
+				}
+
+				// Update DNS records if target changed and DNS hosting is enabled
+				// Note: For IPNS targets, DNS records don't need updating since the peer ID stays the same
+				if targetHashChanged && website.Enabled && website.DNSZoneID != nil && s.dnsSvc != nil {
+					// Only update DNS if not using IPNS (IPNS peer ID doesn't change)
+					if website.IPNSKeyID == nil {
+						newTargetHash := website.TargetHash()
+						newTargetType := pluginDb.WebsiteTargetType(website.TargetType)
+						if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *website.DNSZoneID, newTargetHash, newTargetType); err != nil {
+							s.Logger().Warn("Failed to update DNS records for website",
+								zap.Error(err),
+								zap.Uint("website_id", websiteID),
+								zap.Uint("dns_zone_id", *website.DNSZoneID))
+						}
 					}
 				}
 
@@ -498,22 +629,15 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 				zap.Uint("id", websiteID),
 				zap.Uint("user_id", userID))
 
-			// Clean up DNS records and zone if DNS hosting was enabled
+			// Clean up DNS records if DNS hosting was enabled
+			// Note: We do NOT delete the zone itself as zones are independent from websites
 			if dnsZoneID != nil && s.dnsSvc != nil {
-				// Delete DNS records first
 				if err := s.dnsSvc.DeleteWebsiteDNSRecords(ctx, *dnsZoneID); err != nil {
 					s.Logger().Warn("Failed to delete DNS records for website",
 						zap.Error(err),
 						zap.Uint("website_id", websiteID),
 						zap.Uint("dns_zone_id", *dnsZoneID))
-				}
-
-				// Delete the DNS zone
-				if err := s.dnsSvc.DeleteZone(ctx, *dnsZoneID); err != nil {
-					s.Logger().Warn("Failed to delete DNS zone for website",
-						zap.Error(err),
-						zap.Uint("website_id", websiteID),
-						zap.Uint("dns_zone_id", *dnsZoneID))
+					// Continue despite DNS cleanup failure - website is already deleted
 				}
 			}
 
@@ -665,16 +789,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				}
 
 				// Build expected DNSlink value based on target type
-				var expectedDNSlink string
-				switch pluginDb.WebsiteTargetType(website.TargetType) {
-				case pluginDb.WebsiteTargetTypeIPFS:
-					expectedDNSlink = "/ipfs/" + website.TargetHash()
-				case pluginDb.WebsiteTargetTypeIPNS:
-					expectedDNSlink = "/ipns/" + website.TargetHash()
-				default:
-					_ = tx.AddError(fmt.Errorf("invalid target type: %s", website.TargetType))
-					return tx
-				}
+				expectedDNSlink := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
 
 				// Check for BOTH required records
 				var hasDNSlink, hasToken bool
@@ -682,7 +797,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 
 				// Check dnslink records from result.Links
 				if ipfsLinks, ok := result.Links["ipfs"]; ok && len(ipfsLinks) > 0 {
-					foundDNSlink = "/ipfs/" + ipfsLinks[0].Identifier
+					foundDNSlink = pluginDb.IPFSPrefix + ipfsLinks[0].Identifier
 					if foundDNSlink == expectedDNSlink {
 						hasDNSlink = true
 						s.Logger().Debug("Found valid DNSlink record",
@@ -691,7 +806,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 					}
 				}
 				if ipnsLinks, ok := result.Links["ipns"]; ok && len(ipnsLinks) > 0 {
-					foundDNSlink = "/ipns/" + ipnsLinks[0].Identifier
+					foundDNSlink = pluginDb.IPNSPrefix + ipnsLinks[0].Identifier
 					if foundDNSlink == expectedDNSlink {
 						hasDNSlink = true
 						s.Logger().Debug("Found valid DNSlink record",
