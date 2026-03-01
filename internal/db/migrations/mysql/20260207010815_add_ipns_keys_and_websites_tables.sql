@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS ipfs_websites (
     validation_token VARCHAR(255) NOT NULL,
     validation_expires_at TIMESTAMP NULL DEFAULT NULL,
     last_checked_at TIMESTAMP NULL DEFAULT NULL,
+    dns_zone_id BIGINT UNSIGNED NULL,
+    ipns_key_id BIGINT UNSIGNED NULL,
+    dns_enabled TINYINT(1) DEFAULT 0,
     ssl_status VARCHAR(50) NOT NULL DEFAULT 'pending',
     ssl_error TEXT,
     ssl_issued_at TIMESTAMP NULL DEFAULT NULL,
@@ -39,6 +42,8 @@ CREATE TABLE IF NOT EXISTS ipfs_websites (
     KEY idx_ipfs_websites_domain (domain),
     KEY idx_ipfs_websites_status (status),
     KEY idx_ipfs_websites_last_checked_at (last_checked_at),
+    KEY idx_ipfs_websites_dns_zone_id (dns_zone_id),
+    KEY idx_ipfs_websites_ipns_key_id (ipns_key_id),
     KEY idx_ipfs_websites_ssl_status (ssl_status),
     KEY idx_ipfs_websites_ssl_issued_at (ssl_issued_at),
     KEY idx_ipfs_websites_ssl_last_updated_at (ssl_last_updated_at),
@@ -52,7 +57,18 @@ CREATE TABLE IF NOT EXISTS ipfs_websites (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- +goose StatementEnd
 
+-- Add foreign key constraints (will be added after ipfs_dns_zones table exists)
+-- +goose StatementBegin
+ALTER TABLE ipfs_websites ADD CONSTRAINT fk_websites_dns_zone FOREIGN KEY (dns_zone_id) REFERENCES ipfs_dns_zones(id) ON DELETE SET NULL;
+ALTER TABLE ipfs_websites ADD CONSTRAINT fk_websites_ipns_key FOREIGN KEY (ipns_key_id) REFERENCES ipfs_ipns_keys(id) ON DELETE SET NULL;
+-- +goose StatementEnd
+
 -- +goose Down
+-- +goose StatementBegin
+ALTER TABLE ipfs_websites DROP FOREIGN KEY fk_websites_dns_zone;
+ALTER TABLE ipfs_websites DROP FOREIGN KEY fk_websites_ipns_key;
+-- +goose StatementEnd
+
 -- +goose StatementBegin
 DROP TABLE IF EXISTS ipfs_websites;
 -- +goose StatementEnd
