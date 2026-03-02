@@ -18,7 +18,6 @@ CREATE INDEX idx_ipfs_dns_zones_user_id ON ipfs_dns_zones(user_id);
 CREATE INDEX idx_ipfs_dns_zones_status ON ipfs_dns_zones(status);
 CREATE INDEX idx_ipfs_dns_zones_deleted_at ON ipfs_dns_zones(deleted_at);
 
-<<<<<<< HEAD
 -- Add dns_zone_id foreign key to ipfs_websites
 ALTER TABLE ipfs_websites ADD COLUMN dns_zone_id INTEGER;
 -- SQLite doesn't support ADD CONSTRAINT in ALTER TABLE, FK enforcement handled in app layer
@@ -28,10 +27,6 @@ CREATE INDEX idx_ipfs_websites_dns_zone_id ON ipfs_websites(dns_zone_id);
 ALTER TABLE ipfs_websites ADD COLUMN ipns_key_id INTEGER;
 -- SQLite doesn't support ADD CONSTRAINT in ALTER TABLE, FK enforcement handled in app layer
 CREATE INDEX idx_ipfs_websites_ipns_key_id ON ipfs_websites(ipns_key_id);
-=======
--- Note: dns_zone_id column already exists in ipfs_websites table from migration 20260207010815
--- Index already created in that migration as well
->>>>>>> de08024f (feat(dns): add database migrations for DNS zones)
 -- +goose StatementEnd
 
 -- +goose Down
