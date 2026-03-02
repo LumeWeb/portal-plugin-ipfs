@@ -11,6 +11,31 @@ import (
 	"go.uber.org/zap"
 )
 
+// ValidateKeyList validates and filters a list of key names, removing nil keys
+// Shared between SafeKeystore and SafeRepublisherKeystore to avoid duplication
+func ValidateKeyList(names []string, getFunc func(string) (ic.PrivKey, error), deleteFunc func(string) error, log *core.Logger, context string) []string {
+	return lo.Filter(names, func(name string, _ int) bool {
+		key, err := getFunc(name)
+		if err != nil {
+			log.Warn("Failed to get key during list validation",
+				zap.String("key_name", name),
+				zap.String("context", context),
+				zap.Error(err),
+			)
+			return false
+		}
+		if key == nil {
+			log.Error("Found nil key during list, attempting to delete",
+				zap.String("key_name", name),
+				zap.String("context", context),
+			)
+			_ = deleteFunc(name)
+			return false
+		}
+		return true
+	})
+}
+
 // SafeKeystore wraps a keystore.Keystore to prevent nil keys from being stored
 // This is a defensive wrapper around the vendor's MemKeystore which doesn't validate nil keys
 type SafeKeystore struct {
@@ -75,24 +100,7 @@ func (sk *SafeKeystore) List() ([]string, error) {
 
 	// Validate that all listed keys are non-nil
 	// This is a defensive check to catch any corruption
-	validNames := lo.Filter(names, func(name string, _ int) bool {
-		key, err := sk.Get(name)
-		if err != nil {
-			sk.log.Warn("Failed to get key during list validation",
-				zap.String("key_name", name),
-				zap.Error(err),
-			)
-			return false
-		}
-		if key == nil {
-			sk.log.Error("Found nil key during list, attempting to delete",
-				zap.String("key_name", name),
-			)
-			_ = sk.Delete(name)
-			return false
-		}
-		return true
-	})
+	validNames := ValidateKeyList(names, sk.Get, sk.Delete, sk.log, "SafeKeystore")
 
 	return validNames, nil
 }
