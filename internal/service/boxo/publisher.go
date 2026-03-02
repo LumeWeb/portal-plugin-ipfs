@@ -1,6 +1,7 @@
 package boxo
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -71,18 +72,20 @@ func (s *IPNSPublisherService) ID() string {
 // keyID is the peer ID (IPNS name) to publish to
 // cidStr is the CID to publish as the IPNS record value
 // ttl is the time-to-live for the IPNS record (use 0 for default)
-func (s *IPNSPublisherService) PublishCID(ctx core.Context, keyID string, cidStr string, ttl time.Duration) error {
-	traceCtx, span := core.TraceMethod(ctx, "IPNSPublisherService.PublishCID")
+func (s *IPNSPublisherService) PublishCID(ctx context.Context, keyID string, cidStr string, ttl time.Duration) error {
+	// Convert to core.Context for tracing
+	coreCtx := ctx.(core.Context)
+	traceCtx, span := core.TraceMethod(coreCtx, "IPNSPublisherService.PublishCID")
 	defer span.End()
 
 	// Get IPNSKeyService to retrieve the private key
-	ipnsKeyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+	ipnsKeyService := core.GetService[pluginCore.IPNSKeyService](coreCtx, pluginCore.IPNS_KEY_SERVICE)
 	if ipnsKeyService == nil {
 		return fmt.Errorf("IPNSKeyService not available")
 	}
 
 	// Get the private key by peer ID
-	privKey, _, err := ipnsKeyService.GetPrivateKeyByPeerID(traceCtx, keyID)
+	privKey, _, err := ipnsKeyService.GetPrivateKeyByPeerID(coreCtx, keyID)
 	if err != nil {
 		s.Logger().Error("Failed to get private key for IPNS publish",
 			zap.Error(err),
@@ -127,8 +130,10 @@ func (s *IPNSPublisherService) PublishCID(ctx core.Context, keyID string, cidStr
 }
 
 // PublishWithKey publishes a CID using the provided private key
-func (s *IPNSPublisherService) PublishWithKey(ctx core.Context, privKey crypto.PrivKey, cidStr string, ttl time.Duration) error {
-	traceCtx, span := core.TraceMethod(ctx, "IPNSPublisherService.PublishWithKey")
+func (s *IPNSPublisherService) PublishWithKey(ctx context.Context, privKey crypto.PrivKey, cidStr string, ttl time.Duration) error {
+	// Convert to core.Context for tracing
+	coreCtx := ctx.(core.Context)
+	traceCtx, span := core.TraceMethod(coreCtx, "IPNSPublisherService.PublishWithKey")
 	defer span.End()
 
 	// Parse the CID
@@ -166,8 +171,10 @@ func (s *IPNSPublisherService) PublishWithKey(ctx core.Context, privKey crypto.P
 }
 
 // GetPublished retrieves the latest published record for an IPNS name
-func (s *IPNSPublisherService) GetPublished(ctx core.Context, keyID string, checkRouting bool) (*ipns.Record, error) {
-	traceCtx, span := core.TraceMethod(ctx, "IPNSPublisherService.GetPublished")
+func (s *IPNSPublisherService) GetPublished(ctx context.Context, keyID string, checkRouting bool) (*ipns.Record, error) {
+	// Convert to core.Context for tracing
+	coreCtx := ctx.(core.Context)
+	traceCtx, span := core.TraceMethod(coreCtx, "IPNSPublisherService.GetPublished")
 	defer span.End()
 
 	// Parse the peer ID
@@ -189,8 +196,10 @@ func (s *IPNSPublisherService) GetPublished(ctx core.Context, keyID string, chec
 }
 
 // ListPublished returns all IPNS records published by this node
-func (s *IPNSPublisherService) ListPublished(ctx core.Context) (map[ipns.Name]*ipns.Record, error) {
-	traceCtx, span := core.TraceMethod(ctx, "IPNSPublisherService.ListPublished")
+func (s *IPNSPublisherService) ListPublished(ctx context.Context) (map[ipns.Name]*ipns.Record, error) {
+	// Convert to core.Context for tracing
+	coreCtx := ctx.(core.Context)
+	traceCtx, span := core.TraceMethod(coreCtx, "IPNSPublisherService.ListPublished")
 	defer span.End()
 
 	records, err := s.publisher.ListPublished(traceCtx)
