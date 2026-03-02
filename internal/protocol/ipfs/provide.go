@@ -10,6 +10,7 @@ import (
 
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multihash"
+	"github.com/samber/lo"
 	"go.uber.org/zap"
 )
 
@@ -138,17 +139,18 @@ func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.
 		return rem
 	}
 
-	announced := make([]cid.Cid, 0, len(cids))
-	keys := make([]multihash.Multihash, 0, len(cids))
 	buffer := interval / 10
 	minAnnouncement := time.Now().Add(-(interval - buffer))
-	for _, c := range cids {
-		if c.LastAnnouncement.After(minAnnouncement) {
-			break
-		}
-		keys = append(keys, c.CID.Hash())
-		announced = append(announced, c.CID)
-	}
+	eligibleCIDs := lo.Filter(cids, func(c pluginCore.PinnedCID, _ int) bool {
+		return !c.LastAnnouncement.After(minAnnouncement)
+	})
+	
+	announced := lo.Map(eligibleCIDs, func(c pluginCore.PinnedCID, _ int) cid.Cid {
+		return c.CID
+	})
+	keys := lo.Map(eligibleCIDs, func(c pluginCore.PinnedCID, _ int) multihash.Multihash {
+		return c.CID.Hash()
+	})
 
 	if err := doProvide(ctx, keys); err != nil {
 		r.log.Error("failed to provide CIDs", zap.Error(err))

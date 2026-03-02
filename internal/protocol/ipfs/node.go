@@ -44,6 +44,11 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 )
 
+const (
+	// libp2pProtocolPrefix is the protocol prefix for libp2p multiaddresses
+	libp2pProtocolPrefix = "/p2p/"
+)
+
 var cachedAnnouncementAddresses []multiaddr.Multiaddr
 
 // IPFSNode defines the interface for IPFS node operations
@@ -408,12 +413,9 @@ func ConnectionAddresses(node IPFSNode) ([]multiaddr.Multiaddr, error) {
 		return nil, err
 	}
 
-	connAddrs := make([]multiaddr.Multiaddr, 0, len(annAddrs))
-
-	for _, addr := range annAddrs {
-		fullAddr := addr.Encapsulate(multiaddr.StringCast("/p2p/" + node.PeerID().String()))
-		connAddrs = append(connAddrs, fullAddr)
-	}
+	connAddrs := lo.Map(annAddrs, func(addr multiaddr.Multiaddr, _ int) multiaddr.Multiaddr {
+		return addr.Encapsulate(multiaddr.StringCast(libp2pProtocolPrefix + node.PeerID().String()))
+	})
 
 	return connAddrs, nil
 }

@@ -13,6 +13,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.uber.org/zap"
 )
 
@@ -77,27 +78,7 @@ func (srk *SafeRepublisherKeystore) List() ([]string, error) {
 	}
 
 	// Validate that all listed keys are non-nil and filter out corrupted entries
-	validNames := make([]string, 0, len(names))
-	for _, name := range names {
-		key, err := srk.Get(name)
-		if err != nil {
-			srk.log.Warn("Failed to get key during republisher list validation",
-				zap.String("key_name", name),
-				zap.Error(err),
-			)
-			// Skip keys that can't be retrieved
-			continue
-		}
-		if key == nil {
-			srk.log.Error("Found nil key during republisher list, attempting to delete",
-				zap.String("key_name", name),
-			)
-			// Try to delete the corrupted entry
-			_ = srk.Delete(name)
-			continue
-		}
-		validNames = append(validNames, name)
-	}
+	validNames := ipfs.ValidateKeyList(names, srk.Get, srk.Delete, srk.log, "SafeRepublisherKeystore")
 
 	return validNames, nil
 }
