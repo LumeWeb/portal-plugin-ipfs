@@ -61,7 +61,6 @@ func IPNSPath(peerID string) string {
 func trimPath(s string) string {
 	return strings.Trim(s, "/")
 }
-}
 
 // SSLStatus represents the SSL certificate status
 type SSLStatus string

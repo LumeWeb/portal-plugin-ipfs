@@ -30,12 +30,12 @@ import (
 // WebsiteServiceDefault implements the WebsiteService interface
 type WebsiteServiceDefault struct {
 	*core.BaseComponent
-	pinSvc          pluginCore.IPFSPinService
-	ipnsKeySvc      pluginCore.IPNSKeyService
+	pinSvc           pluginCore.IPFSPinService
+	ipnsKeySvc       pluginCore.IPNSKeyService
 	ipnsPublisherSvc pluginCore.IPNSPublisherService
-	mailerSvc       core.MailerService
-	dnsSvc          pluginCore.DNSService
-	config          pluginConfig.WebsiteConfig
+	mailerSvc        core.MailerService
+	dnsSvc           pluginCore.DNSService
+	config           pluginConfig.WebsiteConfig
 }
 
 // Ensure WebsiteServiceDefault implements the interface
@@ -48,29 +48,10 @@ func NewWebsiteService() (core.Service, []core.ContextBuilderOption, error) {
 	opts := core.ContextOptions(
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
 			svc.pinSvc = core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)
-			if svc.pinSvc == nil {
-				return fmt.Errorf("pin service (PIN_SERVICE) is not registered")
-			}
-
 			svc.ipnsKeySvc = core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
-			if svc.ipnsKeySvc == nil {
-				return fmt.Errorf("IPNS key service (IPNS_KEY_SERVICE) is not registered")
-			}
-
-			svc.ipnsPublisherSvc = core.GetService[pluginCore.IPNSPublisherService](ctx, pluginCore.IPNS_PUBLISHER_SERVICE)
-			if svc.ipnsPublisherSvc == nil {
-				svc.Logger().Warn("IPNS publisher service not available, IPNS publishing will be disabled")
-			}
-
 			svc.mailerSvc = core.GetService[core.MailerService](ctx, core.MAILER_SERVICE)
-			if svc.mailerSvc == nil {
-				svc.Logger().Warn("Mailer service not available, email notifications will be disabled")
-			}
-
 			svc.dnsSvc = core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
-			if svc.dnsSvc == nil {
-				svc.Logger().Warn("DNS service not available, DNS hosting will be disabled")
-			}
+			svc.ipnsPublisherSvc = core.GetService[pluginCore.IPNSPublisherService](ctx, pluginCore.IPNS_PUBLISHER_SERVICE)
 
 			// Load configuration from protocol config
 			protocolConfig := core.GetProtocolConfig[pluginConfig.ProtocolConfig](ctx, internal.ProtocolName)
@@ -146,14 +127,20 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 			if website.Enabled && website.TargetType == string(pluginDb.WebsiteTargetTypeIPFS) {
 				// Generate IPNS key name based on domain
 				keyName := fmt.Sprintf("%s-auto", website.Domain)
-				
+
 				// Check if IPNS key with this name already exists
-				ipnsKey, err = s.ipnsKeySvc.GetKeyByName(ctx, website.UserID, keyName)
+				keys, err := s.ipnsKeySvc.ListKeys(ctx, website.UserID)
 				if err != nil {
-					s.Logger().Error("Failed to check for existing IPNS key",
+					s.Logger().Error("Failed to list existing IPNS keys",
 						zap.Error(err),
 						zap.String("domain", website.Domain))
-					return nil, fmt.Errorf("failed to check for existing IPNS key: %w", err)
+					return nil, fmt.Errorf("failed to list existing IPNS keys: %w", err)
+				}
+				for _, k := range keys {
+					if k.Name == keyName {
+						ipnsKey = &k
+						break
+					}
 				}
 				
 				// Create IPNS key if it doesn't exist
@@ -517,21 +504,19 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 						}
 
 						// Publish the new CID to the IPNS key
-						if s.ipnsPublisherSvc != nil {
-							ttl := 24 * time.Hour
-							err = s.ipnsPublisherSvc.PublishCID(ctx, ipnsKey.PeerID().String(), newTargetHash, ttl)
-							if err != nil {
-								s.Logger().Warn("Failed to republish new CID to IPNS key",
-									zap.Error(err),
-									zap.String("domain", website.Domain),
-									zap.String("peer_id", ipnsKey.PeerID().String()),
-									zap.String("cid", newTargetHash))
-							} else {
-								s.Logger().Info("Republished new CID to IPNS key",
-									zap.String("domain", website.Domain),
-									zap.String("peer_id", ipnsKey.PeerID().String()),
-									zap.String("cid", newTargetHash))
-							}
+						ttl := 24 * time.Hour
+						err = s.ipnsPublisherSvc.PublishCID(ctx, ipnsKey.PeerID().String(), newTargetHash, ttl)
+						if err != nil {
+							s.Logger().Warn("Failed to republish new CID to IPNS key",
+								zap.Error(err),
+								zap.String("domain", website.Domain),
+								zap.String("peer_id", ipnsKey.PeerID().String()),
+								zap.String("cid", newTargetHash))
+						} else {
+							s.Logger().Info("Republished new CID to IPNS key",
+								zap.String("domain", website.Domain),
+								zap.String("peer_id", ipnsKey.PeerID().String()),
+								zap.String("cid", newTargetHash))
 						}
 					}
 				}
