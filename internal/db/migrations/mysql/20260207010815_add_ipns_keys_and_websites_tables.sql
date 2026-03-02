@@ -57,18 +57,7 @@ CREATE TABLE IF NOT EXISTS ipfs_websites (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- +goose StatementEnd
 
--- Add foreign key constraints (will be added after ipfs_dns_zones table exists)
--- +goose StatementBegin
-ALTER TABLE ipfs_websites ADD CONSTRAINT fk_websites_dns_zone FOREIGN KEY (dns_zone_id) REFERENCES ipfs_dns_zones(id) ON DELETE SET NULL;
-ALTER TABLE ipfs_websites ADD CONSTRAINT fk_websites_ipns_key FOREIGN KEY (ipns_key_id) REFERENCES ipfs_ipns_keys(id) ON DELETE SET NULL;
--- +goose StatementEnd
-
 -- +goose Down
--- +goose StatementBegin
-ALTER TABLE ipfs_websites DROP FOREIGN KEY fk_websites_dns_zone;
-ALTER TABLE ipfs_websites DROP FOREIGN KEY fk_websites_ipns_key;
--- +goose StatementEnd
-
 -- +goose StatementBegin
 DROP TABLE IF EXISTS ipfs_websites;
 -- +goose StatementEnd
