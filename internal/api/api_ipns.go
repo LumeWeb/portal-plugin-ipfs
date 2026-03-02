@@ -321,7 +321,7 @@ func (a *API) resolveIPNS(c echo.Context) error {
 		Name:     name,
 		Value:    valuePath.String(),
 		Sequence: sequence,
-		Path:     pluginDb.IPFSPath(valuePath.String()),
+		Path:     dto.IPFSPath(valuePath.String()),
 		Expired:  time.Now().After(validity),
 		Expires:  validity,
 	}

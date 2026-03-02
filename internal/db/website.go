@@ -32,6 +32,14 @@ const (
 	WebsiteTargetTypeIPNS WebsiteTargetType = "ipns"
 )
 
+// ToDNSLinkPath returns the DNSLink path for this target type with the given hash
+func (t WebsiteTargetType) ToDNSLinkPath(hash string) string {
+	if t == WebsiteTargetTypeIPNS {
+		return "/ipns/" + hash
+	}
+	return "/ipfs/" + hash
+}
+
 // SSLStatus represents the SSL certificate status
 type SSLStatus string
 

@@ -15,6 +15,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
@@ -797,7 +798,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 
 				// Check dnslink records from result.Links
 				if ipfsLinks, ok := result.Links["ipfs"]; ok && len(ipfsLinks) > 0 {
-					foundDNSlink = pluginDb.IPFSPrefix + ipfsLinks[0].Identifier
+					foundDNSlink = dto.IPFSPath(ipfsLinks[0].Identifier)
 					if foundDNSlink == expectedDNSlink {
 						hasDNSlink = true
 						s.Logger().Debug("Found valid DNSlink record",
@@ -806,7 +807,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 					}
 				}
 				if ipnsLinks, ok := result.Links["ipns"]; ok && len(ipnsLinks) > 0 {
-					foundDNSlink = pluginDb.IPNSPrefix + ipnsLinks[0].Identifier
+					foundDNSlink = dto.IPNSPath(ipnsLinks[0].Identifier)
 					if foundDNSlink == expectedDNSlink {
 						hasDNSlink = true
 						s.Logger().Debug("Found valid DNSlink record",
