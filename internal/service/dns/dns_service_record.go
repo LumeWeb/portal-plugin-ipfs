@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	apiDTO "go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
@@ -291,6 +292,32 @@ func applyInMemoryFilters(records []*apiDTO.DNSRecord, filters []queryutil.CrudF
 		}
 		return true
 	})
+
+	// Apply sorting if specified
+	if len(sorts) > 0 {
+		sort.Slice(result, func(i, j int) bool {
+			for _, s := range sorts {
+				var valI, valJ string
+				switch s.Field {
+				case "name":
+					valI, valJ = result[i].Name, result[j].Name
+				case "type":
+					valI, valJ = result[i].Type, result[j].Type
+				case "content":
+					valI, valJ = result[i].Content, result[j].Content
+				default:
+					continue
+				}
+				if valI != valJ {
+					if s.Order == filter.OrderDesc {
+						return valI > valJ
+					}
+					return valI < valJ
+				}
+			}
+			return false
+		})
+	}
 
 	return result
 }

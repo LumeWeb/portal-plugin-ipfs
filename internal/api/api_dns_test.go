@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,7 +153,7 @@ func TestAPI_CreateZone(t *testing.T) {
 			helper := newMockHelper(t, ctx)
 			token, _ := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
 
-			longDomain := "a." + string(make([]byte, 300)) + ".com"
+			longDomain := "a." + strings.Repeat("a", 300) + ".com"
 			reqBody := fmt.Sprintf(`{"domain":"%s"}`, longDomain)
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/dns/zones", token, []byte(reqBody))
 

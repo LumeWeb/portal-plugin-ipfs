@@ -125,6 +125,7 @@ func TestNameserverValidatorJob_FailedValidation(t *testing.T) {
 		assert.Equal(tb, string(db.DNSZoneStatusPendingNameserver), updatedZone.Status)
 
 		// Verify LastNameserverCheckAt was updated even on error
+		assert.NotNil(tb, updatedZone.LastNameserverCheckAt)
 		if initialCheckTime != nil {
 			assert.True(tb, updatedZone.LastNameserverCheckAt.After(*initialCheckTime))
 		}
