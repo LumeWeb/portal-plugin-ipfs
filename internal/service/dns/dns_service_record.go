@@ -367,6 +367,18 @@ func (s *DNSService) ImportZoneFile(ctx context.Context, zoneID uint, zoneFileCo
 		existingRecordsMap[key] = rrset
 	}
 
+	// For replace mode, delete all existing user-manageable records first
+	// This must happen BEFORE creating new records to avoid deleting records we just created
+	if importMode == apiDTO.ImportModeReplace && !dryRun && len(existingUserRecords) > 0 {
+		recordIdentifiers := lo.Map(existingUserRecords, func(rrset powerdns.RRSet, _ int) apiDTO.RecordIdentifier {
+			return apiDTO.RecordIdentifier{
+				Name: stripDomain(rrset.Name, zone.Domain),
+				Type: rrset.Type,
+			}
+		})
+		_, _ = s.BulkDeleteRecords(ctx, zoneID, zone.UserID, recordIdentifiers, false)
+	}
+
 	// Process each zone file entry
 	for _, entry := range entries {
 		recordType := string(entry.Type())
@@ -459,17 +471,6 @@ func (s *DNSService) ImportZoneFile(ctx context.Context, zoneID uint, zoneFileCo
 				response.CreatedRecords = append(response.CreatedRecords, buildCreatedRecord(name, recordType, content, ttl))
 			}
 		}
-	}
-
-	// For replace mode, delete all existing user-manageable records first
-	if importMode == apiDTO.ImportModeReplace && !dryRun && len(existingUserRecords) > 0 {
-		recordIdentifiers := lo.Map(existingUserRecords, func(rrset powerdns.RRSet, _ int) apiDTO.RecordIdentifier {
-			return apiDTO.RecordIdentifier{
-				Name: stripDomain(rrset.Name, zone.Domain),
-				Type: rrset.Type,
-			}
-		})
-		_, _ = s.BulkDeleteRecords(ctx, zoneID, zone.UserID, recordIdentifiers, false)
 	}
 
 	s.Logger().Info("DNS zone import completed",
