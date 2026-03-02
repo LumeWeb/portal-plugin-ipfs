@@ -14,12 +14,13 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
-	protocol "go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks/protocol"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.lumeweb.com/portal/db"
 	"gorm.io/gorm"
+
+	protocol "go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 )
 
 // CalculateParentPath computes the parent directory path for a given file path

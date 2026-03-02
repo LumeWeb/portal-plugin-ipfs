@@ -33,9 +33,17 @@ CREATE INDEX idx_websites_dns_zone_id ON ipfs_websites(dns_zone_id);
 ALTER TABLE ipfs_websites ADD CONSTRAINT fk_websites_dns_zone FOREIGN KEY (dns_zone_id) REFERENCES ipfs_dns_zones(id);
 -- +goose StatementEnd
 
+-- +goose StatementBegin
+ALTER TABLE ipfs_websites ADD CONSTRAINT fk_websites_ipns_key FOREIGN KEY (ipns_key_id) REFERENCES ipfs_ipns_keys(id);
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
 ALTER TABLE ipfs_websites DROP FOREIGN KEY fk_websites_dns_zone;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+ALTER TABLE ipfs_websites DROP FOREIGN KEY fk_websites_ipns_key;
 -- +goose StatementEnd
 
 -- +goose StatementBegin

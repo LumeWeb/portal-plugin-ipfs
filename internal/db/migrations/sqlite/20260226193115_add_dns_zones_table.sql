@@ -22,6 +22,11 @@ CREATE INDEX idx_ipfs_dns_zones_deleted_at ON ipfs_dns_zones(deleted_at);
 ALTER TABLE ipfs_websites ADD COLUMN dns_zone_id INTEGER;
 -- SQLite doesn't support ADD CONSTRAINT in ALTER TABLE, FK enforcement handled in app layer
 CREATE INDEX idx_ipfs_websites_dns_zone_id ON ipfs_websites(dns_zone_id);
+
+-- Add ipns_key_id foreign key to ipfs_websites
+ALTER TABLE ipfs_websites ADD COLUMN ipns_key_id INTEGER;
+-- SQLite doesn't support ADD CONSTRAINT in ALTER TABLE, FK enforcement handled in app layer
+CREATE INDEX idx_ipfs_websites_ipns_key_id ON ipfs_websites(ipns_key_id);
 -- +goose StatementEnd
 
 -- +goose Down

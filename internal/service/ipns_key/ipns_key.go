@@ -257,6 +257,26 @@ func (s *IPNSKeyServiceDefault) ListKeys(ctx context.Context, userID uint) ([]pl
 	return keys, nil
 }
 
+// GetKeyByName retrieves a single IPNS key by name for a user
+func (s *IPNSKeyServiceDefault) GetKeyByName(ctx context.Context, userID uint, name string) (*pluginDb.IPFSIPNSKey, error) {
+	ctx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.GetKeyByName")
+	defer span.End()
+
+	var key pluginDb.IPFSIPNSKey
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		return tx.Where("user_id = ? AND name = ? AND deleted_at IS NULL", userID, name).First(&key)
+	})
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil // Key not found, return nil
+		}
+		s.Logger().Error("Failed to get IPNS key by name", zap.Error(err), zap.Uint("user_id", userID), zap.String("name", name))
+		return nil, fmt.Errorf("failed to get IPNS key by name: %w", err)
+	}
+
+	return &key, nil
+}
+
 // GetKeyByID retrieves a single IPNS key by ID
 func (s *IPNSKeyServiceDefault) GetKeyByID(ctx context.Context, userID uint, keyID uint) (*pluginDb.IPFSIPNSKey, error) {
 	ctx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.GetKeyByID")
