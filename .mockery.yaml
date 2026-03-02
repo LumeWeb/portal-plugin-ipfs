@@ -18,6 +18,7 @@ packages:
       IPNSKeyService: {}
       WebsiteService: {}
       IPNSPublisherService: {}
+      DNSService: {}
   go.lumeweb.com/portal-plugin-ipfs/internal/protocol:
     interfaces:
       ProtoNode: {}
@@ -35,3 +36,6 @@ packages:
     interfaces:
       ArchiveExtractor: {}
       StreamingArchiveProcessor: {}
+  go.lumeweb.com/portal-plugin-ipfs/internal/service/dns:
+    interfaces:
+      DNSLookup: {}
