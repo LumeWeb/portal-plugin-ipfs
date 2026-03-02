@@ -815,15 +815,14 @@ func (h *UnpinOperationHandler) GetBlockRelationships(ctx context.Context, tx *g
 	}
 
 	// Convert pinned parent CIDs to strings
-	parents = make([]string, 0, len(pinnedParentCIDs))
-	for _, parentCIDBytes := range pinnedParentCIDs {
+	parents = lo.FilterMap(pinnedParentCIDs, func(parentCIDBytes []byte, _ int) (string, bool) {
 		parentCID, err := cid.Cast(parentCIDBytes)
 		if err != nil {
 			h.Logger().Warn("Failed to cast parent CID", zap.Error(err))
-			continue
+			return "", false
 		}
-		parents = append(parents, parentCID.String())
-	}
+		return parentCID.String(), true
+	})
 
 	return parents, children, nil
 }

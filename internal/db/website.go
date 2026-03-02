@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -30,14 +31,35 @@ type WebsiteTargetType string
 const (
 	WebsiteTargetTypeIPFS WebsiteTargetType = "ipfs"
 	WebsiteTargetTypeIPNS WebsiteTargetType = "ipns"
+
+	// IPFSPrefix is the prefix for IPFS target paths
+	IPFSPrefix = "/ipfs/"
+
+	// IPNSPrefix is the prefix for IPNS target paths
+	IPNSPrefix = "/ipns/"
 )
 
 // ToDNSLinkPath returns the DNSLink path for this target type with the given hash
 func (t WebsiteTargetType) ToDNSLinkPath(hash string) string {
 	if t == WebsiteTargetTypeIPNS {
-		return "/ipns/" + hash
+		return IPNSPrefix + hash
 	}
-	return "/ipfs/" + hash
+	return IPFSPrefix + hash
+}
+
+// IPFSPath creates a properly formatted IPFS path from a CID string
+func IPFSPath(cid string) string {
+	return IPFSPrefix + trimPath(cid)
+}
+
+// IPNSPath creates a properly formatted IPNS path from a peer ID string
+func IPNSPath(peerID string) string {
+	return IPNSPrefix + trimPath(peerID)
+}
+
+// trimPath defensively trims leading and trailing slashes from path components
+func trimPath(s string) string {
+	return strings.Trim(s, "/")
 }
 
 // SSLStatus represents the SSL certificate status
@@ -85,7 +107,8 @@ type Website struct {
 	ValidationExpiresAt *time.Time     `gorm:"index"`
 	LastCheckedAt       *time.Time     `gorm:"index:idx_ipfs_websites_last_checked_at"`
 	DNSZoneID           *uint          `gorm:"column:dns_zone_id;index:idx_ipfs_websites_dns_zone_id"`    // Foreign key to DNS zone (if DNS hosting enabled)
-	Enabled             bool           `gorm:"column:dns_hosting_enabled;default:false"`                // Whether DNS hosting is enabled
+	IPNSKeyID           *uint          `gorm:"column:ipns_key_id;index:idx_ipfs_websites_ipns_key_id"`     // Foreign key to IPNS key (if auto-created for managed DNS)
+	Enabled             bool           `gorm:"column:dns_enabled;default:false"`                // Whether DNS hosting is enabled
 	SSLStatus           string         `gorm:"column:ssl_status;type:varchar(50);index:idx_ipfs_websites_ssl_status;default:'pending'"`
 	SSLError            string         `gorm:"column:ssl_error;type:text"`
 	SSLIssuedAt         *time.Time     `gorm:"column:ssl_issued_at;index:idx_ipfs_websites_ssl_issued_at"`

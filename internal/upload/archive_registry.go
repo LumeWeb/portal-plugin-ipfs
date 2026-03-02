@@ -7,6 +7,7 @@ import (
 
 	"github.com/h2non/filetype"
 	"github.com/mholt/archives"
+	"github.com/samber/lo"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
 )
 
@@ -297,12 +298,7 @@ func (r *ArchiveRegistry) SupportedFormats() []Format {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	formats := make([]Format, 0, len(r.extractors))
-	for format := range r.extractors {
-		formats = append(formats, format)
-	}
-
-	return formats
+	return lo.Keys(r.extractors)
 }
 
 // IsFormatSupported checks if a format is supported
