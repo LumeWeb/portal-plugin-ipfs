@@ -64,7 +64,7 @@ func NewIPNSPublisherService() (core.Service, []core.ContextBuilderOption, error
 }
 
 func (s *IPNSPublisherService) ID() string {
-	return "ipns_publisher_service"
+	return pluginCore.IPNS_PUBLISHER_SERVICE
 }
 
 // PublishCID publishes a CID to an IPNS key
