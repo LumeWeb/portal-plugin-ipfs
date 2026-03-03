@@ -46,6 +46,7 @@ type API struct {
 	workflowService    core.WorkflowService
 	ipnsKeyService     pluginCore.IPNSKeyService
 	websiteService     pluginCore.WebsiteService
+	dnsService         pluginCore.DNSService
 	tus                core.TusHandler
 	ipfs               protocol.ProtoNode
 }
@@ -62,6 +63,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 			api.workflowService = core.GetService[core.WorkflowService](ctx, core.WORKFLOW_SERVICE)
 			api.ipnsKeyService = core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 			api.websiteService = core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+			api.dnsService = core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
 			proto := core.GetProtocol(internal.ProtocolName)
 			sproto := proto.(core.StorageProtocol)
 			event.OnBootStartupFuncsCompleted(ctx, func(ctx core.Context, eventCtx context.Context) error {

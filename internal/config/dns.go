@@ -11,7 +11,7 @@ var _ config.Defaults = (*Config)(nil)
 // Config contains the configuration for the DNS hosting feature
 type Config struct {
 	// DNS hosting enabled/disabled
-	Enabled bool `config:"dns_hosting_enabled"`
+	Enabled bool `config:"dns_enabled"`
 
 	// PowerDNS configuration
 	PowerDNSAPIURL string `config:"powerdns_api_url"`
@@ -20,16 +20,20 @@ type Config struct {
 	// Approved nameservers for validation
 	Nameservers []string `config:"nameservers"`
 
+	// Gateway domain for ALIAS records (auto-wiring)
+	GatewayDomain string `config:"gateway_domain"`
+
 	// Nameserver validation job configuration
 	NameserverValidationInterval time.Duration `config:"nameserver_validation_interval"`
 }
 
 func (c Config) Defaults() map[string]any {
 	return map[string]any{
-		"Enabled":             false,
+		"Enabled":                       false,
 		"PowerDNSAPIURL":                "",
 		"PowerDNSAPIKey":                "",
 		"Nameservers":                   []string{},
+		"GatewayDomain":                 "",
 		"NameserverValidationInterval":  5 * time.Minute,
 	}
 }

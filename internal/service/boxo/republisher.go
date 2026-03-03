@@ -162,7 +162,7 @@ func NewIPNSRepublisherService() (core.Service, []core.ContextBuilderOption, err
 }
 
 func (s *IPNSRepublisherService) ID() string {
-	return "ipns_republisher_service"
+	return pluginCore.IPNS_REPUBLISHER_SERVICE
 }
 
 // Start starts the IPNS republisher if not already running

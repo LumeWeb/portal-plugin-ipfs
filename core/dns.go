@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 
+	"go.lumeweb.com/queryutil"
+	apiDTO "go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
 )
@@ -22,8 +24,8 @@ type DNSService interface {
 	// GetZoneByDomain retrieves a zone by domain name
 	GetZoneByDomain(ctx context.Context, domain string) (*pluginDb.DNSZone, error)
 
-	// ListZones retrieves zones for a user
-	ListZones(ctx context.Context, userID uint) ([]*pluginDb.DNSZone, error)
+	// ListZones retrieves zones for a user with filtering, sorting, and pagination
+	ListZones(ctx context.Context, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.DNSZone, int64, error)
 
 	// UpdateZone updates zone status
 	UpdateZone(ctx context.Context, zoneID uint, status pluginDb.DNSZoneStatus) error
@@ -34,9 +36,38 @@ type DNSService interface {
 	// ValidateNameservers validates that domain's nameservers match approved list
 	ValidateNameservers(ctx context.Context, zoneID uint) (bool, error)
 
+	// CreateWebsiteDNSRecords creates initial DNS records for a new website
+	CreateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType pluginDb.WebsiteTargetType, validationToken string) error
+
 	// UpdateWebsiteDNSRecords updates DNS records for a website
-	UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType string) error
+	UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType pluginDb.WebsiteTargetType) error
 
 	// DeleteWebsiteDNSRecords removes DNS records for a website
 	DeleteWebsiteDNSRecords(ctx context.Context, zoneID uint) error
+
+	// GetZoneRecords retrieves DNS records for a zone from PowerDNS
+	// Returns list of DNSRecord DTOs representing PowerDNS RRSets with filtering applied
+	GetZoneRecords(ctx context.Context, zoneID uint, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*apiDTO.DNSRecord, int64, error)
+
+	// GetRRSet retrieves a specific DNS RRSet by name and type from PowerDNS
+	GetRRSet(ctx context.Context, zoneID uint, name string, recordType string) ([]*apiDTO.DNSRecord, error)
+
+	// CreateRecord creates a new DNS record in PowerDNS via RRSet
+	// name: the record name (e.g., "www")
+	// recordType: the record type (e.g., "A", "CNAME")
+	// content: the record content/value
+	// ttl: time to live in seconds
+	CreateRecord(ctx context.Context, zoneID uint, name string, recordType string, content string, ttl uint) (*apiDTO.DNSRecord, error)
+
+	// UpdateRecord updates an existing DNS RRSet in PowerDNS
+	// name: the record name
+	// recordType: the record type
+	// records: list of record contents to update
+	UpdateRecord(ctx context.Context, zoneID uint, name string, recordType string, records []string, ttl uint) ([]*apiDTO.DNSRecord, error)
+
+	// DeleteRecord deletes a DNS RRSet from PowerDNS
+	DeleteRecord(ctx context.Context, zoneID uint, name string, recordType string) error
+
+	// BulkDeleteRecords deletes multiple DNS records in a single PowerDNS API call
+	BulkDeleteRecords(ctx context.Context, zoneID uint, userID uint, records []apiDTO.RecordIdentifier, dryRun bool) (*apiDTO.BulkDeleteResponse, error)
 }

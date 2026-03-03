@@ -33,6 +33,13 @@ const (
 	ErrKeyUnauthorized          core.ErrorType = "ErrKeyUnauthorized"
 	ErrKeyDownloadQuotaExceeded core.ErrorType = "ErrDownloadQuotaExceeded"
 	ErrKeyInvalidRequest        core.ErrorType = "ErrInvalidRequest"
+
+	// DNS error types
+	ErrKeyInvalidRecordType      core.ErrorType = "INVALID_RECORD_TYPE"
+	ErrKeyRecordNotFound         core.ErrorType = "RECORD_NOT_FOUND"
+	ErrKeyZoneNotFound           core.ErrorType = "ZONE_NOT_FOUND"
+	ErrKeyInvalidDomainFormat    core.ErrorType = "INVALID_DOMAIN_FORMAT"
+	ErrKeyDuplicateRecord        core.ErrorType = "DUPLICATE_RECORD"
 )
 
 var _ router.ResponseError = (*IPFSError)(nil)
@@ -113,6 +120,11 @@ func init() {
 		ErrKeyCorruptedFile:         {Key: ErrKeyCorruptedFile, Message: "Corrupted or invalid file format"},
 		ErrKeyEmptyZIP:              {Key: ErrKeyEmptyZIP, Message: "Empty ZIP file cannot be converted"},
 		ErrKeyPasswordProtected:     {Key: ErrKeyPasswordProtected, Message: "Password-protected ZIP files are not supported"},
+		ErrKeyInvalidRecordType:     {Key: ErrKeyInvalidRecordType, Message: "Invalid DNS record type"},
+		ErrKeyRecordNotFound:        {Key: ErrKeyRecordNotFound, Message: "DNS record not found"},
+		ErrKeyZoneNotFound:          {Key: ErrKeyZoneNotFound, Message: "DNS zone not found"},
+		ErrKeyInvalidDomainFormat:   {Key: ErrKeyInvalidDomainFormat, Message: "Invalid domain format"},
+		ErrKeyDuplicateRecord:       {Key: ErrKeyDuplicateRecord, Message: "Duplicate DNS record"},
 	})
 
 	core.MustRegisterErrorCodes(Namespace, map[core.ErrorType]int{
