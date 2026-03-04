@@ -683,6 +683,220 @@ See also:.*`),
 		return fmt.Errorf("failed to register website routes: %w", err)
 	}
 
+	// DNS routes for zone and record management
+	dnsRoutes := router.DefineRoutes(
+		router.NewRoute(http.MethodPost, "/dns/zones", a.createZone,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Create DNS zone"),
+				router.WithDescription(`Creates a new DNS zone for a domain.
+
+Creates a zone for managing DNS records. The domain must be valid and not already exist.
+
+See also:.*`),
+				router.WithTags("DNS", "Zones"),
+				router.WithRequestBody(&dto.ZoneRequest{}, "Zone request", true),
+				router.WithSuccessResponse(http.StatusCreated, "Zone created", router.WithJSONContent(dto.ZoneResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/dns/zones", a.listZones,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("List DNS zones"),
+				router.WithDescription(`Lists all DNS zones owned by the current user.
+
+Returns paginated list of zones with filtering support.
+
+See also:.*`),
+				router.WithTags("DNS", "Zones"),
+				router.WithSuccessResponse(http.StatusOK, "List of zones", router.WithJSONContent(queryutil.Response[dto.ZoneListResponse]{})),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/dns/zones/:id", a.getZone,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Get DNS zone"),
+				router.WithDescription(`Gets detailed information about a DNS zone.
+
+Returns full zone configuration including domain and status.
+
+See also:.*`),
+				router.WithTags("DNS", "Zones"),
+				router.WithPathParam("id", "Zone ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Zone details", router.WithJSONContent(dto.ZoneResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPut, "/dns/zones/:id", a.updateZone,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Update DNS zone"),
+				router.WithDescription(`Updates a DNS zone configuration.
+
+Only certain fields can be updated after creation.
+
+See also:.*`),
+				router.WithTags("DNS", "Zones"),
+				router.WithPathParam("id", "Zone ID", ""),
+				router.WithRequestBody(&dto.ZoneRequest{}, "Zone request", true),
+				router.WithSuccessResponse(http.StatusOK, "Zone updated", router.WithJSONContent(dto.ZoneResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodDelete, "/dns/zones/:id", a.deleteZone,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Delete DNS zone"),
+				router.WithDescription(`Deletes a DNS zone and all its records.
+
+Performs a soft delete, marking the zone as deleted without removing it from the database.
+
+See also:.*`),
+				router.WithTags("DNS", "Zones"),
+				router.WithPathParam("id", "Zone ID", ""),
+				router.WithSuccessResponse(http.StatusNoContent, "Zone deleted"),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/dns/zones/:id/validate", a.validateZone,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Validate DNS zone"),
+				router.WithDescription(`Validates nameservers for a DNS zone.
+
+Checks if the nameservers are properly configured for the zone.
+
+See also:.*`),
+				router.WithTags("DNS", "Zones"),
+				router.WithPathParam("id", "Zone ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Validation result", router.WithJSONContent(dto.ValidationResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/dns/zones/:id/status", a.getZoneStatus,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Get DNS zone status"),
+				router.WithDescription(`Gets the current status of a DNS zone.
+
+Returns zone status and configuration details.
+
+See also:.*`),
+				router.WithTags("DNS", "Zones"),
+				router.WithPathParam("id", "Zone ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Zone status", router.WithJSONContent(dto.ZoneResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/dns/zones/:id/records", a.listRecords,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("List DNS records"),
+				router.WithDescription(`Lists all DNS records for a zone.
+
+Returns paginated list of records with filtering support.
+
+See also:.*`),
+				router.WithTags("DNS", "Records"),
+				router.WithPathParam("id", "Zone ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "List of records", router.WithJSONContent(queryutil.Response[dto.RecordResponse]{})),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/dns/zones/:id/records/:name/:type", a.getRecord,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Get DNS record"),
+				router.WithDescription(`Gets a specific DNS record by name and type.
+
+Returns record details including content and TTL.
+
+See also:.*`),
+				router.WithTags("DNS", "Records"),
+				router.WithPathParam("id", "Zone ID", ""),
+				router.WithPathParam("name", "Record name", ""),
+				router.WithPathParam("type", "Record type (A, AAAA, CNAME, TXT, etc.)", ""),
+				router.WithSuccessResponse(http.StatusOK, "Record details", router.WithJSONContent(dto.RecordResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/dns/zones/:id/records", a.createRecord,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Create DNS record"),
+				router.WithDescription(`Creates a new DNS record in a zone.
+
+Creates a record with the specified name, type, and content.
+
+See also:.*`),
+				router.WithTags("DNS", "Records"),
+				router.WithPathParam("id", "Zone ID", ""),
+				router.WithRequestBody(&dto.RecordRequest{}, "Record request", true),
+				router.WithSuccessResponse(http.StatusCreated, "Record created", router.WithJSONContent(dto.RecordResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPut, "/dns/zones/:id/records/:name/:type", a.updateRecord,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Update DNS record"),
+				router.WithDescription(`Updates an existing DNS record.
+
+Updates the content and TTL of a record.
+
+See also:.*`),
+				router.WithTags("DNS", "Records"),
+				router.WithPathParam("id", "Zone ID", ""),
+				router.WithPathParam("name", "Record name", ""),
+				router.WithPathParam("type", "Record type (A, AAAA, CNAME, TXT, etc.)", ""),
+				router.WithRequestBody(&dto.RecordRequest{}, "Record request", true),
+				router.WithSuccessResponse(http.StatusOK, "Record updated", router.WithJSONContent(dto.RecordResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodDelete, "/dns/zones/:id/records/:name/:type", a.deleteRecord,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Delete DNS record"),
+				router.WithDescription(`Deletes a DNS record from a zone.
+
+Removes the specified record from the zone.
+
+See also:.*`),
+				router.WithTags("DNS", "Records"),
+				router.WithPathParam("id", "Zone ID", ""),
+				router.WithPathParam("name", "Record name", ""),
+				router.WithPathParam("type", "Record type (A, AAAA, CNAME, TXT, etc.)", ""),
+				router.WithSuccessResponse(http.StatusNoContent, "Record deleted"),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/dns/zones/:id/records/bulk", a.bulkRecords,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Bulk create DNS records"),
+				router.WithDescription(`Creates multiple DNS records in a zone.
+
+Creates all records in the request. Errors are reported for individual records that fail.
+
+See also:.*`),
+				router.WithTags("DNS", "Records"),
+				router.WithPathParam("id", "Zone ID", ""),
+				router.WithRequestBody(&dto.BulkRecordRequest{}, "Bulk record request", true),
+				router.WithSuccessResponse(http.StatusOK, "Bulk operation result", router.WithJSONContent(dto.BulkRecordsResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/dns/zones/:id/records/bulk-delete", a.bulkDeleteRecords,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Bulk delete DNS records"),
+				router.WithDescription(`Deletes multiple DNS records from a zone.
+
+Deletes all records in the request. Can be run in dry-run mode to preview changes.
+
+See also:.*`),
+				router.WithTags("DNS", "Records"),
+				router.WithPathParam("id", "Zone ID", ""),
+				router.WithRequestBody(&dto.BulkDeleteRequest{}, "Bulk delete request", true),
+				router.WithSuccessResponse(http.StatusOK, "Bulk delete result", router.WithJSONContent(dto.BulkDeleteResponse{})),
+			),
+		),
+	)
+
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), dnsRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register dns routes: %w", err)
+	}
+
 	apiConfig := a.Config().GetAPI(internal.ProtocolName).(*pluginConfig.APIConfig)
 	if apiConfig.GatewaySecret == "" {
 		a.Logger().Warn("GatewaySecret is not configured - gateway authentication will fail for all requests")

@@ -79,7 +79,7 @@ func (a *API) listZones(c echo.Context) error {
 
 // getZone gets a specific DNS zone by ID
 func (a *API) getZone(c echo.Context) error {
-	zoneID, err := parseZoneIDParam(c)
+	zoneID, err := parseZoneIDParamWithResponse(c)
 	if err != nil {
 		return err
 	}
@@ -96,12 +96,7 @@ func (a *API) getZone(c echo.Context) error {
 
 // updateZone updates a DNS zone
 func (a *API) updateZone(c echo.Context) error {
-	zoneID, err := parseZoneIDParam(c)
-	if err != nil {
-		return err
-	}
-
-	zone, err := a.verifyZoneOwnership(c, zoneID)
+	zoneID, err := parseZoneIDParamWithResponse(c)
 	if err != nil {
 		return err
 	}
@@ -112,8 +107,32 @@ func (a *API) updateZone(c echo.Context) error {
 		return nil
 	}
 
-	// Update zone status if provided
+	zone, err := a.verifyZoneOwnership(c, zoneID)
+	if err != nil {
+		return err
+	}
+
 	// Note: Domain cannot be changed after creation
+	// This endpoint currently only supports status updates
+	// Nameservers are managed separately via DNS hosting provider
+
+	// Update zone status to active if nameservers are provided
+	if len(req.Nameservers) > 0 {
+		reqCtx := ctx.Context.Request().Context()
+		err = a.dnsService.UpdateZone(reqCtx, zoneID, db.DNSZoneStatusActive)
+		if err != nil {
+			a.Logger().Error("Failed to update DNS zone", zap.Error(err), zap.Uint("zone_id", zoneID))
+			apiErr := NewError(ErrKeyUpdateFailed, err)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+
+		zone, err = a.dnsService.GetZone(ctx.Context.Request().Context(), zoneID)
+		if err != nil {
+			a.Logger().Error("Failed to retrieve updated DNS zone", zap.Error(err), zap.Uint("zone_id", zoneID))
+			apiErr := NewError(ErrKeyZoneNotFound, err)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+	}
 
 	var resp dto.ZoneResponse
 	return httputil.EncodeResponse(ctx, zone, &resp)
@@ -121,7 +140,7 @@ func (a *API) updateZone(c echo.Context) error {
 
 // deleteZone deletes a DNS zone
 func (a *API) deleteZone(c echo.Context) error {
-	zoneID, err := parseZoneIDParam(c)
+	zoneID, err := parseZoneIDParamWithResponse(c)
 	if err != nil {
 		return err
 	}
@@ -136,7 +155,7 @@ func (a *API) deleteZone(c echo.Context) error {
 	err = a.dnsService.DeleteZone(reqCtx, zoneID)
 	if err != nil {
 		a.Logger().Error("Failed to delete DNS zone", zap.Error(err), zap.Uint("zone_id", zoneID))
-		apiErr := NewError(ErrKeyZoneNotFound, err)
+		apiErr := NewError(ErrKeyDeleteFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -145,7 +164,7 @@ func (a *API) deleteZone(c echo.Context) error {
 
 // validateZone validates nameservers for a zone
 func (a *API) validateZone(c echo.Context) error {
-	zoneID, err := parseZoneIDParam(c)
+	zoneID, err := parseZoneIDParamWithResponse(c)
 	if err != nil {
 		return err
 	}
@@ -160,7 +179,7 @@ func (a *API) validateZone(c echo.Context) error {
 	valid, err := a.dnsService.ValidateNameservers(reqCtx, zoneID)
 	if err != nil {
 		a.Logger().Error("Failed to validate DNS zone", zap.Error(err), zap.Uint("zone_id", zoneID))
-		apiErr := NewError(ErrKeyZoneNotFound, err)
+		apiErr := NewError(ErrKeyValidationFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -180,7 +199,7 @@ func (a *API) validateZone(c echo.Context) error {
 
 // getZoneStatus gets the status of a DNS zone
 func (a *API) getZoneStatus(c echo.Context) error {
-	zoneID, err := parseZoneIDParam(c)
+	zoneID, err := parseZoneIDParamWithResponse(c)
 	if err != nil {
 		return err
 	}
@@ -197,7 +216,7 @@ func (a *API) getZoneStatus(c echo.Context) error {
 
 // listRecords lists DNS records for a zone
 func (a *API) listRecords(c echo.Context) error {
-	zoneID, err := parseZoneIDParam(c)
+	zoneID, err := parseZoneIDParamWithResponse(c)
 	if err != nil {
 		return err
 	}
@@ -402,7 +421,7 @@ func (a *API) bulkRecords(c echo.Context) error {
 		return resp
 	})
 
-	resp := dto.BulkRecordRecords{
+	resp := dto.BulkRecordsResponse{
 		Records: recordResponses,
 	}
 

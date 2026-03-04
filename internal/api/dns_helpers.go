@@ -31,7 +31,7 @@ func (a *API) verifyZoneOwnership(c echo.Context, zoneID uint) (*db.DNSZone, err
 	}
 
 	if zone.UserID != user {
-		apiErr := NewError(ErrKeyUnauthorized, nil)
+		apiErr := NewError(ErrKeyPermissionDenied, nil)
 		return nil, ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -57,6 +57,17 @@ func parseZoneIDParam(c echo.Context) (uint, error) {
 	zoneIDRaw, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		return 0, err
+	}
+	return uint(zoneIDRaw), nil
+}
+
+// parseZoneIDParamWithResponse extracts and validates the zone ID from URL parameters
+// Returns an error if parsing fails, which the caller should handle
+func parseZoneIDParamWithResponse(c echo.Context) (uint, error) {
+	zoneIDRaw, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidRequest, nil)
+		return 0, apiErr
 	}
 	return uint(zoneIDRaw), nil
 }
