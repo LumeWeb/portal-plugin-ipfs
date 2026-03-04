@@ -134,7 +134,7 @@ func (a *API) getWebsite(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidUUIDFormat, err)
+		apiErr := NewError(ErrKeyInvalidRequest, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -170,7 +170,7 @@ func (a *API) updateWebsite(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidUUIDFormat, err)
+		apiErr := NewError(ErrKeyInvalidRequest, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -213,7 +213,7 @@ func (a *API) deleteWebsite(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidUUIDFormat, err)
+		apiErr := NewError(ErrKeyInvalidRequest, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -236,7 +236,7 @@ func (a *API) validateWebsiteDNS(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidUUIDFormat, err)
+		apiErr := NewError(ErrKeyInvalidRequest, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 

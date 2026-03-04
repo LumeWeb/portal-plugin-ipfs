@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/Oudwins/zog v0.22.0
 	github.com/bits-and-blooms/bloom/v3 v3.7.1
+	github.com/bwesterb/go-zonefile v1.0.1
 	github.com/dnslink-std/go v0.6.0
 	github.com/docker/go-units v0.5.0
 	github.com/gammazero/workerpool v1.2.1
@@ -60,7 +61,6 @@ require (
 
 require (
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
-	github.com/bwesterb/go-zonefile v1.0.1 // indirect
 	github.com/pion/transport/v4 v4.0.1 // indirect
 )
 
