@@ -469,6 +469,80 @@ func (_c *MockIPNSKeyService_GetKeyByID_Call) RunAndReturn(run func(ctx context.
 	return _c
 }
 
+// GetKeyByName provides a mock function for the type MockIPNSKeyService
+func (_mock *MockIPNSKeyService) GetKeyByName(ctx context.Context, userID uint, name string) (*db.IPFSIPNSKey, error) {
+	ret := _mock.Called(ctx, userID, name)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetKeyByName")
+	}
+
+	var r0 *db.IPFSIPNSKey
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string) (*db.IPFSIPNSKey, error)); ok {
+		return returnFunc(ctx, userID, name)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string) *db.IPFSIPNSKey); ok {
+		r0 = returnFunc(ctx, userID, name)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.IPFSIPNSKey)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uint, string) error); ok {
+		r1 = returnFunc(ctx, userID, name)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIPNSKeyService_GetKeyByName_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetKeyByName'
+type MockIPNSKeyService_GetKeyByName_Call struct {
+	*mock.Call
+}
+
+// GetKeyByName is a helper method to define mock.On call
+//   - ctx context.Context
+//   - userID uint
+//   - name string
+func (_e *MockIPNSKeyService_Expecter) GetKeyByName(ctx interface{}, userID interface{}, name interface{}) *MockIPNSKeyService_GetKeyByName_Call {
+	return &MockIPNSKeyService_GetKeyByName_Call{Call: _e.mock.On("GetKeyByName", ctx, userID, name)}
+}
+
+func (_c *MockIPNSKeyService_GetKeyByName_Call) Run(run func(ctx context.Context, userID uint, name string)) *MockIPNSKeyService_GetKeyByName_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPNSKeyService_GetKeyByName_Call) Return(iPFSIPNSKey *db.IPFSIPNSKey, err error) *MockIPNSKeyService_GetKeyByName_Call {
+	_c.Call.Return(iPFSIPNSKey, err)
+	return _c
+}
+
+func (_c *MockIPNSKeyService_GetKeyByName_Call) RunAndReturn(run func(ctx context.Context, userID uint, name string) (*db.IPFSIPNSKey, error)) *MockIPNSKeyService_GetKeyByName_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetPrivateKey provides a mock function for the type MockIPNSKeyService
 func (_mock *MockIPNSKeyService) GetPrivateKey(ctx context.Context, userID uint, keyID uint) (crypto.PrivKey, error) {
 	ret := _mock.Called(ctx, userID, keyID)
