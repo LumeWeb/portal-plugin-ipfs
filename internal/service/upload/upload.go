@@ -106,8 +106,8 @@ func (s *UploadServiceDefault) HandleUploadWithMode(ctx context.Context, reader 
 
 			rootCID, uploadID, err := processor.Process(ctx, reader)
 			if err != nil {
-				// If it's already an UploadError, return it as-is
-				if _, ok := err.(*upload.UploadError); ok {
+				// If it's already an UploadError, return it as-is using the helper function
+				if _, ok := upload.AsUploadError(err); ok {
 					return UploadResult{}, err
 				}
 				// Otherwise wrap it in a generic processing error

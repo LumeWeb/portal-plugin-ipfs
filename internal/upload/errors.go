@@ -1,6 +1,7 @@
 package upload
 
 import (
+	stderrors "errors"
 	"fmt"
 
 	"go.lumeweb.com/portal-plugin-ipfs/internal/errors"
@@ -95,8 +96,8 @@ func IsUploadErrorType(err error, errorType string) bool {
 		return false
 	}
 
-	// Check if it's an UploadError with matching type
-	if uploadErr, ok := err.(*UploadError); ok {
+	// Check if it's an UploadError with matching type using errors.AsType for type safety
+	if uploadErr, ok := stderrors.AsType[*UploadError](err); ok {
 		return uploadErr.Type == errorType
 	}
 
@@ -109,10 +110,15 @@ func GetUploadErrorType(err error) string {
 		return ""
 	}
 
-	// Check if it's an UploadError
-	if uploadErr, ok := err.(*UploadError); ok {
+	// Check if it's an UploadError using errors.AsType for type safety
+	if uploadErr, ok := stderrors.AsType[*UploadError](err); ok {
 		return uploadErr.Type
 	}
 
 	return ""
+}
+
+// AsUploadError extracts an UploadError from an error using type-safe assertion
+func AsUploadError(err error) (*UploadError, bool) {
+	return stderrors.AsType[*UploadError](err)
 }

@@ -49,8 +49,8 @@ func (a *API) handleUpload(c echo.Context) error {
 		// Handle specific error types with appropriate HTTP status codes
 		var apiErr *IPFSError
 
-		// Check if it's an UploadError and extract the error type
-		if uploadErr, ok := err.(*uploadpkg.UploadError); ok {
+		// Check if it's an UploadError and extract the error type using the helper function
+		if uploadErr, ok := uploadpkg.AsUploadError(err); ok {
 			// Map upload error type to API error type using the helper function
 			apiErr = NewError(pluginErrors.MapUploadErrorType(uploadErr.Type), uploadErr)
 		} else {
