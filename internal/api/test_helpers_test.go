@@ -166,6 +166,13 @@ func (m *mockHelper) SetupFileManagerServiceMocks() *mocks.MockFileManagerServic
 	return mockFileManagerService
 }
 
+// SetupDNSServiceMocks configures DNS service mock expectations
+func (m *mockHelper) SetupDNSServiceMocks() *mocks.MockDNSService {
+	mockDNSService := core.GetService[*mocks.MockDNSService](m.ctx, pluginCore.DNS_SERVICE)
+
+	return mockDNSService
+}
+
 // SetupWebsiteServiceMocks configures website service mock expectations
 func (m *mockHelper) SetupWebsiteServiceMocks(domain string, website *pluginDb.Website) *mocks.MockWebsiteService {
 	mockWebsiteService := core.GetService[*mocks.MockWebsiteService](m.ctx, pluginCore.WEBSITE_SERVICE)
@@ -240,11 +247,12 @@ func (m *mockHelper) SetupAllCommonMocks(userID uint, testCID cid.Cid, pinID typ
 	m.SetupPinServiceMocks(userID, testCID, pinID)
 	m.SetupBlockServiceMocks(testCID)
 	m.SetupFileManagerServiceMocks()
+	m.SetupDNSServiceMocks()
 }
 
 // SetupAuthenticatedTest creates a test user, logs them in, and sets up common mocks
 func (m *mockHelper) SetupAuthenticatedTest() (string, uint, cid.Cid, types.BinaryUUID) {
-	token, userID := createTestUserAndLogin(m.ctx)
+	token, userID := createTestUser(m.ctx)
 	testCID := cid.MustParse(TestCID)
 	pinID := types.NewBinUUID()
 
@@ -255,7 +263,7 @@ func (m *mockHelper) SetupAuthenticatedTest() (string, uint, cid.Cid, types.Bina
 
 // SetupAuthenticatedTestWithCID creates a test user, logs them in, and sets up mocks with custom CID
 func (m *mockHelper) SetupAuthenticatedTestWithCID(testCID cid.Cid) (string, uint) {
-	token, userID := createTestUserAndLogin(m.ctx)
+	token, userID := createTestUser(m.ctx)
 	pinID := types.NewBinUUID()
 
 	m.SetupAllCommonMocks(userID, testCID, pinID)
@@ -273,8 +281,29 @@ func createTestUserAndLogin(ctx coreTesting.TestContext) (string, uint) {
 	return token, user.ID
 }
 
+// createTestUser creates a test user and returns a JWT token without expecting LoginPassword to be called
+// This is for tests that make authenticated requests but don't call the login endpoint
+func createTestUser(ctx coreTesting.TestContext) (string, uint) {
+	// Generate test token using the jwt helper without expecting LoginPassword call
+	jwtHelper := coreTesting.NewJWTHelper(ctx)
+	token, err := jwtHelper.CreateLoginToken(1)
+	if err != nil {
+		ctx.T().Fatalf("failed to create test token: %v", err)
+	}
+
+	return token, 1
+}
+
 func setAuthHeader(req *http.Request, token string) {
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+}
+
+// makeRequest creates and executes an unauthenticated API request, returning the response
+func (m *mockHelper) makeRequest(method, url string, body []byte) *httptest.ResponseRecorder {
+	req := m.ctx.NewAPIRequest(method, url, body)
+	rec := httptest.NewRecorder()
+	m.ctx.Router().ServeHTTP(rec, req)
+	return rec
 }
 
 // makeAuthenticatedRequest creates and executes an authenticated API request, returning the response

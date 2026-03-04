@@ -17,6 +17,7 @@ import (
 var AdminTestOptions = coreTesting.CombineOptions(
 	coreTesting.WithMockServiceFactory(pluginCoreCore.WEBSITE_SERVICE, mocks.NewMockWebsiteService),
 	coreTesting.WithMockServiceFactory(pluginCoreCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService),
+	coreTesting.WithMockServiceFactory(pluginCoreCore.DNS_SERVICE, mocks.NewMockDNSService),
 	coreTesting.WithAPIExtension(NewAdminExtension()),
 	coreTesting.WithAPIID("admin"),
 )

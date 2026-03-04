@@ -242,10 +242,9 @@ func TestAPI_GetIPNSKey(t *testing.T) {
 			helper := newMockHelper(t, ctx)
 			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
 
-			mockIPNSKeyService, mockIPNSPublisherService := helper.SetupIPNSServiceMocksNoDefaults(userID)
+			mockIPNSKeyService, _ := helper.SetupIPNSServiceMocksNoDefaults(userID)
 
 			mockIPNSKeyService.EXPECT().GetKeyByID(mock.Anything, userID, uint(999)).Return(nil, gorm.ErrRecordNotFound)
-			mockIPNSPublisherService.EXPECT().GetPublished(mock.Anything, TestPeerID, false).Return(nil, errors.New("key not found"))
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/ipns/keys/999", token, nil)
 
@@ -522,7 +521,7 @@ func TestAPI_RepublishIPNS(t *testing.T) {
 			}
 
 			mockIPNSPublisherService.EXPECT().ListPublished(mock.Anything).Return(records, nil)
-			mockIPNSKeyService.EXPECT().GetPrivateKeyByPeerID(mock.Anything, TestPeerID).Return(nil, userID, nil).Times(1)
+			mockIPNSKeyService.EXPECT().GetPrivateKeyByPeerID(mock.Anything, ipnsName.Peer().String()).Return(nil, userID, nil).Times(1)
 			mockIPNSPublisherService.EXPECT().PublishWithKey(mock.Anything, nil, ipnsPath.String(), mock.AnythingOfType("time.Duration")).Return(nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/ipns/republish", token, nil)
@@ -553,7 +552,7 @@ func TestAPI_RepublishIPNS(t *testing.T) {
 
 			mockIPNSKeyService.EXPECT().GetKeyByID(mock.Anything, userID, uint(1)).Return(&mockKey, nil)
 			mockIPNSPublisherService.EXPECT().GetPublished(mock.Anything, mockKey.PeerID().String(), false).Return(mockRecord, nil)
-			mockIPNSKeyService.EXPECT().GetPrivateKeyByPeerID(mock.Anything, mockKey.PeerID).Return(nil, userID, nil)
+			mockIPNSKeyService.EXPECT().GetPrivateKeyByPeerID(mock.Anything, mockKey.PeerID().String()).Return(nil, userID, nil)
 			mockIPNSPublisherService.EXPECT().PublishWithKey(mock.Anything, nil, ipnsPath.String(), mock.AnythingOfType("time.Duration")).Return(nil)
 
 			reqBody := `{"key_id":1}`
