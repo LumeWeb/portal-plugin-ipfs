@@ -123,12 +123,16 @@ func TestAPI_CreateZone(t *testing.T) {
 	t.Run("error_invalid_domain_format", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
-			token, _ := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+
+			mockDNSService.EXPECT().CreateZone(mock.Anything, "invalid..domain", userID).Return(nil, errors.New("invalid domain format"))
 
 			reqBody := `{"domain":"invalid..domain"}`
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/dns/zones", token, []byte(reqBody))
 
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
 		}, TestOptions)
 	})
 
@@ -181,14 +185,12 @@ func TestAPI_ListZones(t *testing.T) {
 
 			var response struct {
 				Data []dto.ZoneListResponse `json:"data"`
-				Meta struct {
-					Total int64 `json:"total"`
-				} `json:"meta"`
+				Total int64 `json:"total"`
 			}
 			err := json.Unmarshal(rec.Body.Bytes(), &response)
 			require.NoError(t, err)
 			assert.Len(t, response.Data, 2)
-			assert.Equal(t, int64(2), response.Meta.Total)
+			assert.Equal(t, int64(2), response.Total)
 		}, TestOptions)
 	})
 
@@ -209,14 +211,12 @@ func TestAPI_ListZones(t *testing.T) {
 
 			var response struct {
 				Data []dto.ZoneListResponse `json:"data"`
-				Meta struct {
-					Total int64 `json:"total"`
-				} `json:"meta"`
+				Total int64 `json:"total"`
 			}
 			err := json.Unmarshal(rec.Body.Bytes(), &response)
 			require.NoError(t, err)
 			assert.Len(t, response.Data, 1)
-			assert.Equal(t, int64(10), response.Meta.Total)
+			assert.Equal(t, int64(10), response.Total)
 		}, TestOptions)
 	})
 
@@ -235,14 +235,12 @@ func TestAPI_ListZones(t *testing.T) {
 
 			var response struct {
 				Data []dto.ZoneListResponse `json:"data"`
-				Meta struct {
-					Total int64 `json:"total"`
-				} `json:"meta"`
+				Total int64 `json:"total"`
 			}
 			err := json.Unmarshal(rec.Body.Bytes(), &response)
 			require.NoError(t, err)
 			assert.Len(t, response.Data, 0)
-			assert.Equal(t, int64(0), response.Meta.Total)
+			assert.Equal(t, int64(0), response.Total)
 		}, TestOptions)
 	})
 

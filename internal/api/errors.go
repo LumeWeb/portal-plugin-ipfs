@@ -33,6 +33,9 @@ const (
 	ErrKeyUnauthorized          core.ErrorType = "ErrKeyUnauthorized"
 	ErrKeyDownloadQuotaExceeded core.ErrorType = "ErrDownloadQuotaExceeded"
 	ErrKeyInvalidRequest        core.ErrorType = "ErrInvalidRequest"
+	ErrKeyPermissionDenied      core.ErrorType = "PERMISSION_DENIED"
+	ErrKeyDeleteFailed          core.ErrorType = "DELETE_FAILED"
+	ErrKeyUpdateFailed          core.ErrorType = "UPDATE_FAILED"
 
 	// DNS error types
 	ErrKeyInvalidRecordType      core.ErrorType = "INVALID_RECORD_TYPE"
@@ -40,6 +43,7 @@ const (
 	ErrKeyZoneNotFound           core.ErrorType = "ZONE_NOT_FOUND"
 	ErrKeyInvalidDomainFormat    core.ErrorType = "INVALID_DOMAIN_FORMAT"
 	ErrKeyDuplicateRecord        core.ErrorType = "DUPLICATE_RECORD"
+	ErrKeyValidationFailed       core.ErrorType = "VALIDATION_FAILED"
 )
 
 var _ router.ResponseError = (*IPFSError)(nil)
@@ -125,6 +129,10 @@ func init() {
 		ErrKeyZoneNotFound:          {Key: ErrKeyZoneNotFound, Message: "DNS zone not found"},
 		ErrKeyInvalidDomainFormat:   {Key: ErrKeyInvalidDomainFormat, Message: "Invalid domain format"},
 		ErrKeyDuplicateRecord:       {Key: ErrKeyDuplicateRecord, Message: "Duplicate DNS record"},
+		ErrKeyValidationFailed:      {Key: ErrKeyValidationFailed, Message: "DNS validation failed"},
+		ErrKeyPermissionDenied:      {Key: ErrKeyPermissionDenied, Message: "Permission denied"},
+		ErrKeyDeleteFailed:          {Key: ErrKeyDeleteFailed, Message: "Failed to delete zone"},
+		ErrKeyUpdateFailed:          {Key: ErrKeyUpdateFailed, Message: "Failed to update zone"},
 	})
 
 	core.MustRegisterErrorCodes(Namespace, map[core.ErrorType]int{
@@ -138,6 +146,15 @@ func init() {
 		ErrKeyUploadNotFound:        http.StatusNotFound,
 		ErrKeyUnauthorized:          http.StatusUnauthorized,
 		ErrKeyDownloadQuotaExceeded: http.StatusTooManyRequests,
+		ErrKeyInvalidDomainFormat:   http.StatusBadRequest,
+		ErrKeyRecordNotFound:        http.StatusNotFound,
+		ErrKeyZoneNotFound:          http.StatusNotFound,
+		ErrKeyDuplicateRecord:       http.StatusConflict,
+		ErrKeyValidationFailed:      http.StatusInternalServerError,
+		ErrKeyInvalidRequest:        http.StatusBadRequest,
+		ErrKeyPermissionDenied:      http.StatusForbidden,
+		ErrKeyDeleteFailed:          http.StatusInternalServerError,
+		ErrKeyUpdateFailed:          http.StatusInternalServerError,
 	})
 }
 
