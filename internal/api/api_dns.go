@@ -133,11 +133,6 @@ func (a *API) updateZone(c echo.Context) error {
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
 	}
-	if err != nil {
-		a.Logger().Error("Failed to retrieve updated DNS zone", zap.Error(err), zap.Uint("zone_id", zoneID))
-		apiErr := NewError(ErrKeyZoneNotFound, err)
-		return ctx.Error(apiErr, apiErr.HttpStatus())
-	}
 
 	var resp dto.ZoneResponse
 	return httputil.EncodeResponse(ctx, zone, &resp)
@@ -426,7 +421,7 @@ func (a *API) bulkRecords(c echo.Context) error {
 		return resp
 	})
 
-	resp := dto.BulkRecordRecords{
+	resp := dto.BulkRecordsResponse{
 		Records: recordResponses,
 	}
 

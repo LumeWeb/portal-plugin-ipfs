@@ -422,16 +422,16 @@ func (r *RecordListResponse) FromModel(model any) error {
 	return nil
 }
 
-// BulkRecordRecords represents a bulk operation result for DNS records
-type BulkRecordRecords struct {
+// BulkRecordsResponse represents a bulk operation result for DNS records
+type BulkRecordsResponse struct {
 	Records []RecordResponse `json:"records"`
 }
 
-// FromModel implements DTOResponse[*BulkRecordRecords] interface
-// Since BulkRecordRecords is already a response wrapper with populated data,
+// FromModel implements DTOResponse[*BulkRecordsResponse] interface
+// Since BulkRecordsResponse is already a response wrapper with populated data,
 // this method does nothing (no conversion needed)
-func (r *BulkRecordRecords) FromModel(_ *BulkRecordRecords) error {
+func (r *BulkRecordsResponse) FromModel(_ *BulkRecordsResponse) error {
 	return nil
 }
 
-var _ httputil.DTOResponse[*BulkRecordRecords] = (*BulkRecordRecords)(nil)
+var _ httputil.DTOResponse[*BulkRecordsResponse] = (*BulkRecordsResponse)(nil)
