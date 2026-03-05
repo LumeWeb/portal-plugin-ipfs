@@ -28,7 +28,7 @@ require (
 	github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260222154718-acfa3cedb72b
 	github.com/knadh/koanf/providers/confmap v1.0.0
 	github.com/knadh/koanf/v2 v2.3.3
-	github.com/labstack/echo/v4 v4.15.0
+	github.com/labstack/echo/v4 v4.15.1
 	github.com/labstack/gommon v0.4.2
 	github.com/libp2p/go-libp2p v0.47.0
 	github.com/libp2p/go-libp2p-kad-dht v0.38.0
