@@ -1209,6 +1209,8 @@ go.lumeweb.com/portal-plugin-quota v0.0.0-20251229183341-d3147a18bb0f h1:sYO05qo
 go.lumeweb.com/portal-plugin-quota v0.0.0-20251229183341-d3147a18bb0f/go.mod h1:deJwk/QJmesE9PlyxZSGvOk/tJURIsZs5JJXq3Lr1r4=
 go.lumeweb.com/portal-router v0.6.11 h1:0PTej57mtNcRpKZNukD0j0ZYp5ntbR7fl5g6DO+0mvk=
 go.lumeweb.com/portal-router v0.6.11/go.mod h1:4tb+XYa0GYiFVraMoossGgMBTN9z4U54v8SL+EOBvbs=
+go.lumeweb.com/portal-router v0.6.13 h1:WqBNN4naPuERAwLqjCwxpAhpvzBxom8w8KqdP+EoTvw=
+go.lumeweb.com/portal-router v0.6.13/go.mod h1:4tb+XYa0GYiFVraMoossGgMBTN9z4U54v8SL+EOBvbs=
 go.lumeweb.com/queryutil v0.3.15 h1:R2l6GAAne8rCgh1rGy5HQ54zvs8JJw3gRLjhmkd8SHk=
 go.lumeweb.com/queryutil v0.3.15/go.mod h1:nLkIuXzugX8Ln24wsAbfTafvNmaTHLJhIUKWC1693G4=
 go.lumeweb.com/web/go/portal-dashboard v0.0.0-20260123053442-479cd558a2fc h1:75sjqoO6sy15ONcUO9P+gRsu3CyYA+fbfoER3YLPBTk=
