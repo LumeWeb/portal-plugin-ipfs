@@ -242,6 +242,8 @@ github.com/bwesterb/go-zonefile v1.0.1 h1:tnVpe7msKrt3HRrK5mx8UEnnDN4MjfkuTquckO
 github.com/bwesterb/go-zonefile v1.0.1/go.mod h1:9IS4q4dptNSWk4Q6H+j9VG3D0el9jYujF+ruySi1DrI=
 github.com/casbin/casbin/v3 v3.9.0 h1:EHE4TR/CtnXxvweCRkMiRFD850uhg072zgxL1u0kDdk=
 github.com/casbin/casbin/v3 v3.9.0/go.mod h1:5rJbQr2e6AuuDDNxnPc5lQlC9nIgg6nS1zYwKXhpHC8=
+github.com/casbin/casbin/v3 v3.10.0 h1:039ORla55vCeIZWd0LfzWFt1yiEA5X4W41xBW2bQuHs=
+github.com/casbin/casbin/v3 v3.10.0/go.mod h1:5rJbQr2e6AuuDDNxnPc5lQlC9nIgg6nS1zYwKXhpHC8=
 github.com/casbin/gorm-adapter/v3 v3.40.0 h1:jj58MTKmjAqvTkVOcaapN6HolwdtwiqxVVLsvY8Owsw=
 github.com/casbin/gorm-adapter/v3 v3.40.0/go.mod h1:BQZRJhwUnwMpI+pT2m7/cUJwXxrHfzpBpPcNTyMGeGA=
 github.com/casbin/gorm-adapter/v3 v3.41.0 h1:Xhpi0tfRP9aKPDWDf6dgBxHZ9UM6IophxxPIEGWqCNM=
@@ -1317,6 +1319,8 @@ go.lumeweb.com/portal v0.4.2-0.20260210183348-979be8735f77 h1:XEg6V6fDmb0vYg3Yxi
 go.lumeweb.com/portal v0.4.2-0.20260210183348-979be8735f77/go.mod h1:0YUT5CiL0ktYafwR6WYLqxQxcatlYP0PyG0EqLIpF08=
 go.lumeweb.com/portal v0.4.2-0.20260309034204-f2165604b0ff h1:NQEwihDV5jQL9my0ddPP4+pNz1M/EL+al7ra3WjvI6Y=
 go.lumeweb.com/portal v0.4.2-0.20260309034204-f2165604b0ff/go.mod h1:sciIlRpuRoyFc3FrHWh0hg/2rgWt1kHBk13w7q7Nu84=
+go.lumeweb.com/portal v0.4.2-0.20260309050524-e9170310d275 h1:lgGdqbXP0Esff7btCKZQzKXzfslJyiLhejlTFTpkroo=
+go.lumeweb.com/portal v0.4.2-0.20260309050524-e9170310d275/go.mod h1:terb37/VaR3lLnbM5b7otVXA0dznuzLD3bIx7CyDbBM=
 go.lumeweb.com/portal-middleware v0.3.4 h1:A9/Ipo3giX449CCgbKGco97IqDxFG7Z1ppmM1IQBeDQ=
 go.lumeweb.com/portal-middleware v0.3.4/go.mod h1:3dHvOYXApc1b673I1UAoYBpyXg2c7ku4HqxXvef8dj8=
 go.lumeweb.com/portal-middleware v0.3.5 h1:QwW1cvw4VbSK3rfzW7TwbfezueUXNX80Y/WS97qfoyU=
