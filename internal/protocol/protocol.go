@@ -366,7 +366,7 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 				return fmt.Errorf("failed to create virtual blockstore: %w", err)
 			}
 
-			_ds, dsErr = levelds.NewDatastore(filepath.Join(ctx.Config().ConfigDir(), internal.ProtocolName, "p2p.ldb"), nil)
+			_ds, dsErr = levelds.NewDatastore(filepath.Join(ctx.Config().ConfigDir(), internal.ProtocolName, "p2p"), nil)
 			if dsErr != nil {
 				ctx.Logger().Fatal("failed to open leveldb datastore", zap.Error(dsErr))
 			}
