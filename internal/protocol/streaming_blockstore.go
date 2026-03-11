@@ -65,7 +65,8 @@ type DefaultStreamingBlockstore struct {
 	pendingMutex  sync.RWMutex
 
 	// Bloom filter for quick "ever seen" existence checks
-	seenFilter *bloom.BloomFilter
+	seenFilter      *bloom.BloomFilter
+	seenFilterMutex sync.RWMutex // Protects seenFilter during concurrent access
 
 	// Track blocks that have been processed and sent
 	processedBlocks map[string]bool // Key is binary CID representation
@@ -183,11 +184,16 @@ func (s *DefaultStreamingBlockstore) putBlock(ctx context.Context, block blocks.
 	cidKey := string(block.Cid().Bytes()) // Use binary representation as cache key for space efficiency
 	blockKeyStr := blockKey.String()
 
+	// Get pending count for logging
+	s.pendingMutex.RLock()
+	pendingCount := len(s.pendingBlocks)
+	s.pendingMutex.RUnlock()
+
 	if s.logger != nil {
 		s.logger.Debug("Processing block",
 			zap.String("cid", block.Cid().String()),
 			zap.Int("dataSize", len(block.RawData())),
-			zap.Int("pendingCount", len(s.pendingBlocks)))
+			zap.Int("pendingCount", pendingCount))
 	}
 
 	entry := &BlockEntry{
@@ -212,7 +218,9 @@ func (s *DefaultStreamingBlockstore) putBlock(ctx context.Context, block blocks.
 	s.pendingMutex.Unlock()
 
 	// Add to bloom filter for quick existence checks
+	s.seenFilterMutex.Lock()
 	s.seenFilter.Add([]byte(blockKeyStr))
+	s.seenFilterMutex.Unlock()
 
 	// Submit to worker pool
 	s.workerPool.Submit(func() {
@@ -306,11 +314,20 @@ func (s *DefaultStreamingBlockstore) Get(ctx context.Context, c cid.Cid) (blocks
 	// Convert CID to binary representation for cache lookup
 	cidKey := string(c.Bytes())
 
+	// Get counts for logging
+	s.pendingMutex.RLock()
+	pendingCount := len(s.pendingBlocks)
+	s.pendingMutex.RUnlock()
+
+	s.processedMutex.RLock()
+	processedCount := len(s.processedBlocks)
+	s.processedMutex.RUnlock()
+
 	if s.logger != nil {
 		s.logger.Debug("Retrieving block",
 			zap.String("cid", c.String()),
-			zap.Int("pendingCount", len(s.pendingBlocks)),
-			zap.Int("processedCount", len(s.processedBlocks)))
+			zap.Int("pendingCount", pendingCount),
+			zap.Int("processedCount", processedCount))
 	}
 
 	// First check if block is pending in pending blocks map
@@ -367,7 +384,11 @@ func (s *DefaultStreamingBlockstore) Has(ctx context.Context, c cid.Cid) (bool, 
 	keyStr := key.String()
 
 	// Quick negative check using bloom filter
-	if !s.seenFilter.Test([]byte(keyStr)) {
+	s.seenFilterMutex.RLock()
+	exists := s.seenFilter.Test([]byte(keyStr))
+	s.seenFilterMutex.RUnlock()
+
+	if !exists {
 		// Definitely never seen this CID
 		return false, nil
 	}
@@ -377,9 +398,9 @@ func (s *DefaultStreamingBlockstore) Has(ctx context.Context, c cid.Cid) (bool, 
 
 	// Check pending blocks in pending blocks map
 	s.pendingMutex.RLock()
-	_, exists := s.pendingBlocks[cidKey]
+	_, pendingExists := s.pendingBlocks[cidKey]
 	s.pendingMutex.RUnlock()
-	if exists {
+	if pendingExists {
 		return true, nil
 	}
 
@@ -511,10 +532,19 @@ func (s *DefaultStreamingBlockstore) AllKeysChan(ctx context.Context) (<-chan ci
 func (s *DefaultStreamingBlockstore) Close() error {
 	var err error
 	s.closer.Do(func() {
+		// Get counts for logging before closing
+		s.pendingMutex.RLock()
+		pendingCount := len(s.pendingBlocks)
+		s.pendingMutex.RUnlock()
+
+		s.processedMutex.RLock()
+		processedCount := len(s.processedBlocks)
+		s.processedMutex.RUnlock()
+
 		if s.logger != nil {
 			s.logger.Debug("Closing blockstore",
-				zap.Int("pendingCount", len(s.pendingBlocks)),
-				zap.Int("processedCount", len(s.processedBlocks)),
+				zap.Int("pendingCount", pendingCount),
+				zap.Int("processedCount", processedCount),
 				zap.Int("deliveryChannelLength", len(s.blockDelivery)))
 		}
 
@@ -602,12 +632,22 @@ func (s *DefaultStreamingBlockstore) ProcessingDone() {
 func (s *DefaultStreamingBlockstore) MarkBlockProcessed(blockKey string) {
 	// Convert blockKey to binary CID for cache removal
 	cidKey := KeyToCIDString(ds.NewKey(ds.NewKey(blockKey).Name()))
+	
+	// Get counts BEFORE any modifications for logging
+	s.pendingMutex.RLock()
+	pendingBefore := len(s.pendingBlocks)
+	s.pendingMutex.RUnlock()
+
+	s.processedMutex.RLock()
+	processedBefore := len(s.processedBlocks)
+	s.processedMutex.RUnlock()
+
 	if s.logger != nil {
 		s.logger.Debug("Marking block processed",
 			zap.String("blockKey", blockKey),
 			zap.String("cidKey", cidKey),
-			zap.Int("pendingBefore", len(s.pendingBlocks)),
-			zap.Int("processedBefore", len(s.processedBlocks)))
+			zap.Int("pendingBefore", pendingBefore),
+			zap.Int("processedBefore", processedBefore))
 	}
 
 	// Remove from pending blocks map
@@ -620,6 +660,15 @@ func (s *DefaultStreamingBlockstore) MarkBlockProcessed(blockKey string) {
 	s.processedBlocks[cidKey] = true
 	s.processedMutex.Unlock()
 
+	// Get pending and processed counts AFTER modifications for logging
+	s.pendingMutex.RLock()
+	pendingAfter := len(s.pendingBlocks)
+	s.pendingMutex.RUnlock()
+
+	s.processedMutex.RLock()
+	processedAfter := len(s.processedBlocks)
+	s.processedMutex.RUnlock()
+
 	// Mark as done in DoneTracker
 	if cidObj, err := cid.Decode(blockKey); err == nil {
 		s.Done(cidObj)
@@ -628,8 +677,8 @@ func (s *DefaultStreamingBlockstore) MarkBlockProcessed(blockKey string) {
 	if s.logger != nil {
 		s.logger.Debug("Block marked processed",
 			zap.String("blockKey", blockKey),
-			zap.Int("pendingAfter", len(s.pendingBlocks)),
-			zap.Int("processedAfter", len(s.processedBlocks)))
+			zap.Int("pendingAfter", pendingAfter),
+			zap.Int("processedAfter", processedAfter))
 	}
 }
 
@@ -645,7 +694,9 @@ func (s *DefaultStreamingBlockstore) MarkDone(c cid.Cid) {
 			zap.String("key", key.String()))
 	}
 
+	s.seenFilterMutex.Lock()
 	s.seenFilter.Add([]byte(key.String()))
+	s.seenFilterMutex.Unlock()
 
 	// Mark as done in DoneTracker
 	s.Done(c)

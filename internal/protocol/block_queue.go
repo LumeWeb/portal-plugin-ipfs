@@ -50,7 +50,8 @@ type BlockQueue struct {
 	cancel     context.CancelFunc
 	errorCount int32 // Atomic error counter
 
-	processedFilter *bloom.BloomFilter // Bloom filter for quick existence checks
+	processedFilter      *bloom.BloomFilter // Bloom filter for quick existence checks
+	processedFilterMutex sync.RWMutex     // Protects processedFilter during concurrent access
 }
 
 // NewBlockQueue creates a new BlockQueue instance.
@@ -101,7 +102,11 @@ func (bp *BlockQueue) processBlock(ctx context.Context, job *blockJob) error {
 
 	// Check bloom filter to skip already processed blocks
 	cidStr := job.Block.Cid().String()
-	if bp.processedFilter.Test([]byte(cidStr)) {
+	bp.processedFilterMutex.RLock()
+	alreadyProcessed := bp.processedFilter.Test([]byte(cidStr))
+	bp.processedFilterMutex.RUnlock()
+
+	if alreadyProcessed {
 		// Bloom filter hit - verify with authoritative blockstore to avoid false positives
 		hasBlock, err := bp.proto.GetNode().HasBlock(ctx, job.Block.Cid())
 		if err == nil && hasBlock {
@@ -137,7 +142,9 @@ func (bp *BlockQueue) processBlockInternal(ctx context.Context, job *blockJob) e
 	}
 
 	// Update bloom filter to mark block as processed
+	bp.processedFilterMutex.Lock()
 	bp.processedFilter.Add([]byte(job.Block.Cid().String()))
+	bp.processedFilterMutex.Unlock()
 
 	return nil
 }

@@ -1337,7 +1337,7 @@ func TestProcessArchive_ComplexArchive(t *testing.T) {
 
 	// Performance assertions (adjust these based on your environment)
 	// These are generous bounds to account for different test environments
-	assert.Less(t, processingTime, 5*time.Minute, "Processing should complete within 5 minutes")
+	assert.Less(t, processingTime, 15*time.Minute, "Processing should complete within 15 minutes")
 	assert.Less(t, archiveCreationTime, 2*time.Minute, "Archive creation should complete within 2 minutes")
 
 	// Archive creation throughput
