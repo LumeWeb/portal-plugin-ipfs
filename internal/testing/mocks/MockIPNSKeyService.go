@@ -6,7 +6,9 @@ package mocks
 
 import (
 	"context"
+	"time"
 
+	"github.com/ipfs/boxo/ipns"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	mock "github.com/stretchr/testify/mock"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
@@ -691,6 +693,80 @@ func (_c *MockIPNSKeyService_GetPrivateKeyByPeerID_Call) RunAndReturn(run func(c
 	return _c
 }
 
+// GetPublished provides a mock function for the type MockIPNSKeyService
+func (_mock *MockIPNSKeyService) GetPublished(ctx context.Context, keyID string, checkRouting bool) (*ipns.Record, error) {
+	ret := _mock.Called(ctx, keyID, checkRouting)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetPublished")
+	}
+
+	var r0 *ipns.Record
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, bool) (*ipns.Record, error)); ok {
+		return returnFunc(ctx, keyID, checkRouting)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, bool) *ipns.Record); ok {
+		r0 = returnFunc(ctx, keyID, checkRouting)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*ipns.Record)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, bool) error); ok {
+		r1 = returnFunc(ctx, keyID, checkRouting)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIPNSKeyService_GetPublished_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetPublished'
+type MockIPNSKeyService_GetPublished_Call struct {
+	*mock.Call
+}
+
+// GetPublished is a helper method to define mock.On call
+//   - ctx context.Context
+//   - keyID string
+//   - checkRouting bool
+func (_e *MockIPNSKeyService_Expecter) GetPublished(ctx interface{}, keyID interface{}, checkRouting interface{}) *MockIPNSKeyService_GetPublished_Call {
+	return &MockIPNSKeyService_GetPublished_Call{Call: _e.mock.On("GetPublished", ctx, keyID, checkRouting)}
+}
+
+func (_c *MockIPNSKeyService_GetPublished_Call) Run(run func(ctx context.Context, keyID string, checkRouting bool)) *MockIPNSKeyService_GetPublished_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 bool
+		if args[2] != nil {
+			arg2 = args[2].(bool)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPNSKeyService_GetPublished_Call) Return(record *ipns.Record, err error) *MockIPNSKeyService_GetPublished_Call {
+	_c.Call.Return(record, err)
+	return _c
+}
+
+func (_c *MockIPNSKeyService_GetPublished_Call) RunAndReturn(run func(ctx context.Context, keyID string, checkRouting bool) (*ipns.Record, error)) *MockIPNSKeyService_GetPublished_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ID provides a mock function for the type MockIPNSKeyService
 func (_mock *MockIPNSKeyService) ID() string {
 	ret := _mock.Called()
@@ -883,6 +959,68 @@ func (_c *MockIPNSKeyService_ListKeys_Call) RunAndReturn(run func(ctx context.Co
 	return _c
 }
 
+// ListPublished provides a mock function for the type MockIPNSKeyService
+func (_mock *MockIPNSKeyService) ListPublished(ctx context.Context) (map[ipns.Name]*ipns.Record, error) {
+	ret := _mock.Called(ctx)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListPublished")
+	}
+
+	var r0 map[ipns.Name]*ipns.Record
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context) (map[ipns.Name]*ipns.Record, error)); ok {
+		return returnFunc(ctx)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context) map[ipns.Name]*ipns.Record); ok {
+		r0 = returnFunc(ctx)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[ipns.Name]*ipns.Record)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = returnFunc(ctx)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIPNSKeyService_ListPublished_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListPublished'
+type MockIPNSKeyService_ListPublished_Call struct {
+	*mock.Call
+}
+
+// ListPublished is a helper method to define mock.On call
+//   - ctx context.Context
+func (_e *MockIPNSKeyService_Expecter) ListPublished(ctx interface{}) *MockIPNSKeyService_ListPublished_Call {
+	return &MockIPNSKeyService_ListPublished_Call{Call: _e.mock.On("ListPublished", ctx)}
+}
+
+func (_c *MockIPNSKeyService_ListPublished_Call) Run(run func(ctx context.Context)) *MockIPNSKeyService_ListPublished_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPNSKeyService_ListPublished_Call) Return(nameToRecord map[ipns.Name]*ipns.Record, err error) *MockIPNSKeyService_ListPublished_Call {
+	_c.Call.Return(nameToRecord, err)
+	return _c
+}
+
+func (_c *MockIPNSKeyService_ListPublished_Call) RunAndReturn(run func(ctx context.Context) (map[ipns.Name]*ipns.Record, error)) *MockIPNSKeyService_ListPublished_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Logger provides a mock function for the type MockIPNSKeyService
 func (_mock *MockIPNSKeyService) Logger() *core.Logger {
 	ret := _mock.Called()
@@ -925,6 +1063,144 @@ func (_c *MockIPNSKeyService_Logger_Call) Return(logger *core.Logger) *MockIPNSK
 }
 
 func (_c *MockIPNSKeyService_Logger_Call) RunAndReturn(run func() *core.Logger) *MockIPNSKeyService_Logger_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// PublishCID provides a mock function for the type MockIPNSKeyService
+func (_mock *MockIPNSKeyService) PublishCID(ctx context.Context, keyID string, cidStr string, ttl time.Duration) error {
+	ret := _mock.Called(ctx, keyID, cidStr, ttl)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PublishCID")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, time.Duration) error); ok {
+		r0 = returnFunc(ctx, keyID, cidStr, ttl)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockIPNSKeyService_PublishCID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'PublishCID'
+type MockIPNSKeyService_PublishCID_Call struct {
+	*mock.Call
+}
+
+// PublishCID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - keyID string
+//   - cidStr string
+//   - ttl time.Duration
+func (_e *MockIPNSKeyService_Expecter) PublishCID(ctx interface{}, keyID interface{}, cidStr interface{}, ttl interface{}) *MockIPNSKeyService_PublishCID_Call {
+	return &MockIPNSKeyService_PublishCID_Call{Call: _e.mock.On("PublishCID", ctx, keyID, cidStr, ttl)}
+}
+
+func (_c *MockIPNSKeyService_PublishCID_Call) Run(run func(ctx context.Context, keyID string, cidStr string, ttl time.Duration)) *MockIPNSKeyService_PublishCID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		var arg3 time.Duration
+		if args[3] != nil {
+			arg3 = args[3].(time.Duration)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPNSKeyService_PublishCID_Call) Return(err error) *MockIPNSKeyService_PublishCID_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockIPNSKeyService_PublishCID_Call) RunAndReturn(run func(ctx context.Context, keyID string, cidStr string, ttl time.Duration) error) *MockIPNSKeyService_PublishCID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// PublishWithKey provides a mock function for the type MockIPNSKeyService
+func (_mock *MockIPNSKeyService) PublishWithKey(ctx context.Context, privKey crypto.PrivKey, cidStr string, ttl time.Duration) error {
+	ret := _mock.Called(ctx, privKey, cidStr, ttl)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PublishWithKey")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, crypto.PrivKey, string, time.Duration) error); ok {
+		r0 = returnFunc(ctx, privKey, cidStr, ttl)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockIPNSKeyService_PublishWithKey_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'PublishWithKey'
+type MockIPNSKeyService_PublishWithKey_Call struct {
+	*mock.Call
+}
+
+// PublishWithKey is a helper method to define mock.On call
+//   - ctx context.Context
+//   - privKey crypto.PrivKey
+//   - cidStr string
+//   - ttl time.Duration
+func (_e *MockIPNSKeyService_Expecter) PublishWithKey(ctx interface{}, privKey interface{}, cidStr interface{}, ttl interface{}) *MockIPNSKeyService_PublishWithKey_Call {
+	return &MockIPNSKeyService_PublishWithKey_Call{Call: _e.mock.On("PublishWithKey", ctx, privKey, cidStr, ttl)}
+}
+
+func (_c *MockIPNSKeyService_PublishWithKey_Call) Run(run func(ctx context.Context, privKey crypto.PrivKey, cidStr string, ttl time.Duration)) *MockIPNSKeyService_PublishWithKey_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 crypto.PrivKey
+		if args[1] != nil {
+			arg1 = args[1].(crypto.PrivKey)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		var arg3 time.Duration
+		if args[3] != nil {
+			arg3 = args[3].(time.Duration)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPNSKeyService_PublishWithKey_Call) Return(err error) *MockIPNSKeyService_PublishWithKey_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockIPNSKeyService_PublishWithKey_Call) RunAndReturn(run func(ctx context.Context, privKey crypto.PrivKey, cidStr string, ttl time.Duration) error) *MockIPNSKeyService_PublishWithKey_Call {
 	_c.Call.Return(run)
 	return _c
 }

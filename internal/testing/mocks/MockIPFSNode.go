@@ -9,7 +9,6 @@ import (
 
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/boxo/keystore"
-	"github.com/ipfs/boxo/namesys"
 	"github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
@@ -18,6 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	mock "github.com/stretchr/testify/mock"
+	"go.lumeweb.com/portal-plugin-ipfs/core"
 )
 
 // NewMockIPFSNode creates a new instance of MockIPFSNode. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -597,19 +597,19 @@ func (_c *MockIPFSNode_GetPrivateKey_Call) RunAndReturn(run func() crypto.PrivKe
 }
 
 // GetPublisher provides a mock function for the type MockIPFSNode
-func (_mock *MockIPFSNode) GetPublisher() *namesys.IPNSPublisher {
+func (_mock *MockIPFSNode) GetPublisher() core.IPNSPublisher {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetPublisher")
 	}
 
-	var r0 *namesys.IPNSPublisher
-	if returnFunc, ok := ret.Get(0).(func() *namesys.IPNSPublisher); ok {
+	var r0 core.IPNSPublisher
+	if returnFunc, ok := ret.Get(0).(func() core.IPNSPublisher); ok {
 		r0 = returnFunc()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*namesys.IPNSPublisher)
+			r0 = ret.Get(0).(core.IPNSPublisher)
 		}
 	}
 	return r0
@@ -632,12 +632,12 @@ func (_c *MockIPFSNode_GetPublisher_Call) Run(run func()) *MockIPFSNode_GetPubli
 	return _c
 }
 
-func (_c *MockIPFSNode_GetPublisher_Call) Return(iPNSPublisher *namesys.IPNSPublisher) *MockIPFSNode_GetPublisher_Call {
+func (_c *MockIPFSNode_GetPublisher_Call) Return(iPNSPublisher core.IPNSPublisher) *MockIPFSNode_GetPublisher_Call {
 	_c.Call.Return(iPNSPublisher)
 	return _c
 }
 
-func (_c *MockIPFSNode_GetPublisher_Call) RunAndReturn(run func() *namesys.IPNSPublisher) *MockIPFSNode_GetPublisher_Call {
+func (_c *MockIPFSNode_GetPublisher_Call) RunAndReturn(run func() core.IPNSPublisher) *MockIPFSNode_GetPublisher_Call {
 	_c.Call.Return(run)
 	return _c
 }

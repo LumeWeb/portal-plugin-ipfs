@@ -244,6 +244,63 @@ func (_c *MockMetadataStore_BlockSiblings_Call) RunAndReturn(run func(ctx contex
 	return _c
 }
 
+// MarkBlockReady provides a mock function for the type MockMetadataStore
+func (_mock *MockMetadataStore) MarkBlockReady(c cid.Cid, ready bool) error {
+	ret := _mock.Called(c, ready)
+
+	if len(ret) == 0 {
+		panic("no return value specified for MarkBlockReady")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(cid.Cid, bool) error); ok {
+		r0 = returnFunc(c, ready)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockMetadataStore_MarkBlockReady_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'MarkBlockReady'
+type MockMetadataStore_MarkBlockReady_Call struct {
+	*mock.Call
+}
+
+// MarkBlockReady is a helper method to define mock.On call
+//   - c cid.Cid
+//   - ready bool
+func (_e *MockMetadataStore_Expecter) MarkBlockReady(c interface{}, ready interface{}) *MockMetadataStore_MarkBlockReady_Call {
+	return &MockMetadataStore_MarkBlockReady_Call{Call: _e.mock.On("MarkBlockReady", c, ready)}
+}
+
+func (_c *MockMetadataStore_MarkBlockReady_Call) Run(run func(c cid.Cid, ready bool)) *MockMetadataStore_MarkBlockReady_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 cid.Cid
+		if args[0] != nil {
+			arg0 = args[0].(cid.Cid)
+		}
+		var arg1 bool
+		if args[1] != nil {
+			arg1 = args[1].(bool)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockMetadataStore_MarkBlockReady_Call) Return(err error) *MockMetadataStore_MarkBlockReady_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockMetadataStore_MarkBlockReady_Call) RunAndReturn(run func(c cid.Cid, ready bool) error) *MockMetadataStore_MarkBlockReady_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Pin provides a mock function for the type MockMetadataStore
 func (_mock *MockMetadataStore) Pin(ctx context.Context, pinnedBlock core.PinnedBlock) error {
 	ret := _mock.Called(ctx, pinnedBlock)
@@ -375,6 +432,57 @@ func (_c *MockMetadataStore_Pinned_Call) RunAndReturn(run func(ctx context.Conte
 	return _c
 }
 
+// ProcessMissingUnixFSNames provides a mock function for the type MockMetadataStore
+func (_mock *MockMetadataStore) ProcessMissingUnixFSNames(cids []cid.Cid) error {
+	ret := _mock.Called(cids)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ProcessMissingUnixFSNames")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func([]cid.Cid) error); ok {
+		r0 = returnFunc(cids)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockMetadataStore_ProcessMissingUnixFSNames_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ProcessMissingUnixFSNames'
+type MockMetadataStore_ProcessMissingUnixFSNames_Call struct {
+	*mock.Call
+}
+
+// ProcessMissingUnixFSNames is a helper method to define mock.On call
+//   - cids []cid.Cid
+func (_e *MockMetadataStore_Expecter) ProcessMissingUnixFSNames(cids interface{}) *MockMetadataStore_ProcessMissingUnixFSNames_Call {
+	return &MockMetadataStore_ProcessMissingUnixFSNames_Call{Call: _e.mock.On("ProcessMissingUnixFSNames", cids)}
+}
+
+func (_c *MockMetadataStore_ProcessMissingUnixFSNames_Call) Run(run func(cids []cid.Cid)) *MockMetadataStore_ProcessMissingUnixFSNames_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 []cid.Cid
+		if args[0] != nil {
+			arg0 = args[0].([]cid.Cid)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockMetadataStore_ProcessMissingUnixFSNames_Call) Return(err error) *MockMetadataStore_ProcessMissingUnixFSNames_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockMetadataStore_ProcessMissingUnixFSNames_Call) RunAndReturn(run func(cids []cid.Cid) error) *MockMetadataStore_ProcessMissingUnixFSNames_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Size provides a mock function for the type MockMetadataStore
 func (_mock *MockMetadataStore) Size(ctx context.Context, c cid.Cid) (uint64, error) {
 	ret := _mock.Called(ctx, c)
@@ -494,6 +602,63 @@ func (_c *MockMetadataStore_Unpin_Call) Return(err error) *MockMetadataStore_Unp
 }
 
 func (_c *MockMetadataStore_Unpin_Call) RunAndReturn(run func(ctx context.Context, c cid.Cid) error) *MockMetadataStore_Unpin_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// UpdateUnixFSMetadata provides a mock function for the type MockMetadataStore
+func (_mock *MockMetadataStore) UpdateUnixFSMetadata(c cid.Cid, metadata any) error {
+	ret := _mock.Called(c, metadata)
+
+	if len(ret) == 0 {
+		panic("no return value specified for UpdateUnixFSMetadata")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(cid.Cid, any) error); ok {
+		r0 = returnFunc(c, metadata)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockMetadataStore_UpdateUnixFSMetadata_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UpdateUnixFSMetadata'
+type MockMetadataStore_UpdateUnixFSMetadata_Call struct {
+	*mock.Call
+}
+
+// UpdateUnixFSMetadata is a helper method to define mock.On call
+//   - c cid.Cid
+//   - metadata any
+func (_e *MockMetadataStore_Expecter) UpdateUnixFSMetadata(c interface{}, metadata interface{}) *MockMetadataStore_UpdateUnixFSMetadata_Call {
+	return &MockMetadataStore_UpdateUnixFSMetadata_Call{Call: _e.mock.On("UpdateUnixFSMetadata", c, metadata)}
+}
+
+func (_c *MockMetadataStore_UpdateUnixFSMetadata_Call) Run(run func(c cid.Cid, metadata any)) *MockMetadataStore_UpdateUnixFSMetadata_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 cid.Cid
+		if args[0] != nil {
+			arg0 = args[0].(cid.Cid)
+		}
+		var arg1 any
+		if args[1] != nil {
+			arg1 = args[1].(any)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockMetadataStore_UpdateUnixFSMetadata_Call) Return(err error) *MockMetadataStore_UpdateUnixFSMetadata_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockMetadataStore_UpdateUnixFSMetadata_Call) RunAndReturn(run func(c cid.Cid, metadata any) error) *MockMetadataStore_UpdateUnixFSMetadata_Call {
 	_c.Call.Return(run)
 	return _c
 }
