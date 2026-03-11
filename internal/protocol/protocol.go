@@ -46,6 +46,8 @@ type ProtoNode interface {
 	core.Protocol
 	core.StorageProtocol
 	GetNode() ipfs.IPFSNode
+	GetIPNSNode() pluginCore.IPNSNodeAccess
+	GetMetadataStore() pluginCore.MetadataStore
 }
 
 // Ensure Protocol implements IPNSBoxoServices
@@ -114,62 +116,67 @@ func (p Protocol) ID() string {
 	return p.Name()
 }
 
-func (p Protocol) Workflows() []core.WorkflowDefinition {
+// NewProtocolWorkflows creates the list of workflows for the IPFS protocol
+func NewProtocolWorkflows(p core.Protocol) []core.WorkflowDefinition {
 	return []core.WorkflowDefinition{
-		p.newPinWorkflow(),
-		p.newUploadWorkflow(),
-		p.newTUSUploadWorkflow(),
+		newPinWorkflow(),
+		newUploadWorkflow(p.Name()),
+		newTUSUploadWorkflow(p.Name()),
 	}
 }
 
-func (p Protocol) pinWorkflowSteps() []core.OperationStep {
+func (p Protocol) Workflows() []core.WorkflowDefinition {
+	return NewProtocolWorkflows(&p)
+}
+
+func pinWorkflowSteps() []core.OperationStep {
 	return []core.OperationStep{
-		p.newRetryStep(core.RetrieveOperationName(internal.ProtocolName)),
-		p.newRetryStep(core.ScanOperationName(internal.ProtocolName)),
-		p.newRetryStep(core.StoreOperationName(internal.ProtocolName)),
-		p.newContinueStep(core.PublishOperationName(internal.ProtocolName)),
-		p.newRetryStep(confirmOperationName()),
-		p.newRetryStep(FilePathOperationName()),
+		newRetryStep(core.RetrieveOperationName(internal.ProtocolName)),
+		newRetryStep(core.ScanOperationName(internal.ProtocolName)),
+		newRetryStep(core.StoreOperationName(internal.ProtocolName)),
+		newContinueStep(core.PublishOperationName(internal.ProtocolName)),
+		newRetryStep(confirmOperationName()),
+		newRetryStep(FilePathOperationName()),
 	}
 }
 
-func (p Protocol) publishWorkflowSteps() []core.OperationStep {
+func publishWorkflowSteps() []core.OperationStep {
 	return []core.OperationStep{
-		p.newRetryStep(core.PublishOperationName(internal.ProtocolName)),
+		newRetryStep(core.PublishOperationName(internal.ProtocolName)),
 	}
 }
 
-func (p Protocol) newPinWorkflow() core.WorkflowDefinition {
+func newPinWorkflow() core.WorkflowDefinition {
 	return core.WorkflowDefinition{
 		Name:                 PIN_WORKFLOW,
 		AutoTriggerFirstStep: true,
-		Steps:                p.pinWorkflowSteps(),
+		Steps:                pinWorkflowSteps(),
 	}
 }
 
-func (p Protocol) newUploadWorkflow() core.WorkflowDefinition {
+func newUploadWorkflow(protocolName string) core.WorkflowDefinition {
 	return core.WorkflowDefinition{
 		Name:                 UPLOAD_WORKFLOW,
 		AutoTriggerFirstStep: true,
 		Steps: []core.OperationStep{
-			p.newRetryStep(core.PostUploadOperationName(p.Name())),
-			p.newRetryStep(FilePathOperationName()),
+			newRetryStep(core.PostUploadOperationName(protocolName)),
+			newRetryStep(FilePathOperationName()),
 		},
 	}
 }
 
-func (p Protocol) newTUSUploadWorkflow() core.WorkflowDefinition {
+func newTUSUploadWorkflow(protocolName string) core.WorkflowDefinition {
 	return core.WorkflowDefinition{
 		Name:                 TUS_UPLOAD_WORKFLOW,
 		AutoTriggerFirstStep: true,
 		Steps: append([]core.OperationStep{
-			p.newRetryStep(core.TUSUploadOperationName(p.Name())),
-			p.newRetryStep(FilePathOperationName()),
-		}, p.publishWorkflowSteps()...),
+			newRetryStep(core.TUSUploadOperationName(protocolName)),
+			newRetryStep(FilePathOperationName()),
+		}, publishWorkflowSteps()...),
 	}
 }
 
-func (p Protocol) newRetryStep(operation string) core.OperationStep {
+func newRetryStep(operation string) core.OperationStep {
 	return core.OperationStep{
 		Operation:       operation,
 		FailureBehavior: core.RetryStep,
@@ -177,7 +184,7 @@ func (p Protocol) newRetryStep(operation string) core.OperationStep {
 	}
 }
 
-func (p Protocol) newContinueStep(operation string) core.OperationStep {
+func newContinueStep(operation string) core.OperationStep {
 	return core.OperationStep{
 		Operation:       operation,
 		FailureBehavior: core.ContinueWorkflow,
@@ -185,7 +192,8 @@ func (p Protocol) newContinueStep(operation string) core.OperationStep {
 	}
 }
 
-func (p Protocol) Operations() []core.Operation {
+// NewProtocolOperations creates the list of operations for the IPFS protocol
+func NewProtocolOperations(p core.Protocol) []core.Operation {
 	return []core.Operation{
 		NewRetrieveOperation(p.Context()),
 		NewScanOperation(p.Context()),
@@ -200,7 +208,8 @@ func (p Protocol) Operations() []core.Operation {
 
 			tusHandler := core.GetAPI(internal.ProtocolName).(core.APITusHandler).GetTusHandler()
 
-			reader, err := tusHandler.UploadReader(ctx, tsReq.TUSUploadID, p, 0)
+			proto := p.(core.StorageProtocol)
+			reader, err := tusHandler.UploadReader(ctx, tsReq.TUSUploadID, proto, 0)
 			if err != nil {
 				return fmt.Errorf("failed to get upload reader: %w", err)
 			}
@@ -233,7 +242,8 @@ func (p Protocol) Operations() []core.Operation {
 				}
 			} else {
 				// Single file format (archives treated as files, not extracted)
-				processor, err = createFileProcessorForTUS(reader, p, helper.Logger())
+				proto := p.(ProtoNode)
+				processor, err = createFileProcessorForTUS(reader, proto, helper.Logger())
 				if err != nil {
 					return fmt.Errorf("failed to create file processor: %w", err)
 				}
@@ -267,7 +277,7 @@ func (p Protocol) Operations() []core.Operation {
 			}
 
 			// Fix any UnixFS metadata gaps before proceeding
-			_store := p.GetMetadataStore()
+			_store := p.(ProtoNode).GetMetadataStore()
 			if _store != nil {
 				err = _store.ProcessMissingUnixFSNames(allCids)
 				if err != nil {
@@ -304,6 +314,10 @@ func (p Protocol) Operations() []core.Operation {
 	}
 }
 
+func (p Protocol) Operations() []core.Operation {
+	return NewProtocolOperations(&p)
+}
+
 func (p Protocol) GetProtocolPinModel() any {
 	return &pluginDb.IPFSPin{}
 }
@@ -320,6 +334,10 @@ func (p Protocol) GetNode() ipfs.IPFSNode {
 	return p.node
 }
 
+func (p Protocol) GetMetadataStore() pluginCore.MetadataStore {
+	return p.metadataStore
+}
+
 func (p Protocol) Name() string {
 	return internal.ProtocolName
 }
@@ -330,10 +348,6 @@ func (p Protocol) DisplayName() string {
 
 func (p Protocol) GetConfig() config.ProtocolConfig {
 	return &pluginConfig.ProtocolConfig{}
-}
-
-func (p Protocol) GetMetadataStore() *store.MetadataStoreDefault {
-	return p.metadataStore
 }
 
 func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
@@ -447,7 +461,7 @@ func KeyToCIDBinary(key ds.Key) string {
 }
 
 // createFileProcessorForTUS creates a file processor for TUS uploads (archives treated as single files)
-func createFileProcessorForTUS(uploadFile io.ReadCloser, proto Protocol, logger *core.Logger) (BlockProcessor, error) {
+func createFileProcessorForTUS(uploadFile io.ReadCloser, proto ProtoNode, logger *core.Logger) (BlockProcessor, error) {
 	doneTracker := NewDoneTracker()
 	bstore := proto.GetNode().GetBlockstore()
 	dagService := proto.GetNode().DagService()
