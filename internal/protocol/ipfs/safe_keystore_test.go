@@ -1,23 +1,25 @@
 package ipfs
 
 import (
+	"crypto/rand"
 	"testing"
 
 	"github.com/ipfs/boxo/keystore"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
-	"go.lumeweb.com/portal/core"
+	coreTesting "go.lumeweb.com/portal/core/testing"
 )
 
 func TestSafeKeystore_RejectsNilKeys(t *testing.T) {
+	ctx, err := coreTesting.NewTestContext(t)
+	require.NoError(t, err)
+
 	inner := keystore.NewMemKeystore()
-	logger := core.NewLogger(zap.NewNop(), zap.NewNop().AtomicLevel())
-	safeKS := NewSafeKeystore(inner, logger)
+	safeKS := NewSafeKeystore(inner, ctx.Logger())
 
 	// Attempt to put a nil key
-	err := safeKS.Put("test-key", nil)
+	err = safeKS.Put("test-key", nil)
 	assert.Error(t, err, "Should reject nil key")
 	assert.Contains(t, err.Error(), "cannot put nil key")
 
@@ -28,12 +30,14 @@ func TestSafeKeystore_RejectsNilKeys(t *testing.T) {
 }
 
 func TestSafeKeystore_AllowsValidKeys(t *testing.T) {
+	ctx, err := coreTesting.NewTestContext(t)
+	require.NoError(t, err)
+
 	inner := keystore.NewMemKeystore()
-	logger := core.NewLogger(zap.NewNop(), zap.NewNop().AtomicLevel())
-	safeKS := NewSafeKeystore(inner, logger)
+	safeKS := NewSafeKeystore(inner, ctx.Logger())
 
 	// Generate a valid key
-	privKey, _, err := crypto.GenerateEd25519Key(crypto.RandSource)
+	privKey, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	require.NoError(t, err)
 
 	// Put the valid key
@@ -52,12 +56,14 @@ func TestSafeKeystore_AllowsValidKeys(t *testing.T) {
 }
 
 func TestSafeKeystore_ListValidatesKeys(t *testing.T) {
+	ctx, err := coreTesting.NewTestContext(t)
+	require.NoError(t, err)
+
 	inner := keystore.NewMemKeystore()
-	logger := core.NewLogger(zap.NewNop(), zap.NewNop().AtomicLevel())
-	safeKS := NewSafeKeystore(inner, logger)
+	safeKS := NewSafeKeystore(inner, ctx.Logger())
 
 	// Add a valid key
-	privKey, _, err := crypto.GenerateEd25519Key(crypto.RandSource)
+	privKey, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	require.NoError(t, err)
 	err = safeKS.Put("valid-key", privKey)
 	require.NoError(t, err)
@@ -71,22 +77,26 @@ func TestSafeKeystore_ListValidatesKeys(t *testing.T) {
 func TestSafeKeystore_GetValidatesNonNil(t *testing.T) {
 	// This test verifies the defensive check in Get() catches any edge cases
 	// where nil keys might exist in the underlying keystore
+	ctx, err := coreTesting.NewTestContext(t)
+	require.NoError(t, err)
+
 	inner := keystore.NewMemKeystore()
-	logger := core.NewLogger(zap.NewNop(), zap.NewNop().AtomicLevel())
-	safeKS := NewSafeKeystore(inner, logger)
+	safeKS := NewSafeKeystore(inner, ctx.Logger())
 
 	// Try to get a non-existent key
-	_, err := safeKS.Get("non-existent-key")
+	_, err = safeKS.Get("non-existent-key")
 	assert.Error(t, err, "Should return error for non-existent key")
 }
 
 func TestSafeKeystore_Delete(t *testing.T) {
+	ctx, err := coreTesting.NewTestContext(t)
+	require.NoError(t, err)
+
 	inner := keystore.NewMemKeystore()
-	logger := core.NewLogger(zap.NewNop(), zap.NewNop().AtomicLevel())
-	safeKS := NewSafeKeystore(inner, logger)
+	safeKS := NewSafeKeystore(inner, ctx.Logger())
 
 	// Add a valid key
-	privKey, _, err := crypto.GenerateEd25519Key(crypto.RandSource)
+	privKey, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	require.NoError(t, err)
 	err = safeKS.Put("test-key", privKey)
 	require.NoError(t, err)

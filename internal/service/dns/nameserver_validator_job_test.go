@@ -2,26 +2,26 @@ package dns
 
 import (
 	"context"
+	"io/fs"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.lumeweb.com/portal/core"
-	coreTesting "go.lumeweb.com/portal/core/testing"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
+	"go.lumeweb.com/portal/core"
+	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.uber.org/zap"
 )
 
 var NameserverValidatorTestOptions = coreTesting.CombineOptions(
-	coreTesting.WithServiceFactory(pluginCore.DNS_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
+	coreTesting.NewMockPluginBuilder(internal.ProtocolName).WithService(pluginCore.DNS_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
 		logger := zap.NewNop()
 		coreLogger := &core.Logger{Logger: logger}
 		pdnsClient, err := NewPowerDNSClient("http://localhost:8081", "test-api-key", coreLogger)
@@ -29,20 +29,15 @@ var NameserverValidatorTestOptions = coreTesting.CombineOptions(
 			return nil, nil, err
 		}
 		return NewDNSServiceWithOptions(WithPowerDNSClient(pdnsClient))
-	}),
-	coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{
-		DnsHosting: pluginConfig.Config{
-			Enabled:                      true,
-			PowerDNSAPIURL:               "http://localhost:8081",
-			PowerDNSAPIKey:               "test-api-key",
-			Nameservers:                  []string{"ns1.example.com.", "ns2.example.com."},
-			NameserverValidationInterval: 5 * time.Minute,
-		},
-	}),
-	coreTesting.WithSQLitePluginMigrations(
-		internal.ProtocolName, migrations.GetSQLite(),
-	),
-	util.GetProtocolMock(),
+	}).WithServiceConfig(pluginCore.DNS_SERVICE, &pluginConfig.DnsConfig{
+		Enabled:                      true,
+		PowerDNSAPIURL:               "http://localhost:8081",
+		PowerDNSAPIKey:               "test-api-key",
+		Nameservers:                  []string{"ns1.example.com.", "ns2.example.com."},
+		NameserverValidationInterval: 5 * time.Minute,
+	}).WithMigrations(map[core.DBType]fs.FS{
+		core.DB_TYPE_SQLITE: migrations.GetSQLite(),
+	}).BuilderOption(),
 )
 
 // TestNameserverValidatorJob_SuccessfulValidation tests that a zone successfully transitions from pending_nameserver to active
@@ -64,7 +59,7 @@ func TestNameserverValidatorJob_SuccessfulValidation(t *testing.T) {
 		setupDNSLookupMock(tb, ctx, testZone.Domain, []*net.NS{{Host: "ns1.example.com."}, {Host: "ns2.example.com."}}, nil)
 
 		// Act - Call validateDNSZones via janitor job
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
 		validated, err := svc.ValidateNameservers(context.Background(), testZone.ID)
@@ -108,7 +103,7 @@ func TestNameserverValidatorJob_FailedValidation(t *testing.T) {
 		setupDNSLookupMock(tb, ctx, testZone.Domain, nil, assert.AnError)
 
 		// Act
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
 		validated, err := svc.ValidateNameservers(context.Background(), testZone.ID)
@@ -139,7 +134,7 @@ func TestNameserverValidatorJob_NonExistentZone(t *testing.T) {
 		// Note: DNS lookup mock not needed since zone doesn't exist
 
 		// Act
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
 		validated, err := svc.ValidateNameservers(context.Background(), 999)
@@ -202,7 +197,7 @@ func TestNameserverValidatorJob_ZoneTimestampUpdate(t *testing.T) {
 		setupDNSLookupMock(tb, ctx, testZone.Domain, []*net.NS{{Host: "ns1.example.com."}, {Host: "ns2.example.com."}}, nil)
 
 		// Act
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
 		validated, err := svc.ValidateNameservers(context.Background(), testZone.ID)
@@ -257,8 +252,8 @@ func TestNameserverValidatorJob_MultipleZones(t *testing.T) {
 		mockDNSLookup.EXPECT().LookupNS("example1.com.").Return([]*net.NS{{Host: "ns1.example.com."}, {Host: "ns2.example.com."}}, nil)
 		mockDNSLookup.EXPECT().LookupNS("example2.com.").Return([]*net.NS{{Host: "ns1.example.com."}, {Host: "ns2.example.com."}}, nil)
 		mockDNSLookup.EXPECT().LookupNS("example3.com.").Return(nil, assert.AnError)
-		
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 		svc.SetDNSLookup(mockDNSLookup)
 
@@ -376,7 +371,7 @@ func TestNameserverValidatorJob_StatusTransitionPendingToActive(t *testing.T) {
 		setupDNSLookupMock(tb, ctx, testZone.Domain, []*net.NS{{Host: "ns1.example.com."}, {Host: "ns2.example.com."}}, nil)
 
 		// Act
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
 		validated, err := svc.ValidateNameservers(context.Background(), testZone.ID)
@@ -414,7 +409,7 @@ func TestNameserverValidatorJob_InvalidDomainFormat(t *testing.T) {
 		setupDNSLookupMock(tb, ctx, testZone.Domain, nil, assert.AnError)
 
 		// Act
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
 		validated, err := svc.ValidateNameservers(context.Background(), testZone.ID)
@@ -535,7 +530,7 @@ func TestNameserverValidatorJob_DatabaseErrorHandling(t *testing.T) {
 		setupDNSLookupMock(tb, ctx, testZone.Domain, []*net.NS{{Host: "ns1.example.com."}, {Host: "ns2.example.com."}}, nil)
 
 		// Act
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
 		validated, err := svc.ValidateNameservers(context.Background(), testZone.ID)
@@ -562,7 +557,7 @@ func setupDNSLookupMock(t testing.TB, ctx coreTesting.TestContext, domain string
 	} else {
 		mockDNSLookup.EXPECT().LookupNS(domain).Return([]*net.NS{{Host: "ns1.example.com."}}, nil)
 	}
-	svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+	svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 	require.NotNil(t, svc)
 	svc.SetDNSLookup(mockDNSLookup)
 }

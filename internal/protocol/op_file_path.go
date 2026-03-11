@@ -11,7 +11,6 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	filemanager "go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.uber.org/zap"
@@ -339,7 +338,7 @@ func (h *FilePathOperationHandler) createOrphanEntry(ctx context.Context, fileMa
 
 	// Store the orphan file path
 	err := fileManagerSvc.CreateFilePath(ctx, filePath)
-	if err != nil && !errors.Is(err, filemanager.ErrDuplicateFilePath) {
+	if err != nil && !errors.Is(err, db.ErrDuplicateFilePath) {
 		h.Logger().Error("Failed to create orphan file path",
 			zap.String("path", filePath.Path),
 			zap.Stringer("cid", c),
@@ -438,7 +437,7 @@ func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fi
 	// Store the file path for the current node
 	err := fileManagerSvc.CreateFilePath(ctx, filePath)
 	if err != nil {
-		if errors.Is(err, filemanager.ErrDuplicateFilePath) {
+		if errors.Is(err, db.ErrDuplicateFilePath) {
 			// If the file path already exists, just log a debug message and continue
 			h.Logger().Debug("File path already exists, skipping creation",
 				zap.String("path", currentPath),

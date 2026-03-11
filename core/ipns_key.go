@@ -7,6 +7,7 @@ import (
 	"github.com/ipfs/boxo/ipns"
 	"github.com/ipfs/boxo/keystore"
 	"github.com/ipfs/boxo/namesys"
+	"github.com/ipfs/boxo/path"
 	"github.com/ipfs/go-datastore"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
@@ -14,22 +15,27 @@ import (
 )
 
 const (
-	// IPNS_KEY_SERVICE is the service ID for the IPNS key management service
+	// IPNS_KEY_SERVICE is the service ID for the IPNS key management and publishing service
 	IPNS_KEY_SERVICE = "ipfs.ipns.key"
 
-	// IPNS_PUBLISHER_SERVICE is the service ID for the IPNS publisher service
-	IPNS_PUBLISHER_SERVICE = "ipfs.ipns.publisher"
-
-	// IPNS_REPUBLISHER_SERVICE is the service ID for the IPNS republisher service
-	IPNS_REPUBLISHER_SERVICE = "ipfs.ipns.republisher"
+	// Deprecated: IPNS_PUBLISHER_SERVICE is deprecated - use IPNS_KEY_SERVICE instead
+	// This is kept for backward compatibility
+	IPNS_PUBLISHER_SERVICE = IPNS_KEY_SERVICE
 )
 
 // IPNSNodeAccess provides access to IPFS node components needed for IPNS operations
 type IPNSNodeAccess interface {
-	GetPublisher() *namesys.IPNSPublisher
+	GetPublisher() IPNSPublisher
 	GetKeystore() keystore.Keystore
 	GetDatastore() datastore.Datastore
 	GetPrivateKey() crypto.PrivKey
+}
+
+// IPNSPublisher provides an interface for IPNS publishing operations
+type IPNSPublisher interface {
+	Publish(ctx context.Context, privKey crypto.PrivKey, ipnsPath path.Path, options ...namesys.PublishOption) error
+	GetPublished(ctx context.Context, name ipns.Name, checkRouting bool) (*ipns.Record, error)
+	ListPublished(ctx context.Context) (map[ipns.Name]*ipns.Record, error)
 }
 
 // IPNSBoxoServices provides access to Boxo IPNS services
@@ -37,7 +43,7 @@ type IPNSBoxoServices interface {
 	GetIPNSNode() IPNSNodeAccess
 }
 
-// IPNSKeyService defines the interface for IPNS key management
+// IPNSKeyService defines the interface for IPNS key management and publishing
 type IPNSKeyService interface {
 	core.Service
 
@@ -70,11 +76,6 @@ type IPNSKeyService interface {
 
 	// SyncToBoxoKeystore syncs all active IPNS keys from the database to the boxo keystore
 	SyncToBoxoKeystore(ctx context.Context) error
-}
-
-// IPNSPublisherService defines the interface for IPNS record publishing
-type IPNSPublisherService interface {
-	core.Service
 
 	// PublishCID publishes a CID to an IPNS key using peer ID
 	PublishCID(ctx context.Context, keyID string, cidStr string, ttl time.Duration) error

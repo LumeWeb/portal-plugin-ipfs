@@ -22,6 +22,7 @@ var (
 	mimeToFormat = map[string]Format{
 		"application/zip":              FormatZIP,
 		"application/x-tar":            FormatTAR,
+		"application/vnd.rar":          FormatRAR,
 		"application/x-rar-compressed": FormatRAR,
 		"application/x-7z-compressed":  Format7Z,
 	}

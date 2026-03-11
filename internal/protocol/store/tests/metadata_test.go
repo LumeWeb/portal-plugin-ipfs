@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -46,19 +47,19 @@ func TestMetadataStore_PinUnpinBlockExists(t *testing.T) {
 		pinnedBlock := createPinnedBlock(tb, ctx, testData)
 
 		// Act & Assert - Pin
-		err := metadataStore.Pin(pinnedBlock)
+		err := metadataStore.Pin(context.Background(), pinnedBlock)
 		require.NoError(tb, err)
 
 		// Act & Assert - BlockExists
-		err = metadataStore.BlockExists(pinnedBlock.Cid)
+		err = metadataStore.BlockExists(context.Background(), pinnedBlock.Cid)
 		require.NoError(tb, err)
 
 		// Act & Assert - Unpin
-		err = metadataStore.Unpin(pinnedBlock.Cid)
+		err = metadataStore.Unpin(context.Background(), pinnedBlock.Cid)
 		require.NoError(tb, err)
 
 		// Act & Assert - BlockExists (should return error after unpin)
-		err = metadataStore.BlockExists(pinnedBlock.Cid)
+		err = metadataStore.BlockExists(context.Background(), pinnedBlock.Cid)
 		assert.Error(tb, err)
 		assert.True(tb, errors.Is(err, format.ErrNotFound{}))
 	}, ipfsTestConfig)
@@ -84,15 +85,15 @@ func TestMetadataStore_BlockChildren(t *testing.T) {
 		parentBlock.Links = expectedChildren
 
 		// Pin all blocks
-		require.NoError(tb, metadataStore.Pin(parentBlock))
-		require.NoError(tb, metadataStore.Pin(createPinnedBlock(tb, ctx, child1Data)))
-		require.NoError(tb, metadataStore.Pin(createPinnedBlock(tb, ctx, child2Data)))
+		require.NoError(tb, metadataStore.Pin(context.Background(), parentBlock))
+		require.NoError(tb, metadataStore.Pin(context.Background(), createPinnedBlock(tb, ctx, child1Data)))
+		require.NoError(tb, metadataStore.Pin(context.Background(), createPinnedBlock(tb, ctx, child2Data)))
 
 		// Debug: Verify what's in the database
 		var blocks []pluginDb.IPFSBlock
 		require.NoError(tb, ctx.DB().Find(&blocks).Error)
 		// Act
-		actualChildren, err := metadataStore.BlockChildren(parentBlock.Cid, nil)
+		actualChildren, err := metadataStore.BlockChildren(context.Background(), parentBlock.Cid, nil)
 		require.NoError(tb, err)
 		// Assert
 		require.Len(tb, actualChildren, len(expectedChildren), "wrong number of children returned")
@@ -131,24 +132,24 @@ func TestMetadataStore_BlockSiblings(t *testing.T) {
 			child2Cid,
 			child3Cid,
 		}
-		err := metadataStore.Pin(parentBlock)
+		err := metadataStore.Pin(context.Background(), parentBlock)
 		require.NoError(tb, err)
 
 		// Pin child blocks
 		child1Block := createPinnedBlock(tb, ctx, child1Data)
-		err = metadataStore.Pin(child1Block)
+		err = metadataStore.Pin(context.Background(), child1Block)
 		require.NoError(tb, err)
 
 		child2Block := createPinnedBlock(tb, ctx, child2Data)
-		err = metadataStore.Pin(child2Block)
+		err = metadataStore.Pin(context.Background(), child2Block)
 		require.NoError(tb, err)
 
 		child3Block := createPinnedBlock(tb, ctx, child3Data)
-		err = metadataStore.Pin(child3Block)
+		err = metadataStore.Pin(context.Background(), child3Block)
 		require.NoError(tb, err)
 
 		// Act
-		siblings, err := metadataStore.BlockSiblings(child1Cid, 2)
+		siblings, err := metadataStore.BlockSiblings(context.Background(), child1Cid, 2)
 
 		// Assert
 		require.NoError(tb, err)
@@ -167,15 +168,15 @@ func TestMetadataStore_ProvideCIDs(t *testing.T) {
 
 		// Pin blocks
 		block1 := createPinnedBlock(tb, ctx, testData1)
-		err := metadataStore.Pin(block1)
+		err := metadataStore.Pin(context.Background(), block1)
 		require.NoError(tb, err)
 
 		block2 := createPinnedBlock(tb, ctx, testData2)
-		err = metadataStore.Pin(block2)
+		err = metadataStore.Pin(context.Background(), block2)
 		require.NoError(tb, err)
 
 		// Act
-		cids, err := metadataStore.ProvideCIDs(2)
+		cids, err := metadataStore.ProvideCIDs(context.Background(), 2)
 
 		// Assert
 		require.NoError(tb, err)
@@ -190,13 +191,13 @@ func TestMetadataStore_SetLastAnnouncement(t *testing.T) {
 		metadataStore := store.NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protocol.ProtoNode))
 		testData := "test data"
 		pinnedBlock := createPinnedBlock(tb, ctx, testData)
-		err := metadataStore.Pin(pinnedBlock)
+		err := metadataStore.Pin(context.Background(), pinnedBlock)
 		require.NoError(tb, err)
 
 		announcementTime := time.Now()
 
 		// Act
-		err = metadataStore.SetLastAnnouncement([]cid.Cid{pinnedBlock.Cid}, announcementTime)
+		err = metadataStore.SetLastAnnouncement(context.Background(), []cid.Cid{pinnedBlock.Cid}, announcementTime)
 
 		// Assert
 		require.NoError(tb, err)
@@ -220,15 +221,15 @@ func TestMetadataStore_Pinned(t *testing.T) {
 
 		// Pin blocks
 		block1 := createPinnedBlock(tb, ctx, testData1)
-		err := metadataStore.Pin(block1)
+		err := metadataStore.Pin(context.Background(), block1)
 		require.NoError(tb, err)
 
 		block2 := createPinnedBlock(tb, ctx, testData2)
-		err = metadataStore.Pin(block2)
+		err = metadataStore.Pin(context.Background(), block2)
 		require.NoError(tb, err)
 
 		// Act
-		pinned, err := metadataStore.Pinned(0, 10)
+		pinned, err := metadataStore.Pinned(context.Background(), 0, 10)
 
 		// Assert
 		require.NoError(tb, err)
@@ -242,11 +243,11 @@ func TestMetadataStore_Size(t *testing.T) {
 		metadataStore := store.NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protocol.ProtoNode))
 		testData := "test data"
 		pinnedBlock := createPinnedBlock(tb, ctx, testData)
-		err := metadataStore.Pin(pinnedBlock)
+		err := metadataStore.Pin(context.Background(), pinnedBlock)
 		require.NoError(tb, err)
 
 		// Act
-		size, err := metadataStore.Size(pinnedBlock.Cid)
+		size, err := metadataStore.Size(context.Background(), pinnedBlock.Cid)
 
 		// Assert
 		require.NoError(tb, err)
@@ -260,7 +261,7 @@ func TestMetadataStore_UpdateUnixFSMetadata(t *testing.T) {
 		metadataStore := store.NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protocol.ProtoNode))
 		testData := "test data"
 		pinnedBlock := createPinnedBlock(tb, ctx, testData)
-		err := metadataStore.Pin(pinnedBlock)
+		err := metadataStore.Pin(context.Background(), pinnedBlock)
 		require.NoError(tb, err)
 
 		// Create initial metadata
@@ -294,7 +295,7 @@ func TestMetadataStore_GetUnixFSMetadata(t *testing.T) {
 			BlockSize: 1024,
 		}
 
-		err := metadataStore.Pin(pinnedBlock)
+		err := metadataStore.Pin(context.Background(), pinnedBlock)
 		require.NoError(tb, err)
 
 		err = metadataStore.UpdateUnixFSMetadata(pinnedBlock.Cid, initialMetadata)
@@ -316,7 +317,7 @@ func TestMetadataStore_MarkBlockReady(t *testing.T) {
 		metadataStore := store.NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protocol.ProtoNode))
 		testData := "test data"
 		pinnedBlock := createPinnedBlock(tb, ctx, testData)
-		err := metadataStore.Pin(pinnedBlock)
+		err := metadataStore.Pin(context.Background(), pinnedBlock)
 		require.NoError(tb, err)
 
 		// Act
@@ -350,7 +351,7 @@ func TestMetadataStore_SetLastAnnouncement_NoBlockFound(t *testing.T) {
 		announcementTime := time.Now()
 
 		// Act
-		err := metadataStore.SetLastAnnouncement([]cid.Cid{testCid}, announcementTime)
+		err := metadataStore.SetLastAnnouncement(context.Background(), []cid.Cid{testCid}, announcementTime)
 
 		// Assert
 		assert.Error(tb, err)
@@ -373,16 +374,16 @@ func TestMetadataStore_Pin_DuplicateLinks(t *testing.T) {
 			childCid,
 			childCid, // Duplicate link
 		}
-		err := metadataStore.Pin(parentBlock)
+		err := metadataStore.Pin(context.Background(), parentBlock)
 		require.NoError(tb, err)
 
 		// Pin child block
 		childBlock := createPinnedBlock(tb, ctx, childData)
-		err = metadataStore.Pin(childBlock)
+		err = metadataStore.Pin(context.Background(), childBlock)
 		require.NoError(tb, err)
 
 		// Act
-		children, err := metadataStore.BlockChildren(parentCid, nil)
+		children, err := metadataStore.BlockChildren(context.Background(), parentCid, nil)
 
 		// Assert
 		require.NoError(tb, err)
@@ -401,17 +402,17 @@ func TestMetadataStore_Pin_ExistingLinkedBlockWithoutParent(t *testing.T) {
 
 		// Pin child block first
 		childBlock := createPinnedBlock(tb, ctx, childData)
-		err := metadataStore.Pin(childBlock)
+		err := metadataStore.Pin(context.Background(), childBlock)
 		require.NoError(tb, err)
 
 		// Pin parent block, linking to the existing child
 		parentBlock := createPinnedBlock(tb, ctx, parentData)
 		parentBlock.Links = []cid.Cid{childCid}
-		err = metadataStore.Pin(parentBlock)
+		err = metadataStore.Pin(context.Background(), parentBlock)
 		require.NoError(tb, err)
 
 		// Act
-		children, err := metadataStore.BlockChildren(parentCid, nil)
+		children, err := metadataStore.BlockChildren(context.Background(), parentCid, nil)
 
 		// Assert
 		require.NoError(tb, err)
@@ -439,7 +440,7 @@ func TestMetadataStore_Unpin_NonExistentBlock(t *testing.T) {
 		testCid := generateCid(t, testData)
 
 		// Act
-		err := metadataStore.Unpin(testCid)
+		err := metadataStore.Unpin(context.Background(), testCid)
 
 		// Assert
 		require.NoError(tb, err) // Unpinning a non-existent block should not return an error
@@ -457,20 +458,20 @@ func TestMetadataStore_Unpin_WithLinkedBlocks(t *testing.T) {
 
 		// Pin parent block with a link to the child
 		parentBlock.Links = []cid.Cid{childCid}
-		err := metadataStore.Pin(parentBlock)
+		err := metadataStore.Pin(context.Background(), parentBlock)
 		require.NoError(tb, err)
 
 		// Pin child block
 		childBlock := createPinnedBlock(tb, ctx, childData)
-		err = metadataStore.Pin(childBlock)
+		err = metadataStore.Pin(context.Background(), childBlock)
 		require.NoError(tb, err)
 
 		// Act
-		err = metadataStore.Unpin(parentBlock.Cid)
+		err = metadataStore.Unpin(context.Background(), parentBlock.Cid)
 		require.NoError(tb, err)
 
 		// Assert - Parent block should be deleted
-		err = metadataStore.BlockExists(parentBlock.Cid)
+		err = metadataStore.BlockExists(context.Background(), parentBlock.Cid)
 		assert.Error(tb, err)
 
 		// Assert - Linked block entries should be deleted

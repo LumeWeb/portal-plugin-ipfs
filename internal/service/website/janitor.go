@@ -23,13 +23,12 @@ const (
 // WebsiteJanitorJob implements core.CronJob for periodic website validation
 type WebsiteJanitorJob struct {
 	*core.BaseCronJob
-	config              *config.WebsiteConfig
-	pinService          pluginCore.IPFSPinService
-	ipnsKeyService      pluginCore.IPNSKeyService
-	ipnsPublisherService pluginCore.IPNSPublisherService
-	dnsService          pluginCore.DNSService
-	db                  *gorm.DB
-	logger              *core.Logger
+	config         *config.WebsiteConfig
+	pinService     pluginCore.IPFSPinService
+	ipnsKeyService pluginCore.IPNSKeyService
+	dnsService     pluginCore.DNSService
+	db             *gorm.DB
+	logger         *core.Logger
 }
 
 // NewWebsiteJanitorJob creates a new WebsiteJanitorJob instance
@@ -275,8 +274,8 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 
 	_ = privKey
 
-	// Resolve IPNS record via IPNSPublisherService
-	record, err := j.ipnsPublisherService.GetPublished(ctx, website.TargetHash(), true)
+	// Resolve IPNS record
+	record, err := j.ipnsKeyService.GetPublished(ctx, website.TargetHash(), true)
 	if err != nil {
 		j.logger.Error("Failed to resolve IPNS record",
 			zap.Error(err),
@@ -442,10 +441,8 @@ func (j *WebsiteJanitorJob) validateDNSZones(ctx context.Context) error {
 
 // initializeJob sets up the job dependencies
 func (j *WebsiteJanitorJob) initializeJob(ctx core.Context) error {
-	// Get configuration
-	j.config = &config.WebsiteConfig{}
-	// Use defaults since we can't access website-specific config via the API
-	// The config will be loaded from the protocol config if needed later
+	// Get configuration from service config
+	j.config = core.GetServiceConfig[*config.WebsiteConfig](ctx, pluginCore.WEBSITE_SERVICE)
 
 	// Get pin service
 	j.pinService = core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)
@@ -457,12 +454,6 @@ func (j *WebsiteJanitorJob) initializeJob(ctx core.Context) error {
 	j.ipnsKeyService = core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 	if j.ipnsKeyService == nil {
 		return fmt.Errorf("IPNS key service not available")
-	}
-
-	// Get IPNS publisher service
-	j.ipnsPublisherService = core.GetService[pluginCore.IPNSPublisherService](ctx, pluginCore.IPNS_PUBLISHER_SERVICE)
-	if j.ipnsPublisherService == nil {
-		return fmt.Errorf("IPNS publisher service not available")
 	}
 
 	// Get DNS service (optional - for DNS hosting validation)

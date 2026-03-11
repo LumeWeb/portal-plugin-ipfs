@@ -15,6 +15,7 @@ const WEBSITE_SERVICE = "ipfs.website"
 // WebsiteService defines the interface for managing website configurations
 type WebsiteService interface {
 	core.Service
+	core.Configurable
 
 	// CreateWebsite creates a new website configuration
 	CreateWebsite(ctx context.Context, website *pluginDb.Website) (*pluginDb.Website, error)

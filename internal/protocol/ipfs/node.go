@@ -66,7 +66,7 @@ type IPFSNode interface {
 	AddPeer(addr peer.AddrInfo)
 	Pin(ctx context.Context, root cid.Cid, recursive bool) error
 	TriggerReprovider()
-	GetPublisher() *namesys.IPNSPublisher
+	GetPublisher() pluginCore.IPNSPublisher
 	GetKeystore() keystore.Keystore
 	GetDatastore() datastore.Datastore
 	GetPrivateKey() crypto.PrivKey
@@ -426,7 +426,7 @@ func (n *Node) GetKeystore() keystore.Keystore {
 }
 
 // GetPublisher returns the node's IPNS publisher
-func (n *Node) GetPublisher() *namesys.IPNSPublisher {
+func (n *Node) GetPublisher() pluginCore.IPNSPublisher {
 	return n.publisher
 }
 

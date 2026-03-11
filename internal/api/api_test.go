@@ -33,9 +33,8 @@ var TestOptions = coreTesting.CombineOptions(
 	coreTesting.WithMockServiceFactory(pluginCore.BLOCK_SERVICE, mocks.NewMockBlockService),
 	coreTesting.WithMockServiceFactory(pluginCore.UPLOAD_SERVICE, mocks.NewMockUploadService),
 	coreTesting.WithMockServiceFactory(pluginCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService),
-	coreTesting.WithMockServiceFactory(pluginCore.IPNS_PUBLISHER_SERVICE, mocks.NewMockIPNSPublisherService),
-	coreTesting.WithMockServiceFactory(pluginCore.WEBSITE_SERVICE, mocks.NewMockWebsiteService),
-	coreTesting.WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService),
+	coreTesting.WithMockServiceFactory(pluginCore.WEBSITE_SERVICE, mocks.NewMockWebsiteService, &pluginConfig.WebsiteConfig{}),
+	coreTesting.WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService, &pluginConfig.DnsConfig{}),
 	coreTesting.WithHTTPService(),
 	coreTesting.WithPlugins(),
 	coreTesting.WithAPIConfig(internal.ProtocolName, &pluginConfig.APIConfig{

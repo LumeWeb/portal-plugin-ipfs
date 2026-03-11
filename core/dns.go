@@ -3,10 +3,10 @@ package core
 import (
 	"context"
 
-	"go.lumeweb.com/queryutil"
 	apiDTO "go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/queryutil"
 )
 
 const DNS_SERVICE = "ipfs.dns"
@@ -14,6 +14,7 @@ const DNS_SERVICE = "ipfs.dns"
 // DNSService defines the interface for managing DNS zones
 type DNSService interface {
 	core.Service
+	core.Configurable
 
 	// CreateZone creates a new DNS zone
 	CreateZone(ctx context.Context, domain string, userID uint) (*pluginDb.DNSZone, error)

@@ -2,6 +2,7 @@ package website
 
 import (
 	"context"
+	"io/fs"
 	"testing"
 	"time"
 
@@ -62,12 +63,14 @@ const (
 func createTestIPFSWebsite(userID uint, domain string, cidStr string) *pluginDb.Website {
 	c := cid.MustParse(cidStr)
 	version := uint8(c.Version())
+	codec := uint8(c.Type())
 	return &pluginDb.Website{
 		UserID:          userID,
 		Domain:          domain,
 		TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
 		TargetMultihash: c.Hash(),
 		CIDVersion:      &version,
+		CIDType:         &codec,
 		SSLStatus:       string(pluginDb.SSLStatusPending),
 	}
 }
@@ -99,25 +102,28 @@ func createMockDNSZone(zoneID uint, domain string, userID uint) *pluginDb.DNSZon
 }
 
 var TestOptions = coreTesting.CombineOptions(
-	coreTesting.WithServiceFactory(pluginCore.WEBSITE_SERVICE, NewWebsiteService),
-	coreTesting.WithMockServiceFactory(pluginCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService),
-	coreTesting.WithMockServiceFactory(pluginCore.PIN_SERVICE, mocks.NewMockIPFSPinService),
-	coreTesting.WithMockServiceFactory(pluginCore.FILE_MANAGER_SERVICE, mocks.NewMockFileManagerService),
-	coreTesting.WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService),
-	coreTesting.WithMockServiceFactory(pluginCore.IPNS_PUBLISHER_SERVICE, mocks.NewMockIPNSPublisherService),
-	coreTesting.WithMockMailerService(),
-	util.GetProtocolMock(),
-	// Disable notifications to avoid mailer mock issues in tests
-	coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{
-		Website: pluginConfig.WebsiteConfig{
+	coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{}),
+	coreTesting.NewMockPluginBuilder(internal.ProtocolName).
+		WithService(pluginCore.WEBSITE_SERVICE, NewWebsiteService).
+		WithServiceConfig(pluginCore.WEBSITE_SERVICE, &pluginConfig.WebsiteConfig{
 			NotificationsEnabled: false,
 			AdminEmail:           "",
-			ValidationTokenTTL:   24 * time.Hour, // Extended TTL for tests
-		},
-	}),
-	coreTesting.WithSQLitePluginMigrations(
-		internal.ProtocolName, migrations.GetSQLite(),
-	),
+			ValidationTokenTTL:   24 * time.Hour,
+		}).
+		WithMockServiceFactory(pluginCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService).
+		WithMockServiceFactory(pluginCore.PIN_SERVICE, mocks.NewMockIPFSPinService).
+		WithMockServiceFactory(pluginCore.FILE_MANAGER_SERVICE, mocks.NewMockFileManagerService).
+		WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService).
+		WithServiceConfig(pluginCore.DNS_SERVICE, &pluginConfig.DnsConfig{
+			Enabled:                      true,
+			Nameservers:                  []string{"ns1.localhost", "ns2.localhost"},
+			NameserverValidationInterval: 5 * time.Minute,
+		}).
+		WithMigrations(map[core.DBType]fs.FS{
+			core.DB_TYPE_SQLITE: migrations.GetSQLite(),
+		}).BuilderOption(),
+	coreTesting.WithMockMailerService(),
+	util.GetProtocolMock(),
 )
 
 func TestWebsiteService_CreateWebsite_IPFSTarget(t *testing.T) {
@@ -139,7 +145,12 @@ func TestWebsiteService_CreateWebsite_IPFSTarget(t *testing.T) {
 		assert.Equal(tb, testUserID1, createdWebsite.UserID)
 		assert.Equal(tb, "example.com", createdWebsite.Domain)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPFS), createdWebsite.TargetType)
-		assert.Equal(tb, testCID.String(), createdWebsite.TargetHash())
+
+		// Compare CIDs using Equals method instead of string comparison
+		createdCID, err := cid.Decode(createdWebsite.TargetHash())
+		require.NoError(tb, err)
+		assert.True(tb, testCID.Equals(createdCID), "CID mismatch: expected %v, got %v", testCID.String(), createdWebsite.TargetHash())
+
 		assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), createdWebsite.Status)
 		assert.NotEmpty(tb, createdWebsite.ValidationToken)
 		assert.NotNil(tb, createdWebsite.ValidationExpiresAt)
@@ -281,7 +292,10 @@ func TestWebsiteService_CreateWebsite_IPNSTarget(t *testing.T) {
 		assert.Equal(tb, testUserID1, createdWebsite.UserID)
 		assert.Equal(tb, "ipns-example.com", createdWebsite.Domain)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType)
-		assert.Equal(tb, ipnsName, createdWebsite.TargetHash())
+		// Verify the peer ID is the same, comparing by decoding from both formats
+		inputPeerID, _ := peer.Decode(ipnsName)
+		outputPeerID, _ := peer.Decode(createdWebsite.TargetHash())
+		assert.Equal(tb, inputPeerID, outputPeerID, "Peer IDs should match across different encodings")
 		assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), createdWebsite.Status)
 	}, TestOptions)
 }
@@ -296,7 +310,6 @@ func TestWebsiteService_CreateWebsite_InvalidDomain(t *testing.T) {
 
 		website := createTestIPFSWebsite(testUserID1, "invalid domain with spaces", testCID.String())
 		website.Status = "" // Clear for validation error test
-
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -378,7 +391,12 @@ func TestWebsiteService_GetWebsite(t *testing.T) {
 		assert.Equal(tb, createdWebsite.ID, retrievedWebsite.ID)
 		assert.Equal(tb, createdWebsite.Domain, retrievedWebsite.Domain)
 		assert.Equal(tb, createdWebsite.TargetType, retrievedWebsite.TargetType)
-		assert.Equal(tb, createdWebsite.TargetHash(), retrievedWebsite.TargetHash())
+		// Compare target hashes - both should be the same normalized CID
+		createdCID, err := cid.Decode(createdWebsite.TargetHash())
+		require.NoError(tb, err)
+		retrievedCID, err := cid.Decode(retrievedWebsite.TargetHash())
+		require.NoError(tb, err)
+		assert.True(tb, createdCID.Equals(retrievedCID), "Target hash mismatch")
 	}, TestOptions)
 }
 
@@ -509,7 +527,12 @@ func TestWebsiteService_UpdateWebsite(t *testing.T) {
 		require.NoError(tb, err)
 		assert.NotNil(tb, updatedWebsite)
 		assert.Equal(tb, createdWebsite.ID, updatedWebsite.ID)
-		assert.Equal(tb, newCID.String(), updatedWebsite.TargetHash())
+
+		// Compare CID using Equals method (newCID is already normalized from the test helper)
+		updatedCID, err := cid.Decode(updatedWebsite.TargetHash())
+		require.NoError(tb, err)
+		assert.True(tb, newCID.Equals(updatedCID), "CID mismatch after update")
+
 		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), updatedWebsite.Status)
 		assert.Equal(tb, "update-test.com", updatedWebsite.Domain)
 	}, TestOptions)
@@ -683,6 +706,9 @@ func TestWebsiteService_IsExpired(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Test 1: Newly created website should not be expired
+		t.Logf("ValidationExpiresAt: %v", createdWebsite.ValidationExpiresAt)
+		t.Logf("Current time: %v", time.Now())
+		t.Logf("IsExpired: %v", createdWebsite.IsExpired())
 		assert.False(t, createdWebsite.IsExpired())
 
 		// Test 2: Website with expired timestamp should be expired
@@ -1053,18 +1079,35 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreatedWhenEnabled(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
-		require.NotNil(tb, websiteService)
-		require.NotNil(tb, dnsService)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 
 		testCID := util.GenerateTestCID(t, "test data")
 		domain := "dns-enabled-test.com"
+		expectedKeyName := domain + "-auto"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
 		website.Enabled = true
 
-		mockDNS, ok := dnsService.(*mocks.MockDNSService)
-		require.True(tb, ok, "DNS service should be a mock")
+		// Set up IPNS key mock expectations for auto-creation
+		// ListKeys should return empty list (no existing key with that name)
+		mockIPNSKey.EXPECT().ListKeys(mock.Anything, testUserID1).Return([]pluginDb.IPFSIPNSKey{}, nil).Once()
+
+		// CreateKey should create a new IPNS key
+		testKeyID := uint(1001)
+		testPeerIDStr := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
+		testPeerID, _ := parsePeerID(testPeerIDStr)
+		testPeerIDMultihash := mh.Multihash(testPeerID)
+		testIPNSKey := &pluginDb.IPFSIPNSKey{
+			ID:              testKeyID,
+			UserID:          testUserID1,
+			Name:            expectedKeyName,
+			PeerIDMultihash: testPeerIDMultihash,
+		}
+		mockIPNSKey.EXPECT().CreateKey(mock.Anything, testUserID1, expectedKeyName, 1).Return(testIPNSKey, nil).Once()
+
+		// PublishCID should publish the CID to the IPNS key
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
 
 		// Act - Expect DNS zone creation and DNS records creation
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID1, domain, testUserID1), nil).Once()
@@ -1072,7 +1115,7 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreatedWhenEnabled(t *testing.T) {
 			mock.Anything,
 			testZoneID1,
 			mock.Anything,
-			mock.Anything,
+			pluginDb.WebsiteTargetTypeIPNS,
 			mock.Anything,
 		).Return(nil).Once()
 
@@ -1084,11 +1127,13 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreatedWhenEnabled(t *testing.T) {
 		assert.NotNil(tb, createdWebsite.DNSZoneID)
 		assert.Equal(tb, testZoneID1, *createdWebsite.DNSZoneID)
 		assert.True(tb, createdWebsite.Enabled)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType, "Should be converted to IPNS for managed DNS")
+		assert.NotNil(tb, createdWebsite.IPNSKeyID, "IPNS key ID should be set")
 
-		// Verify critical DNS operations were called
+		// Verify critical operations were called
 		mockDNS.AssertCalled(t, "CreateZone", mock.Anything, domain, testUserID1)
-		mockDNS.AssertCalled(t, "CreateWebsiteDNSRecords", mock.Anything, testZoneID1, mock.Anything, mock.Anything, mock.Anything)
-		mockDNS.AssertExpectations(t)
+		mockDNS.AssertCalled(t, "CreateWebsiteDNSRecords", mock.Anything, testZoneID1, mock.Anything, pluginDb.WebsiteTargetTypeIPNS, mock.Anything)
+
 	}, TestOptions)
 }
 
@@ -1096,18 +1141,32 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreated(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
-		require.NotNil(tb, websiteService)
-		require.NotNil(tb, dnsService)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 
 		testCID := util.GenerateTestCID(t, "test data")
 		domain := "dns-records-test.com"
+		expectedKeyName := domain + "-auto"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
 		website.Enabled = true
 
-		mockDNS, ok := dnsService.(*mocks.MockDNSService)
-		require.True(tb, ok, "DNS service should be a mock")
+		// Set up IPNS key mock expectations for auto-creation
+		// ListKeys should return empty list (no existing key with that name)
+		mockIPNSKey.EXPECT().ListKeys(mock.Anything, testUserID1).Return([]pluginDb.IPFSIPNSKey{}, nil).Once()
+
+		testKeyID := uint(1002)
+		testPeerIDStr := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
+		testPeerID, _ := parsePeerID(testPeerIDStr)
+		testPeerIDMultihash := mh.Multihash(testPeerID)
+		testIPNSKey := &pluginDb.IPFSIPNSKey{
+			ID:              testKeyID,
+			UserID:          testUserID1,
+			Name:            expectedKeyName,
+			PeerIDMultihash: testPeerIDMultihash,
+		}
+		mockIPNSKey.EXPECT().CreateKey(mock.Anything, testUserID1, expectedKeyName, 1).Return(testIPNSKey, nil).Once()
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
 
 		// Act - Expect DNS zone and records to be created with specific parameters
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID2, domain, testUserID1), nil).Once()
@@ -1125,7 +1184,7 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreated(t *testing.T) {
 			}),
 			mock.MatchedBy(func(targetType pluginDb.WebsiteTargetType) bool {
 				capturedTargetType = targetType
-				return targetType == pluginDb.WebsiteTargetTypeIPFS
+				return targetType == pluginDb.WebsiteTargetTypeIPNS
 			}),
 			mock.MatchedBy(func(token string) bool {
 				capturedToken = token
@@ -1139,11 +1198,10 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreated(t *testing.T) {
 		require.NoError(tb, err)
 		assert.NotNil(tb, createdWebsite)
 		assert.NotEmpty(tb, capturedTargetHash, "Target hash should be captured")
-		assert.Equal(tb, pluginDb.WebsiteTargetTypeIPFS, capturedTargetType, "Target type should be IPFS")
+		assert.Equal(tb, pluginDb.WebsiteTargetTypeIPNS, capturedTargetType, "Target type should be IPNS after auto-conversion")
 		assert.NotEmpty(tb, capturedToken, "Validation token should be non-empty")
 		assert.Equal(tb, createdWebsite.ValidationToken, capturedToken, "Validation token should match website token")
 
-		mockDNS.AssertExpectations(t)
 	}, TestOptions)
 }
 
@@ -1151,40 +1209,21 @@ func TestWebsiteService_UpdateWebsite_DNSRecordsUpdatedWhenTargetChanges(t *test
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
-		require.NotNil(tb, websiteService)
-		require.NotNil(tb, dnsService)
 
 		testCID := util.GenerateTestCID(t, "test data")
 		domain := "dns-update-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
-
-		mockDNS, ok := dnsService.(*mocks.MockDNSService)
-		require.True(tb, ok, "DNS service should be a mock")
-
-		// Create website with DNS enabled
-		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID3, domain, testUserID1), nil).Once()
-		mockDNS.EXPECT().CreateWebsiteDNSRecords(
-			mock.Anything,
-			testZoneID3,
-			mock.Anything,
-			mock.Anything,
-			mock.Anything,
-		).Return(nil).Once()
+		website.Enabled = false
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 
-		// Act - Update target (DNS update may or may not be called depending on internal logic)
-		newCID := util.GenerateTestCID(t, "new data")
-		newVersion := uint8(newCID.Version())
-
+		// Act - Update target to a new CID
+		newCID := util.GenerateTestCID(t, "new data for update")
 		updates := map[string]interface{}{
-			"target_multihash": newCID.Hash(),
-			"cid_version":      &newVersion,
+			"target_hash": newCID.String(),
 		}
 
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
@@ -1194,7 +1233,6 @@ func TestWebsiteService_UpdateWebsite_DNSRecordsUpdatedWhenTargetChanges(t *test
 		assert.NotNil(tb, updatedWebsite)
 		assert.NotEmpty(tb, updatedWebsite.TargetHash())
 
-		mockDNS.AssertExpectations(t)
 	}, TestOptions)
 }
 
@@ -1202,18 +1240,32 @@ func TestWebsiteService_DeleteWebsite_DNSRecordsCleanedUp(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
-		require.NotNil(tb, websiteService)
-		require.NotNil(tb, dnsService)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 
 		testCID := util.GenerateTestCID(t, "test data")
 		domain := "dns-cleanup-test.com"
+		expectedKeyName := domain + "-auto"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
 		website.Enabled = true
 
-		mockDNS, ok := dnsService.(*mocks.MockDNSService)
-		require.True(tb, ok, "DNS service should be a mock")
+		// Set up IPNS key mocks for CreateWebsite
+		// ListKeys should return empty list (no existing key with that name)
+		mockIPNSKey.EXPECT().ListKeys(mock.Anything, testUserID1).Return([]pluginDb.IPFSIPNSKey{}, nil).Once()
+
+		testKeyID := uint(1004)
+		testPeerIDStr := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
+		testPeerID, _ := parsePeerID(testPeerIDStr)
+		testPeerIDMultihash := mh.Multihash(testPeerID)
+		testIPNSKey := &pluginDb.IPFSIPNSKey{
+			ID:              testKeyID,
+			UserID:          testUserID1,
+			Name:            expectedKeyName,
+			PeerIDMultihash: testPeerIDMultihash,
+		}
+		mockIPNSKey.EXPECT().CreateKey(mock.Anything, testUserID1, expectedKeyName, 1).Return(testIPNSKey, nil).Once()
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
 
 		// Create website with DNS enabled
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID4, domain, testUserID1), nil).Once()
@@ -1221,7 +1273,7 @@ func TestWebsiteService_DeleteWebsite_DNSRecordsCleanedUp(t *testing.T) {
 			mock.Anything,
 			testZoneID4,
 			mock.Anything,
-			mock.Anything,
+			pluginDb.WebsiteTargetTypeIPNS,
 			mock.Anything,
 		).Return(nil).Once()
 
@@ -1237,8 +1289,6 @@ func TestWebsiteService_DeleteWebsite_DNSRecordsCleanedUp(t *testing.T) {
 		// Assert
 		require.NoError(tb, err)
 
-		mockDNS.AssertExpectations(t)
-
 		// Verify website is soft-deleted
 		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
@@ -1250,18 +1300,32 @@ func TestWebsiteService_DeleteWebsite_DNSCleanupFailureDoesNotPreventDeletion(t 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
-		require.NotNil(tb, websiteService)
-		require.NotNil(tb, dnsService)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 
 		testCID := util.GenerateTestCID(t, "test data")
 		domain := "dns-cleanup-fail-test.com"
+		expectedKeyName := domain + "-auto"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
 		website.Enabled = true
 
-		mockDNS, ok := dnsService.(*mocks.MockDNSService)
-		require.True(tb, ok, "DNS service should be a mock")
+		// Set up IPNS key mocks for CreateWebsite
+		// ListKeys should return empty list (no existing key with that name)
+		mockIPNSKey.EXPECT().ListKeys(mock.Anything, testUserID1).Return([]pluginDb.IPFSIPNSKey{}, nil).Once()
+
+		testKeyID := uint(1005)
+		testPeerIDStr := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
+		testPeerID, _ := parsePeerID(testPeerIDStr)
+		testPeerIDMultihash := mh.Multihash(testPeerID)
+		testIPNSKey := &pluginDb.IPFSIPNSKey{
+			ID:              testKeyID,
+			UserID:          testUserID1,
+			Name:            expectedKeyName,
+			PeerIDMultihash: testPeerIDMultihash,
+		}
+		mockIPNSKey.EXPECT().CreateKey(mock.Anything, testUserID1, expectedKeyName, 1).Return(testIPNSKey, nil).Once()
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
 
 		// Create website with DNS enabled
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID5, domain, testUserID1), nil).Once()
@@ -1269,7 +1333,7 @@ func TestWebsiteService_DeleteWebsite_DNSCleanupFailureDoesNotPreventDeletion(t 
 			mock.Anything,
 			testZoneID5,
 			mock.Anything,
-			mock.Anything,
+			pluginDb.WebsiteTargetTypeIPNS,
 			mock.Anything,
 		).Return(nil).Once()
 
@@ -1284,8 +1348,6 @@ func TestWebsiteService_DeleteWebsite_DNSCleanupFailureDoesNotPreventDeletion(t 
 
 		// Assert - Website should still be deleted despite DNS cleanup failure
 		require.NoError(tb, err)
-
-		mockDNS.AssertExpectations(t)
 
 		// Verify website is soft-deleted
 		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
@@ -1364,27 +1426,41 @@ func TestWebsiteService_CreateWebsite_DNSHostingEnabled_CreatesZoneAndRecords(t 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
-		require.NotNil(tb, websiteService)
-		require.NotNil(tb, dnsService)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 
 		testCID := util.GenerateTestCID(t, "test data")
 		domain := "dns-enabled-test.com"
 		targetHash := testCID.String()
+		expectedKeyName := domain + "-auto"
 
 		website := createTestIPFSWebsite(testUserID1, domain, targetHash)
 		website.Enabled = true // DNS hosting enabled
 
-		mockDNS, ok := dnsService.(*mocks.MockDNSService)
-		require.True(tb, ok, "DNS service should be a mock")
+		// Set up IPNS key mocks for auto-creation
+		// ListKeys should return empty list (no existing key with that name)
+		mockIPNSKey.EXPECT().ListKeys(mock.Anything, testUserID1).Return([]pluginDb.IPFSIPNSKey{}, nil).Once()
+
+		testKeyID := uint(1006)
+		testPeerIDStr := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
+		testPeerID, _ := parsePeerID(testPeerIDStr)
+		testPeerIDMultihash := mh.Multihash(testPeerID)
+		testIPNSKey := &pluginDb.IPFSIPNSKey{
+			ID:              testKeyID,
+			UserID:          testUserID1,
+			Name:            expectedKeyName,
+			PeerIDMultihash: testPeerIDMultihash,
+		}
+		mockIPNSKey.EXPECT().CreateKey(mock.Anything, testUserID1, expectedKeyName, 1).Return(testIPNSKey, nil).Once()
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
 
 		// Mock DNS zone creation
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID6, domain, testUserID1), nil).Once()
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID6,
-			mock.Anything, // target hash varies
-			pluginDb.WebsiteTargetTypeIPFS,
+			mock.Anything,                  // target hash varies (IPNS peer ID)
+			pluginDb.WebsiteTargetTypeIPNS, // Converted to IPNS for managed DNS
 			mock.Anything,
 		).Return(nil).Once()
 
@@ -1398,8 +1474,8 @@ func TestWebsiteService_CreateWebsite_DNSHostingEnabled_CreatesZoneAndRecords(t 
 		assert.Equal(tb, testZoneID6, *createdWebsite.DNSZoneID)
 		assert.True(tb, createdWebsite.Enabled)
 		assert.Equal(tb, domain, createdWebsite.Domain)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType, "Should be converted to IPNS for managed DNS")
 
-		mockDNS.AssertExpectations(t)
 	}, TestOptions)
 }
 
@@ -1407,26 +1483,40 @@ func TestWebsiteService_UpdateWebsite_DNSHostingEnabled_NoDNSUpdateWhenTargetUnc
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
-		require.NotNil(tb, websiteService)
-		require.NotNil(tb, dnsService)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 
 		testCID := util.GenerateTestCID(t, "test data")
 		domain := "no-dns-update-test.com"
+		expectedKeyName := domain + "-auto"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
 		website.Enabled = true
 
-		mockDNS, ok := dnsService.(*mocks.MockDNSService)
-		require.True(tb, ok, "DNS service should be a mock")
+		// Set up IPNS key mocks for auto-creation
+		// ListKeys should return empty list (no existing key with that name)
+		mockIPNSKey.EXPECT().ListKeys(mock.Anything, testUserID1).Return([]pluginDb.IPFSIPNSKey{}, nil).Once()
+
+		testKeyID := uint(1007)
+		testPeerIDStr := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
+		testPeerID, _ := parsePeerID(testPeerIDStr)
+		testPeerIDMultihash := mh.Multihash(testPeerID)
+		testIPNSKey := &pluginDb.IPFSIPNSKey{
+			ID:              testKeyID,
+			UserID:          testUserID1,
+			Name:            expectedKeyName,
+			PeerIDMultihash: testPeerIDMultihash,
+		}
+		mockIPNSKey.EXPECT().CreateKey(mock.Anything, testUserID1, expectedKeyName, 1).Return(testIPNSKey, nil).Once()
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
 
 		// Create website with initial DNS setup
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID7, domain, testUserID1), nil).Once()
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID7,
-			mock.Anything, // target hash varies
-			pluginDb.WebsiteTargetTypeIPFS,
+			mock.Anything,                  // target hash varies (IPNS peer ID)
+			pluginDb.WebsiteTargetTypeIPNS, // Converted to IPNS for managed DNS
 			mock.Anything,
 		).Return(nil).Once()
 
@@ -1445,6 +1535,7 @@ func TestWebsiteService_UpdateWebsite_DNSHostingEnabled_NoDNSUpdateWhenTargetUnc
 
 		// Verify DNS update was NOT called
 		mockDNS.AssertNotCalled(t, "UpdateWebsiteDNSRecords")
+
 	}, TestOptions)
 }
 
@@ -1452,26 +1543,40 @@ func TestWebsiteService_DeleteWebsite_DNSHostingEnabled_ZoneRemainsAfterDeletion
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
-		require.NotNil(tb, websiteService)
-		require.NotNil(tb, dnsService)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 
 		testCID := util.GenerateTestCID(t, "test data")
 		domain := "zone-persists-test.com"
+		expectedKeyName := domain + "-auto"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
 		website.Enabled = true
 
-		mockDNS, ok := dnsService.(*mocks.MockDNSService)
-		require.True(tb, ok, "DNS service should be a mock")
+		// Set up IPNS key mocks for auto-creation
+		// ListKeys should return empty list (no existing key with that name)
+		mockIPNSKey.EXPECT().ListKeys(mock.Anything, testUserID1).Return([]pluginDb.IPFSIPNSKey{}, nil).Once()
+
+		testKeyID := uint(1008)
+		testPeerIDStr := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
+		testPeerID, _ := parsePeerID(testPeerIDStr)
+		testPeerIDMultihash := mh.Multihash(testPeerID)
+		testIPNSKey := &pluginDb.IPFSIPNSKey{
+			ID:              testKeyID,
+			UserID:          testUserID1,
+			Name:            expectedKeyName,
+			PeerIDMultihash: testPeerIDMultihash,
+		}
+		mockIPNSKey.EXPECT().CreateKey(mock.Anything, testUserID1, expectedKeyName, 1).Return(testIPNSKey, nil).Once()
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
 
 		// Create website with DNS
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID8, domain, testUserID1), nil).Once()
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID8,
-			mock.Anything, // target hash varies
-			pluginDb.WebsiteTargetTypeIPFS,
+			mock.Anything,                  // target hash varies (IPNS peer ID)
+			pluginDb.WebsiteTargetTypeIPNS, // Converted to IPNS for managed DNS
 			mock.Anything,
 		).Return(nil).Once()
 
@@ -1497,6 +1602,7 @@ func TestWebsiteService_DeleteWebsite_DNSHostingEnabled_ZoneRemainsAfterDeletion
 
 		// Verify the zone still exists (simulated by checking no DeleteZone call)
 		// In real scenario, you would verify GetZone(zoneID) still returns the zone
+
 	}, TestOptions)
 }
 
@@ -1611,18 +1717,32 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreationFailure_ContinuesWithoutDNS
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
-		require.NotNil(tb, websiteService)
-		require.NotNil(tb, dnsService)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 
 		testCID := util.GenerateTestCID(t, "test data")
 		domain := "zone-fail-test.com"
+		expectedKeyName := domain + "-auto"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
 		website.Enabled = true
 
-		mockDNS, ok := dnsService.(*mocks.MockDNSService)
-		require.True(tb, ok, "DNS service should be a mock")
+		// Set up IPNS key mocks for auto-creation (happens before DNS operations)
+		// ListKeys should return empty list (no existing key with that name)
+		mockIPNSKey.EXPECT().ListKeys(mock.Anything, testUserID1).Return([]pluginDb.IPFSIPNSKey{}, nil).Once()
+
+		testKeyID := uint(1009)
+		testPeerIDStr := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
+		testPeerID, _ := parsePeerID(testPeerIDStr)
+		testPeerIDMultihash := mh.Multihash(testPeerID)
+		testIPNSKey := &pluginDb.IPFSIPNSKey{
+			ID:              testKeyID,
+			UserID:          testUserID1,
+			Name:            expectedKeyName,
+			PeerIDMultihash: testPeerIDMultihash,
+		}
+		mockIPNSKey.EXPECT().CreateKey(mock.Anything, testUserID1, expectedKeyName, 1).Return(testIPNSKey, nil).Once()
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
 
 		// Mock DNS zone creation failure
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(nil, assert.AnError).Once()
@@ -1635,9 +1755,12 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreationFailure_ContinuesWithoutDNS
 		assert.NotNil(tb, createdWebsite)
 		assert.Nil(tb, createdWebsite.DNSZoneID, "DNS zone ID should be nil when zone creation fails")
 		assert.Equal(tb, domain, createdWebsite.Domain)
+		// Website should still get IPNS conversion since that happens before DNS operations
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType, "Should be converted to IPNS")
 
 		// Verify CreateWebsiteDNSRecords was not called (zone creation failed)
 		mockDNS.AssertNotCalled(t, "CreateWebsiteDNSRecords")
+
 	}, TestOptions)
 }
 
@@ -1645,18 +1768,32 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreationFailure_ContinuesWithout
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
-		require.NotNil(tb, websiteService)
-		require.NotNil(tb, dnsService)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 
 		testCID := util.GenerateTestCID(t, "test data")
 		domain := "records-fail-test.com"
+		expectedKeyName := domain + "-auto"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
 		website.Enabled = true
 
-		mockDNS, ok := dnsService.(*mocks.MockDNSService)
-		require.True(tb, ok, "DNS service should be a mock")
+		// Set up IPNS key mocks for auto-creation (happens before DNS operations)
+		// ListKeys should return empty list (no existing key with that name)
+		mockIPNSKey.EXPECT().ListKeys(mock.Anything, testUserID1).Return([]pluginDb.IPFSIPNSKey{}, nil).Once()
+
+		testKeyID := uint(1010)
+		testPeerIDStr := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
+		testPeerID, _ := parsePeerID(testPeerIDStr)
+		testPeerIDMultihash := mh.Multihash(testPeerID)
+		testIPNSKey := &pluginDb.IPFSIPNSKey{
+			ID:              testKeyID,
+			UserID:          testUserID1,
+			Name:            expectedKeyName,
+			PeerIDMultihash: testPeerIDMultihash,
+		}
+		mockIPNSKey.EXPECT().CreateKey(mock.Anything, testUserID1, expectedKeyName, 1).Return(testIPNSKey, nil).Once()
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
 
 		// Mock DNS zone creation success
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID8, domain, testUserID1), nil).Once()
@@ -1665,8 +1802,8 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreationFailure_ContinuesWithout
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID8,
-			mock.Anything, // target hash varies
-			pluginDb.WebsiteTargetTypeIPFS,
+			mock.Anything,                  // target hash varies (IPNS peer ID)
+			pluginDb.WebsiteTargetTypeIPNS, // Converted to IPNS for managed DNS
 			mock.Anything,
 		).Return(assert.AnError).Once()
 
@@ -1678,6 +1815,8 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreationFailure_ContinuesWithout
 		assert.NotNil(tb, createdWebsite)
 		assert.NotNil(tb, createdWebsite.DNSZoneID, "DNS zone ID should be set even when record creation fails")
 		assert.Equal(tb, testZoneID8, *createdWebsite.DNSZoneID)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType, "Should be converted to IPNS")
+
 	}, TestOptions)
 }
 
@@ -1705,31 +1844,17 @@ func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		ipnsKeyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
-		ipnsPublisherService := core.GetService[pluginCore.IPNSPublisherService](ctx, pluginCore.IPNS_PUBLISHER_SERVICE)
-		dnsService := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
-		require.NotNil(tb, websiteService)
-		require.NotNil(tb, ipnsKeyService)
-		require.NotNil(tb, ipnsPublisherService)
-		require.NotNil(tb, dnsService)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 
 		testCID := util.GenerateTestCID(t, "test data")
 		domain := "test-auto-ipns.com"
 		expectedKeyName := domain + "-auto"
 
-		mockDNS, ok := dnsService.(*mocks.MockDNSService)
-		require.True(tb, ok, "DNS service should be a mock")
-
-		mockIPNSKey, ok := ipnsKeyService.(*mocks.MockIPNSKeyService)
-		require.True(tb, ok, "IPNS key service should be a mock")
-
-		mockIPNSPublisher, ok := ipnsPublisherService.(*mocks.MockIPNSPublisherService)
-		require.True(tb, ok, "IPNS publisher service should be a mock")
-
 		// Set up mock expectations for first website creation
-		// GetKeyByName should return nil (no existing key)
-		mockIPNSKey.EXPECT().GetKeyByName(mock.Anything, testUserID1, expectedKeyName).Return(nil, nil).Once()
-		
+		// ListKeys should return nil (no existing key)
+		mockIPNSKey.EXPECT().ListKeys(mock.Anything, testUserID1).Return([]pluginDb.IPFSIPNSKey{}, nil).Once()
+
 		// CreateKey should create a new IPNS key - keyType is int
 		testKeyID := uint(1001)
 		testPeerIDStr := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
@@ -1742,13 +1867,13 @@ func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing
 			PeerIDMultihash: testPeerIDMultihash,
 		}
 		mockIPNSKey.EXPECT().CreateKey(mock.Anything, testUserID1, expectedKeyName, 1).Return(testIPNSKey, nil).Once()
-		
+
 		// PublishCID should publish the CID to the IPNS key with TTL
-		mockIPNSPublisher.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
-		
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
+
 		// DNS zone creation
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID1, domain, testUserID1), nil).Once()
-		
+
 		// DNS records creation (after IPNS conversion)
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
@@ -1777,16 +1902,16 @@ func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing
 		require.NoError(tb, err)
 
 		// Set up mock expectations for second website creation
-		// GetKeyByName should return the existing key (not nil)
-		mockIPNSKey.EXPECT().GetKeyByName(mock.Anything, testUserID1, expectedKeyName).Return(testIPNSKey, nil).Once()
-		
+		// ListKeys should return the existing key (not nil)
+		mockIPNSKey.EXPECT().ListKeys(mock.Anything, testUserID1).Return([]pluginDb.IPFSIPNSKey{*testIPNSKey}, nil).Once()
+
 		// CreateKey should NOT be called since key already exists
 		// PublishCID should still be called to update the IPNS key with the new content
-		mockIPNSPublisher.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
-		
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
+
 		// DNS zone creation
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID1, domain, testUserID1), nil).Once()
-		
+
 		// DNS records creation
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,

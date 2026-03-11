@@ -103,8 +103,8 @@ func mustMarshal(tb coreTesting.TB, v interface{}) []byte {
 // setupTestUser creates a test user with a unique email based on format and mode
 func setupTestUser(t testing.TB, ctx coreTesting.TestContext, format upload.Format, mode upload.ArchiveMode) *models.User {
 	userSvc := core.GetService[core.UserService](ctx, core.USER_SERVICE)
-	email := strings.ToLower(format.String()) + "_" + mode.String() + "@test.com"
-	testUser, err := userSvc.CreateAccount(email, "testpassword123", false)
+	email := strings.ToLower(format.String()) + "_" + mode.String() + "@example.com"
+	testUser, err := userSvc.CreateAccount(ctx, email, "testpassword123", false)
 	require.NoError(t, err)
 	return testUser
 }
@@ -127,7 +127,7 @@ func handleUploadWithMode(uploadService pluginCore.UploadService, ctx coreTestin
 // assertWorkflowSuccess performs common workflow assertions
 func assertWorkflowSuccess(wfTest *coreTesting.WorkflowTest, req *models.Request) {
 	wfTest.AssertOperationSuccess(req)
-	wfTest.AssertOperationStatusMessageContains(req, "Upload processed successfully")
+	wfTest.AssertOperationStatusMessageContains(req, "Upload completed")
 	wfTest.AssertOperationStatusProgress(req, 100)
 }
 
@@ -146,9 +146,7 @@ func testArchiveUpload(t *testing.T, format upload.Format, creator upload.Archiv
 	if len(testOptions) > 0 {
 		finalOptions = testOptions
 	} else {
-		finalOptions = []coreTesting.TestContextBuilderOption{
-			coreTesting.CombineOptions(GetCommonTestOptions(), GetDbTestOptions()),
-		}
+		finalOptions = GetStandardTestOptions()
 	}
 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
@@ -192,7 +190,7 @@ func setupTUSUpload(t *testing.T, ctx coreTesting.TestContext, uploadFile *os.Fi
 	fullId := fmt.Sprintf("%s+%s", objectId, uploadId)
 
 	// Create TUS upload - this is TUS-specific logic
-	testUser, err := core.GetService[core.UserService](ctx, core.USER_SERVICE).CreateAccount("test@example.com", "testpassword123", false)
+	testUser, err := core.GetService[core.UserService](ctx, core.USER_SERVICE).CreateAccount(ctx, "test@example.com", "testpassword123", false)
 	require.NoError(t, err)
 
 	tusUpload, err := tusService.CreateUpload(
@@ -281,6 +279,7 @@ func testTUSArchiveUpload(t *testing.T, format upload.Format, creator upload.Arc
 
 		// Workflow Execution
 		wfTest := coreTesting.NewWorkflowTest(ctx)
+
 		wf := wfTest.NewOperationWorkflow(core.TUSUploadOperationName(internal.ProtocolName))
 
 		// Build workflow options - for CAR files we have the hash, for others we don't

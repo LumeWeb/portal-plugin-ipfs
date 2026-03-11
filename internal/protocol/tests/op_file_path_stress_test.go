@@ -1,20 +1,16 @@
 package tests
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/ipfs/go-cid"
-	"github.com/knadh/koanf/providers/confmap"
-	"github.com/knadh/koanf/v2"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
@@ -33,14 +29,11 @@ func TestFilePathOperationHandler_StressTest_ConcurrentDirectoryCreation(t *test
 		maxNameLength := 20
 
 		// Arrange
-		handler := &protocol.FilePathOperationHandler{
-			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
-		}
-
-		fileManagerSvc := core.GetService[pluginCore.FileManagerService](ctx, pluginCore.FILE_MANAGER_SERVICE)
-		require.NotNil(tb, fileManagerSvc)
+		wfTest := coreTesting.NewWorkflowTest(ctx)
 
 		var wg sync.WaitGroup
+		workflowID := 0
+		wfIDMutex := sync.Mutex{}
 		errChan := make(chan error, numUsers*numDirsPerUser) // Buffered channel for errors
 
 		// Run concurrent directory creation for multiple users
@@ -51,6 +44,17 @@ func TestFilePathOperationHandler_StressTest_ConcurrentDirectoryCreation(t *test
 				wg.Add(1)
 				go func(userID uint, dirIndex int) {
 					defer wg.Done()
+					defer func() {
+						if r := recover(); r != nil {
+							errChan <- fmt.Errorf("user %d, dir %d: panic during execution: %v", userID, dirIndex, r)
+						}
+					}()
+
+					// Generate unique workflow ID for this goroutine
+					wfIDMutex.Lock()
+					myWorkflowID := workflowID
+					workflowID++
+					wfIDMutex.Unlock()
 
 					// Create a random directory structure with unique seed per goroutine
 					seed := time.Now().UnixNano() + rand.Int63() + int64(userID*1000000) + int64(dirIndex*10000)
@@ -62,35 +66,30 @@ func TestFilePathOperationHandler_StressTest_ConcurrentDirectoryCreation(t *test
 						return
 					}
 
-					// Create a test request
-					req := createTestRequest(rootCID, &userID)
-
-					// Mock the workflow service to return pin workflow data
-					workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
-
-					// Create workflow data with the CIDs
-					pinWorkflowData := &protocol.PinWorkflowData{
-						Cids: []string{rootCID.String()}, // Only root CID for simplicity
-
+					// Register a unique workflow for this goroutine with the actual operation name in steps
+					uniqueWorkflowName := "test-workflow-ipfs.file.path-" + strconv.Itoa(myWorkflowID)
+					steps := []core.OperationStep{
+						{Operation: protocol.FilePathOperationName(), FailureBehavior: core.FailWorkflow, Foreground: true},
 					}
-					// Create a koanf instance and populate it with our test data
-					k := koanf.New(".")
-					err = k.Load(confmap.Provider(map[string]any{
-						"cids": pinWorkflowData.Cids,
-					}, "."), nil)
-					require.NoError(t, err)
+					wfTest.RegisterWorkflow(uniqueWorkflowName, steps, false)
 
-					workflowSvc.On("GetWorkflowMetadata", ctx, req.ID).Return(k, nil)
+					// Start the workflow
+					req := wfTest.StartWorkflow(
+						uniqueWorkflowName,
+						core.WithWorkflowStructData(protocol.PinWorkflowData{
+							Cids: []string{rootCID.String()},
+						}, "json"),
+						core.WithWorkflowStorageHash(internal.NewIPFSHash(rootCID)),
+						core.WithWorkflowUserID(userID),
+						core.WithWorkflowSourceIP("127.0.0.1"),
+					)
 
-					// Mock the UpdateWorkflowDataStruct calls that will be made during execution
-					workflowSvc.On("UpdateWorkflowDataStruct", ctx, req.ID, mock.AnythingOfType("protocol.FilePathWorkflowData"), "json").Return(nil)
+					// Execute the workflow step
+					wfTest.ExecuteWorkflowStep(req)
+					wfTest.CompleteWorkflowStep(req)
 
-					// Execute the file path operation
-					err = handler.Execute(context.Background(), req)
-					if err != nil {
-						errChan <- fmt.Errorf("user %d, dir %d: failed to execute file path operation: %w", userID, dirIndex, err)
-						return
-					}
+					// Verify operation success
+					wfTest.AssertOperationSuccess(req)
 				}(userID, d)
 			}
 		}
@@ -110,7 +109,7 @@ func TestFilePathOperationHandler_StressTest_ConcurrentDirectoryCreation(t *test
 		tb.Logf("Total file paths created: %d", totalFilePaths)
 
 		// Add more detailed validation as needed (e.g., check paths for specific users)
-	}, TestOptions)
+	}, TestOptions...)
 }
 
 // Helper function to create a random directory structure

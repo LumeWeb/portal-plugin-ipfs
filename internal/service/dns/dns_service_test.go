@@ -3,16 +3,16 @@ package dns
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	apiDTO "go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	apiDTO "go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
@@ -23,87 +23,124 @@ import (
 	"gorm.io/gorm"
 )
 
-// Helper function to get protocol config pointer
-func getTestProtocolConfig() *pluginConfig.ProtocolConfig {
-	return &pluginConfig.ProtocolConfig{
-		DnsHosting: pluginConfig.Config{
-			Enabled: true,
-			PowerDNSAPIURL:    "http://localhost:8081",
-			PowerDNSAPIKey:    "test-api-key",
-			Nameservers:       []string{"ns1.example.com.", "ns2.example.com."},
-		},
+// Helper function to get DNS service config
+func getTestDnsConfig() *pluginConfig.DnsConfig {
+	return &pluginConfig.DnsConfig{
+		Enabled:        true,
+		PowerDNSAPIURL: "http://localhost:8081",
+		PowerDNSAPIKey: "test-api-key",
+		Nameservers:    []string{"ns1.localhost", "ns2.localhost"},
 	}
 }
 
 // mockPowerDNSServer is a shared mock PowerDNS server for all tests
 var mockPowerDNSServer *httptest.Server
 
-func TestMain(m *testing.M) {
-	// Start mock PowerDNS server
-	mockPowerDNSServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// init creates the mock PowerDNS server before any tests run
+func init() {
+	// Create a new ServeMux with Go 1.22+ routing
+	mux := http.NewServeMux()
+
+	// Handle zone creation
+	mux.HandleFunc("POST /servers/localhost/zones", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		
-		// Handle zone creation
-		if r.Method == http.MethodPost && r.URL.Path == "/servers/localhost/zones" {
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(powerdns.Zone{
-				Id:   new("example.com."),
-				Name: new("example.com."),
-				Kind: (*powerdns.ZoneKind)(new("Native")),
-			})
-			return
-		}
-		
-		// Handle zone retrieval
-		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/servers/localhost/zones/example.com.") {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(powerdns.Zone{
-				Id:      new("example.com."),
-				Name:    new("example.com."),
-				Kind:    (*powerdns.ZoneKind)(new("Native")),
-				Rrsets:  &[]powerdns.RRSet{},
-			})
-			return
-		}
-		
-		// Handle zone updates (PATCH for bulk operations)
-		if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/servers/localhost/zones/example.com.") {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		
-		// Default handler - return 404 for unhandled requests
-		w.WriteHeader(http.StatusNotFound)
-	}))
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(powerdns.Zone{
+			Id:   new("example.com."),
+			Name: new("example.com."),
+			Kind: (*powerdns.ZoneKind)(new("Native")),
+		})
+	})
 
+	// Handle zone retrieval
+	mux.HandleFunc("GET /servers/localhost/zones/example.com.", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(powerdns.Zone{
+			Id:     new("example.com."),
+			Name:   new("example.com."),
+			Kind:   (*powerdns.ZoneKind)(new("Native")),
+			Rrsets: &[]powerdns.RRSet{},
+		})
+	})
+
+	// Handle zone updates (PATCH for bulk operations)
+	mux.HandleFunc("PATCH /servers/localhost/zones/example.com.", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Start mock PowerDNS server
+	mockPowerDNSServer = httptest.NewServer(mux)
+}
+
+func TestMain(m *testing.M) {
 	code := m.Run()
-
 	mockPowerDNSServer.Close()
-
 	os.Exit(code)
 }
 
+// setupDefaultServerHandlers sets up the default PowerDNS server handlers
+// Use this for tests that create their own mock servers
+func setupDefaultServerHandlers(mux *http.ServeMux) {
+	// Handle zone creation
+	mux.HandleFunc("POST /servers/localhost/zones", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(powerdns.Zone{
+			Id:   new("example.com."),
+			Name: new("example.com."),
+			Kind: (*powerdns.ZoneKind)(new("Native")),
+		})
+	})
 
+	// Handle zone retrieval
+	mux.HandleFunc("GET /servers/localhost/zones/example.com.", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(powerdns.Zone{
+			Id:     new("example.com."),
+			Name:   new("example.com."),
+			Kind:   (*powerdns.ZoneKind)(new("Native")),
+			Rrsets: &[]powerdns.RRSet{},
+		})
+	})
 
-var TestOptions = coreTesting.CombineOptions(
-	coreTesting.WithServiceFactory(pluginCore.DNS_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
-		logger := zap.NewNop()
-		coreLogger := &core.Logger{Logger: logger}
-		pdnsClient, err := NewPowerDNSClient(mockPowerDNSServer.URL, "test-api-key", coreLogger)
-		if err != nil {
-			return nil, nil, err
-		}
-		return NewDNSServiceWithOptions(WithPowerDNSClient(pdnsClient))
-	}),
-	coreTesting.WithProtocolConfig(internal.ProtocolName, getTestProtocolConfig()),
-	coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.dns_enabled", true),
-	coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.powerdns_api_url", "http://localhost:8081"),
-	coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.powerdns_api_key", "test-api-key"),
-	coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.nameservers", []string{"ns1.example.com.", "ns2.example.com."}),
-	coreTesting.WithSQLitePluginMigrations(
-		internal.ProtocolName, migrations.GetSQLite(),
-	),
-)
+	// Handle zone updates (PATCH for bulk operations)
+	mux.HandleFunc("PATCH /servers/localhost/zones/example.com.", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// createTestOptionsWithPowerDNSClient creates test options with a custom PowerDNS client
+func createTestOptionsWithPowerDNSClient(client *PowerDNSClient) coreTesting.TestContextBuilderOption {
+	return coreTesting.NewMockPluginBuilder(internal.ProtocolName).WithService(pluginCore.DNS_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
+		return NewDNSServiceWithOptions(WithPowerDNSClient(client))
+	}).WithServiceConfig(pluginCore.DNS_SERVICE, getTestDnsConfig()).WithMigrations(map[core.DBType]fs.FS{
+		core.DB_TYPE_SQLITE: migrations.GetSQLite(),
+	}).BuilderOption()
+}
+
+// createTestOptionsWithServer creates test options with a custom PowerDNS server
+func createTestOptionsWithServer(server *httptest.Server) coreTesting.TestContextBuilderOption {
+	return createTestOptionsWithPowerDNSClient(createTestPowerDNSClient(server.URL))
+}
+
+// createTestPowerDNSClient creates a test PowerDNS client
+func createTestPowerDNSClient(serverURL string) *PowerDNSClient {
+	logger := zap.NewNop()
+	coreLogger := &core.Logger{Logger: logger}
+	pdnsClient, err := NewPowerDNSClient(serverURL, "test-api-key", coreLogger)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create PowerDNS client: %v", err))
+	}
+	return pdnsClient
+}
+
+func getTestOptions() coreTesting.TestContextBuilderOption {
+	return createTestOptionsWithPowerDNSClient(createTestPowerDNSClient(mockPowerDNSServer.URL))
+}
 
 func TestDNSServiceCreateZone(t *testing.T) {
 	// Create a mock HTTP server
@@ -134,30 +171,8 @@ func TestDNSServiceCreateZone(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Create test options with mocked PowerDNS client
-	testOptions := coreTesting.CombineOptions(
-		coreTesting.WithServiceFactory(pluginCore.DNS_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
-			logger := zap.NewNop()
-			coreLogger := &core.Logger{Logger: logger}
-			pdnsClient, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
-			if err != nil {
-				return nil, nil, err
-			}
-			return NewDNSServiceWithOptions(WithPowerDNSClient(pdnsClient))
-		}),
-		coreTesting.WithProtocolConfig(internal.ProtocolName, getTestProtocolConfig()),
-		coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.dns_enabled", true),
-		coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.powerdns_api_url", "http://localhost:8081"),
-		coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.powerdns_api_key", "test-api-key"),
-		coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.nameservers", []string{"ns1.example.com.", "ns2.example.com."}),
-		coreTesting.WithSQLitePluginMigrations(
-			internal.ProtocolName, migrations.GetSQLite(),
-		),
-	)
-
-	
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
 		// Test successful zone creation
@@ -167,23 +182,24 @@ func TestDNSServiceCreateZone(t *testing.T) {
 		require.Equal(tb, "example.com.", zone.Domain)
 		require.Equal(tb, uint(1), zone.UserID)
 		require.Equal(tb, string(pluginDb.DNSZoneStatusPendingNameserver), zone.Status)
-	}, testOptions)
+	}, createTestOptionsWithServer(server))
 }
 
 func TestDNSServiceCreateZoneInvalidDomain(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
-		// Test invalid domain format
-		_, err := svc.CreateZone(ctx, "invalid-domain", 1)
+		// Test invalid domain format - contains invalid characters
+		_, err := svc.CreateZone(ctx, "example!.com.", 1)
 		require.Error(tb, err)
-	}, TestOptions)
+		require.Contains(tb, err.Error(), "invalid character")
+	}, getTestOptions())
 }
 
 func TestDNSServiceCreateZoneDuplicate(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
 		// Create first zone
@@ -195,7 +211,7 @@ func TestDNSServiceCreateZoneDuplicate(t *testing.T) {
 		zone2, err := svc.CreateZone(ctx, "example.com.", 1)
 		require.Error(tb, err)
 		require.Nil(tb, zone2)
-	}, TestOptions)
+	}, getTestOptions())
 }
 
 func TestDNSServiceCreateZoneTableDriven(t *testing.T) {
@@ -225,7 +241,7 @@ func TestDNSServiceCreateZoneTableDriven(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-				svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+				svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 				require.NotNil(tb, svc)
 
 				zone, err := svc.CreateZone(ctx, tt.domain, tt.userID)
@@ -239,14 +255,14 @@ func TestDNSServiceCreateZoneTableDriven(t *testing.T) {
 					require.Equal(tb, tt.userID, zone.UserID)
 					require.Equal(tb, tt.expectedStatus, zone.Status)
 				}
-			}, TestOptions)
+			}, getTestOptions())
 		})
 	}
 }
 
 func TestDNSServiceGetZone(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
 		// Create a zone first
@@ -260,25 +276,25 @@ func TestDNSServiceGetZone(t *testing.T) {
 		require.NotNil(tb, zone)
 		require.Equal(tb, createdZone.ID, zone.ID)
 		require.Equal(tb, "example.com.", zone.Domain)
-	}, TestOptions)
+	}, getTestOptions())
 }
 
 func TestDNSServiceGetZoneNotFound(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
 		// Try to get non-existent zone
 		_, err := svc.GetZone(ctx, 999)
 		require.Error(tb, err)
 		require.Equal(tb, gorm.ErrRecordNotFound, err)
-	}, TestOptions)
+	}, getTestOptions())
 }
 
 func TestDNSServiceValidateNameservers(t *testing.T) {
 	t.Run("validation_succeeds_for_valid_zone", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, svc)
 
 			// Create a zone
@@ -290,46 +306,46 @@ func TestDNSServiceValidateNameservers(t *testing.T) {
 			// This test verifies the method is callable and returns proper structure
 			_, err = svc.ValidateNameservers(ctx, zone.ID)
 			// DNS lookup may fail in test environment, but method should not panic
-		}, TestOptions)
+		}, getTestOptions())
 	})
 
 	t.Run("validation_fails_for_nonexistent_zone", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, svc)
 
 			// Try to validate non-existent zone
 			_, err := svc.ValidateNameservers(ctx, 999)
 			require.Error(tb, err)
-		}, TestOptions)
+		}, getTestOptions())
 	})
 }
 
 func TestDNSServiceValidateNameserversTableDriven(t *testing.T) {
 	tests := []struct {
-		name         string
-		zoneID       uint
-		expectError  bool
-		description  string
+		name        string
+		zoneID      uint
+		expectError bool
+		description string
 	}{
 		{
-			name:         "validation_succeeds_for_valid_zone",
-			zoneID:       1,
-			expectError:  false,
-			description:  "Valid zone should succeed (DNS lookup may fail in test)",
+			name:        "validation_succeeds_for_valid_zone",
+			zoneID:      1,
+			expectError: false,
+			description: "Valid zone should succeed (DNS lookup may fail in test)",
 		},
 		{
-			name:         "validation_fails_for_nonexistent_zone",
-			zoneID:       999,
-			expectError:  true,
-			description:  "Non-existent zone should return error",
+			name:        "validation_fails_for_nonexistent_zone",
+			zoneID:      999,
+			expectError: true,
+			description: "Non-existent zone should return error",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-				svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+				svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 				require.NotNil(tb, svc)
 
 				// Create a zone if needed
@@ -346,14 +362,14 @@ func TestDNSServiceValidateNameserversTableDriven(t *testing.T) {
 				}
 				// Note: We don't assert success for non-error cases because DNS lookups
 				// will fail in test environment
-			}, TestOptions)
+			}, getTestOptions())
 		})
 	}
 }
 
 func TestDNSServiceCreateWebsiteDNSRecords(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
 		// Create a zone first
@@ -364,12 +380,12 @@ func TestDNSServiceCreateWebsiteDNSRecords(t *testing.T) {
 		// Create website DNS records
 		err = svc.CreateWebsiteDNSRecords(ctx, zone.ID, "QmHash123", pluginDb.WebsiteTargetTypeIPFS, "test-validation-token")
 		require.NoError(tb, err)
-	}, TestOptions)
+	}, getTestOptions())
 }
 
 func TestDNSServiceDeleteWebsiteDNSRecords(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
 		// Create a zone first
@@ -380,71 +396,21 @@ func TestDNSServiceDeleteWebsiteDNSRecords(t *testing.T) {
 		// Delete website DNS records
 		err = svc.DeleteWebsiteDNSRecords(ctx, zone.ID)
 		require.NoError(tb, err)
-	}, TestOptions)
+	}, getTestOptions())
 }
 
 func TestDNSServiceBulkDeleteRecords(t *testing.T) {
-	// Create a mock HTTP server that handles PowerDNS API requests
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		
-		// Handle zone creation
-		if r.Method == http.MethodPost && r.URL.Path == "/servers/localhost/zones" {
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(powerdns.Zone{
-				Id:   new("example.com."),
-				Name: new("example.com."),
-				Kind: (*powerdns.ZoneKind)(new("Native")),
-			})
-			return
-		}
-		
-		// Handle zone retrieval
-		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/servers/localhost/zones/example.com.") {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(powerdns.Zone{
-				Id:      new("example.com."),
-				Name:    new("example.com."),
-				Kind:    (*powerdns.ZoneKind)(new("Native")),
-				Rrsets:  &[]powerdns.RRSet{},
-			})
-			return
-		}
-		
-		// Handle zone updates (for bulk delete)
-		if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/servers/localhost/zones/example.com.") {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	mux := http.NewServeMux()
+	setupDefaultServerHandlers(mux)
+
+	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	// Create test options with mocked PowerDNS client
-	testOptions := coreTesting.CombineOptions(
-		coreTesting.WithServiceFactory(pluginCore.DNS_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
-			logger := zap.NewNop()
-			coreLogger := &core.Logger{Logger: logger}
-			pdnsClient, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
-			if err != nil {
-				return nil, nil, err
-			}
-			return NewDNSServiceWithOptions(WithPowerDNSClient(pdnsClient))
-		}),
-		coreTesting.WithProtocolConfig(internal.ProtocolName, getTestProtocolConfig()),
-		coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.dns_enabled", true),
-		coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.powerdns_api_url", server.URL),
-		coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.powerdns_api_key", "test-api-key"),
-		coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.nameservers", []string{"ns1.example.com.", "ns2.example.com."}),
-		coreTesting.WithSQLitePluginMigrations(
-			internal.ProtocolName, migrations.GetSQLite(),
-		),
-	)
+	testOptions := createTestOptionsWithServer(server)
 
 	t.Run("success", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, svc)
 
 			// Create a zone first
@@ -469,7 +435,7 @@ func TestDNSServiceBulkDeleteRecords(t *testing.T) {
 
 	t.Run("dry_run", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, svc)
 
 			// Create a zone first
@@ -491,7 +457,7 @@ func TestDNSServiceBulkDeleteRecords(t *testing.T) {
 
 	t.Run("zone_not_found", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, svc)
 
 			records := []apiDTO.RecordIdentifier{
@@ -521,66 +487,17 @@ mail		IN	A	192.0.2.2
 @		IN	MX	10	mail.example.com.
 test		IN	TXT	"test record"`
 
-	// Create test options with mocked PowerDNS client
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		
-		// Handle zone creation
-		if r.Method == http.MethodPost && r.URL.Path == "/servers/localhost/zones" {
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(powerdns.Zone{
-				Id:   new("example.com."),
-				Name: new("example.com."),
-				Kind: (*powerdns.ZoneKind)(new("Native")),
-			})
-			return
-		}
-		
-		// Handle zone retrieval
-		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/servers/localhost/zones/example.com.") {
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(powerdns.Zone{
-				Id:      new("example.com."),
-				Name:    new("example.com."),
-				Kind:    (*powerdns.ZoneKind)(new("Native")),
-				Rrsets:  &[]powerdns.RRSet{},
-			})
-			return
-		}
-		
-		// Handle record creation/updates
-		if r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/servers/localhost/zones/example.com.") {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	mux := http.NewServeMux()
+	setupDefaultServerHandlers(mux)
+
+	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	testOptions := coreTesting.CombineOptions(
-		coreTesting.WithServiceFactory(pluginCore.DNS_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
-			logger := zap.NewNop()
-			coreLogger := &core.Logger{Logger: logger}
-			pdnsClient, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
-			if err != nil {
-				return nil, nil, err
-			}
-			return NewDNSServiceWithOptions(WithPowerDNSClient(pdnsClient))
-		}),
-		coreTesting.WithProtocolConfig(internal.ProtocolName, getTestProtocolConfig()),
-		coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.dns_enabled", true),
-		coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.powerdns_api_url", server.URL),
-		coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.powerdns_api_key", "test-api-key"),
-		coreTesting.WithConfig("plugin.ipfs.protocol.dns_hosting.nameservers", []string{"ns1.example.com.", "ns2.example.com."}),
-		coreTesting.WithSQLitePluginMigrations(
-			internal.ProtocolName, migrations.GetSQLite(),
-		),
-	)
+	testOptions := createTestOptionsWithServer(server)
 
 	t.Run("merge_mode_success", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, svc)
 
 			// Create a zone first
@@ -598,7 +515,7 @@ test		IN	TXT	"test record"`
 
 	t.Run("merge_mode_dry_run", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, svc)
 
 			// Create a zone first
@@ -610,12 +527,12 @@ test		IN	TXT	"test record"`
 			require.NoError(tb, err)
 			require.NotNil(tb, response)
 			require.Greater(tb, len(response.CreatedRecords), 0)
-		}, TestOptions)
+		}, getTestOptions())
 	})
 
 	t.Run("replace_mode", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, svc)
 
 			// Create a zone first
@@ -627,12 +544,12 @@ test		IN	TXT	"test record"`
 			require.NoError(tb, err)
 			require.NotNil(tb, response)
 			require.Greater(tb, len(response.CreatedRecords), 0)
-		}, TestOptions)
+		}, getTestOptions())
 	})
 
 	t.Run("update_mode", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, svc)
 
 			// Create a zone first
@@ -643,23 +560,23 @@ test		IN	TXT	"test record"`
 			response, err := svc.ImportZoneFile(ctx, zone.ID, zoneFileContent, apiDTO.ImportModeUpdate, false)
 			require.NoError(tb, err)
 			require.NotNil(tb, response)
-		}, TestOptions)
+		}, getTestOptions())
 	})
 
 	t.Run("zone_not_found", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, svc)
 
 			_, err := svc.ImportZoneFile(ctx, 999, zoneFileContent, apiDTO.ImportModeMerge, false)
 			require.Error(tb, err)
 			require.Contains(tb, err.Error(), "failed to get zone")
-		}, TestOptions)
+		}, getTestOptions())
 	})
 
 	t.Run("invalid_zone_file", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, svc)
 
 			// Create a zone first
@@ -674,12 +591,12 @@ test		IN	TXT	"test record"`
 			require.NotNil(tb, response)
 			require.Greater(tb, len(response.Errors), 0)
 			require.Contains(tb, response.Errors[0].Error, "Failed to parse zone file")
-		}, TestOptions)
+		}, getTestOptions())
 	})
 
 	t.Run("filters_powerdns_managed_records", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DNSService](ctx, pluginCore.DNS_SERVICE)
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, svc)
 
 			// Create a zone first
@@ -693,10 +610,10 @@ test		IN	TXT	"test record"`
 
 			for _, record := range response.CreatedRecords {
 				recordType := pluginCore.RecordType(record.Type)
-				require.False(tb, recordType.IsManagedByPowerDNS(), 
+				require.False(tb, recordType.IsManagedByPowerDNS(),
 					fmt.Sprintf("Record type %s should not be managed by PowerDNS", record.Type))
 			}
-		}, TestOptions)
+		}, getTestOptions())
 	})
 }
 

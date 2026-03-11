@@ -5,17 +5,17 @@ import (
 	"fmt"
 	"strings"
 
-	apiDTO "go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"github.com/bwesterb/go-zonefile"
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	apiDTO "go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	powerdns "go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
 	"go.uber.org/zap"
 )
 
 // getZoneWithPowerDNS retrieves a zone and validates it has a PowerDNS zone ID
-func (s *DNSService) getZoneWithPowerDNS(ctx context.Context, zoneID uint) (*pluginDb.DNSZone, *powerdns.Zone, error) {
+func (s *DNSServiceDefault) getZoneWithPowerDNS(ctx context.Context, zoneID uint) (*pluginDb.DNSZone, *powerdns.Zone, error) {
 	zone, err := s.GetZone(ctx, zoneID)
 	if err != nil {
 		s.Logger().Error("Failed to get zone", zap.Error(err), zap.Uint("zone_id", zoneID))
@@ -126,17 +126,17 @@ func ParseZoneFile(content string) ([]zonefile.Entry, error) {
 		// Control entries have empty Type or start with $ in Domain
 		entryType := entry.Type()
 		entryDomain := entry.Domain()
-		
+
 		// Skip if type is empty (control directive)
 		if len(entryType) == 0 {
 			return false
 		}
-		
+
 		// Skip if domain starts with $ (control directive)
 		if len(entryDomain) > 0 && entryDomain[0] == '$' {
 			return false
 		}
-		
+
 		return true
 	})
 

@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -23,13 +24,21 @@ var (
 
 func setupVirtualTest(tb coreTesting.TB, ctx coreTesting.TestContext, c cid.Cid, keys int) (*store.VirtualBlockStore, *mocks.MockMockBlockstore) {
 	mockDirectBS := mocks.NewMockMockBlockstore(tb)
+
+	// Set up AllKeysChan expectation to return a fresh channel each time
+	// because CachedBlockstore calls it during initialization, and the test
+	// also calls it. Use RunAndReturn to create a new channel each call.
+	mockDirectBS.EXPECT().AllKeysChan(mock.Anything).RunAndReturn(func(ctx context.Context) (<-chan cid.Cid, error) {
+		keysChan := make(chan cid.Cid, 1)
+		if keys > 0 {
+			keysChan <- c
+		}
+		close(keysChan)
+		return keysChan, nil
+	}).Maybe()
+
 	virtualBS, err := store.NewVirtualBlockStore(ctx, mockDirectBS, blockstore.DefaultCacheOpts())
 	require.NoError(tb, err)
-
-	keysChan := make(chan cid.Cid, 1)
-	keysChan <- c
-	close(keysChan)
-	mockDirectBS.EXPECT().AllKeysChan(mock.Anything).Return(keysChan, nil).Times(keys)
 
 	tb.Cleanup(func() {
 		time.Sleep(100 * time.Millisecond)
@@ -96,7 +105,6 @@ func TestVirtualBlockStoreHasVirtualReadDisabled(t *testing.T) {
 func TestVirtualBlockStorePutVirtualReadEnabled(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		virtualBS, mockDirectBS := setupVirtualTest(tb, ctx, cid1, 1)
-		mockDirectBS.EXPECT().AllKeysChan(mock.Anything).Return((<-chan cid.Cid)(make(chan cid.Cid)), nil).Maybe()
 
 		mockDirectBS.EXPECT().Put(mock.Anything, block1).Return(nil).Once()
 
@@ -110,9 +118,8 @@ func TestVirtualBlockStorePutVirtualReadEnabled(t *testing.T) {
 func TestVirtualBlockStorePutVirtualReadDisabled(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		virtualBS, mockDirectBS := setupVirtualTest(tb, ctx, cid1, 1)
-		mockDirectBS.EXPECT().AllKeysChan(mock.Anything).Return((<-chan cid.Cid)(make(chan cid.Cid)), nil).Maybe()
 
-		mockDirectBS.EXPECT().Put(ctx, block1).Return(nil).Once()
+		mockDirectBS.EXPECT().Put(mock.Anything, block1).Return(nil).Once()
 
 		err := virtualBS.Put(ctx, block1)
 
@@ -137,7 +144,7 @@ func TestVirtualBlockStoreDeleteBlockVirtualReadDisabled(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		virtualBS, mockDirectBS := setupVirtualTest(tb, ctx, cid1, 1)
 
-		mockDirectBS.EXPECT().DeleteBlock(ctx, cid1).Return(nil).Once()
+		mockDirectBS.EXPECT().DeleteBlock(mock.Anything, cid1).Return(nil).Once()
 
 		err := virtualBS.DeleteBlock(ctx, cid1)
 
@@ -163,7 +170,7 @@ func TestVirtualBlockStoreGetSizeVirtualReadDisabled(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		virtualBS, mockDirectBS := setupVirtualTest(tb, ctx, cid1, 1)
 
-		mockDirectBS.EXPECT().GetSize(ctx, cid1).Return(100, nil).Once()
+		mockDirectBS.EXPECT().GetSize(mock.Anything, cid1).Return(100, nil).Once()
 
 		size, err := virtualBS.GetSize(ctx, cid1)
 
@@ -175,7 +182,6 @@ func TestVirtualBlockStoreGetSizeVirtualReadDisabled(t *testing.T) {
 func TestVirtualBlockStorePutManyVirtualReadEnabled(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		virtualBS, mockDirectBS := setupVirtualTest(tb, ctx, cid1, 1)
-		mockDirectBS.EXPECT().AllKeysChan(mock.Anything).Return((<-chan cid.Cid)(make(chan cid.Cid)), nil).Maybe()
 
 		_blocks := []blocks.Block{block1}
 		mockDirectBS.EXPECT().PutMany(mock.Anything, _blocks).Return(nil).Once()
@@ -190,10 +196,9 @@ func TestVirtualBlockStorePutManyVirtualReadEnabled(t *testing.T) {
 func TestVirtualBlockStorePutManyVirtualReadDisabled(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		virtualBS, mockDirectBS := setupVirtualTest(tb, ctx, cid1, 1)
-		mockDirectBS.EXPECT().AllKeysChan(mock.Anything).Return((<-chan cid.Cid)(make(chan cid.Cid)), nil).Maybe()
 
 		_blocks := []blocks.Block{block1}
-		mockDirectBS.EXPECT().PutMany(ctx, _blocks).Return(nil).Once()
+		mockDirectBS.EXPECT().PutMany(mock.Anything, _blocks).Return(nil).Once()
 
 		err := virtualBS.PutMany(ctx, _blocks)
 
@@ -215,7 +220,7 @@ func TestVirtualBlockStoreAllKeysChanVirtualReadEnabled(t *testing.T) {
 
 func TestVirtualBlockStoreAllKeysChanVirtualReadDisabled(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		virtualBS, _ := setupVirtualTest(tb, ctx, cid1, 0)
+		virtualBS, _ := setupVirtualTest(tb, ctx, cid1, 1)
 
 		ch, err := virtualBS.AllKeysChan(ctx)
 

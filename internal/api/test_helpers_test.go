@@ -187,20 +187,19 @@ func (m *mockHelper) SetupWebsiteServiceMocks(domain string, website *pluginDb.W
 }
 
 // SetupIPNSServiceMocks configures IPNS service mock expectations
-func (m *mockHelper) SetupIPNSServiceMocks(userID uint) (*mocks.MockIPNSKeyService, *mocks.MockIPNSPublisherService) {
+func (m *mockHelper) SetupIPNSServiceMocks(userID uint) *mocks.MockIPNSKeyService {
 	return m.SetupIPNSServiceMocksWithOptions(userID, true)
 }
 
 // SetupIPNSServiceMocksNoDefaults configures IPNS service mocks without default Maybe() expectations
 // Use this for tests that need to set up error cases or custom behavior
-func (m *mockHelper) SetupIPNSServiceMocksNoDefaults(userID uint) (*mocks.MockIPNSKeyService, *mocks.MockIPNSPublisherService) {
+func (m *mockHelper) SetupIPNSServiceMocksNoDefaults(userID uint) *mocks.MockIPNSKeyService {
 	return m.SetupIPNSServiceMocksWithOptions(userID, false)
 }
 
 // SetupIPNSServiceMocksWithOptions configures IPNS service mocks with optional default expectations
-func (m *mockHelper) SetupIPNSServiceMocksWithOptions(userID uint, withDefaults bool) (*mocks.MockIPNSKeyService, *mocks.MockIPNSPublisherService) {
+func (m *mockHelper) SetupIPNSServiceMocksWithOptions(userID uint, withDefaults bool) *mocks.MockIPNSKeyService {
 	mockIPNSKeyService := core.GetService[*mocks.MockIPNSKeyService](m.ctx, pluginCore.IPNS_KEY_SERVICE)
-	mockIPNSPublisherService := core.GetService[*mocks.MockIPNSPublisherService](m.ctx, pluginCore.IPNS_PUBLISHER_SERVICE)
 
 	// Create mock IPNS key
 	testPeerID, _ := peer.Decode(TestPeerID)
@@ -223,7 +222,7 @@ func (m *mockHelper) SetupIPNSServiceMocksWithOptions(userID uint, withDefaults 
 	}
 	// No defaults when withDefaults is false - tests should set up expectations explicitly
 
-	return mockIPNSKeyService, mockIPNSPublisherService
+	return mockIPNSKeyService
 }
 
 // SetupWorkflowServiceMock configures workflow service mock for tests that need pin workflows

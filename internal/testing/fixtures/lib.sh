@@ -98,7 +98,7 @@ add_to_ipfs() {
   local OUTPUT
   
   if [[ "$FILE" == *data_* ]]; then
-    OUTPUT=$(calculate_raw_cid "$FILE") || return 1
+    OUTPUT=$(calculate_raw_cid "$FILE")
   else
     OUTPUT=$(ipfs add -Q --pin=false "$FILE" 2>&1)
     if [ $? -ne 0 ]; then
@@ -117,7 +117,8 @@ add_directory_to_ipfs() {
     return 1
   fi
   local OUTPUT
-  if ! OUTPUT=$(ipfs add -Q -r --pin=false "$DIR" 2>&1); then
+  OUTPUT=$(ipfs add -Q -r --pin=false "$DIR" 2>/dev/null)
+  if ! ipfs add -Q -r --pin=false "$DIR" >/dev/null 2>&1; then
     echo "Error: Failed to add directory $DIR to IPFS" >&2
     return 1
   fi
@@ -314,6 +315,7 @@ create_info_file() {
         jq_args+=(--arg raw_block_size "$2")
         shift 2
         ;;
+      *) shift ;;
       *) shift ;;
     esac
   done

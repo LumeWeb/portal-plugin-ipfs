@@ -102,6 +102,7 @@ type Website struct {
 	TargetType          string         `gorm:"type:varchar(50);index:idx_ipfs_websites_status;not null"` // WebsiteTargetTypeIPFS or WebsiteTargetTypeIPNS
 	TargetMultihash     mh.Multihash   `gorm:"type:varbinary(64);not null"`                              // CID multihash (IPFS) or peer ID multihash (IPNS)
 	CIDVersion          *uint8         `gorm:"column:cid_version;type:tinyint unsigned"`                // 0 = CIDv0, 1 = CIDv1; NULL for IPNS
+	CIDType             *uint8         `gorm:"column:cid_type;type:tinyint unsigned"`                  // CID codec type (e.g., 85=Raw, 113=DagCBOR); NULL for IPNS or v0
 	Status              string         `gorm:"type:varchar(50);index:idx_ipfs_websites_status;not null"` // pending_validation, active, broken
 	ValidationToken     string         `gorm:"type:varchar(255);not null"`
 	ValidationExpiresAt *time.Time     `gorm:"index"`
@@ -181,7 +182,12 @@ func (w *Website) TargetHash() string {
 			// CIDv0: base58btc encoding
 			return cid.NewCidV0(w.TargetMultihash).String()
 		}
-		// CIDv1: default to raw codec for IPFS content
+		// CIDv1: Use stored codec type
+		if w.CIDType != nil {
+			codec := uint64(*w.CIDType)
+			return cid.NewCidV1(codec, w.TargetMultihash).String()
+		}
+		// Fallback to Raw codec if cid_type not set (should not happen with proper validation)
 		return cid.NewCidV1(cid.Raw, w.TargetMultihash).String()
 	}
 	// IPNS: base36 peer ID string

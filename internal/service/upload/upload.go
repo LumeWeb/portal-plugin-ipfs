@@ -33,7 +33,7 @@ type UploadServiceDefault struct {
 	coreUpload core.UploadService
 	pin        pluginCore.IPFSPinService
 	storage    core.StorageService
-	ipfs       core.Protocol
+	ipfs       protocol.ProtoNode
 
 	processorFactory upload.UploadProcessorFactory
 }
@@ -46,7 +46,8 @@ func NewUploadService() (core.Service, []core.ContextBuilderOption, error) {
 			_service.storage = core.GetService[core.StorageService](ctx, core.STORAGE_SERVICE)
 			_service.corePin = core.GetService[core.PinService](ctx, core.PIN_SERVICE)
 			_service.coreUpload = core.GetService[core.UploadService](ctx, core.UPLOAD_SERVICE)
-			_service.ipfs = core.GetProtocol(internal.ProtocolName)
+			protoInterface := core.GetProtocol(internal.ProtocolName)
+			_service.ipfs = protoInterface.(protocol.ProtoNode)
 
 			// Create processor factory
 			_service.processorFactory = upload.NewUploadProcessorFactory(ctx.Logger(), _service.storage, _service.ipfs)
@@ -136,7 +137,7 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 			var totalSize uint64
 			cidSizes := make(map[string]uint64, len(cids))
 			for _, c := range cids {
-				size, err := s.ipfs.(*protocol.Protocol).GetMetadataStore().Size(ctx, c)
+				size, err := s.ipfs.GetMetadataStore().Size(ctx, c)
 				if err != nil {
 					s.Context().Logger().Warn("Failed to get size for quota check", zap.Stringer("cid", c), zap.Error(err))
 					continue

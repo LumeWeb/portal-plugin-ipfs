@@ -208,7 +208,8 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 
 			tusHandler := core.GetAPI(internal.ProtocolName).(core.APITusHandler).GetTusHandler()
 
-			reader, err := tusHandler.UploadReader(ctx, tsReq.TUSUploadID, p, 0)
+			proto := p.(core.StorageProtocol)
+			reader, err := tusHandler.UploadReader(ctx, tsReq.TUSUploadID, proto, 0)
 			if err != nil {
 				return fmt.Errorf("failed to get upload reader: %w", err)
 			}
@@ -241,7 +242,8 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 				}
 			} else {
 				// Single file format (archives treated as files, not extracted)
-				processor, err = createFileProcessorForTUS(reader, p, helper.Logger())
+				proto := p.(ProtoNode)
+				processor, err = createFileProcessorForTUS(reader, proto, helper.Logger())
 				if err != nil {
 					return fmt.Errorf("failed to create file processor: %w", err)
 				}
@@ -275,7 +277,7 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 			}
 
 			// Fix any UnixFS metadata gaps before proceeding
-			_store := p.GetMetadataStore()
+			_store := p.(ProtoNode).GetMetadataStore()
 			if _store != nil {
 				err = _store.ProcessMissingUnixFSNames(allCids)
 				if err != nil {

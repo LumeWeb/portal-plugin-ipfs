@@ -9,7 +9,7 @@ import (
 func TestTUSUploadOperationHandler_Execute_Integration(t *testing.T) {
 	// Test CAR file upload using TUS-specific logic
 	t.Run("CAR file upload", func(t *testing.T) {
-		testTUSArchiveUpload(t, upload.FormatCAR, upload.CreateCARArchive, upload.ArchiveConvert, GetTUSUploadTestOptions()...)
+		testTUSArchiveUpload(t, upload.FormatCAR, upload.CreateCARArchive, upload.ArchiveConvert, GetStandardTestOptions()...)
 	})
 
 	// Define test cases for all archive formats with convert mode only (TUS doesn't support preserve mode yet)
@@ -42,17 +42,17 @@ func TestTUSUploadOperationHandler_Execute_Integration(t *testing.T) {
 
 	for _, af := range archiveFormats {
 		t.Run(af.name+" archive upload (convert mode)", func(t *testing.T) {
-			testTUSArchiveUpload(t, af.format, af.creator, upload.ArchiveConvert, GetTUSUploadTestOptions()...)
+			testTUSArchiveUpload(t, af.format, af.creator, upload.ArchiveConvert, GetStandardTestOptions()...)
 		})
 	}
 
 	// Test 7Z format separately since it requires external tools
 	t.Run("7Z archive upload (convert mode)", func(t *testing.T) {
-		testTUSArchiveUpload(t, upload.Format7Z, upload.Create7ZArchive, upload.ArchiveConvert, GetTUSUploadTestOptions()...)
+		testTUSArchiveUpload(t, upload.Format7Z, upload.Create7ZArchive, upload.ArchiveConvert, GetStandardTestOptions()...)
 	})
 
 	// Test RAR format separately since it requires external tools
 	t.Run("RAR archive upload (convert mode)", func(t *testing.T) {
-		testTUSArchiveUpload(t, upload.FormatRAR, upload.CreateRARArchive, upload.ArchiveConvert, GetTUSUploadTestOptions()...)
+		testTUSArchiveUpload(t, upload.FormatRAR, upload.CreateRARArchive, upload.ArchiveConvert, GetStandardTestOptions()...)
 	})
 }
