@@ -177,11 +177,11 @@ func (a *API) publishIPNS(c echo.Context) error {
 		return nil
 	}
 
-	// Get IPNSPublisherService
-	ipnsPublisherService := core.GetService[pluginCore.IPNSPublisherService](a.Context(), pluginCore.IPNS_PUBLISHER_SERVICE)
-	if ipnsPublisherService == nil {
-		a.Logger().Error("IPNSPublisherService not available")
-		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("IPNSPublisherService not available"))
+	// Get IPNSKeyService
+	ipnsKeyService := core.GetService[pluginCore.IPNSKeyService](a.Context(), pluginCore.IPNS_KEY_SERVICE)
+	if ipnsKeyService == nil {
+		a.Logger().Error("IPNSKeyService not available")
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("IPNSKeyService not available"))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -209,7 +209,7 @@ func (a *API) publishIPNS(c echo.Context) error {
 	}
 
 	// Publish the CID to IPNS using the peer ID
-	err = ipnsPublisherService.PublishCID(reqCtx, key.PeerID().String(), req.CID, ttl)
+	err = ipnsKeyService.PublishCID(reqCtx, key.PeerID().String(), req.CID, ttl)
 	if err != nil {
 		a.Logger().Error("Failed to publish IPNS record", zap.Error(err), zap.Uint("key_id", req.KeyID), zap.String("cid", req.CID))
 		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to publish IPNS record: %w", err))
@@ -217,7 +217,7 @@ func (a *API) publishIPNS(c echo.Context) error {
 	}
 
 	// Get the published record to return details
-	record, err := ipnsPublisherService.GetPublished(reqCtx, key.PeerID().String(), false)
+	record, err := ipnsKeyService.GetPublished(reqCtx, key.PeerID().String(), false)
 	if err != nil {
 		a.Logger().Error("Failed to get published IPNS record", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
 		// Don't fail the request if we can't retrieve the record, just return a basic response
@@ -278,11 +278,11 @@ func (a *API) resolveIPNS(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	// Get IPNSPublisherService
-	ipnsPublisherService := core.GetService[pluginCore.IPNSPublisherService](a.Context(), pluginCore.IPNS_PUBLISHER_SERVICE)
-	if ipnsPublisherService == nil {
-		a.Logger().Error("IPNSPublisherService not available")
-		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("IPNSPublisherService not available"))
+	// Get IPNSKeyService
+	ipnsKeyService := core.GetService[pluginCore.IPNSKeyService](a.Context(), pluginCore.IPNS_KEY_SERVICE)
+	if ipnsKeyService == nil {
+		a.Logger().Error("IPNSKeyService not available")
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("IPNSKeyService not available"))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -290,7 +290,7 @@ func (a *API) resolveIPNS(c echo.Context) error {
 	checkRouting := c.QueryParam("check_routing") == "true"
 
 	// Get the published record
-	record, err := ipnsPublisherService.GetPublished(reqCtx, name, checkRouting)
+	record, err := ipnsKeyService.GetPublished(reqCtx, name, checkRouting)
 	if err != nil {
 		a.Logger().Error("Failed to resolve IPNS name", zap.Error(err), zap.String("name", name))
 		apiErr := NewError(ErrKeyPinFetchFailed, fmt.Errorf("failed to resolve IPNS name: %w", err))
@@ -346,11 +346,11 @@ func (a *API) republishIPNS(c echo.Context) error {
 		// If body parsing fails, it's okay - key_id is optional
 	}
 
-	// Get IPNSPublisherService
-	ipnsPublisherService := core.GetService[pluginCore.IPNSPublisherService](a.Context(), pluginCore.IPNS_PUBLISHER_SERVICE)
-	if ipnsPublisherService == nil {
-		a.Logger().Error("IPNSPublisherService not available")
-		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("IPNSPublisherService not available"))
+	// Get IPNSKeyService
+	ipnsKeyService := core.GetService[pluginCore.IPNSKeyService](a.Context(), pluginCore.IPNS_KEY_SERVICE)
+	if ipnsKeyService == nil {
+		a.Logger().Error("IPNSKeyService not available")
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("IPNSKeyService not available"))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -372,7 +372,7 @@ func (a *API) republishIPNS(c echo.Context) error {
 		}
 
 		// Get the current published record
-		record, err := ipnsPublisherService.GetPublished(reqCtx, key.PeerID().String(), false)
+		record, err := ipnsKeyService.GetPublished(reqCtx, key.PeerID().String(), false)
 		if err != nil {
 			a.Logger().Error("Failed to get published record for republish", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
 			apiErr := NewError(ErrKeyPinFetchFailed, fmt.Errorf("failed to get published record: %w", err))
@@ -396,7 +396,7 @@ func (a *API) republishIPNS(c echo.Context) error {
 		}
 
 		// Republish with the same value
-		err = ipnsPublisherService.PublishWithKey(reqCtx, privKey, valuePath.String(), 0)
+		err = ipnsKeyService.PublishWithKey(reqCtx, privKey, valuePath.String(), 0)
 		if err != nil {
 			a.Logger().Error("Failed to republish IPNS record", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
 			apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to republish IPNS record: %w", err))
@@ -406,7 +406,7 @@ func (a *API) republishIPNS(c echo.Context) error {
 		count = 1
 	} else {
 		// Republish all keys
-		records, err := ipnsPublisherService.ListPublished(reqCtx)
+		records, err := ipnsKeyService.ListPublished(reqCtx)
 		if err != nil {
 			a.Logger().Error("Failed to list published records", zap.Error(err))
 			apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to list published records: %w", err))
@@ -429,7 +429,7 @@ func (a *API) republishIPNS(c echo.Context) error {
 				continue
 			}
 
-			err = ipnsPublisherService.PublishWithKey(reqCtx, privKey, valuePath.String(), 0)
+			err = ipnsKeyService.PublishWithKey(reqCtx, privKey, valuePath.String(), 0)
 			if err != nil {
 				a.Logger().Warn("Failed to republish IPNS record, skipping", zap.Error(err), zap.String("peer_id", peerID))
 				continue

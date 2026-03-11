@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -10,15 +11,48 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.lumeweb.com/httputil"
 	mcontext "go.lumeweb.com/portal-middleware/context"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/errors"
+	pluginEvents "go.lumeweb.com/portal-plugin-ipfs/internal/errors"
+	pluginservice "go.lumeweb.com/portal-plugin-ipfs/internal/service/website"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
 	"go.uber.org/zap"
 )
 
 // Website Handlers
+
+// handleWebsiteValidationError is a DRY helper for handling website validation errors with proper context
+func (a *API) handleWebsiteValidationError(err error, c echo.Context) (error, bool) {
+	if err == nil {
+		return nil, false
+	}
+	
+	ctx := httputil.Context(c)
+	
+	// Check for specific validation errors using errors.Is
+	if errors.Is(err, pluginservice.ErrInvalidCID) {
+		apiErr := NewError(ErrKeyInvalidCID, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus()), true
+	}
+	
+	if errors.Is(err, pluginservice.ErrInvalidIPNS) {
+		apiErr := NewError(ErrKeyInvalidTarget, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus()), true
+	}
+	
+	if errors.Is(err, pluginservice.ErrInvalidTarget) {
+		apiErr := NewError(ErrKeyInvalidTarget, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus()), true
+	}
+	
+	if errors.Is(err, pluginservice.ErrInvalidDomain) {
+		apiErr := NewError(ErrKeyInvalidDomainFormat, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus()), true
+	}
+	
+	return err, false
+}
 
 func (a *API) createWebsite(c echo.Context) error {
 	ctx := httputil.Context(c)
@@ -43,6 +77,9 @@ func (a *API) createWebsite(c echo.Context) error {
 	website, err := a.websiteService.CreateWebsite(reqCtx, model)
 	if err != nil {
 		a.Logger().Error("Failed to create website", zap.Error(err), zap.Uint("user_id", user), zap.String("domain", req.Domain))
+		if handledErr, wasHandled := a.handleWebsiteValidationError(err, c); wasHandled {
+			return handledErr
+		}
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
@@ -276,14 +313,14 @@ func (a *API) getSSLStatus(c echo.Context) error {
 
 	domain := c.Param("domain")
 	if domain == "" {
-		apiErr := NewError(errors.ErrInvalidDomain, fmt.Errorf("domain is required"))
+		apiErr := NewError(pluginEvents.ErrInvalidDomain, fmt.Errorf("domain is required"))
 		return ctx.Error(apiErr, http.StatusBadRequest)
 	}
 
 	website, err := a.websiteService.GetWebsiteByDomain(reqCtx, domain)
 	if err != nil {
 		if strings.Contains(err.Error(), "website not found") {
-			apiErr := NewError(errors.ErrWebsiteNotFound, err)
+			apiErr := NewError(pluginEvents.ErrWebsiteNotFound, err)
 			return ctx.Error(apiErr, http.StatusNotFound)
 		}
 		a.Logger().Error("Failed to get website SSL status", zap.Error(err), zap.String("domain", domain))
@@ -292,7 +329,7 @@ func (a *API) getSSLStatus(c echo.Context) error {
 	}
 
 	if website == nil {
-		apiErr := NewError(errors.ErrWebsiteNotFound, fmt.Errorf("website not found: %s", domain))
+		apiErr := NewError(pluginEvents.ErrWebsiteNotFound, fmt.Errorf("website not found: %s", domain))
 		return ctx.Error(apiErr, http.StatusNotFound)
 	}
 
@@ -305,7 +342,7 @@ func (a *API) updateSSLStatus(c echo.Context) error {
 
 	domain := c.Param("domain")
 	if domain == "" {
-		apiErr := NewError(errors.ErrInvalidDomain, fmt.Errorf("domain is required"))
+		apiErr := NewError(pluginEvents.ErrInvalidDomain, fmt.Errorf("domain is required"))
 		return ctx.Error(apiErr, http.StatusBadRequest)
 	}
 
@@ -318,7 +355,7 @@ func (a *API) updateSSLStatus(c echo.Context) error {
 	if req.Timestamp != "" {
 		parsed, err := time.Parse(time.RFC3339, req.Timestamp)
 		if err != nil {
-			apiErr := NewError(errors.ErrInvalidTimestamp, err)
+			apiErr := NewError(pluginEvents.ErrInvalidTimestamp, err)
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
 		timestamp = &parsed
@@ -327,7 +364,7 @@ func (a *API) updateSSLStatus(c echo.Context) error {
 	website, err := a.websiteService.UpdateSSLStatus(reqCtx, domain, req.Status, req.Error, timestamp)
 	if err != nil {
 		if strings.Contains(err.Error(), "website not found") {
-			apiErr := NewError(errors.ErrWebsiteNotFound, err)
+			apiErr := NewError(pluginEvents.ErrWebsiteNotFound, err)
 			return ctx.Error(apiErr, http.StatusNotFound)
 		}
 		a.Logger().Error("Failed to update SSL status", zap.Error(err), zap.String("domain", domain))

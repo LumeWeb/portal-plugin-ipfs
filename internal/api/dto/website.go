@@ -72,7 +72,11 @@ func (r *IPNSPublishRequest) ToModel() (*IPNSPublishRequest, error) {
 	// Validate CID
 	_, err := cid.Parse(r.CID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid CID: %w", err)
+		return nil, &httputil.ValidationError{
+			FieldErrors: map[string]string{
+				"cid": fmt.Sprintf("invalid CID: %v", err),
+			},
+		}
 	}
 	return r, nil
 }
@@ -127,7 +131,11 @@ func (r WebsiteRequest) Schema() *zog.StructSchema {
 func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 	// Validate target type
 	if r.TargetType != db.WebsiteTargetTypeIPFS && r.TargetType != db.WebsiteTargetTypeIPNS {
-		return nil, fmt.Errorf("invalid target type: must be '%s' or '%s'", db.WebsiteTargetTypeIPFS, db.WebsiteTargetTypeIPNS)
+		return nil, &httputil.ValidationError{
+			FieldErrors: map[string]string{
+				"target_type": fmt.Sprintf("must be '%s' or '%s'", db.WebsiteTargetTypeIPFS, db.WebsiteTargetTypeIPNS),
+			},
+		}
 	}
 
 	website := &db.Website{
@@ -143,7 +151,11 @@ func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 	if r.TargetType == db.WebsiteTargetTypeIPFS {
 		c, err := cid.Parse(r.TargetHash)
 		if err != nil {
-			return nil, fmt.Errorf("invalid CID: %w", err)
+			return nil, &httputil.ValidationError{
+				FieldErrors: map[string]string{
+					"target_hash": fmt.Sprintf("invalid CID: %v", err),
+				},
+			}
 		}
 		website.TargetMultihash = c.Hash()
 		version := uint8(c.Version())
@@ -154,7 +166,11 @@ func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 	if r.TargetType == db.WebsiteTargetTypeIPNS {
 		target, err := db.NewIPNSTargetFromString(r.TargetHash)
 		if err != nil {
-			return nil, fmt.Errorf("invalid IPNS target: %w", err)
+			return nil, &httputil.ValidationError{
+				FieldErrors: map[string]string{
+					"target_hash": fmt.Sprintf("invalid IPNS target: %v", err),
+				},
+			}
 		}
 		website.TargetMultihash = target.ToMultihash()
 		website.CIDVersion = nil // NULL for IPNS
@@ -239,14 +255,14 @@ type WebsiteItem WebsiteResponse
 
 // WebsiteFilter represents filtering options for website listings
 type WebsiteFilter struct {
-	Domain     *string `json:"domain,omitempty" query:"domain"`
-	TargetType *string `json:"target_type,omitempty" query:"target_type"`
-	Status     *string `json:"status,omitempty" query:"status"`
+	Domain     *string              `json:"domain,omitempty" query:"domain"`
+	TargetType *db.WebsiteTargetType `json:"target_type,omitempty" query:"target_type"`
+	Status     *db.WebsiteStatus    `json:"status,omitempty" query:"status"`
 }
 
 func (f WebsiteFilter) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
-		"Domain": zog.Ptr(zog.String().Optional()),
+		"Domain": zog.Ptr(zog.String().Optional().Max(255)),
 		"TargetType": zog.Ptr(config.ZogStringLike[db.WebsiteTargetType]().OneOf([]db.WebsiteTargetType{
 			db.WebsiteTargetTypeIPFS,
 			db.WebsiteTargetTypeIPNS,

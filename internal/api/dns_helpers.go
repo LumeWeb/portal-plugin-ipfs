@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -11,6 +12,18 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"gorm.io/gorm"
 )
+
+// handleIPFSError is a DRY helper for handling IPFSError with proper context
+func (a *API) handleIPFSError(err error, c echo.Context) (error, bool) {
+	if err == nil {
+		return nil, false
+	}
+	if apiErr, ok := errors.AsType[*IPFSError](err); ok {
+		ctx := httputil.Context(c)
+		return ctx.Error(apiErr, apiErr.HttpStatus()), true
+	}
+	return err, false
+}
 
 // verifyZoneOwnership checks if a zone exists and belongs to the current user
 // Returns the zone if valid, otherwise returns an appropriate error response
@@ -66,7 +79,7 @@ func parseZoneIDParam(c echo.Context) (uint, error) {
 func parseZoneIDParamWithResponse(c echo.Context) (uint, error) {
 	zoneIDRaw, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidRequest, nil)
+		apiErr := NewError(ErrKeyInvalidIdentifier, nil)
 		return 0, apiErr
 	}
 	return uint(zoneIDRaw), nil

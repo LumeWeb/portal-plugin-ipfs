@@ -4,10 +4,9 @@ import (
 	"fmt"
 	"net"
 
-	"go.lumeweb.com/portal/core"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 )
 
@@ -50,21 +49,23 @@ func WithDNSLookup(lookup DNSLookup) DNSServiceOption {
 	}
 }
 
-// DNSService manages DNS zones and PowerDNS integration
-type DNSService struct {
+var _ pluginCore.DNSService = (*DNSServiceDefault)(nil)
+
+// DNSServiceDefault manages DNS zones and PowerDNS integration
+type DNSServiceDefault struct {
 	*core.BaseComponent
-	config     pluginConfig.Config
+	config     *pluginConfig.DnsConfig
 	pdnsClient *PowerDNSClient
 	dnsLookup  DNSLookup
 }
 
 // GetDNSLookup returns the DNS lookup implementation (for testing)
-func (s *DNSService) GetDNSLookup() DNSLookup {
+func (s *DNSServiceDefault) GetDNSLookup() DNSLookup {
 	return s.dnsLookup
 }
 
 // SetDNSLookup sets the DNS lookup implementation (for testing)
-func (s *DNSService) SetDNSLookup(lookup DNSLookup) {
+func (s *DNSServiceDefault) SetDNSLookup(lookup DNSLookup) {
 	s.dnsLookup = lookup
 }
 
@@ -75,7 +76,7 @@ func NewDNSService() (core.Service, []core.ContextBuilderOption, error) {
 
 // NewDNSServiceWithOptions creates a new DNS service with configurable options
 func NewDNSServiceWithOptions(options ...DNSServiceOption) (core.Service, []core.ContextBuilderOption, error) {
-	svc := &DNSService{BaseComponent: &core.BaseComponent{}}
+	svc := &DNSServiceDefault{BaseComponent: &core.BaseComponent{}}
 
 	// Apply options to default struct
 	serviceOpts := &DNSServiceOptions{
@@ -88,13 +89,8 @@ func NewDNSServiceWithOptions(options ...DNSServiceOption) (core.Service, []core
 
 	opts := core.ContextOptions(
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
-			// Load configuration
-			protocolConfig := core.GetProtocolConfig[*pluginConfig.ProtocolConfig](ctx, internal.ProtocolName)
-			if protocolConfig == nil {
-				svc.Logger().Warn("Protocol config not found")
-				return nil
-			}
-			svc.config = protocolConfig.DnsHosting
+			// Load configuration from service config
+			svc.config = core.GetServiceConfig[*pluginConfig.DnsConfig](ctx, pluginCore.DNS_SERVICE)
 
 			// Initialize PowerDNS client from config if not provided via options
 			if serviceOpts.PowerDNSClient == nil && svc.config.Enabled {
@@ -129,8 +125,10 @@ func NewDNSServiceWithOptions(options ...DNSServiceOption) (core.Service, []core
 	return svc, opts, nil
 }
 
-func (s *DNSService) ID() string {
+func (s *DNSServiceDefault) ID() string {
 	return pluginCore.DNS_SERVICE
 }
 
-
+func (s *DNSServiceDefault) GetConfig() (any, error) {
+	return &pluginConfig.DnsConfig{}, nil
+}

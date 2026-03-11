@@ -81,6 +81,9 @@ func (a *API) listZones(c echo.Context) error {
 func (a *API) getZone(c echo.Context) error {
 	zoneID, err := parseZoneIDParamWithResponse(c)
 	if err != nil {
+		if handledErr, wasHandled := a.handleIPFSError(err, c); wasHandled {
+			return handledErr
+		}
 		return err
 	}
 
@@ -96,12 +99,14 @@ func (a *API) getZone(c echo.Context) error {
 
 // updateZone updates a DNS zone
 func (a *API) updateZone(c echo.Context) error {
+	ctx := httputil.Context(c)
 	zoneID, err := parseZoneIDParamWithResponse(c)
 	if err != nil {
+		if handledErr, wasHandled := a.handleIPFSError(err, c); wasHandled {
+			return handledErr
+		}
 		return err
 	}
-
-	ctx := httputil.Context(c)
 	var req dto.ZoneRequest
 	if _, ok := httputil.DecodeAndValidateRequest(ctx, &req); !ok {
 		return nil
@@ -142,6 +147,9 @@ func (a *API) updateZone(c echo.Context) error {
 func (a *API) deleteZone(c echo.Context) error {
 	zoneID, err := parseZoneIDParamWithResponse(c)
 	if err != nil {
+		if handledErr, wasHandled := a.handleIPFSError(err, c); wasHandled {
+			return handledErr
+		}
 		return err
 	}
 
@@ -166,6 +174,9 @@ func (a *API) deleteZone(c echo.Context) error {
 func (a *API) validateZone(c echo.Context) error {
 	zoneID, err := parseZoneIDParamWithResponse(c)
 	if err != nil {
+		if handledErr, wasHandled := a.handleIPFSError(err, c); wasHandled {
+			return handledErr
+		}
 		return err
 	}
 
@@ -201,6 +212,9 @@ func (a *API) validateZone(c echo.Context) error {
 func (a *API) getZoneStatus(c echo.Context) error {
 	zoneID, err := parseZoneIDParamWithResponse(c)
 	if err != nil {
+		if handledErr, wasHandled := a.handleIPFSError(err, c); wasHandled {
+			return handledErr
+		}
 		return err
 	}
 
@@ -218,6 +232,9 @@ func (a *API) getZoneStatus(c echo.Context) error {
 func (a *API) listRecords(c echo.Context) error {
 	zoneID, err := parseZoneIDParamWithResponse(c)
 	if err != nil {
+		if handledErr, wasHandled := a.handleIPFSError(err, c); wasHandled {
+			return handledErr
+		}
 		return err
 	}
 

@@ -10,9 +10,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	mh "github.com/multiformats/go-multihash"
-	"github.com/libp2p/go-libp2p/core/crypto"
+	boxoRepublisher "github.com/ipfs/boxo/namesys/republisher"
+	"github.com/ipfs/boxo/ipns"
+	"github.com/ipfs/boxo/keystore"
+	"github.com/ipfs/boxo/namesys"
+	"github.com/ipfs/boxo/path"
+	"github.com/ipfs/go-cid"
+	ic "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
@@ -33,14 +40,105 @@ const (
 	KeyType_ECDSA     = 3
 )
 
-// IPNSKeyServiceDefault implements the IPNS key management service
+// IPNSKeyServiceDefault implements the IPNS key management and publishing service
 type IPNSKeyServiceDefault struct {
 	*core.BaseComponent
-	protocol protocol.ProtoNode
+	protocol  protocol.ProtoNode
+	publisher pluginCore.IPNSPublisher
+	republisher *boxoRepublisher.Republisher
+	stopFunc  context.CancelFunc
 }
 
 // Ensure IPNSKeyServiceDefault implements the interface
 var _ pluginCore.IPNSKeyService = (*IPNSKeyServiceDefault)(nil)
+
+// SafeRepublisherKeystore wraps a keystore with additional validation for the republisher
+// It ensures that all keys returned to the republisher are non-nil
+type SafeRepublisherKeystore struct {
+	inner        keystore.Keystore
+	log          *core.Logger
+	getKeyByName func(name string) (ic.PrivKey, error)
+	deleteKey    func(name string) error
+}
+
+// NewSafeRepublisherKeystore creates a new safe republisher keystore wrapper
+func NewSafeRepublisherKeystore(inner keystore.Keystore, log *core.Logger) keystore.Keystore {
+	return &SafeRepublisherKeystore{
+		inner: inner,
+		log:   log,
+	}
+}
+
+// Has returns whether or not a key exists in the Keystore
+func (srk *SafeRepublisherKeystore) Has(name string) (bool, error) {
+	return srk.inner.Has(name)
+}
+
+// Put stores a key in the Keystore with nil validation
+func (srk *SafeRepublisherKeystore) Put(name string, k ic.PrivKey) error {
+	if k == nil {
+		srk.log.Error("Refusing to put nil key into republisher keystore",
+			zap.String("key_name", name),
+		)
+		return errors.New("cannot put nil key into keystore")
+	}
+	return srk.inner.Put(name, k)
+}
+
+// Get retrieves a key from the Keystore
+// Returns the key if it exists, and ErrNoSuchKey otherwise
+func (srk *SafeRepublisherKeystore) Get(name string) (ic.PrivKey, error) {
+	key, err := srk.inner.Get(name)
+	if err != nil {
+		return nil, err
+	}
+	// Defensive check: validate on retrieval to catch any edge cases
+	if key == nil {
+		srk.log.Error("Retrieved nil key from republisher keystore",
+			zap.String("key_name", name),
+		)
+		return nil, fmt.Errorf("key %s exists but is nil in keystore", name)
+	}
+	return key, nil
+}
+
+// Delete removes a key from the Keystore
+func (srk *SafeRepublisherKeystore) Delete(name string) error {
+	return srk.inner.Delete(name)
+}
+
+// List returns a list of key identifiers with validation
+func (srk *SafeRepublisherKeystore) List() ([]string, error) {
+	names, err := srk.inner.List()
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate that all listed keys are non-nil and filter out corrupted entries
+	validNames := make([]string, 0, len(names))
+	for _, name := range names {
+		key, err := srk.inner.Get(name)
+		if err != nil {
+			// Key not found or error reading, skip
+			srk.log.Warn("Failed to get key during list validation",
+				zap.String("key_name", name),
+				zap.Error(err),
+			)
+			continue
+		}
+		if key == nil {
+			// Nil key found, delete it
+			_ = srk.inner.Delete(name)
+			srk.log.Warn("Removed nil key from republisher keystore during list",
+				zap.String("key_name", name),
+			)
+			continue
+		}
+		validNames = append(validNames, name)
+	}
+
+	return validNames, nil
+}
 
 // NewIPNSKeyService creates a new IPNS key service
 func NewIPNSKeyService() (core.Service, []core.ContextBuilderOption, error) {
@@ -55,8 +153,32 @@ func NewIPNSKeyService() (core.Service, []core.ContextBuilderOption, error) {
 			}
 			svc.protocol = ipfsProto
 
+			// Get the IPNS node access
+			ipnsNode, ok := proto.(pluginCore.IPNSBoxoServices)
+			if !ok {
+				return fmt.Errorf("IPFS protocol does not implement IPNSBoxoServices")
+			}
+
+			node := ipnsNode.GetIPNSNode()
+			if node == nil {
+				return fmt.Errorf("IPNS node not found")
+			}
+
+			// Get the publisher
+			publisher := node.GetPublisher()
+			if publisher == nil {
+				return fmt.Errorf("IPNS publisher not found")
+			}
+			svc.publisher = publisher
+
+			// Initialize the republisher
+			err := svc.initRepublisher(node)
+			if err != nil {
+				return fmt.Errorf("failed to initialize republisher: %w", err)
+			}
+
 			// Migrate encryption seed from placeholder to actual portal identity seed
-			err := svc.MigrateEncryptionSeed(ctx)
+			err = svc.MigrateEncryptionSeed(ctx)
 			if err != nil {
 				svc.Logger().Warn("IPNS key encryption seed migration encountered issues",
 					zap.Error(err),
@@ -74,6 +196,9 @@ func NewIPNSKeyService() (core.Service, []core.ContextBuilderOption, error) {
 			}
 
 			return nil
+		}),
+		core.ContextWithExitFunc(func(ctx core.Context) error {
+			return svc.StopRepublisher()
 		}),
 	)
 
@@ -94,7 +219,7 @@ func (s *IPNSKeyServiceDefault) CreateKey(ctx context.Context, userID uint, name
 		keyType = KeyType_Ed25519
 	}
 
-	privKey, pubKey, err := crypto.GenerateKeyPairWithReader(keyType, 2048, rand.Reader)
+	privKey, pubKey, err := ic.GenerateKeyPairWithReader(keyType, 2048, rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate key pair: %w", err)
 	}
@@ -155,7 +280,7 @@ func (s *IPNSKeyServiceDefault) ImportKey(ctx context.Context, userID uint, name
 	}
 
 	// Unmarshal private key
-	privKey, err := crypto.UnmarshalPrivateKey(keyBytes)
+	privKey, err := ic.UnmarshalPrivateKey(keyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal private key: %w", err)
 	}
@@ -232,7 +357,7 @@ func (s *IPNSKeyServiceDefault) ExportKey(ctx context.Context, userID uint, keyI
 	}
 
 	// Marshal to protobuf format
-	keyBytes, err := crypto.MarshalPrivateKey(privKey)
+	keyBytes, err := ic.MarshalPrivateKey(privKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal private key: %w", err)
 	}
@@ -380,7 +505,7 @@ func (s *IPNSKeyServiceDefault) DeleteKey(ctx context.Context, userID uint, keyI
 
 // syncKeyToBoxoKeystore syncs a single IPNS key to the boxo keystore
 // This is called after CreateKey and ImportKey operations
-func (s *IPNSKeyServiceDefault) syncKeyToBoxoKeystore(ctx context.Context, key *pluginDb.IPFSIPNSKey, privKey crypto.PrivKey) error {
+func (s *IPNSKeyServiceDefault) syncKeyToBoxoKeystore(ctx context.Context, key *pluginDb.IPFSIPNSKey, privKey ic.PrivKey) error {
 	ctx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.syncKeyToBoxoKeystore")
 	defer span.End()
 
@@ -555,7 +680,7 @@ func (s *IPNSKeyServiceDefault) SyncToBoxoKeystore(ctx context.Context) error {
 }
 
 // GetPrivateKeyByPeerID decrypts and returns the private key for a given peer ID
-func (s *IPNSKeyServiceDefault) GetPrivateKeyByPeerID(ctx context.Context, peerIDStr string) (crypto.PrivKey, uint, error) {
+func (s *IPNSKeyServiceDefault) GetPrivateKeyByPeerID(ctx context.Context, peerIDStr string) (ic.PrivKey, uint, error) {
 	ctx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.GetPrivateKeyByPeerID")
 	defer span.End()
 
@@ -587,7 +712,7 @@ func (s *IPNSKeyServiceDefault) GetPrivateKeyByPeerID(ctx context.Context, peerI
 }
 
 // GetPrivateKey decrypts and returns the private key for a given key
-func (s *IPNSKeyServiceDefault) GetPrivateKey(ctx context.Context, userID uint, keyID uint) (crypto.PrivKey, error) {
+func (s *IPNSKeyServiceDefault) GetPrivateKey(ctx context.Context, userID uint, keyID uint) (ic.PrivKey, error) {
 	key, err := s.GetKeyByID(ctx, userID, keyID)
 	if err != nil {
 		return nil, err
@@ -597,8 +722,8 @@ func (s *IPNSKeyServiceDefault) GetPrivateKey(ctx context.Context, userID uint, 
 }
 
 // encryptPrivateKey encrypts a private key using the portal identity seed
-func (s *IPNSKeyServiceDefault) encryptPrivateKey(privKey crypto.PrivKey) ([]byte, error) {
-	keyBytes, err := crypto.MarshalPrivateKey(privKey)
+func (s *IPNSKeyServiceDefault) encryptPrivateKey(privKey ic.PrivKey) ([]byte, error) {
+	keyBytes, err := ic.MarshalPrivateKey(privKey)
 	if err != nil {
 		return nil, err
 	}
@@ -633,7 +758,7 @@ func (s *IPNSKeyServiceDefault) encryptPrivateKey(privKey crypto.PrivKey) ([]byt
 }
 
 // decryptPrivateKey decrypts an encrypted private key
-func (s *IPNSKeyServiceDefault) decryptPrivateKey(encryptedKey []byte) (crypto.PrivKey, error) {
+func (s *IPNSKeyServiceDefault) decryptPrivateKey(encryptedKey []byte) (ic.PrivKey, error) {
 	ctx := s.Context()
 	portalSeed := ctx.Config().Config().Core.Identity.PrivateKey()
 
@@ -665,12 +790,12 @@ func (s *IPNSKeyServiceDefault) decryptPrivateKey(encryptedKey []byte) (crypto.P
 		return nil, err
 	}
 
-	return crypto.UnmarshalPrivateKey(keyBytes)
+	return ic.UnmarshalPrivateKey(keyBytes)
 }
 
 // decryptPrivateKeyWithSeed decrypts an encrypted private key using a specific seed
 // This is used for migration from old seed to new seed
-func (s *IPNSKeyServiceDefault) decryptPrivateKeyWithSeed(encryptedKey []byte, seed []byte) (crypto.PrivKey, error) {
+func (s *IPNSKeyServiceDefault) decryptPrivateKeyWithSeed(encryptedKey []byte, seed []byte) (ic.PrivKey, error) {
 	ctx := s.Context()
 	hasher := hkdf.New(sha256.New, seed, ctx.Config().Config().Core.NodeID.Bytes(), []byte("ipns-key-encryption"))
 	derivedSeed := make([]byte, 32)
@@ -700,7 +825,7 @@ func (s *IPNSKeyServiceDefault) decryptPrivateKeyWithSeed(encryptedKey []byte, s
 		return nil, err
 	}
 
-	return crypto.UnmarshalPrivateKey(keyBytes)
+	return ic.UnmarshalPrivateKey(keyBytes)
 }
 
 // MigrateEncryptionSeed migrates all IPNS keys from old placeholder seed to new portal identity seed
@@ -782,4 +907,210 @@ func (s *IPNSKeyServiceDefault) MigrateEncryptionSeed(ctx core.Context) error {
 	}
 
 	return nil
+}
+
+// PublishCID publishes a CID to an IPNS key
+// keyID is the peer ID (IPNS name) to publish to
+// cidStr is the CID to publish as the IPNS record value
+// ttl is the time-to-live for the IPNS record (use 0 for default)
+func (s *IPNSKeyServiceDefault) PublishCID(ctx context.Context, keyID string, cidStr string, ttl time.Duration) error {
+	// Convert to core.Context for tracing
+	coreCtx := ctx.(core.Context)
+	_, span := core.TraceMethod(coreCtx, "IPNSKeyServiceDefault.PublishCID")
+	defer span.End()
+
+	// Get the private key by peer ID
+	privKey, _, err := s.GetPrivateKeyByPeerID(coreCtx, keyID)
+	if err != nil {
+		s.Logger().Error("Failed to get private key for IPNS publish",
+			zap.Error(err),
+			zap.String("key_id", keyID),
+		)
+		return fmt.Errorf("failed to get private key: %w", err)
+	}
+
+	// Publish using the private key
+	return s.PublishWithKey(ctx, privKey, cidStr, ttl)
+}
+
+// PublishWithKey publishes a CID using the provided private key
+func (s *IPNSKeyServiceDefault) PublishWithKey(ctx context.Context, privKey ic.PrivKey, cidStr string, ttl time.Duration) error {
+	// Convert to core.Context for tracing
+	coreCtx := ctx.(core.Context)
+	traceCtx, span := core.TraceMethod(coreCtx, "IPNSKeyServiceDefault.PublishWithKey")
+	defer span.End()
+
+	// Parse the CID
+	targetCid, err := cid.Decode(cidStr)
+	if err != nil {
+		return fmt.Errorf("invalid CID %s: %w", cidStr, err)
+	}
+
+	// Create an IPNS path from the CID
+	ipnsPath := path.FromCid(targetCid)
+
+	// Build publish options
+	var options []namesys.PublishOption
+	if ttl > 0 {
+		options = append(options, namesys.PublishWithTTL(ttl))
+	}
+
+	// Publish the IPNS record
+	err = s.publisher.Publish(traceCtx, privKey, ipnsPath, options...)
+	if err != nil {
+		s.Logger().Error("Failed to publish IPNS record",
+			zap.Error(err),
+			zap.String("cid", cidStr),
+		)
+		return fmt.Errorf("failed to publish IPNS record: %w", err)
+	}
+
+	peerID, _ := peer.IDFromPrivateKey(privKey)
+	s.Logger().Info("Successfully published IPNS record",
+		zap.String("peer_id", peerID.String()),
+		zap.String("cid", cidStr),
+	)
+
+	return nil
+}
+
+// GetPublished retrieves the latest published record for an IPNS name
+func (s *IPNSKeyServiceDefault) GetPublished(ctx context.Context, keyID string, checkRouting bool) (*ipns.Record, error) {
+	// Convert to core.Context for tracing
+	coreCtx := ctx.(core.Context)
+	traceCtx, span := core.TraceMethod(coreCtx, "IPNSKeyServiceDefault.GetPublished")
+	defer span.End()
+
+	// Parse the peer ID
+	peerID, err := peer.Decode(keyID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid peer ID %s: %w", keyID, err)
+	}
+
+	// Create IPNS name
+	name := ipns.NameFromPeer(peerID)
+
+	// Get the published record
+	record, err := s.publisher.GetPublished(traceCtx, name, checkRouting)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get published record: %w", err)
+	}
+
+	return record, nil
+}
+
+// ListPublished returns all IPNS records published by this node
+func (s *IPNSKeyServiceDefault) ListPublished(ctx context.Context) (map[ipns.Name]*ipns.Record, error) {
+	// Convert to core.Context for tracing
+	coreCtx := ctx.(core.Context)
+	traceCtx, span := core.TraceMethod(coreCtx, "IPNSKeyServiceDefault.ListPublished")
+	defer span.End()
+
+	records, err := s.publisher.ListPublished(traceCtx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list published records: %w", err)
+	}
+
+	return records, nil
+}
+
+// initRepublisher initializes the IPNS republisher
+func (s *IPNSKeyServiceDefault) initRepublisher(node pluginCore.IPNSNodeAccess) error {
+	publisher := node.GetPublisher()
+	if publisher == nil {
+		return fmt.Errorf("publisher not found")
+	}
+
+	ds := node.GetDatastore()
+	if ds == nil {
+		return fmt.Errorf("datastore not found")
+	}
+
+	ks := node.GetKeystore()
+	if ks == nil {
+		return fmt.Errorf("keystore not found")
+	}
+
+	// Wrap the keystore with SafeRepublisherKeystore to filter out nil keys
+	// This prevents the republisher from crashing on corrupted keystore entries
+	safeKS := NewSafeRepublisherKeystore(ks, s.Logger())
+
+	// Get the node's private key for the republisher's self key
+	// The vendor code always tries to republish the self key first
+	selfKey := node.GetPrivateKey()
+	if selfKey == nil {
+		return fmt.Errorf("node private key is nil")
+	}
+
+	// Create the boxo republisher with default settings
+	// Pass the node's private key as the self key to satisfy vendor code requirements
+	repub := boxoRepublisher.NewRepublisher(publisher, ds, selfKey, safeKS)
+
+	// Configure with defaults (4-hour interval, 24-hour record lifetime)
+	repub.Interval = boxoRepublisher.DefaultRebroadcastInterval
+	repub.RecordLifetime = ipns.DefaultRecordLifetime
+
+	s.republisher = repub
+
+	// Start the republisher
+	s.stopFunc = repub.Run()
+
+	s.Logger().Info("IPNS republisher started",
+		zap.Duration("interval", s.republisher.Interval),
+		zap.Duration("record_lifetime", s.republisher.RecordLifetime),
+	)
+
+	return nil
+}
+
+// StopRepublisher stops the IPNS republisher if running
+func (s *IPNSKeyServiceDefault) StopRepublisher() error {
+	if s.stopFunc == nil {
+		return nil
+	}
+
+	if logger := s.Logger(); logger != nil {
+		logger.Info("Stopping IPNS republisher")
+	}
+	s.stopFunc()
+	s.stopFunc = nil
+	return nil
+}
+
+// GetRepublisherInterval returns the current republish interval
+func (s *IPNSKeyServiceDefault) GetRepublisherInterval() time.Duration {
+	if s.republisher == nil {
+		return 0
+	}
+	return s.republisher.Interval
+}
+
+// SetRepublisherInterval updates the republish interval
+// Note: This doesn't affect a running republisher - it would need to be restarted
+func (s *IPNSKeyServiceDefault) SetRepublisherInterval(interval time.Duration) {
+	if s.republisher != nil {
+		s.republisher.Interval = interval
+		s.Logger().Info("IPNS republisher interval updated", zap.Duration("interval", interval))
+	}
+}
+
+// GetRecordLifetime returns the current record lifetime
+func (s *IPNSKeyServiceDefault) GetRecordLifetime() time.Duration {
+	if s.republisher == nil {
+		return 0
+	}
+	return s.republisher.RecordLifetime
+}
+
+// SetRecordLifetime updates the record lifetime
+func (s *IPNSKeyServiceDefault) SetRecordLifetime(lifetime time.Duration) {
+	if s.republisher != nil {
+		s.republisher.RecordLifetime = lifetime
+		s.Logger().Info("IPNS record lifetime updated", zap.Duration("lifetime", lifetime))
+	}
+}
+
+// IsRepublisherRunning returns whether the republisher is currently running
+func (s *IPNSKeyServiceDefault) IsRepublisherRunning() bool {
+	return s.stopFunc != nil
 }
