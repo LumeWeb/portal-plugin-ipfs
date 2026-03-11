@@ -53,7 +53,7 @@ require (
 	go.lumeweb.com/queryutil v0.3.15
 	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260123053442-479cd558a2fc
 	go.uber.org/zap v1.27.1
-	golang.org/x/crypto v0.48.0
+	golang.org/x/crypto v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/datatypes v1.2.7
 	gorm.io/gorm v1.31.1
