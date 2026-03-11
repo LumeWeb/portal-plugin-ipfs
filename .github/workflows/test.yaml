@@ -1,0 +1,29 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Generate
+        run: go generate ./...
+
+      - name: Test
+        run: go test ./...

@@ -17,9 +17,18 @@ packages:
       FileManagerService: {}
       IPNSKeyService: {}
       WebsiteService: {}
-      IPNSPublisherService: {}
+      IPNSPublisher: {}
       DNSService: {}
+  github.com/ipfs/boxo/keystore:
+    interfaces:
+      Keystore: {}
+  github.com/ipfs/go-datastore:
+    interfaces:
+      Datastore: {}
   go.lumeweb.com/portal-plugin-ipfs/internal/protocol:
+    config:
+      pkgname: protocoltestmocks
+      dir: ./internal/protocol/mock_tests
     interfaces:
       ProtoNode: {}
   go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs:

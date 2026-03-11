@@ -7,19 +7,22 @@ import (
 	"testing"
 
 	"github.com/ipfs/go-cid"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	protocol "go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.lumeweb.com/portal/db"
 	"gorm.io/gorm"
 
-	protocol "go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks/protocol"
+	protomock "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/mock_tests"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 )
 
@@ -120,17 +123,57 @@ func CreateTestBlockAndNode(t *testing.T, ctx coreTesting.TestContext, cid cid.C
 
 func GetProtocolMock() coreTesting.TestContextBuilderOption {
 	return coreTesting.WithCustomMockProtocol(internal.ProtocolName, func(ctx coreTesting.TestContext) core.Protocol {
-		protoMock := protocol.NewMockProtoNode(ctx.T())
+		protoMock := protomock.NewMockProtoNode(ctx.T())
+		protoMock.EXPECT().Name().Return(internal.ProtocolName).Maybe()
 		protoMock.EXPECT().GetConfig().Return(&config.ProtocolConfig{}).Maybe()
 		protoMock.EXPECT().Workflows().Return(nil).Maybe()
+
+		// Create mocks for IPNS components
+		pluginCoreMockPublisher := mocks.NewMockIPNSPublisher(ctx.T())
+		mockKeystore := mocks.NewMockKeystore(ctx.T())
+		mockDatastore := mocks.NewMockDatastore(ctx.T())
+		
+		// Set up keystore to handle Has() calls (needed for SyncToBoxoKeystore during startup)
+		mockKeystore.EXPECT().Has(mock.Anything).Return(false, nil).Maybe()
+		mockKeystore.EXPECT().Put(mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockKeystore.EXPECT().Get(mock.Anything).Return(nil, errors.New("key not found")).Maybe()
+		mockKeystore.EXPECT().List().Return([]string{}, nil).Maybe()
+
 		ipfsNode := mocks.NewMockIPFSNode(ctx.T())
 		mockPeer := config.BootstrapPeers[0].ToAddrInfo()
 		ipfsNode.EXPECT().PeerID().Return(mockPeer.ID).Maybe()
 		ipfsNode.EXPECT().DelegateAddresses().Return(ipfs.ConnectionAddresses(ipfsNode)).Maybe()
 		protoMock.EXPECT().GetNode().Return(ipfsNode).Maybe()
+		protoMock.EXPECT().GetIPNSNode().Return(ipfsNode).Maybe()
+		ipfsNode.EXPECT().GetKeystore().Return(mockKeystore).Maybe()
+		ipfsNode.EXPECT().GetPublisher().Return(pluginCoreMockPublisher).Maybe()
+		ipfsNode.EXPECT().GetDatastore().Return(mockDatastore).Maybe()
+		
+		// Generate a valid private key for the republisher
+		privKey, _, err := crypto.GenerateKeyPair(crypto.Ed25519, 2048)
+		require.NoError(ctx.T(), err, "Failed to generate test private key")
+		ipfsNode.EXPECT().GetPrivateKey().Return(privKey).Maybe()
 
 		ipfsNode.EXPECT().ConnectionAddresses().RunAndReturn(func() ([]multiaddr.Multiaddr, error) {
 			return ipfs.ConnectionAddresses(ipfsNode)
+		}).Maybe()
+
+		// Mock AddBlock to return nil (success)
+		ipfsNode.EXPECT().AddBlock(mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		// Mock GetMetadataStore to return a mock metadata store
+		mockMetadataStore := mocks.NewMockMetadataStore(ctx.T())
+		mockMetadataStore.EXPECT().Size(mock.Anything, mock.Anything).Return(uint64(0), nil).Maybe()
+		protoMock.EXPECT().GetMetadataStore().Return(mockMetadataStore).Maybe()
+
+		// Set up operations expectation - this will call Context() on the proto
+		protoMock.EXPECT().Operations().RunAndReturn(func() []core.Operation {
+			// Return real operations via NewProtocolOperations
+			// Set up expectations that will be called when operations are created
+			dummyProto := protomock.NewMockProtoNode(ctx.T())
+			dummyProto.EXPECT().Name().Return(internal.ProtocolName).Maybe()
+			dummyProto.EXPECT().Context().Return(ctx).Maybe()
+			return protocol.NewProtocolOperations(dummyProto)
 		}).Maybe()
 
 		return protoMock

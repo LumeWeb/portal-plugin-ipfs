@@ -2,12 +2,13 @@
 // github.com/vektra/mockery
 // template: testify
 
-package mocks
+package protocoltestmocks
 
 import (
 	"io"
 
 	mock "github.com/stretchr/testify/mock"
+	core0 "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
@@ -316,6 +317,98 @@ func (_c *MockProtoNode_GetConfig_Call) Return(protocolConfig config.ProtocolCon
 }
 
 func (_c *MockProtoNode_GetConfig_Call) RunAndReturn(run func() config.ProtocolConfig) *MockProtoNode_GetConfig_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetIPNSNode provides a mock function for the type MockProtoNode
+func (_mock *MockProtoNode) GetIPNSNode() core0.IPNSNodeAccess {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetIPNSNode")
+	}
+
+	var r0 core0.IPNSNodeAccess
+	if returnFunc, ok := ret.Get(0).(func() core0.IPNSNodeAccess); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(core0.IPNSNodeAccess)
+		}
+	}
+	return r0
+}
+
+// MockProtoNode_GetIPNSNode_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetIPNSNode'
+type MockProtoNode_GetIPNSNode_Call struct {
+	*mock.Call
+}
+
+// GetIPNSNode is a helper method to define mock.On call
+func (_e *MockProtoNode_Expecter) GetIPNSNode() *MockProtoNode_GetIPNSNode_Call {
+	return &MockProtoNode_GetIPNSNode_Call{Call: _e.mock.On("GetIPNSNode")}
+}
+
+func (_c *MockProtoNode_GetIPNSNode_Call) Run(run func()) *MockProtoNode_GetIPNSNode_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockProtoNode_GetIPNSNode_Call) Return(iPNSNodeAccess core0.IPNSNodeAccess) *MockProtoNode_GetIPNSNode_Call {
+	_c.Call.Return(iPNSNodeAccess)
+	return _c
+}
+
+func (_c *MockProtoNode_GetIPNSNode_Call) RunAndReturn(run func() core0.IPNSNodeAccess) *MockProtoNode_GetIPNSNode_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetMetadataStore provides a mock function for the type MockProtoNode
+func (_mock *MockProtoNode) GetMetadataStore() core0.MetadataStore {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetMetadataStore")
+	}
+
+	var r0 core0.MetadataStore
+	if returnFunc, ok := ret.Get(0).(func() core0.MetadataStore); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(core0.MetadataStore)
+		}
+	}
+	return r0
+}
+
+// MockProtoNode_GetMetadataStore_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetMetadataStore'
+type MockProtoNode_GetMetadataStore_Call struct {
+	*mock.Call
+}
+
+// GetMetadataStore is a helper method to define mock.On call
+func (_e *MockProtoNode_Expecter) GetMetadataStore() *MockProtoNode_GetMetadataStore_Call {
+	return &MockProtoNode_GetMetadataStore_Call{Call: _e.mock.On("GetMetadataStore")}
+}
+
+func (_c *MockProtoNode_GetMetadataStore_Call) Run(run func()) *MockProtoNode_GetMetadataStore_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockProtoNode_GetMetadataStore_Call) Return(metadataStore core0.MetadataStore) *MockProtoNode_GetMetadataStore_Call {
+	_c.Call.Return(metadataStore)
+	return _c
+}
+
+func (_c *MockProtoNode_GetMetadataStore_Call) RunAndReturn(run func() core0.MetadataStore) *MockProtoNode_GetMetadataStore_Call {
 	_c.Call.Return(run)
 	return _c
 }
