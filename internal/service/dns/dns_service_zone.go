@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
 	"go.lumeweb.com/queryutil"
-	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -19,7 +19,7 @@ import (
 type DNSLinkTarget string
 
 // CreateZone creates a new DNS zone
-func (s *DNSService) CreateZone(ctx context.Context, domain string, userID uint) (*pluginDb.DNSZone, error) {
+func (s *DNSServiceDefault) CreateZone(ctx context.Context, domain string, userID uint) (*pluginDb.DNSZone, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.CreateZone")
 	defer span.End()
 
@@ -78,7 +78,7 @@ func (s *DNSService) CreateZone(ctx context.Context, domain string, userID uint)
 }
 
 // GetZone retrieves a zone by ID
-func (s *DNSService) GetZone(ctx context.Context, zoneID uint) (*pluginDb.DNSZone, error) {
+func (s *DNSServiceDefault) GetZone(ctx context.Context, zoneID uint) (*pluginDb.DNSZone, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.GetZone")
 	defer span.End()
 
@@ -103,7 +103,7 @@ func (s *DNSService) GetZone(ctx context.Context, zoneID uint) (*pluginDb.DNSZon
 }
 
 // GetZoneByDomain retrieves a zone by domain name
-func (s *DNSService) GetZoneByDomain(ctx context.Context, domain string) (*pluginDb.DNSZone, error) {
+func (s *DNSServiceDefault) GetZoneByDomain(ctx context.Context, domain string) (*pluginDb.DNSZone, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.GetZoneByDomain")
 	defer span.End()
 
@@ -124,7 +124,7 @@ func (s *DNSService) GetZoneByDomain(ctx context.Context, domain string) (*plugi
 }
 
 // ListZones retrieves zones for a user with filtering, sorting, and pagination
-func (s *DNSService) ListZones(ctx context.Context, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.DNSZone, int64, error) {
+func (s *DNSServiceDefault) ListZones(ctx context.Context, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.DNSZone, int64, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.ListZones")
 	defer span.End()
 
@@ -159,7 +159,7 @@ func (s *DNSService) ListZones(ctx context.Context, filters []queryutil.CrudFilt
 }
 
 // UpdateZone updates zone status
-func (s *DNSService) UpdateZone(ctx context.Context, zoneID uint, status pluginDb.DNSZoneStatus) error {
+func (s *DNSServiceDefault) UpdateZone(ctx context.Context, zoneID uint, status pluginDb.DNSZoneStatus) error {
 	ctx, span := core.TraceMethod(ctx, "DNSService.UpdateZone")
 	defer span.End()
 
@@ -188,7 +188,7 @@ func (s *DNSService) UpdateZone(ctx context.Context, zoneID uint, status pluginD
 }
 
 // DeleteZone deletes a zone
-func (s *DNSService) DeleteZone(ctx context.Context, zoneID uint) error {
+func (s *DNSServiceDefault) DeleteZone(ctx context.Context, zoneID uint) error {
 	ctx, span := core.TraceMethod(ctx, "DNSService.DeleteZone")
 	defer span.End()
 
@@ -231,7 +231,7 @@ func (s *DNSService) DeleteZone(ctx context.Context, zoneID uint) error {
 }
 
 // ValidateNameservers validates that domain's nameservers match approved list
-func (s *DNSService) ValidateNameservers(ctx context.Context, zoneID uint) (bool, error) {
+func (s *DNSServiceDefault) ValidateNameservers(ctx context.Context, zoneID uint) (bool, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.ValidateNameservers")
 	defer span.End()
 
@@ -253,6 +253,12 @@ func (s *DNSService) ValidateNameservers(ctx context.Context, zoneID uint) (bool
 	// Lookup nameservers for the domain using DNS lookup interface
 	dnsNameservers, err := s.dnsLookup.LookupNS(zone.Domain)
 	if err != nil {
+		// Update check timestamp even on failure to prevent retry loops
+		now := time.Now()
+		zone.LastNameserverCheckAt = &now
+		_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			return tx.Save(zone)
+		})
 		return false, fmt.Errorf("failed to lookup nameservers for domain %s: %w", zone.Domain, err)
 	}
 
@@ -271,6 +277,11 @@ func (s *DNSService) ValidateNameservers(ctx context.Context, zoneID uint) (bool
 	}
 
 	if !valid {
+		now := time.Now()
+		zone.LastNameserverCheckAt = &now
+		_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			return tx.Save(zone)
+		})
 		return false, fmt.Errorf("no approved nameservers found in DNS for domain %s", zone.Domain)
 	}
 
@@ -298,7 +309,7 @@ func buildTargetPath(targetHash string, targetType pluginDb.WebsiteTargetType) D
 }
 
 // CreateWebsiteDNSRecords creates initial DNS records for a new website
-func (s *DNSService) CreateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType pluginDb.WebsiteTargetType, validationToken string) error {
+func (s *DNSServiceDefault) CreateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType pluginDb.WebsiteTargetType, validationToken string) error {
 	ctx, span := core.TraceMethod(ctx, "DNSService.CreateWebsiteDNSRecords")
 	defer span.End()
 
@@ -374,7 +385,7 @@ func (s *DNSService) CreateWebsiteDNSRecords(ctx context.Context, zoneID uint, t
 }
 
 // UpdateWebsiteDNSRecords updates DNS records for a website
-func (s *DNSService) UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType pluginDb.WebsiteTargetType) error {
+func (s *DNSServiceDefault) UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType pluginDb.WebsiteTargetType) error {
 	ctx, span := core.TraceMethod(ctx, "DNSService.UpdateWebsiteDNSRecords")
 	defer span.End()
 
@@ -423,7 +434,7 @@ func (s *DNSService) UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, t
 }
 
 // DeleteWebsiteDNSRecords removes DNS records for a website
-func (s *DNSService) DeleteWebsiteDNSRecords(ctx context.Context, zoneID uint) error {
+func (s *DNSServiceDefault) DeleteWebsiteDNSRecords(ctx context.Context, zoneID uint) error {
 	ctx, span := core.TraceMethod(ctx, "DNSService.DeleteWebsiteDNSRecords")
 	defer span.End()
 
@@ -476,7 +487,7 @@ func (s *DNSService) DeleteWebsiteDNSRecords(ctx context.Context, zoneID uint) e
 }
 
 // validateDomain validates the domain name format
-func (s *DNSService) validateDomain(domain string) error {
+func (s *DNSServiceDefault) validateDomain(domain string) error {
 	if domain == "" {
 		return fmt.Errorf("domain cannot be empty")
 	}

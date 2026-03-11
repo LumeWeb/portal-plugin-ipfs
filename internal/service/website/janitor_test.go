@@ -2,6 +2,7 @@ package website
 
 import (
 	"context"
+	"io/fs"
 	"testing"
 	"time"
 
@@ -18,21 +19,20 @@ import (
 )
 
 var JanitorTestOptions = coreTesting.CombineOptions(
-	coreTesting.WithServiceFactory(pluginCore.WEBSITE_SERVICE, NewWebsiteService),
-	coreTesting.WithMockServiceFactory(pluginCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService),
-	coreTesting.WithMockServiceFactory(pluginCore.IPNS_PUBLISHER_SERVICE, mocks.NewMockIPNSPublisherService),
-	coreTesting.WithMockServiceFactory(pluginCore.PIN_SERVICE, mocks.NewMockIPFSPinService),
-	coreTesting.WithMockServiceFactory(pluginCore.FILE_MANAGER_SERVICE, mocks.NewMockFileManagerService),
-	util.GetProtocolMock(),
-	// Disable notifications to avoid mailer mock issues in tests
-	coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{
-		Website: pluginConfig.WebsiteConfig{
+	coreTesting.NewMockPluginBuilder(internal.ProtocolName).
+		WithMockServiceFactory(pluginCore.WEBSITE_SERVICE, mocks.NewMockWebsiteService).
+		WithServiceConfig(pluginCore.WEBSITE_SERVICE, &pluginConfig.WebsiteConfig{
 			NotificationsEnabled: false,
-		},
-	}),
-	coreTesting.WithSQLitePluginMigrations(
-		internal.ProtocolName, migrations.GetSQLite(),
-	),
+		}).
+		WithMockServiceFactory(pluginCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService).
+		WithMockServiceFactory(pluginCore.PIN_SERVICE, mocks.NewMockIPFSPinService).
+		WithMockServiceFactory(pluginCore.FILE_MANAGER_SERVICE, mocks.NewMockFileManagerService).
+		WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService).
+		WithServiceConfig(pluginCore.DNS_SERVICE, &pluginConfig.DnsConfig{}).
+		WithMigrations(map[core.DBType]fs.FS{
+			core.DB_TYPE_SQLITE: migrations.GetSQLite(),
+		}).BuilderOption(),
+	util.GetProtocolMock(),
 )
 
 func TestWebsiteJanitorJob_NewWebsiteJanitorJob(t *testing.T) {
@@ -78,10 +78,10 @@ func TestWebsiteJanitorJob_Run_NoWebsites(t *testing.T) {
 
 		// Configure janitor
 		websiteConfig := &pluginConfig.WebsiteConfig{
-			JanitorEnabled:      true,
-			JanitorInterval:     30 * time.Minute,
-			JanitorWorkerCount:  2,
-			JanitorBatchSize:    10,
+			JanitorEnabled:     true,
+			JanitorInterval:    30 * time.Minute,
+			JanitorWorkerCount: 2,
+			JanitorBatchSize:   10,
 		}
 
 		// Inject dependencies

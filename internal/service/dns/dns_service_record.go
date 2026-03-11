@@ -6,19 +6,19 @@ import (
 	"sort"
 	"strings"
 
-	apiDTO "go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	apiDTO "go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
+	powerdns "go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
-	powerdns "go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
 	"go.uber.org/zap"
 )
 
 // GetZoneRecords retrieves DNS records for a zone from PowerDNS
 // Returns list of DNSRecord representing PowerDNS RRSets with filtering applied
-func (s *DNSService) GetZoneRecords(ctx context.Context, zoneID uint, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*apiDTO.DNSRecord, int64, error) {
+func (s *DNSServiceDefault) GetZoneRecords(ctx context.Context, zoneID uint, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*apiDTO.DNSRecord, int64, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.GetZoneRecords")
 	defer span.End()
 
@@ -53,7 +53,7 @@ func (s *DNSService) GetZoneRecords(ctx context.Context, zoneID uint, filters []
 }
 
 // GetRRSet retrieves a specific DNS RRSet by name and type from PowerDNS
-func (s *DNSService) GetRRSet(ctx context.Context, zoneID uint, name string, recordType string) ([]*apiDTO.DNSRecord, error) {
+func (s *DNSServiceDefault) GetRRSet(ctx context.Context, zoneID uint, name string, recordType string) ([]*apiDTO.DNSRecord, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.GetRRSet")
 	defer span.End()
 
@@ -82,7 +82,7 @@ func (s *DNSService) GetRRSet(ctx context.Context, zoneID uint, name string, rec
 }
 
 // CreateRecord creates a new DNS record in PowerDNS via RRSet
-func (s *DNSService) CreateRecord(ctx context.Context, zoneID uint, name string, recordType string, content string, ttl uint) (*apiDTO.DNSRecord, error) {
+func (s *DNSServiceDefault) CreateRecord(ctx context.Context, zoneID uint, name string, recordType string, content string, ttl uint) (*apiDTO.DNSRecord, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.CreateRecord")
 	defer span.End()
 
@@ -119,7 +119,7 @@ func (s *DNSService) CreateRecord(ctx context.Context, zoneID uint, name string,
 }
 
 // UpdateRecord updates an existing DNS RRSet in PowerDNS
-func (s *DNSService) UpdateRecord(ctx context.Context, zoneID uint, name string, recordType string, records []string, ttl uint) ([]*apiDTO.DNSRecord, error) {
+func (s *DNSServiceDefault) UpdateRecord(ctx context.Context, zoneID uint, name string, recordType string, records []string, ttl uint) ([]*apiDTO.DNSRecord, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.UpdateRecord")
 	defer span.End()
 
@@ -164,7 +164,7 @@ func (s *DNSService) UpdateRecord(ctx context.Context, zoneID uint, name string,
 }
 
 // DeleteRecord deletes a DNS RRSet from PowerDNS
-func (s *DNSService) DeleteRecord(ctx context.Context, zoneID uint, name string, recordType string) error {
+func (s *DNSServiceDefault) DeleteRecord(ctx context.Context, zoneID uint, name string, recordType string) error {
 	ctx, span := core.TraceMethod(ctx, "DNSService.DeleteRecord")
 	defer span.End()
 
@@ -195,7 +195,7 @@ func (s *DNSService) DeleteRecord(ctx context.Context, zoneID uint, name string,
 }
 
 // BulkDeleteRecords deletes multiple DNS records in a single PowerDNS API call
-func (s *DNSService) BulkDeleteRecords(ctx context.Context, zoneID uint, userID uint, records []apiDTO.RecordIdentifier, dryRun bool) (*apiDTO.BulkDeleteResponse, error) {
+func (s *DNSServiceDefault) BulkDeleteRecords(ctx context.Context, zoneID uint, userID uint, records []apiDTO.RecordIdentifier, dryRun bool) (*apiDTO.BulkDeleteResponse, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.BulkDeleteRecords")
 	defer span.End()
 
@@ -356,7 +356,7 @@ func getPaginationRange(pagination queryutil.Pagination, total int) (start, end 
 // ImportZoneFile imports DNS records from a BIND zone file into a zone.
 // Supports three import modes: merge (add records, keep existing), replace (delete user records first), update (upsert behavior).
 // When dryRun is true, the method parses and validates but doesn't make actual API calls.
-func (s *DNSService) ImportZoneFile(ctx context.Context, zoneID uint, zoneFileContent string, importMode apiDTO.ImportMode, dryRun bool) (*apiDTO.ImportZoneResponse, error) {
+func (s *DNSServiceDefault) ImportZoneFile(ctx context.Context, zoneID uint, zoneFileContent string, importMode apiDTO.ImportMode, dryRun bool) (*apiDTO.ImportZoneResponse, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.ImportZoneFile")
 	defer span.End()
 

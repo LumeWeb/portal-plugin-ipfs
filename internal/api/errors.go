@@ -33,6 +33,7 @@ const (
 	ErrKeyUnauthorized          core.ErrorType = "UNAUTHORIZED"
 	ErrKeyDownloadQuotaExceeded core.ErrorType = "DOWNLOAD_QUOTA_EXCEEDED"
 	ErrKeyInvalidRequest        core.ErrorType = "INVALID_REQUEST"
+	ErrKeyInvalidIdentifier    core.ErrorType = "INVALID_IDENTIFIER"
 	ErrKeyPermissionDenied      core.ErrorType = "PERMISSION_DENIED"
 	ErrKeyDeleteFailed          core.ErrorType = "DELETE_FAILED"
 	ErrKeyUpdateFailed          core.ErrorType = "UPDATE_FAILED"
@@ -44,6 +45,10 @@ const (
 	ErrKeyInvalidDomainFormat    core.ErrorType = "INVALID_DOMAIN_FORMAT"
 	ErrKeyDuplicateRecord        core.ErrorType = "DUPLICATE_RECORD"
 	ErrKeyValidationFailed       core.ErrorType = "VALIDATION_FAILED"
+
+	// Website validation error types
+	ErrKeyInvalidCID            core.ErrorType = "INVALID_CID"
+	ErrKeyInvalidTarget         core.ErrorType = "INVALID_TARGET"
 )
 
 var _ router.ResponseError = (*IPFSError)(nil)
@@ -120,6 +125,7 @@ func init() {
 		ErrKeyUnauthorized:          {Key: ErrKeyUnauthorized, Message: "Access denied. Please check your credentials and try again."},
 		ErrKeyDownloadQuotaExceeded: {Key: ErrKeyDownloadQuotaExceeded, Message: "Download quota exceeded. Please try again later."},
 		ErrKeyInvalidRequest:        {Key: ErrKeyInvalidRequest, Message: "Invalid request parameter: %s"},
+		ErrKeyInvalidIdentifier:     {Key: ErrKeyInvalidIdentifier, Message: "Invalid identifier format"},
 		ErrKeyUnsupportedFormat:     {Key: ErrKeyUnsupportedFormat, Message: "Unsupported file format. Supported formats: CAR, ZIP"},
 		ErrKeyCorruptedFile:         {Key: ErrKeyCorruptedFile, Message: "Corrupted or invalid file format"},
 		ErrKeyEmptyZIP:              {Key: ErrKeyEmptyZIP, Message: "Empty ZIP file cannot be converted"},
@@ -131,6 +137,8 @@ func init() {
 		ErrKeyDuplicateRecord:       {Key: ErrKeyDuplicateRecord, Message: "Duplicate DNS record"},
 		ErrKeyValidationFailed:      {Key: ErrKeyValidationFailed, Message: "DNS validation failed"},
 		ErrKeyPermissionDenied:      {Key: ErrKeyPermissionDenied, Message: "Permission denied"},
+		ErrKeyInvalidCID:            {Key: ErrKeyInvalidCID, Message: "Invalid CID provided"},
+		ErrKeyInvalidTarget:         {Key: ErrKeyInvalidTarget, Message: "Invalid target hash or peer ID provided"},
 		ErrKeyDeleteFailed:          {Key: ErrKeyDeleteFailed, Message: "Failed to delete zone"},
 		ErrKeyUpdateFailed:          {Key: ErrKeyUpdateFailed, Message: "Failed to update zone"},
 	})
@@ -151,7 +159,10 @@ func init() {
 		ErrKeyZoneNotFound:          http.StatusNotFound,
 		ErrKeyDuplicateRecord:       http.StatusConflict,
 		ErrKeyValidationFailed:      http.StatusInternalServerError,
-		ErrKeyInvalidRequest:        http.StatusBadRequest,
+		ErrKeyInvalidRequest:        http.StatusUnprocessableEntity,
+		ErrKeyInvalidIdentifier:     http.StatusUnprocessableEntity,
+		ErrKeyInvalidCID:            http.StatusUnprocessableEntity,
+		ErrKeyInvalidTarget:         http.StatusUnprocessableEntity,
 		ErrKeyPermissionDenied:      http.StatusForbidden,
 		ErrKeyDeleteFailed:          http.StatusInternalServerError,
 		ErrKeyUpdateFailed:          http.StatusInternalServerError,

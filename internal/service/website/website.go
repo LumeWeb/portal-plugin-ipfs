@@ -12,11 +12,12 @@ import (
 
 	dnslink "github.com/dnslink-std/go"
 	"github.com/ipfs/go-cid"
+	"github.com/libp2p/go-libp2p/core/peer"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
-	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
+	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
 	"go.lumeweb.com/queryutil"
@@ -27,15 +28,22 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// Validation error types
+var (
+	ErrInvalidCID    = errors.New("invalid CID")
+	ErrInvalidIPNS   = errors.New("invalid IPNS name")
+	ErrInvalidTarget = errors.New("invalid target")
+	ErrInvalidDomain = errors.New("invalid domain")
+)
+
 // WebsiteServiceDefault implements the WebsiteService interface
 type WebsiteServiceDefault struct {
 	*core.BaseComponent
 	pinSvc           pluginCore.IPFSPinService
 	ipnsKeySvc       pluginCore.IPNSKeyService
-	ipnsPublisherSvc pluginCore.IPNSPublisherService
 	mailerSvc        core.MailerService
 	dnsSvc           pluginCore.DNSService
-	config           pluginConfig.WebsiteConfig
+	config           *pluginConfig.WebsiteConfig
 }
 
 // Ensure WebsiteServiceDefault implements the interface
@@ -51,11 +59,9 @@ func NewWebsiteService() (core.Service, []core.ContextBuilderOption, error) {
 			svc.ipnsKeySvc = core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 			svc.mailerSvc = core.GetService[core.MailerService](ctx, core.MAILER_SERVICE)
 			svc.dnsSvc = core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
-			svc.ipnsPublisherSvc = core.GetService[pluginCore.IPNSPublisherService](ctx, pluginCore.IPNS_PUBLISHER_SERVICE)
 
-			// Load configuration from protocol config
-			protocolConfig := core.GetProtocolConfig[pluginConfig.ProtocolConfig](ctx, internal.ProtocolName)
-			svc.config = protocolConfig.Website
+			// Load configuration from service config
+			svc.config = core.GetServiceConfig[*pluginConfig.WebsiteConfig](ctx, pluginCore.WEBSITE_SERVICE)
 
 			return nil
 		}),
@@ -66,6 +72,10 @@ func NewWebsiteService() (core.Service, []core.ContextBuilderOption, error) {
 
 func (s *WebsiteServiceDefault) ID() string {
 	return pluginCore.WEBSITE_SERVICE
+}
+
+func (s *WebsiteServiceDefault) GetConfig() (any, error) {
+	return &pluginConfig.WebsiteConfig{}, nil
 }
 
 // CreateWebsite creates a new website configuration
@@ -142,7 +152,7 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 						break
 					}
 				}
-				
+
 				// Create IPNS key if it doesn't exist
 				if ipnsKey == nil {
 					ipnsKey, err = s.ipnsKeySvc.CreateKey(ctx, website.UserID, keyName, 1)
@@ -170,10 +180,10 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				}
 
 				// Publish the IPFS CID to the IPNS key
-				if s.ipnsPublisherSvc != nil {
+				if s.ipnsKeySvc != nil {
 					// Use default TTL (24 hours)
 					ttl := 24 * time.Hour
-					err = s.ipnsPublisherSvc.PublishCID(ctx, ipnsKey.PeerID().String(), website.TargetHash(), ttl)
+					err = s.ipnsKeySvc.PublishCID(ctx, ipnsKey.PeerID().String(), website.TargetHash(), ttl)
 					if err != nil {
 						s.Logger().Warn("Failed to publish CID to IPNS key for managed DNS",
 							zap.Error(err),
@@ -192,8 +202,9 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				website.TargetType = string(pluginDb.WebsiteTargetTypeIPNS)
 				website.TargetMultihash = ipnsKey.PeerIDMultihash
 				website.CIDVersion = nil
+				website.CIDType = nil
 				website.IPNSKeyID = &ipnsKey.ID
-				
+
 				err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 					return tx.Save(website)
 				})
@@ -259,7 +270,7 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				zap.Uint("user_id", website.UserID),
 				zap.String("target_type", website.TargetType),
 				zap.String("target_hash", website.TargetHash()),
-				zap.Bool("dns_enabled", website.Enabled))
+				zap.Bool("enabled", website.Enabled))
 
 			// Send notification to admin
 			if err := s.notifyAdminWebsiteCreated(ctx, website, ""); err != nil {
@@ -463,9 +474,12 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 							_ = tx.AddError(fmt.Errorf("failed to decode CID: %w", err))
 							return tx
 						}
-						updates["target_multihash"] = c.Hash()
-						version := uint8(c.Version())
+						normalizedCid := encoding.NormalizeCid(c)
+						updates["target_multihash"] = normalizedCid.Hash()
+						version := uint8(normalizedCid.Version())
 						updates["cid_version"] = &version
+						codec := uint8(normalizedCid.Type())
+						updates["cid_type"] = &codec
 					} else {
 						target, err := pluginDb.NewIPNSTargetFromString(targetHashStr)
 						if err != nil {
@@ -474,7 +488,11 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 						}
 						updates["target_multihash"] = target.ToMultihash()
 						updates["cid_version"] = nil
+						updates["cid_type"] = nil
 					}
+
+					// Store the target hash for IPNS republishing
+					newTargetHash := targetHashStr
 
 					// Remove old target_hash from updates
 					delete(updates, "target_hash")
@@ -497,15 +515,11 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 							zap.Uint("website_id", websiteID),
 							zap.Uint("ipns_key_id", *website.IPNSKeyID))
 					} else {
-						// Get the new target hash (from updates, since website was just updated)
-						newTargetHash := oldTargetHash
-						if targetHashStr, ok := updates["target_hash"].(string); ok {
-							newTargetHash = targetHashStr
-						}
+						// newTargetHash was already captured before deletion
 
 						// Publish the new CID to the IPNS key
 						ttl := 24 * time.Hour
-						err = s.ipnsPublisherSvc.PublishCID(ctx, ipnsKey.PeerID().String(), newTargetHash, ttl)
+						err = s.ipnsKeySvc.PublishCID(ctx, ipnsKey.PeerID().String(), newTargetHash, ttl)
 						if err != nil {
 							s.Logger().Warn("Failed to republish new CID to IPNS key",
 								zap.Error(err),
@@ -755,8 +769,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				if err != nil {
 					// Check if this is an NXDOMAIN error (no DNS records exist)
 					// This typically means the user hasn't configured their DNS yet
-					var dnsErr dnslink.DNSRCodeError
-					if errors.As(err, &dnsErr) && dnsErr.DNSRCode == 3 {
+					if dnsErr, ok := errors.AsType[dnslink.DNSRCodeError](err); ok && dnsErr.DNSRCode == 3 {
 						s.Logger().Debug("DNS validation failed: no DNS records found (NXDOMAIN)",
 							zap.Error(err),
 							zap.String("domain", website.Domain),
@@ -935,7 +948,7 @@ func (s *WebsiteServiceDefault) validateDomain(domain string) error {
 	idna := idna.New()
 	asciiDomain, err := idna.ToASCII(domain)
 	if err != nil {
-		return fmt.Errorf("invalid domain name: %w", err)
+		return fmt.Errorf("%w: %v", ErrInvalidDomain, err)
 	}
 
 	// RFC 1035 compliant domain validation
@@ -955,16 +968,20 @@ func (s *WebsiteServiceDefault) validateTarget(targetType string, targetHash str
 		// Validate CID format
 		_, err := cid.Decode(targetHash)
 		if err != nil {
-			return fmt.Errorf("invalid CID: %w", err)
+			return fmt.Errorf("%w: %v", ErrInvalidCID, err)
 		}
 	case pluginDb.WebsiteTargetTypeIPNS:
-		// Validate IPNS name format (CIDv1 with libp2p-key codec)
+		// Validate IPNS name format (peer ID in base36 format)
 		_, err := cid.Decode(targetHash)
 		if err != nil {
-			return fmt.Errorf("invalid IPNS name: %w", err)
+			// If CID decode fails, try peer ID decode
+			_, err = peer.Decode(targetHash)
+			if err != nil {
+				return fmt.Errorf("%w: %v", ErrInvalidIPNS, err)
+			}
 		}
 	default:
-		return fmt.Errorf("invalid target type: %s", targetType)
+		return fmt.Errorf("%w: invalid type %s", ErrInvalidTarget, targetType)
 	}
 	return nil
 }
