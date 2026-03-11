@@ -8,15 +8,9 @@ import (
 	"testing"
 
 	"github.com/ipld/go-car/v2"
-	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
-	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
 	"go.lumeweb.com/portal/core"
-	"go.lumeweb.com/portal/service"
 
 	"github.com/stretchr/testify/require"
 	coreTesting "go.lumeweb.com/portal/core/testing"
@@ -35,33 +29,32 @@ func TestProcessCarIntegration(t *testing.T) {
 		{
 			name:         "Valid CAR file - Big Buck Bunny",
 			carFileName:  "../../testing/fixtures/cars/bbb.car",
-			expectedSize: 515008217,
-			rootCIDs:     []string{"bafybeiehmyjhx3ucuy4gejj5q3nqgrp2uaiqnebqnfvchal63bsnwlxg7y"},
+			expectedSize: 515027709,
+			rootCIDs:     []string{"QmbvEbKtzaZEtyXMvD5HDnQRpcYkg4hAj9xqNLsi7arTq3"},
 			expectError:  false,
 		},
 		{
 			name:         "Valid CAR file - DOCX",
-			carFileName:  "../../testing/fixtures/cars/docx.car", // Ensure this file exists
-			expectedSize: 34658,
-			rootCIDs:     []string{"bafybeie4meysywjfzp6a6d4jo4t2zz262qduvesub647ov5g2rvc4doas4"},
+			carFileName:  "../../testing/fixtures/cars/docx.car",
+			expectedSize: 34976,
+			rootCIDs:     []string{"QmNdr9DzL38nQyASPbvSuzkTeX7FSjojyW6EMbs81sC4iv"},
 			expectError:  false,
 		},
 		{
 			name:         "Valid CAR file - File Tree",
 			carFileName:  "../../testing/fixtures/cars/filetree.car",
-			expectedSize: 497705023,
-			rootCIDs:     []string{"bafybeiccfclkdtucu6y4yc5cpr6y3yuinr67svmii46v5cfcrkp47ihehy"},
+			expectedSize: 70200,
+			rootCIDs:     []string{"QmP68x398CKjjKSYHaqJr9iJdksM6TRTckhtcfw6HANt2F"},
 			expectError:  false,
 			runNode:      true,
 		},
-		// TODO: Create HAMT Tree dataset
-		/*		{
-				name:         "Valid CAR file - HAMT Tree",
-				carFileName:  "testdata/hamttree.car", // Ensure this file exists
-				expectedSize: 102400,
-				rootCIDs:     []string{"bafybeiaysi4s6lnjev27ln5icwm6tueaw2vdykrtjkwiphwekaywqhcjze"},
-				expectError:  false,
-			},*/
+		{
+			name:         "Valid CAR file - HAMT Tree",
+			carFileName:  "../../testing/fixtures/cars/hamttree.car",
+			expectedSize: 70252,
+			rootCIDs:     []string{"bafybeiafoftayzdd4qsi6keef373dinlrzyibxdqnct64ymvjusovgw2yq"},
+			expectError:  false,
+		},
 		{
 			name:         "Invalid CAR file",
 			carFileName:  "../../testing/fixtures/cars/invalid.car",
@@ -161,19 +154,7 @@ func TestProcessCarIntegration(t *testing.T) {
 					}
 				}
 			},
-				coreTesting.WithStatefulMockRenterService(),
-				coreTesting.WithServiceFactory(core.UPLOAD_SERVICE, service.NewMetadataService),
-				coreTesting.WithServiceFactory(core.STORAGE_SERVICE, service.NewStorageService),
-				coreTesting.WithServiceFactory(core.CRON_SERVICE, service.NewCronService),
-				coreTesting.WithServiceFactory(core.REQUEST_SERVICE, service.NewRequestService),
-				coreTesting.WithServiceFactory(core.WORKFLOW_SERVICE, service.NewWorkflowCoordinator),
-				coreTesting.WithServiceFactory(pluginCore.FILE_MANAGER_SERVICE, filemanager.NewFileManagerService),
-				coreTesting.WithServiceFactory(pluginCore.PIN_SERVICE, pin.NewPinService),
-				coreTesting.WithProtocol(internal.ProtocolName, protocol.NewProtocol),
-				coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{}),
-				coreTesting.WithSQLitePluginMigrations(
-					internal.ProtocolName, migrations.GetSQLite(),
-				),
+				GetStandardTestOptions()...,
 			)
 		})
 	}

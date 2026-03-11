@@ -92,8 +92,8 @@ func TestAnalyzeNode_RawData(t *testing.T) {
 		name     string
 		filename string
 	}{
-		{"data1", "data_1_0.block"},
-		{"data2", "data_2_0.block"},
+		{"data1024", "data_1024_0.block"},
+		{"data256000", "data_256000_0.block"},
 	}
 
 	for _, tt := range tests {
@@ -146,7 +146,9 @@ func TestAnalyzeNode_ProtobufData(t *testing.T) {
 
 			// Validate CID matches
 			if infoFile.CID != "" && infoFile.CID != "N/A" {
-				assert.Equal(t, infoFile.CID, info.CID.String(), "CID mismatch")
+				_cid, err := info.GetCID()
+				require.NoError(t, err)
+				assert.Equal(t, infoFile.CID, _cid.String(), "CID mismatch")
 			}
 
 			// Validate size - protobuf size should match the generated size from info file
@@ -231,18 +233,20 @@ func TestAnalyzeNode_UnixFSData(t *testing.T) {
 			switch expectedUnixFSType {
 			case pb.Data_File:
 				assert.Equal(t, infoFile.Size, info.BlockSize, "File data size should match info file")
-				assert.GreaterOrEqual(t, len(info.Links), 0, "File should have zero or more links")
+				assert.GreaterOrEqual(t, info.LinkCount(), 0, "File should have zero or more links")
 
 				if info.IsFileRoot {
 					assert.Greater(t, info.BlockSize, uint64(0), "File root block should have non-zero size")
-					assert.Greater(t, len(info.UnixFSBlockSizes), 0, "File root should have one or more block sizes")
+					assert.Greater(t, len(info.ChunkSizes), 0, "File root should have one or more block sizes")
 				}
 
 			case pb.Data_Directory:
 				if infoFile.CID != "" && infoFile.CID != "N/A" {
-					assert.Equal(t, infoFile.CID, info.CID.String(), "Directory CID should match info file")
+					_cid, err := info.GetCID()
+					require.NoError(t, err)
+					assert.Equal(t, infoFile.CID, _cid.String(), "Directory CID should match info file")
 				}
-				assert.Greater(t, len(info.Links), 0, "Directory should have one or more links")
+				assert.Greater(t, info.LinkCount(), 0, "Directory should have one or more links")
 				assert.Equal(t, infoFile.RawBlockSize, info.BlockSize, "Directory data size should match info file")
 				assert.Equal(t, infoFile.Size, info.BlockSize, "Directory data size should match info file")
 				assert.Equal(t, infoFile.MessageSize, info.DataSize, "Directory message size should match data size")

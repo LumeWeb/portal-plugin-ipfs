@@ -491,9 +491,6 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 						updates["cid_type"] = nil
 					}
 
-					// Store the target hash for IPNS republishing
-					newTargetHash := targetHashStr
-
 					// Remove old target_hash from updates
 					delete(updates, "target_hash")
 				}
@@ -515,7 +512,11 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 							zap.Uint("website_id", websiteID),
 							zap.Uint("ipns_key_id", *website.IPNSKeyID))
 					} else {
-						// newTargetHash was already captured before deletion
+						// Get the new target hash (from updates, since website was just updated)
+						newTargetHash := oldTargetHash
+						if targetHashStr, ok := updates["target_hash"].(string); ok {
+							newTargetHash = targetHashStr
+						}
 
 						// Publish the new CID to the IPNS key
 						ttl := 24 * time.Hour

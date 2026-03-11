@@ -43,7 +43,7 @@ var blockJobPool = sync.Pool{
 
 // BlockQueue manages the processing of blocks from a CAR file.
 type BlockQueue struct {
-	proto      *Protocol
+	proto      ProtoNode
 	logger     *core.Logger
 	wp         *workerpool.WorkerPool // Worker pool
 	ctx        context.Context
@@ -54,7 +54,7 @@ type BlockQueue struct {
 }
 
 // NewBlockQueue creates a new BlockQueue instance.
-func NewBlockQueue(coreCtx core.Context, proto *Protocol, logger *core.Logger) *BlockQueue {
+func NewBlockQueue(coreCtx core.Context, proto ProtoNode, logger *core.Logger) *BlockQueue {
 	ctx, cancel := context.WithTimeout(coreCtx.GetContext(), 30*time.Minute)
 
 	// Initialize bloom filter
@@ -154,9 +154,9 @@ func ProcessBlocks(ctx core.Context, processor BlockProcessor) ([]cid.Cid, []cid
 	if protoInterface == nil {
 		return nil, nil, fmt.Errorf("protocol %s not found", internal.ProtocolName)
 	}
-	proto, ok := protoInterface.(*Protocol)
+	proto, ok := protoInterface.(ProtoNode)
 	if !ok {
-		return nil, nil, fmt.Errorf("protocol %s has unexpected type", internal.ProtocolName)
+		return nil, nil, fmt.Errorf("protocol has unexpected type, expected ProtoNode")
 	}
 	logger := ctx.Logger()
 

@@ -23,7 +23,6 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
-	"go.lumeweb.com/portal/service"
 )
 
 var plugins = core.GetPlugins()
@@ -166,18 +165,16 @@ func TestIPFSPinningServiceCompliance(t *testing.T) {
 	},
 		coreTesting.TestComponents(coreTesting.ComponentHTTP, coreTesting.ComponentCron, coreTesting.ComponentDB),
 		coreTesting.CombineOptions(
-			GetCoreTestOptions(),
-			coreTesting.WithMockS3(),
-			coreTesting.WithHTTPService(),
-			coreTesting.WithServiceFactory(core.AUTH_SERVICE, service.NewAuthService),
-			coreTesting.WithEnvConfigOrDefault("core.domain", "", "localhost"),
-			coreTesting.WithPlugins(plugins...),
-			coreTesting.WithConfig("plugin.dashboard.api.subdomain", "account"),
-			coreTesting.WithAPIConfig("dashboard", &dashboard.APIConfig{
-				Subdomain: "account",
-			}),
-			coreTesting.WithConfig("core.secure", false),
-			coreTesting.WithErrorNamespaces(errorNS),
+			append(GetStandardTestOptions(),
+				coreTesting.WithEnvConfigOrDefault("core.domain", "", "localhost"),
+				coreTesting.WithPlugins(plugins...),
+				coreTesting.WithConfig("plugin.dashboard.api.subdomain", "account"),
+				coreTesting.WithAPIConfig("dashboard", &dashboard.APIConfig{
+					Subdomain: "account",
+				}),
+				coreTesting.WithConfig("core.secure", false),
+				coreTesting.WithErrorNamespaces(errorNS),
+			)...,
 		),
 	)
 }

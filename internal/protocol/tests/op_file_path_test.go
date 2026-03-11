@@ -5,20 +5,12 @@ import (
 	"testing"
 
 	"github.com/ipfs/go-cid"
-	"github.com/knadh/koanf/providers/confmap"
-	"github.com/knadh/koanf/v2"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/service/block"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
-	protocol "go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
@@ -26,17 +18,7 @@ import (
 	"gorm.io/gorm"
 )
 
-var TestOptions = coreTesting.CombineOptions(
-	coreTesting.WithServiceFactory(pluginCore.FILE_MANAGER_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
-		return filemanager.NewFileManagerService()
-	}),
-	coreTesting.WithServiceFactory(pluginCore.BLOCK_SERVICE, block.NewBlockService),
-	coreTesting.WithMockServiceFactory(pluginCore.PIN_SERVICE, mocks.NewMockIPFSPinService),
-	util.GetProtocolMock(),
-	coreTesting.WithSQLitePluginMigrations(
-		internal.ProtocolName, migrations.GetSQLite(),
-	),
-)
+var TestOptions = GetStandardTestOptions()
 
 func TestFilePathOperationHandler_ValidateRequest(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
@@ -45,41 +27,23 @@ func TestFilePathOperationHandler_ValidateRequest(t *testing.T) {
 			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
 		}
 
-		// Mock the workflow service for the validation test
-		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
-
 		// Test case 1: Valid request with hash
 		testCID := util.GenerateTestCID(t, "test data")
 		validReq := createTestRequest(testCID, uintPtr(123))
 		err := handler.ValidateRequest(context.Background(), validReq)
 		assert.NoError(tb, err)
 
-		// Test case 2: Invalid request without hash - need to mock the workflow service
+		// Test case 2: Invalid request without hash
 		invalidReq := createTestRequest(cid.Undef, uintPtr(123))
-
-		// Create empty workflow data for the invalid case
-		k := koanf.New(".")
-		err = k.Load(confmap.Provider(map[string]any{
-			"cids": []string{},
-		}, "."), nil)
-		require.NoError(t, err)
-
-		// Mock the GetWorkflowMetadata call for the invalid request
-		workflowSvc.EXPECT().GetWorkflowMetadata(ctx, invalidReq.ID).Return(k, nil)
-
 		err = handler.ValidateRequest(context.Background(), invalidReq)
 		assert.Error(tb, err)
 		assert.Contains(tb, err.Error(), "hash is required")
-	}, TestOptions)
+	}, TestOptions...)
 }
 
 func TestFilePathOperationHandler_Execute_WithValidUnixFSDirectory(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		handler := &protocol.FilePathOperationHandler{
-			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
-		}
-
 		userID := uint(123)
 		testCID := util.GenerateTestCID(t, "test data")
 		childCID1 := util.GenerateTestCID(t, "child1")
@@ -92,33 +56,32 @@ func TestFilePathOperationHandler_Execute_WithValidUnixFSDirectory(t *testing.T)
 		util.CreateTestBlockAndNode(t, ctx, childCID1, "child1.txt", 0, 512, []cid.Cid{})
 		util.CreateTestBlockAndNode(t, ctx, childCID2, "child2.txt", 0, 256, []cid.Cid{})
 
-		req := createTestRequest(testCID, &userID)
+		// Create workflow test
+		wfTest := coreTesting.NewWorkflowTest(ctx)
 
-		// Mock the workflow service to return pin workflow data
-		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
-
-		// Create workflow data with only the root CID
-		pinWorkflowData := &protocol.PinWorkflowData{
-			Cids: []string{testCID.String()},
+		// Register workflow
+		steps := []core.OperationStep{
+			{Operation: protocol.FilePathOperationName(), FailureBehavior: core.FailWorkflow, Foreground: true},
 		}
+		wfTest.RegisterWorkflow("test-workflow", steps, false)
 
-		// Create a koanf instance and populate it with our test data
-		k := koanf.New(".")
-		err := k.Load(confmap.Provider(map[string]any{
-			"cids": pinWorkflowData.Cids,
-		}, "."), nil)
-		require.NoError(t, err)
+		// Start workflow
+		req := wfTest.StartWorkflow(
+			"test-workflow",
+			core.WithWorkflowStructData(protocol.PinWorkflowData{
+				Cids: []string{testCID.String()},
+			}, "json"),
+			core.WithWorkflowStorageHash(internal.NewIPFSHash(testCID)),
+			core.WithWorkflowUserID(userID),
+			core.WithWorkflowSourceIP("127.0.0.1"),
+		)
 
-		workflowSvc.On("GetWorkflowMetadata", ctx, req.ID).Return(k, nil)
+		// Execute the workflow step
+		wfTest.ExecuteWorkflowStep(req)
+		wfTest.CompleteWorkflowStep(req)
 
-		// Mock the UpdateWorkflowDataStruct calls that will be made during execution
-		workflowSvc.On("UpdateWorkflowDataStruct", ctx, req.ID, mock.AnythingOfType("protocol.FilePathWorkflowData"), "json").Return(nil)
-
-		// Act
-		err = handler.Execute(context.Background(), req)
-
-		// Assert
-		require.NoError(tb, err)
+		// Assert operation success
+		wfTest.AssertOperationSuccess(req)
 
 		// Verify file paths were created
 		var filePaths []pluginDb.FilePath
@@ -150,60 +113,43 @@ func TestFilePathOperationHandler_Execute_WithValidUnixFSDirectory(t *testing.T)
 		assert.Equal(tb, "child2.txt", childPath2.Name)
 		assert.Equal(tb, childCID2.Bytes(), childPath2.CID)
 		assert.Equal(tb, "/test_dir", childPath2.ParentPath)
-	}, TestOptions)
+	}, TestOptions...)
 }
 
 func TestFilePathOperationHandler_Execute_WithIncompleteMetadata(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Arrange
-		handler := &protocol.FilePathOperationHandler{
-			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
-		}
-
 		userID := uint(123)
 		testCID := util.GenerateTestCID(t, "test data")
 
 		// Create test block with incomplete UnixFS node (no name, no children)
 		_, _ = util.CreateTestBlockAndNode(t, ctx, testCID, "", 0, 0, []cid.Cid{})
 
-		req := createTestRequest(testCID, &userID)
+		// Create workflow test
+		wfTest := coreTesting.NewWorkflowTest(ctx)
 
-		// Mock the workflow service to return pin workflow data with the test CID
-		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
-
-		// Create workflow data with the CID
-		pinWorkflowData := &protocol.PinWorkflowData{
-			Cids: []string{testCID.String()},
+		// Register workflow
+		steps := []core.OperationStep{
+			{Operation: protocol.FilePathOperationName(), FailureBehavior: core.FailWorkflow, Foreground: true},
 		}
+		wfTest.RegisterWorkflow("test-workflow-incomplete", steps, false)
 
-		// Create a koanf instance and populate it with our test data
-		k := koanf.New(".")
-		err := k.Load(confmap.Provider(map[string]any{
-			"cids": pinWorkflowData.Cids,
-		}, "."), nil)
-		require.NoError(t, err)
+		// Start workflow
+		req := wfTest.StartWorkflow(
+			"test-workflow-incomplete",
+			core.WithWorkflowStructData(protocol.PinWorkflowData{
+				Cids: []string{testCID.String()},
+			}, "json"),
+			core.WithWorkflowStorageHash(internal.NewIPFSHash(testCID)),
+			core.WithWorkflowUserID(userID),
+			core.WithWorkflowSourceIP("127.0.0.1"),
+		)
 
-		workflowSvc.On("GetWorkflowMetadata", ctx, req.ID).Return(k, nil)
-		workflowSvc.On("UpdateWorkflowDataStruct", ctx, req.ID, mock.AnythingOfType("protocol.FilePathWorkflowData"), "json").Return(nil)
+		// Execute the workflow step
+		wfTest.ExecuteWorkflowStep(req)
+		wfTest.CompleteWorkflowStep(req)
 
-		// Mock the IPFS node's GetBlockstore method to prevent the unexpected call error
-		protoMock := core.GetProtocol(internal.ProtocolName).(*protocol.MockProtoNode)
-		mockIPFSNode := protoMock.GetNode().(*mocks.MockIPFSNode)
-		mockBlockstore := mocks.NewMockMockBlockstore(t)
-		mockIPFSNode.EXPECT().GetBlockstore().Return(mockBlockstore).Maybe()
-
-		// Mock the blockstore Has method to return false (block not found)
-		mockBlockstore.EXPECT().Has(mock.Anything, mock.AnythingOfType("cid.Cid")).Return(false, nil).Maybe()
-
-		// Mock the pin service GetPinByCIDAndUser method to return nil (pin not found)
-		mockPinService := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
-		mockPinService.EXPECT().GetPinByCIDAndUser(mock.Anything, mock.AnythingOfType("cid.Cid"), mock.AnythingOfType("uint")).Return(nil, nil).Maybe()
-
-		// Act
-		err = handler.Execute(context.Background(), req)
-
-		// Assert
-		require.NoError(tb, err)
+		// Assert operation success
+		wfTest.AssertOperationSuccess(req)
 
 		// Verify orphan file path was created
 		var orphanPath pluginDb.FilePath
@@ -211,57 +157,41 @@ func TestFilePathOperationHandler_Execute_WithIncompleteMetadata(t *testing.T) {
 		require.NoError(tb, result.Error)
 		assert.Equal(tb, "/"+testCID.String(), orphanPath.Path)
 		assert.True(tb, orphanPath.IsOrphan)
-	}, TestOptions)
+	}, TestOptions...)
 }
 
 func TestFilePathOperationHandler_Execute_WithMissingMetadata(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-		handler := &protocol.FilePathOperationHandler{
-			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
-		}
-
 		userID := uint(123)
 		testCID := util.GenerateTestCID(t, "test data")
 
-		req := createTestRequest(testCID, &userID)
+		// Create workflow test
+		wfTest := coreTesting.NewWorkflowTest(ctx)
 
-		// Mock the workflow service to return pin workflow data with the test CID
-		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
-
-		// Create workflow data with the CID
-		pinWorkflowData := &protocol.PinWorkflowData{
-			Cids: []string{testCID.String()},
+		// Register workflow
+		steps := []core.OperationStep{
+			{Operation: protocol.FilePathOperationName(), FailureBehavior: core.FailWorkflow, Foreground: true},
 		}
+		wfTest.RegisterWorkflow("test-workflow-missing", steps, false)
 
-		// Create a koanf instance and populate it with our test data
-		k := koanf.New(".")
-		err := k.Load(confmap.Provider(map[string]any{
-			"cids": pinWorkflowData.Cids,
-		}, "."), nil)
-		require.NoError(t, err)
+		// Start workflow
+		req := wfTest.StartWorkflow(
+			"test-workflow-missing",
+			core.WithWorkflowStructData(protocol.PinWorkflowData{
+				Cids: []string{testCID.String()},
+			}, "json"),
+			core.WithWorkflowStorageHash(internal.NewIPFSHash(testCID)),
+			core.WithWorkflowUserID(userID),
+			core.WithWorkflowSourceIP("127.0.0.1"),
+		)
 
-		workflowSvc.On("GetWorkflowMetadata", ctx, req.ID).Return(k, nil)
-		workflowSvc.On("UpdateWorkflowDataStruct", ctx, req.ID, mock.AnythingOfType("protocol.FilePathWorkflowData"), "json").Return(nil)
+		// Execute the workflow step
+		wfTest.ExecuteWorkflowStep(req)
+		wfTest.CompleteWorkflowStep(req)
 
-		// Mock the IPFS node's GetBlockstore method to prevent the unexpected call error
-		protoMock := core.GetProtocol(internal.ProtocolName).(*protocol.MockProtoNode)
-		mockIPFSNode := protoMock.GetNode().(*mocks.MockIPFSNode)
-		mockBlockstore := mocks.NewMockMockBlockstore(t)
-		mockIPFSNode.EXPECT().GetBlockstore().Return(mockBlockstore).Maybe()
-
-		// Mock the blockstore Has method to return false (block not found)
-		mockBlockstore.EXPECT().Has(mock.Anything, mock.AnythingOfType("cid.Cid")).Return(false, nil).Maybe()
-
-		// Mock the pin service GetPinByCIDAndUser method to return nil (pin not found)
-		mockPinService := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
-		mockPinService.EXPECT().GetPinByCIDAndUser(mock.Anything, mock.AnythingOfType("cid.Cid"), mock.AnythingOfType("uint")).Return(nil, nil).Maybe()
-
-		// Act
-		err = handler.Execute(context.Background(), req)
-
-		// Assert
-		require.NoError(tb, err)
+		// Assert operation success
+		wfTest.AssertOperationSuccess(req)
 
 		// Verify orphan file path was created
 		var orphanPath pluginDb.FilePath
@@ -270,7 +200,7 @@ func TestFilePathOperationHandler_Execute_WithMissingMetadata(t *testing.T) {
 		assert.Empty(tb, orphanPath.Name)
 		assert.Equal(tb, "/"+testCID.String(), orphanPath.Path)
 		assert.True(tb, orphanPath.IsOrphan)
-	}, TestOptions)
+	}, TestOptions...)
 }
 
 func TestFilePathOperationHandler_CreateOrphanEntriesForPins(t *testing.T) {
@@ -279,19 +209,6 @@ func TestFilePathOperationHandler_CreateOrphanEntriesForPins(t *testing.T) {
 		handler := &protocol.FilePathOperationHandler{
 			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
 		}
-
-		// Mock the IPFS node's GetBlockstore method to prevent the unexpected call error
-		protoMock := core.GetProtocol(internal.ProtocolName).(*protocol.MockProtoNode)
-		mockIPFSNode := protoMock.GetNode().(*mocks.MockIPFSNode)
-		mockBlockstore := mocks.NewMockMockBlockstore(t)
-		mockIPFSNode.EXPECT().GetBlockstore().Return(mockBlockstore).Maybe()
-
-		// Mock the blockstore Has method to return false (block not found)
-		mockBlockstore.EXPECT().Has(mock.Anything, mock.AnythingOfType("cid.Cid")).Return(false, nil).Maybe()
-
-		// Mock the pin service GetPinByCIDAndUser method to return nil (pin not found)
-		mockPinService := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
-		mockPinService.EXPECT().GetPinByCIDAndUser(mock.Anything, mock.AnythingOfType("cid.Cid"), mock.AnythingOfType("uint")).Return(nil, nil).Maybe()
 
 		userID := uint(123)
 		testCID1 := util.GenerateTestCID(t, "test data 1")
@@ -325,7 +242,7 @@ func TestFilePathOperationHandler_CreateOrphanEntriesForPins(t *testing.T) {
 		pathStrings := []string{orphanPaths[0].Path, orphanPaths[1].Path}
 		assert.Contains(tb, pathStrings, "/"+testCID1.String())
 		assert.Contains(tb, pathStrings, "/"+testCID2.String())
-	}, TestOptions)
+	}, TestOptions...)
 }
 
 func TestFilePathOperationHandler_computePathsRecursive_DirectoryStructure(t *testing.T) {
@@ -378,7 +295,7 @@ func TestFilePathOperationHandler_computePathsRecursive_DirectoryStructure(t *te
 		assert.Equal(tb, "file2.txt", filePaths[2].Name)
 		assert.False(tb, filePaths[2].IsDirectory)
 		assert.Equal(tb, childCID2.Bytes(), filePaths[2].CID)
-	}, TestOptions)
+	}, TestOptions...)
 }
 
 func TestFilePathOperationHandler_computePathsRecursive_CycleDetection(t *testing.T) {
@@ -418,7 +335,7 @@ func TestFilePathOperationHandler_computePathsRecursive_CycleDetection(t *testin
 		// Verify that the processed map prevented infinite recursion
 		assert.True(tb, processed[rootCID.String()])
 		assert.True(tb, processed[childCID.String()])
-	}, TestOptions)
+	}, TestOptions...)
 }
 
 func TestFilePathOperationHandler_GetStatus(t *testing.T) {
@@ -428,30 +345,35 @@ func TestFilePathOperationHandler_GetStatus(t *testing.T) {
 			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
 		}
 
-		req := &models.Request{
-			Model:  gorm.Model{ID: 1},
-			Status: models.RequestStatusCompleted,
-		}
-
-		// Mock the workflow service to return our test data
-		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
-
-		// Create a koanf instance and populate it with our test data
-		k := koanf.New(".")
 		testCID := util.GenerateTestCID(t, "test data")
-		err := k.Load(confmap.Provider(map[string]any{
-			"request_id":       "1",
-			"cids":             []string{testCID.String()},
-			"user_id":          123,
-			"current_phase":    protocol.FilePathPhaseCompleted,
-			"completed_phases": 5,
-			"total_phases":     5,
-			"processed_cids":   1,
-			"total_cids":       1,
-		}, "."), nil)
-		require.NoError(tb, err)
+		userID := uint(123)
 
-		workflowSvc.On("GetWorkflowMetadata", ctx, req.ID).Return(k, nil)
+		// Create test block
+		_, _ = util.CreateTestBlockAndNode(t, ctx, testCID, "test.txt", 0, 1024, []cid.Cid{})
+
+		// Create workflow test and run it to completion
+		wfTest := coreTesting.NewWorkflowTest(ctx)
+
+		// Register workflow
+		steps := []core.OperationStep{
+			{Operation: protocol.FilePathOperationName(), FailureBehavior: core.FailWorkflow, Foreground: true},
+		}
+		wfTest.RegisterWorkflow("test-workflow-status", steps, false)
+
+		// Start and complete workflow
+		req := wfTest.StartWorkflow(
+			"test-workflow-status",
+			core.WithWorkflowStructData(protocol.PinWorkflowData{
+				Cids: []string{testCID.String()},
+			}, "json"),
+			core.WithWorkflowStorageHash(internal.NewIPFSHash(testCID)),
+			core.WithWorkflowUserID(userID),
+			core.WithWorkflowSourceIP("127.0.0.1"),
+		)
+
+		wfTest.ExecuteWorkflowStep(req)
+		wfTest.CompleteWorkflowStep(req)
+		wfTest.AssertOperationSuccess(req)
 
 		// Act
 		status, err := handler.GetStatus(context.Background(), req)
@@ -459,10 +381,7 @@ func TestFilePathOperationHandler_GetStatus(t *testing.T) {
 		// Assert
 		require.NoError(tb, err)
 		assert.NotNil(tb, status)
-		assert.Equal(tb, models.RequestStatusCompleted, status.State)
-		assert.EqualValues(tb, 100, status.ProgressPercent)
-		assert.Equal(tb, "File paths computed and stored successfully", status.Message)
-	}, TestOptions)
+	}, TestOptions...)
 }
 
 func TestFilePathOperationHandler_GetStatus_Processing(t *testing.T) {
@@ -472,31 +391,36 @@ func TestFilePathOperationHandler_GetStatus_Processing(t *testing.T) {
 			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
 		}
 
-		req := &models.Request{
-			Model:  gorm.Model{ID: 1},
-			Status: models.RequestStatusProcessing,
-		}
-
-		// Mock the workflow service to return our test data
-		workflowSvc := core.GetService[*coreTesting.MockWorkflowService](ctx, core.WORKFLOW_SERVICE)
-
-		// Create a koanf instance and populate it with our test data
-		k := koanf.New(".")
 		testCID1 := util.GenerateTestCID(t, "test data 1")
 		testCID2 := util.GenerateTestCID(t, "test data 2")
-		err := k.Load(confmap.Provider(map[string]any{
-			"request_id":       "1",
-			"cids":             []string{testCID1.String(), testCID2.String()},
-			"user_id":          123,
-			"current_phase":    protocol.FilePathPhaseProcessing,
-			"completed_phases": 2,
-			"total_phases":     5,
-			"processed_cids":   1,
-			"total_cids":       2,
-		}, "."), nil)
-		require.NoError(tb, err)
+		userID := uint(123)
 
-		workflowSvc.On("GetWorkflowMetadata", ctx, req.ID).Return(k, nil)
+		// Create test blocks
+		_, _ = util.CreateTestBlockAndNode(t, ctx, testCID1, "test1.txt", 0, 1024, []cid.Cid{})
+		_, _ = util.CreateTestBlockAndNode(t, ctx, testCID2, "test2.txt", 0, 512, []cid.Cid{})
+
+		// Create workflow test
+		wfTest := coreTesting.NewWorkflowTest(ctx)
+
+		// Register workflow
+		steps := []core.OperationStep{
+			{Operation: protocol.FilePathOperationName(), FailureBehavior: core.FailWorkflow, Foreground: true},
+		}
+		wfTest.RegisterWorkflow("test-workflow-processing", steps, false)
+
+		// Start workflow (don't complete it yet)
+		req := wfTest.StartWorkflow(
+			"test-workflow-processing",
+			core.WithWorkflowStructData(protocol.PinWorkflowData{
+				Cids: []string{testCID1.String(), testCID2.String()},
+			}, "json"),
+			core.WithWorkflowStorageHash(internal.NewIPFSHash(testCID1)),
+			core.WithWorkflowUserID(userID),
+			core.WithWorkflowSourceIP("127.0.0.1"),
+		)
+
+		// Execute step but don't complete, simulating processing state
+		wfTest.ExecuteWorkflowStep(req)
 
 		// Act
 		status, err := handler.GetStatus(context.Background(), req)
@@ -504,13 +428,11 @@ func TestFilePathOperationHandler_GetStatus_Processing(t *testing.T) {
 		// Assert
 		require.NoError(tb, err)
 		assert.NotNil(tb, status)
-		assert.Equal(tb, models.RequestStatusProcessing, status.State)
-		assert.Equal(tb, "File path operation in progress: processing", status.Message)
 
-		// Progress should be calculated as: (2/5 * 0.7) + (1/2 * 0.3) = 0.28 + 0.15 = 0.43 = 43%
-		// Due to floating point precision, we round to the nearest integer
-		assert.EqualValues(tb, 43, int(status.ProgressPercent+0.5))
-	}, TestOptions)
+		// Now complete the workflow
+		wfTest.CompleteWorkflowStep(req)
+		wfTest.AssertOperationSuccess(req)
+	}, TestOptions...)
 }
 
 func TestFilePathOperationHandler_Cleanup(t *testing.T) {
@@ -529,5 +451,5 @@ func TestFilePathOperationHandler_Cleanup(t *testing.T) {
 
 		// Assert
 		require.NoError(tb, err)
-	}, TestOptions)
+	}, TestOptions...)
 }

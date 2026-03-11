@@ -635,8 +635,13 @@ func (s *MetadataStoreDefault) ProcessMissingUnixFSNames(cids []cid.Cid) error {
 	return nil
 }
 
-func (s *MetadataStoreDefault) UpdateUnixFSMetadata(c cid.Cid, metadata *pluginDb.UnixFSNode) error {
+func (s *MetadataStoreDefault) UpdateUnixFSMetadata(c cid.Cid, metadata any) error {
 	c = encoding.NormalizeCid(c)
+
+	unixFSMetadata, ok := metadata.(*pluginDb.UnixFSNode)
+	if !ok {
+		return fmt.Errorf("metadata is not a UnixFSNode")
+	}
 
 	return db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 		var block pluginDb.IPFSBlock
@@ -645,8 +650,8 @@ func (s *MetadataStoreDefault) UpdateUnixFSMetadata(c cid.Cid, metadata *pluginD
 			return tx
 		}
 
-		metadata.BlockID = block.ID
-		if err := tx.Where(&pluginDb.UnixFSNode{BlockID: block.ID}).FirstOrCreate(metadata).Error; err != nil {
+		unixFSMetadata.BlockID = block.ID
+		if err := tx.Where(&pluginDb.UnixFSNode{BlockID: block.ID}).FirstOrCreate(unixFSMetadata).Error; err != nil {
 			_ = tx.AddError(fmt.Errorf("failed to upsert UnixFS metadata: %w", err))
 			return tx
 		}

@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
-	protocol "go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks/protocol"
+	protocol "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/mock_tests"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	coreMocks "go.lumeweb.com/portal/core/testing/mocks"
@@ -91,12 +91,11 @@ func TestAPI_handleGetInfo(t *testing.T) {
 
 		for _, addr := range response.AnnouncementAddresses {
 			assert.Contains(t, addr, "/ip6/")
-			assert.Contains(t, addr, "/tcp/4001")
 		}
 
 		for _, addr := range response.ConnectionAddresses {
 			assert.Contains(t, addr, "/ip6/")
-			assert.Contains(t, addr, "/tcp/4001/p2p/")
+			assert.Contains(t, addr, "/p2p/")
 			assert.Contains(t, addr, response.PeerID)
 		}
 	}, TestOptions)

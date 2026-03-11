@@ -31,7 +31,7 @@ func TestBlockStore_Get(t *testing.T) {
 		expectedBlock := blocks.NewBlock([]byte(testData))
 
 		// Mock the metadata's Size method (called for quota validation)
-		mockMetadata.EXPECT().Size(testCid).Return(uint64(len(testData)), nil).Once()
+		mockMetadata.EXPECT().Size(mock.Anything, testCid).Return(uint64(len(testData)), nil).Once()
 
 		// Mock the downloader's Get method
 		mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(expectedBlock, nil).Once()
@@ -58,8 +58,8 @@ func TestBlockStore_GetSize(t *testing.T) {
 		expectedSize := uint64(1234)
 
 		// Mock the metadata's Size method
-		mockMetadata.EXPECT().BlockExists(testCid).Return(nil).Once()
-		mockMetadata.EXPECT().Size(testCid).Return(expectedSize, nil).Once()
+		mockMetadata.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
+		mockMetadata.EXPECT().Size(mock.Anything, testCid).Return(expectedSize, nil).Once()
 
 		// Act
 		size, err := bs.GetSize(context.Background(), testCid)
@@ -83,7 +83,7 @@ func TestBlockStore_GetSize_BlockExistsError(t *testing.T) {
 		expectedError := errors.New("block does not exist")
 
 		// Mock the metadata's BlockExists method to return an error
-		mockMetadata.EXPECT().BlockExists(testCid).Return(expectedError).Once()
+		mockMetadata.EXPECT().BlockExists(mock.Anything, testCid).Return(expectedError).Once()
 
 		// Act
 		_, err = bs.GetSize(context.Background(), testCid)
@@ -107,8 +107,8 @@ func TestBlockStore_GetSize_SizeError(t *testing.T) {
 		expectedError := errors.New("failed to get size")
 
 		// Mock the metadata's Size method to return an error
-		mockMetadata.EXPECT().BlockExists(testCid).Return(nil).Once()
-		mockMetadata.EXPECT().Size(testCid).Return(0, expectedError).Once()
+		mockMetadata.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
+		mockMetadata.EXPECT().Size(mock.Anything, testCid).Return(0, expectedError).Once()
 
 		// Act
 		_, err = bs.GetSize(context.Background(), testCid)
@@ -131,7 +131,7 @@ func TestBlockStore_Has(t *testing.T) {
 		testCid := generateCid(t, testData)
 
 		// Mock the metadata's BlockExists method
-		mockMetadata.EXPECT().BlockExists(testCid).Return(nil).Once()
+		mockMetadata.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
 
 		// Act
 		exists, err := bs.Has(context.Background(), testCid)
@@ -155,7 +155,7 @@ func TestBlockStore_Has_NotFound(t *testing.T) {
 		expectedError := errors.New("not found")
 
 		// Mock the metadata's BlockExists method to return an error
-		mockMetadata.EXPECT().BlockExists(testCid).Return(expectedError).Once()
+		mockMetadata.EXPECT().BlockExists(mock.Anything, testCid).Return(expectedError).Once()
 
 		// Act
 		exists, err := bs.Has(context.Background(), testCid)
@@ -186,7 +186,7 @@ func TestBlockStore_Put(t *testing.T) {
 		mockStorage.EXPECT().UploadObject(mock.Anything, mock.Anything).Return(nil, nil).Once()
 
 		// Mock the metadata's Pin method
-		mockMetadata.EXPECT().Pin(mock.Anything).Return(nil).Once()
+		mockMetadata.EXPECT().Pin(mock.Anything, mock.Anything).Return(nil).Once()
 
 		// Act
 		err = bs.Put(context.Background(), testBlock)
@@ -244,7 +244,7 @@ func TestBlockStore_Put_PinError(t *testing.T) {
 		mockStorage.EXPECT().UploadObject(mock.Anything, mock.Anything).Return(nil, nil).Once()
 
 		// Mock the metadata's Pin method to return an error
-		mockMetadata.EXPECT().Pin(mock.Anything).Return(expectedError).Once()
+		mockMetadata.EXPECT().Pin(mock.Anything, mock.Anything).Return(expectedError).Once()
 
 		// Act
 		err = bs.Put(context.Background(), testBlock)
@@ -269,7 +269,7 @@ func TestBlockStore_DeleteBlock(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Mock the metadata's Unpin method
-		mockMetadata.EXPECT().Unpin(testCid).Return(nil).Once()
+		mockMetadata.EXPECT().Unpin(mock.Anything, testCid).Return(nil).Once()
 
 		// Mock the storage's DeleteObject call
 		mockStorage.EXPECT().DeleteObject(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
@@ -296,7 +296,7 @@ func TestBlockStore_DeleteBlock_UnpinError(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Mock the metadata's Unpin method to return an error
-		mockMetadata.EXPECT().Unpin(testCid).Return(expectedError).Once()
+		mockMetadata.EXPECT().Unpin(mock.Anything, testCid).Return(expectedError).Once()
 
 		// Act
 		err = bs.DeleteBlock(context.Background(), testCid)
@@ -333,7 +333,7 @@ func TestBlockStore_PutMany(t *testing.T) {
 		mockStorage.EXPECT().UploadObject(mock.Anything, mock.Anything).Return(nil, nil).Times(2)
 
 		// Mock the metadata's Pin method for each block
-		mockMetadata.EXPECT().Pin(mock.Anything).Return(nil).Times(2)
+		mockMetadata.EXPECT().Pin(mock.Anything, mock.Anything).Return(nil).Times(2)
 
 		// Act
 		err = bs.PutMany(context.Background(), _blocks)
@@ -393,8 +393,8 @@ func TestBlockStore_AllKeysChan(t *testing.T) {
 		expectedCIDs := []cid.Cid{testCid1, testCid2}
 
 		// Mock the metadata's Pinned method
-		mockMetadata.EXPECT().Pinned(0, 1000).Return(expectedCIDs, nil).Once()
-		mockMetadata.EXPECT().Pinned(1000, 1000).Return([]cid.Cid{}, nil).Once()
+		mockMetadata.EXPECT().Pinned(mock.Anything, 0, 1000).Return(expectedCIDs, nil).Once()
+		mockMetadata.EXPECT().Pinned(mock.Anything, 1000, 1000).Return([]cid.Cid{}, nil).Once()
 
 		// Act
 		ch, err := bs.AllKeysChan(context.Background())
@@ -422,7 +422,7 @@ func TestBlockStore_AllKeysChan_MetadataError(t *testing.T) {
 		expectedError := errors.New("failed to get pinned CIDs")
 
 		// Mock the metadata's Pinned method to return an error
-		mockMetadata.EXPECT().Pinned(0, 1000).Return(nil, expectedError).Once()
+		mockMetadata.EXPECT().Pinned(mock.Anything, 0, 1000).Return(nil, expectedError).Once()
 
 		// Act
 		ch, err := bs.AllKeysChan(context.Background())
@@ -471,7 +471,7 @@ func TestBlockStore_VirtualReadEnabled(t *testing.T) {
 		readCtx := store.VirtualReadOption(context.Background(), true)
 
 		// Test Get
-		mockDownloader.EXPECT().Get(readCtx, testCid).Return(testBlock, nil).Once()
+		mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(testBlock, nil).Once()
 		block, err := bs.Get(readCtx, testCid)
 		require.NoError(tb, err)
 		assert.Equal(tb, testBlock, block)
@@ -482,7 +482,7 @@ func TestBlockStore_VirtualReadEnabled(t *testing.T) {
 		assert.False(tb, has)
 
 		// Test GetSize
-		mockDownloader.EXPECT().Get(readCtx, testCid).Return(testBlock, nil).Once()
+		mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(testBlock, nil).Once()
 		size, err := bs.GetSize(readCtx, testCid)
 		require.NoError(tb, err)
 		assert.Equal(tb, len(testData), size)
@@ -524,39 +524,39 @@ func TestBlockStore_VirtualReadDisabled(t *testing.T) {
 		normalCtx := context.Background()
 
 		// Test Get
-		mockMetadata.EXPECT().Size(testCid).Return(uint64(len(testData)), nil).Once()
-		mockDownloader.EXPECT().Get(normalCtx, testCid).Return(testBlock, nil).Once()
+		mockMetadata.EXPECT().Size(mock.Anything, testCid).Return(uint64(len(testData)), nil).Once()
+		mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(testBlock, nil).Once()
 		block, err := bs.Get(normalCtx, testCid)
 		require.NoError(tb, err)
 		assert.Equal(tb, testBlock, block)
 
 		// Test Has
-		mockMetadata.EXPECT().BlockExists(testCid).Return(nil).Once()
+		mockMetadata.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
 		has, err := bs.Has(normalCtx, testCid)
 		require.NoError(tb, err)
 		assert.True(tb, has)
 
 		// Test GetSize
-		mockMetadata.EXPECT().BlockExists(testCid).Return(nil).Once()
-		mockMetadata.EXPECT().Size(testCid).Return(uint64(len(testData)), nil).Once()
+		mockMetadata.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
+		mockMetadata.EXPECT().Size(mock.Anything, testCid).Return(uint64(len(testData)), nil).Once()
 		size, err := bs.GetSize(normalCtx, testCid)
 		require.NoError(tb, err)
 		assert.Equal(tb, len(testData), size)
 
 		// Test Put
 		mockStorage.EXPECT().UploadObject(mock.Anything, mock.Anything).Return(nil, nil).Once()
-		mockMetadata.EXPECT().Pin(mock.Anything).Return(nil).Once()
+		mockMetadata.EXPECT().Pin(mock.Anything, mock.Anything).Return(nil).Once()
 		err = bs.Put(normalCtx, testBlock)
 		require.NoError(tb, err)
 
 		// Test DeleteBlock
-		mockMetadata.EXPECT().Unpin(testCid).Return(nil).Once()
+		mockMetadata.EXPECT().Unpin(mock.Anything, testCid).Return(nil).Once()
 		mockStorage.EXPECT().DeleteObject(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 		err = bs.DeleteBlock(normalCtx, testCid)
 		require.NoError(tb, err)
 
 		// Test AllKeysChan
-		mockMetadata.EXPECT().Pinned(0, 1000).Return([]cid.Cid{}, nil).Once()
+		mockMetadata.EXPECT().Pinned(mock.Anything, 0, 1000).Return([]cid.Cid{}, nil).Once()
 		ch, err := bs.AllKeysChan(normalCtx)
 		require.NoError(tb, err)
 		_, ok := <-ch
@@ -578,7 +578,7 @@ func TestBlockStore_AllKeysChan_ContextDone(t *testing.T) {
 		ccancel()
 
 		// Mock the initial Pinned call that will happen in the goroutine
-		mockMetadata.EXPECT().Pinned(0, 1000).Return([]cid.Cid{}, nil).Once()
+		mockMetadata.EXPECT().Pinned(mock.Anything, 0, 1000).Return([]cid.Cid{}, nil).Once()
 
 		// Act
 		ch, err := bs.AllKeysChan(cctx)

@@ -7,67 +7,17 @@ import (
 	"net/http"
 	"time"
 
-	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/api"
-	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/service/block"
-	filemanager "go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/service/upload"
-	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/plugin"
 	coreTesting "go.lumeweb.com/portal/core/testing"
-	"go.lumeweb.com/portal/service"
+	serviceTesting "go.lumeweb.com/portal/service/testing"
 )
 
-func GetCoreTestOptions() []coreTesting.TestContextBuilderOption {
+func GetStandardTestOptions() []coreTesting.TestContextBuilderOption {
 	return []coreTesting.TestContextBuilderOption{
-		coreTesting.WithStatefulMockRenterService(),
-		coreTesting.WithServiceFactory(core.UPLOAD_SERVICE, service.NewMetadataService),
-		coreTesting.WithServiceFactory(core.PIN_SERVICE, service.NewPinService),
-		coreTesting.WithServiceFactory(core.STORAGE_SERVICE, service.NewStorageService),
-		coreTesting.WithServiceFactory(core.REQUEST_SERVICE, service.NewRequestService),
-		coreTesting.WithServiceFactory(core.WORKFLOW_SERVICE, service.NewWorkflowCoordinator),
-		coreTesting.WithServiceFactory(core.USER_SERVICE, service.NewUserService),
-		coreTesting.WithMockS3(),
-	}
-}
-
-func GetPluginTestOptions() []coreTesting.TestContextBuilderOption {
-	return []coreTesting.TestContextBuilderOption{
-		coreTesting.WithServiceFactory(pluginCore.FILE_MANAGER_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
-			return filemanager.NewFileManagerService()
-		}),
-		coreTesting.WithServiceFactory(pluginCore.PIN_SERVICE, pin.NewPinService),
-		coreTesting.WithServiceFactory(pluginCore.BLOCK_SERVICE, block.NewBlockService),
-
-		coreTesting.WithServiceFactory(pluginCore.UPLOAD_SERVICE, upload.NewUploadService),
-		coreTesting.WithProtocol(internal.ProtocolName, protocol.NewProtocol),
-		coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{}),
-	}
-}
-
-func GetCommonTestOptions() []coreTesting.TestContextBuilderOption {
-	return []coreTesting.TestContextBuilderOption{coreTesting.CombineOptions(GetCoreTestOptions(), GetPluginTestOptions())}
-}
-
-func GetDbTestOptions() []coreTesting.TestContextBuilderOption {
-	return []coreTesting.TestContextBuilderOption{
-		coreTesting.WithSQLitePluginMigrations(
-			internal.ProtocolName, migrations.GetSQLite(),
-		),
-	}
-}
-
-func GetTUSUploadTestOptions() []coreTesting.TestContextBuilderOption {
-	return []coreTesting.TestContextBuilderOption{
-		coreTesting.CombineOptions(GetCommonTestOptions(),
-			GetDbTestOptions(),
-			coreTesting.WithServiceFactory(core.TUS_SERVICE, service.NewTUSService),
-			coreTesting.WithAPI(internal.ProtocolName, api.NewAPI),
-			coreTesting.WithAPIConfig(internal.ProtocolName, &pluginConfig.APIConfig{})),
+		serviceTesting.PresetE2E(),
+		coreTesting.WithConfig("core.mail.host", "localhost"),
+		coreTesting.WithConfig("core.mail.port", 25),
+		coreTesting.WithPlugins(plugin.GetPluginInfoWithTemplates(nil)),
 	}
 }
 

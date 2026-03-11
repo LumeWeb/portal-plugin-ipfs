@@ -46,7 +46,7 @@ func TestBlockDownloader(t *testing.T) {
 		testCid := cid.NewCidV1(cid.Raw, mh)
 
 		// Mock the BlockExists call
-		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
+		mockStore.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
 
 		// Mock the DownloadObjectWithOptions call - create a new reader for each call
 		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
@@ -55,8 +55,8 @@ func TestBlockDownloader(t *testing.T) {
 			})
 
 		// Mock the BlockSiblings and BlockChildren calls
-		mockStore.EXPECT().BlockSiblings(testCid, 64).Return([]cid.Cid{}, nil).Maybe()
-		mockStore.EXPECT().BlockChildren(testCid, mock.Anything).Return([]cid.Cid{}, nil).Maybe()
+		mockStore.EXPECT().BlockSiblings(mock.Anything, testCid, 64).Return([]cid.Cid{}, nil).Maybe()
+		mockStore.EXPECT().BlockChildren(mock.Anything, testCid, mock.Anything).Return([]cid.Cid{}, nil).Maybe()
 
 		// Call Get
 		block, err := bd.Get(context.Background(), testCid)
@@ -83,7 +83,7 @@ func TestBlockDownloader_BlockExistsError(t *testing.T) {
 		testCid := cid.NewCidV1(cid.Raw, mh)
 
 		// Mock the BlockExists call to return an error
-		mockStore.EXPECT().BlockExists(testCid).Return(fmt.Errorf("block does not exist")).Once()
+		mockStore.EXPECT().BlockExists(mock.Anything, testCid).Return(fmt.Errorf("block does not exist")).Once()
 
 		// Call Get
 		block, err := bd.Get(context.Background(), testCid)
@@ -111,7 +111,7 @@ func TestBlockDownloader_DownloadObjectWithOptionsError(t *testing.T) {
 		testCid := cid.NewCidV1(cid.Raw, mh)
 
 		// Mock the BlockExists call
-		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
+		mockStore.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
 
 		// Mock the DownloadObjectWithOptions call to return an error
 		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
@@ -143,15 +143,15 @@ func TestBlockDownloader_DownloadWorker_QueueRelated(t *testing.T) {
 		testCid := cid.NewCidV1(cid.Raw, mh)
 
 		// Mock the BlockExists call
-		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
+		mockStore.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
 
 		// Mock the DownloadObjectWithOptions call
 		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(&mockReadCloser{Reader: strings.NewReader("test data")}, nil).Once()
 
 		// Mock the BlockSiblings and BlockChildren calls
-		mockStore.EXPECT().BlockSiblings(testCid, 64).Return([]cid.Cid{}, nil).Once()
-		mockStore.EXPECT().BlockChildren(testCid, mock.Anything).Return([]cid.Cid{}, nil).Once()
+		mockStore.EXPECT().BlockSiblings(mock.Anything, testCid, 64).Return([]cid.Cid{}, nil).Once()
+		mockStore.EXPECT().BlockChildren(mock.Anything, testCid, mock.Anything).Return([]cid.Cid{}, nil).Once()
 
 		// Call Get
 		_, err = bd.Get(context.Background(), testCid)
@@ -183,8 +183,8 @@ func TestBlockDownloader_PriorityBehavior(t *testing.T) {
 		cid2 := cid.NewCidV1(cid.Raw, mh2)
 
 		// Mock BlockExists to return nil
-		mockStore.EXPECT().BlockExists(cid1).Return(nil).Once()
-		mockStore.EXPECT().BlockExists(cid2).Return(nil).Once()
+		mockStore.EXPECT().BlockExists(mock.Anything, cid1).Return(nil).Once()
+		mockStore.EXPECT().BlockExists(mock.Anything, cid2).Return(nil).Once()
 
 		// Mock DownloadObjectWithOptions calls in order we expect them to be processed
 		// (high priority first, then low priority)
@@ -201,8 +201,8 @@ func TestBlockDownloader_PriorityBehavior(t *testing.T) {
 			}).Times(2)
 
 		// Mock BlockSiblings and BlockChildren to return empty slices
-		mockStore.EXPECT().BlockSiblings(mock.Anything, 64).Return([]cid.Cid{}, nil)
-		mockStore.EXPECT().BlockChildren(mock.Anything, mock.Anything).Return([]cid.Cid{}, nil)
+		mockStore.EXPECT().BlockSiblings(mock.Anything, mock.Anything, 64).Return([]cid.Cid{}, nil)
+		mockStore.EXPECT().BlockChildren(mock.Anything, mock.Anything, mock.Anything).Return([]cid.Cid{}, nil)
 
 		// Queue cid1 with low priority (should be processed second)
 		cid1Done := make(chan struct{})
@@ -276,10 +276,12 @@ func TestBlockDownloader_ConcurrentGet(t *testing.T) {
 			}).Times(numRoutines)
 
 		// Mock the BlockSiblings and BlockChildren calls for all CIDs
+		// Using Maybe() because queueRelated runs in a separate goroutine and may not
+		// complete before the test finishes (race condition with wg.Wait())
 		for _, td := range testData {
-			mockStore.EXPECT().BlockSiblings(td.cid, 64).Return([]cid.Cid{}, nil)
-			mockStore.EXPECT().BlockChildren(td.cid, mock.Anything).Return([]cid.Cid{}, nil)
-			mockStore.EXPECT().BlockExists(td.cid).Return(nil)
+			mockStore.EXPECT().BlockSiblings(mock.Anything, td.cid, 64).Return([]cid.Cid{}, nil).Maybe()
+			mockStore.EXPECT().BlockChildren(mock.Anything, td.cid, mock.Anything).Return([]cid.Cid{}, nil).Maybe()
+			mockStore.EXPECT().BlockExists(mock.Anything, td.cid).Return(nil)
 		}
 
 		// Configure the BlockDownloaderDefault
@@ -319,7 +321,7 @@ func TestBlockDownloader_HashMismatch(t *testing.T) {
 		testCid := cid.NewCidV1(cid.Raw, mh)
 
 		// Mock the BlockExists call
-		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
+		mockStore.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
 
 		// Mock the DownloadObjectWithOptions call to return incorrect data
 		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
@@ -350,7 +352,7 @@ func TestBlockDownloader_VerifyError(t *testing.T) {
 		testCid := cid.NewCidV1(cid.Raw, mh)
 
 		// Mock the BlockExists call
-		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
+		mockStore.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
 
 		// Mock the DownloadObjectWithOptions call
 		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
@@ -382,7 +384,7 @@ func TestBlockDownloader_ReadError(t *testing.T) {
 		testCid := cid.NewCidV1(cid.Raw, mh)
 
 		// Mock the BlockExists call
-		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
+		mockStore.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
 
 		// Mock the DownloadObjectWithOptions call to return a reader that errors
 		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
@@ -419,14 +421,14 @@ func TestBlockDownloader_QueueRelated_BlockSiblingsError(t *testing.T) {
 		testCid := cid.NewCidV1(cid.Raw, mh)
 
 		// Mock the BlockExists call
-		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
+		mockStore.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
 
 		// Mock the DownloadObjectWithOptions call
 		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(&mockReadCloser{Reader: strings.NewReader("test data")}, nil).Once()
 
 		// Mock BlockSiblings to return an error when queueRelated is called
-		mockStore.EXPECT().BlockSiblings(testCid, 64).Return([]cid.Cid{}, fmt.Errorf("siblings error")).Once()
+		mockStore.EXPECT().BlockSiblings(mock.Anything, testCid, 64).Return([]cid.Cid{}, fmt.Errorf("siblings error")).Once()
 
 		// Call Get which will trigger queueRelated for high priority downloads
 		block, err := bd.Get(context.Background(), testCid)
@@ -455,17 +457,17 @@ func TestBlockDownloader_QueueRelated_BlockChildrenError(t *testing.T) {
 		testCid := cid.NewCidV1(cid.Raw, mh)
 
 		// Mock the BlockExists call
-		mockStore.EXPECT().BlockExists(testCid).Return(nil).Once()
+		mockStore.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
 
 		// Mock the DownloadObjectWithOptions call
 		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(&mockReadCloser{Reader: strings.NewReader("test data")}, nil).Once()
 
 		// Mock BlockSiblings to return empty slice
-		mockStore.EXPECT().BlockSiblings(testCid, 64).Return([]cid.Cid{}, nil).Once()
+		mockStore.EXPECT().BlockSiblings(mock.Anything, testCid, 64).Return([]cid.Cid{}, nil).Once()
 
 		// Mock BlockChildren to return an error when queueRelated is called
-		mockStore.EXPECT().BlockChildren(testCid, mock.Anything).Return([]cid.Cid{}, fmt.Errorf("children error")).Once()
+		mockStore.EXPECT().BlockChildren(mock.Anything, testCid, mock.Anything).Return([]cid.Cid{}, fmt.Errorf("children error")).Once()
 
 		// Call Get which will trigger queueRelated for high priority downloads
 		block, err := bd.Get(context.Background(), testCid)

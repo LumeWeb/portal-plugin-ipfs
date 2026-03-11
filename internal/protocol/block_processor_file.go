@@ -238,6 +238,9 @@ func (fp *FileBlockProcessor) Release() {
 			zap.String("filePath", fp.filePath))
 	}
 
+	// Close the base processor first (handles cleanup, context cancellation, and waits for background goroutines)
+	fp.Close()
+
 	// Close the file reader if it's still open
 	if fp.fileReader != nil {
 		if err := fp.fileReader.Close(); err != nil {
@@ -249,9 +252,6 @@ func (fp *FileBlockProcessor) Release() {
 		}
 		fp.fileReader = nil
 	}
-
-	// Close the base processor (handles cleanup, context cancellation, etc.)
-	fp.Close()
 
 	// Close the blockstore
 	if fp.blockstore != nil {

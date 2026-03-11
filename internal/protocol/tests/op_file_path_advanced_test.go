@@ -102,5 +102,5 @@ func TestFilePathOperationHandler_ComputePathsRecursive_MultiLevelDirectory(t *t
 		assert.True(tb, processed[subdir2CID.String()])
 		assert.True(tb, processed[file1CID.String()])
 		assert.True(tb, processed[file2CID.String()])
-	}, TestOptions)
+	}, TestOptions...)
 }
