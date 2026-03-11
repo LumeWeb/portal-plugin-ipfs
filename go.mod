@@ -44,7 +44,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tus/tusd/v2 v2.9.1
 	go.lumeweb.com/httputil v0.5.4
-	go.lumeweb.com/portal v0.4.2-0.20260311095405-d571e32fe6ea
+	go.lumeweb.com/portal v0.4.2-0.20260311123727-1cfa6d83722d
 	go.lumeweb.com/portal-middleware v0.3.5
 	go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20260308093909-80f381086370
