@@ -18,6 +18,9 @@ type MetadataStore interface {
 	Unpin(ctx context.Context, c cid.Cid) error
 	Pinned(ctx context.Context, offset, limit int) (roots []cid.Cid, err error)
 	Size(ctx context.Context, c cid.Cid) (uint64, error)
+	ProcessMissingUnixFSNames(cids []cid.Cid) error
+	UpdateUnixFSMetadata(c cid.Cid, metadata any) error
+	MarkBlockReady(c cid.Cid, ready bool) error
 }
 
 type PinnedBlock struct {

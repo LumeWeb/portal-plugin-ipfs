@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS ipfs_websites (
     target_type VARCHAR(50) NOT NULL,
     target_multihash VARBINARY(64) NOT NULL,
     cid_version TINYINT UNSIGNED,
+    cid_type TINYINT UNSIGNED,
     status VARCHAR(50) NOT NULL,
     validation_token VARCHAR(255) NOT NULL,
     validation_expires_at TIMESTAMP NULL DEFAULT NULL,

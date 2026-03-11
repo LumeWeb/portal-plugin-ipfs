@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS ipfs_websites (
     target_type TEXT NOT NULL,
     target_multihash BLOB NOT NULL,
     cid_version INTEGER,
+    cid_type INTEGER,
     status TEXT NOT NULL,
     validation_token TEXT NOT NULL,
     validation_expires_at TIMESTAMP NULL DEFAULT NULL,
