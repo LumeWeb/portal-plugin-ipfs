@@ -91,6 +91,10 @@ func NewDNSServiceWithOptions(options ...DNSServiceOption) (core.Service, []core
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
 			// Load configuration from service config
 			svc.config = core.GetServiceConfig[*pluginConfig.DnsConfig](ctx, pluginCore.DNS_SERVICE)
+			if svc.config == nil {
+				svc.Logger().Warn("DNS service config not found")
+				return nil
+			}
 
 			// Initialize PowerDNS client from config if not provided via options
 			if serviceOpts.PowerDNSClient == nil && svc.config.Enabled {

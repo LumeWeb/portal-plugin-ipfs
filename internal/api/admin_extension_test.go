@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	pluginCoreCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal/core"
@@ -18,7 +17,7 @@ import (
 // AdminTestOptions provides test configuration for admin extension tests
 var AdminTestOptions = coreTesting.CombineOptions(
 	coreTesting.WithMockServiceFactory(pluginCore.WEBSITE_SERVICE, mocks.NewMockWebsiteService, &pluginConfig.WebsiteConfig{}),
-	coreTesting.WithMockServiceFactory(pluginCoreCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService),
+	coreTesting.WithMockServiceFactory(pluginCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService),
 	coreTesting.WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService, &pluginConfig.DnsConfig{}),
 	coreTesting.WithAPIExtension(NewAdminExtension()),
 	coreTesting.WithAPIID("admin"),
