@@ -1,0 +1,21 @@
+# Generated test fixtures
+cars/*.car
+data/*.block
+data/*.info
+data/*.info.json
+tmp/
+
+# Source binary files (auto-downloaded)
+*.mp4
+*.docx
+
+# Exceptions (source docs used for test fixtures)
+!sia.docx
+
+# Build artifacts
+*.log
+MANIFEST-*
+
+# Test binaries
+__debug_bin*
+*.test

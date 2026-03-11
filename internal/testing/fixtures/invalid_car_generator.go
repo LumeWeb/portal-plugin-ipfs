@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/ipfs/go-cid"
 	carv2 "github.com/ipld/go-car/v2"
@@ -14,15 +15,17 @@ import (
 )
 
 func main() {
-	// Get current working directory
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Println("Error getting current working directory:", err)
+	// Get source file location using runtime
+	_, filename, _, _ := runtime.Caller(0)
+	cwd := filepath.Dir(filename)
+
+	// Define the output CAR file path in the cars/ subdirectory
+	carsDir := filepath.Join(cwd, "cars")
+	if err := os.MkdirAll(carsDir, 0755); err != nil {
+		fmt.Println("Error creating cars directory:", err)
 		return
 	}
-
-	// Define the output CAR file path in the current directory
-	carFilePath := filepath.Join(cwd, "invalid.car")
+	carFilePath := filepath.Join(carsDir, "invalid.car")
 
 	// Create a new CAR file with no roots (valid initially)
 	roots := []cid.Cid{} // Empty roots slice

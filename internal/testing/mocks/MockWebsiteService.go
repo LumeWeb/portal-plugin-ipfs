@@ -436,6 +436,61 @@ func (_c *MockWebsiteService_DeleteWebsite_Call) RunAndReturn(run func(ctx conte
 	return _c
 }
 
+// GetConfig provides a mock function for the type MockWebsiteService
+func (_mock *MockWebsiteService) GetConfig() (any, error) {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetConfig")
+	}
+
+	var r0 any
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func() (any, error)); ok {
+		return returnFunc()
+	}
+	if returnFunc, ok := ret.Get(0).(func() any); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(any)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func() error); ok {
+		r1 = returnFunc()
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockWebsiteService_GetConfig_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetConfig'
+type MockWebsiteService_GetConfig_Call struct {
+	*mock.Call
+}
+
+// GetConfig is a helper method to define mock.On call
+func (_e *MockWebsiteService_Expecter) GetConfig() *MockWebsiteService_GetConfig_Call {
+	return &MockWebsiteService_GetConfig_Call{Call: _e.mock.On("GetConfig")}
+}
+
+func (_c *MockWebsiteService_GetConfig_Call) Run(run func()) *MockWebsiteService_GetConfig_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockWebsiteService_GetConfig_Call) Return(v any, err error) *MockWebsiteService_GetConfig_Call {
+	_c.Call.Return(v, err)
+	return _c
+}
+
+func (_c *MockWebsiteService_GetConfig_Call) RunAndReturn(run func() (any, error)) *MockWebsiteService_GetConfig_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetWebsite provides a mock function for the type MockWebsiteService
 func (_mock *MockWebsiteService) GetWebsite(ctx context.Context, userID uint, websiteID uint) (*db.Website, error) {
 	ret := _mock.Called(ctx, userID, websiteID)
