@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ipfs/boxo/blockservice"
@@ -65,15 +66,19 @@ func setupTestSecondNode(t *testing.T) *TestSecondNodeInfo {
 	ctx := context.Background()
 	sess := merkledag.NewSession(ctx, dserv)
 	var collectedBlocks []blocks.Block
+	var mu sync.Mutex
 
-	merkledag.Walk(ctx, merkledag.GetLinksWithDAG(sess), rootCID, func(c cid.Cid) bool {
+	err = merkledag.Walk(ctx, merkledag.GetLinksWithDAG(sess), rootCID, func(c cid.Cid) bool {
 		node, err := dserv.Get(ctx, c)
 		require.NoError(t, err, "Failed to get node for CID")
 
 		block := node.(blocks.Block)
+		mu.Lock()
 		collectedBlocks = append(collectedBlocks, block)
+		mu.Unlock()
 		return true
 	}, merkledag.Concurrent())
+	require.NoError(t, err, "Failed to walk DAG")
 
 	return &TestSecondNodeInfo{
 		FileCID: rootCID,
