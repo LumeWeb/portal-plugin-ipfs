@@ -66,8 +66,7 @@ calculate_raw_cid() {
   local OUTPUT
 
   while [ $retry_count -lt $max_retries ]; do
-    OUTPUT=$(ipfs dag put --store-codec=raw --input-codec=raw --allow-big-block "$FILE" 2>&1)
-    if ipfs dag put --store-codec=raw --input-codec=raw --allow-big-block "$FILE" >/dev/null 2>&1; then
+    if OUTPUT=$(ipfs dag put --store-codec=raw --input-codec=raw --allow-big-block "$FILE" 2>&1); then
       echo "$OUTPUT"
       return 0
     fi
@@ -118,8 +117,7 @@ add_directory_to_ipfs() {
     return 1
   fi
   local OUTPUT
-  OUTPUT=$(ipfs add -Q -r --pin=false "$DIR" 2>/dev/null)
-  if ! ipfs add -Q -r --pin=false "$DIR" >/dev/null 2>&1; then
+  if ! OUTPUT=$(ipfs add -Q -r --pin=false "$DIR" 2>&1); then
     echo "Error: Failed to add directory $DIR to IPFS" >&2
     return 1
   fi
