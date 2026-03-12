@@ -1233,6 +1233,8 @@ github.com/uptrace/uptrace-go v1.39.0 h1:MszuE3eX/z86xzYywN2JBtYcmsS4ofdo1VMDhRv
 github.com/uptrace/uptrace-go v1.39.0/go.mod h1:FquipEqgTMXPbhdhenjbiLHG1R5WYdxVH6zgwHeMzzA=
 github.com/uptrace/uptrace-go v1.40.0 h1:fMva36FZ/eujU60hq+ke9HdYGkXP5jJXUTNeEuWDI+I=
 github.com/uptrace/uptrace-go v1.40.0/go.mod h1:HJhggr8UMkJ+keR8B9o4KsF7kxT8lKH7Ra8X2DRwqdc=
+github.com/uptrace/uptrace-go v1.41.0 h1:rh96b8nS8Z//M1DoiOq+ysHJLj6MfLIi6m7z9MPR0IU=
+github.com/uptrace/uptrace-go v1.41.0/go.mod h1:D4ShPmVU/S7YD9vrfFUsy/ZgFT4gZTZxp5Ok+TqDC7A=
 github.com/urfave/cli v1.22.10 h1:p8Fspmz3iTctJstry1PYS3HVdllxnEzTEsgIgtxTrCk=
 github.com/urfave/cli v1.22.10/go.mod h1:Gos4lmkARVdJ6EkW0WaNv/tZAAMe9V7XWyB60NtXRu0=
 github.com/urfave/cli/v3 v3.6.2 h1:lQuqiPrZ1cIz8hz+HcrG0TNZFxU70dPZ3Yl+pSrH9A8=
@@ -1337,6 +1339,8 @@ go.lumeweb.com/portal v0.4.2-0.20260311123727-1cfa6d83722d h1:NVDpPJg+P3d+CP7MDy
 go.lumeweb.com/portal v0.4.2-0.20260311123727-1cfa6d83722d/go.mod h1:astdpqlXJdOFc0RQRWrny4cTFrI+kMno2yCQOPtAEHI=
 go.lumeweb.com/portal v0.4.2-0.20260311230725-d554c4f2ce10 h1:djBHKm+mAiU53Hq9hKJtjsT0WquPMsvwi7TsMLoSs28=
 go.lumeweb.com/portal v0.4.2-0.20260311230725-d554c4f2ce10/go.mod h1:cD1a6GwXgpQP1vRT0xFJkbwPHbcIZWwm92lkPhebDoE=
+go.lumeweb.com/portal v0.4.2-0.20260311234653-b570cab574da h1:6ITSYVolpdFoNHplE8FLzV4qQpalEm0y3lZYd3JySyE=
+go.lumeweb.com/portal v0.4.2-0.20260311234653-b570cab574da/go.mod h1:3LG8ylUL39VYH0G8AVikCpqjQ/tk4lnkSVFlsosixwg=
 go.lumeweb.com/portal-middleware v0.3.4 h1:A9/Ipo3giX449CCgbKGco97IqDxFG7Z1ppmM1IQBeDQ=
 go.lumeweb.com/portal-middleware v0.3.4/go.mod h1:3dHvOYXApc1b673I1UAoYBpyXg2c7ku4HqxXvef8dj8=
 go.lumeweb.com/portal-middleware v0.3.5 h1:QwW1cvw4VbSK3rfzW7TwbfezueUXNX80Y/WS97qfoyU=
@@ -1438,6 +1442,8 @@ go.opentelemetry.io/otel/trace v1.42.0 h1:OUCgIPt+mzOnaUTpOQcBiM/PLQ/Op7oq6g4Len
 go.opentelemetry.io/otel/trace v1.42.0/go.mod h1:f3K9S+IFqnumBkKhRJMeaZeNk9epyhnCmQh/EysQCdc=
 go.opentelemetry.io/proto/otlp v1.9.0 h1:l706jCMITVouPOqEnii2fIAuO3IVGBRPV5ICjceRb/A=
 go.opentelemetry.io/proto/otlp v1.9.0/go.mod h1:xE+Cx5E/eEHw+ISFkwPLwCZefwVjY+pqKg1qcK03+/4=
+go.opentelemetry.io/proto/otlp v1.10.0 h1:IQRWgT5srOCYfiWnpqUYz9CVmbO8bFmKcwYxpuCSL2g=
+go.opentelemetry.io/proto/otlp v1.10.0/go.mod h1:/CV4QoCR/S9yaPj8utp3lvQPoqMtxXdzn7ozvvozVqk=
 go.shabbyrobe.org/gocovmerge v0.0.0-20230507111327-fa4f82cfbf4d h1:Ns9kd1Rwzw7t0BR8XMphenji4SmIoNZPn8zhYmaVKP8=
 go.shabbyrobe.org/gocovmerge v0.0.0-20230507111327-fa4f82cfbf4d/go.mod h1:92Uoe3l++MlthCm+koNi0tcUCX3anayogF0Pa/sp24k=
 go.sia.tech/core v0.14.1 h1:4MvZBjuZiz0IQk9eqU/NL8mTK5BAMca3L3lUzszGHqs=
