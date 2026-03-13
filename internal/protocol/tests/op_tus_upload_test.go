@@ -55,4 +55,17 @@ func TestTUSUploadOperationHandler_Execute_Integration(t *testing.T) {
 	t.Run("RAR archive upload (convert mode)", func(t *testing.T) {
 		testTUSArchiveUpload(t, upload.FormatRAR, upload.CreateRARArchive, upload.ArchiveConvert, GetStandardTestOptions()...)
 	})
+
+	// Test plain file uploads via TUS
+	t.Run("Plain text file upload", func(t *testing.T) {
+		testTUSFileUpload(t, "Hello, World! This is a plain text file for TUS upload test.", "test.txt")
+	})
+
+	t.Run("JSON config file upload", func(t *testing.T) {
+		content := `{
+  "name": "test",
+  "version": "1.0"
+}`
+		testTUSFileUpload(t, content, "config.json")
+	})
 }

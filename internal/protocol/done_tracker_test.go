@@ -9,6 +9,7 @@ import (
 
 	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDoneTracker_Done(t *testing.T) {
@@ -41,7 +42,7 @@ func TestDoneTracker_Done(t *testing.T) {
 			},
 			cid: generateTestCIDFromInt(1),
 			expectedState: func(dt *DefaultDoneTracker) bool {
-				return dt.Count() == 0 // Should be removed after waiter is processed
+				return dt.Count() == 1 // Should be 1 since CID is in completed map
 			},
 		},
 		{
@@ -163,8 +164,8 @@ func TestDoneTracker_ConcurrentWaiters(t *testing.T) {
 		assert.True(t, result, "Waiter %d should have received done signal", i)
 	}
 
-	// Tracker should be clean
-	assert.Equal(t, 0, dt.Count(), "Tracker should be empty after completion")
+	// CID is done and tracked in completed map
+	assert.Equal(t, 1, dt.Count(), "Tracker count should be 1 (CID is done in completed map)")
 }
 
 func TestDoneTracker_ContextCancellationCleanup(t *testing.T) {
@@ -208,19 +209,23 @@ func TestDoneTracker_GetDoneCIDs(t *testing.T) {
 	// Give time for waiters to register
 	time.Sleep(1 * time.Millisecond)
 
-	// Mark one as done - it will be immediately cleaned up
+	// Mark one as done - CIDs are now in completed map
 	dt.Done(cid1)
 
-	// Should see no done CIDs since they are cleaned up immediately
+	// GetDoneCIDs() should return CID1 since it's done and in completed map
 	doneCIDs = dt.GetDoneCIDs()
-	assert.Empty(t, doneCIDs, "Should have no done CIDs since they are cleaned up immediately")
+	assert.NotEmpty(t, doneCIDs, "Should have done CIDs after Done()")
+	assert.Contains(t, doneCIDs, cid1, "Should contain CID1")
+	assert.NotContains(t, doneCIDs, cid2, "Should not contain CID2 (not done)")
 
 	// Mark the second as done
 	dt.Done(cid2)
 
-	// Should still be empty
+	// GetDoneCIDs() should return both CIDs now
 	doneCIDs = dt.GetDoneCIDs()
-	assert.Empty(t, doneCIDs, "Should have no done CIDs after cleanup")
+	assert.Len(t, doneCIDs, 2, "Should have 2 done CIDs")
+	assert.Contains(t, doneCIDs, cid1, "Should contain CID1")
+	assert.Contains(t, doneCIDs, cid2, "Should contain CID2")
 }
 
 func TestDoneTracker_Count(t *testing.T) {
@@ -243,17 +248,17 @@ func TestDoneTracker_Count(t *testing.T) {
 	// Still zero count (waiters exist but not done)
 	assert.Equal(t, 0, dt.Count(), "Should have count of 0 with only waiters")
 
-	// Mark one as done
+	// Mark one as done - waiters notified and removed from waiters map, but kept in completed map
 	dt.Done(cid1)
 
-	// Count should still be 0 since done CIDs are immediately cleaned up
-	assert.Equal(t, 0, dt.Count(), "Should have count of 0 after cleanup")
+	// Count should be 1 since CID1 is in completed map
+	assert.Equal(t, 1, dt.Count(), "Should have count of 1 after Done (CID in completed map)")
 
 	// Mark the second as done
 	dt.Done(cid2)
 
-	// Count should still be 0
-	assert.Equal(t, 0, dt.Count(), "Should have count of 0 after all cleanup")
+	// Count should be 2 since both CIDs are in completed map
+	assert.Equal(t, 2, dt.Count(), "Should have count of 2 total (both in completed map)")
 }
 
 func TestDoneTracker_Reset(t *testing.T) {
@@ -328,8 +333,8 @@ func TestDoneTracker_MultipleCIDs(t *testing.T) {
 		assert.True(t, result, "Waiter for CID %d should have received done signal", i)
 	}
 
-	// Tracker should be clean
-	assert.Equal(t, 0, dt.Count(), "Tracker should be empty after all completions")
+	// All 3 CIDs are done and tracked in completed map
+	assert.Equal(t, 3, dt.Count(), "Tracker count should be 3 (all CIDs done in completed map)")
 }
 
 // generateTestCID creates a test CID from generated data
@@ -695,6 +700,197 @@ func TestDoneTracker_RaceConditionResetVsOperations(t *testing.T) {
 		// After reset, tracker should be clean
 		assert.Equal(t, 0, dt.Count(), "Count should be 0 after reset")
 	}
+}
+
+// TestDoneTracker_GetDoneCIDs_DoneFirst tests GetDoneCIDs() when Done() is called before WaitDone()
+// This represents the plain text file scenario where a single block is processed without retrieval
+func TestDoneTracker_GetDoneCIDs_DoneFirst(t *testing.T) {
+	dt := NewDoneTracker()
+	cid1 := generateTestCIDFromInt(1)
+	cid2 := generateTestCIDFromInt(2)
+
+	// Initially no done CIDs
+	doneCIDs := dt.GetDoneCIDs()
+	assert.Empty(t, doneCIDs, "Should initially have no done CIDs")
+
+	// Mark CIDs as done WITHOUT creating waiters first (simulating plain file processing)
+	dt.Done(cid1)
+	dt.Done(cid2)
+
+	// GetDoneCIDs() should now return both CIDs from completed map
+	doneCIDs = dt.GetDoneCIDs()
+	require.Len(t, doneCIDs, 2, "Should have 2 done CIDs")
+	
+	// Verify both CIDs are present
+	doneCIDMap := make(map[string]cid.Cid)
+	for _, c := range doneCIDs {
+		doneCIDMap[string(c.Bytes())] = c
+	}
+	_, exists1 := doneCIDMap[string(cid1.Bytes())]
+	_, exists2 := doneCIDMap[string(cid2.Bytes())]
+	assert.True(t, exists1, "Should contain CID1")
+	assert.True(t, exists2, "Should contain CID2")
+}
+
+// TestDoneTracker_GetDoneCIDs_WaitDoneFirst tests GetDoneCIDs() when WaitDone() is called before Done()
+// This represents the CAR/archive file scenario where blocks are retrieved during processing
+func TestDoneTracker_GetDoneCIDs_WaitDoneFirst(t *testing.T) {
+	dt := NewDoneTracker()
+	cid1 := generateTestCIDFromInt(1)
+	cid2 := generateTestCIDFromInt(2)
+
+	// Initially no done CIDs
+	doneCIDs := dt.GetDoneCIDs()
+	assert.Empty(t, doneCIDs, "Should initially have no done CIDs")
+
+	// Create waiters first (simulating retrieval operations)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	go dt.WaitDone(ctx, cid1)
+	go dt.WaitDone(ctx, cid2)
+
+	// Give time for waiters to register
+	time.Sleep(1 * time.Millisecond)
+
+	// Mark one as done (this will notify waiter, remove from waiters, add to completed)
+	dt.Done(cid1)
+
+	// GetDoneCIDs() should return CID1 (done and in completed map)
+	// CID2 is waiting but not done yet
+	doneCIDs = dt.GetDoneCIDs()
+	require.Len(t, doneCIDs, 1, "Should have 1 done CID (CID1 done)")
+	
+	// Should contain CID1, not CID2
+	assert.Contains(t, doneCIDs, cid1, "Should contain CID1 (done)")
+	assert.NotContains(t, doneCIDs, cid2, "Should not contain CID2 (not done)")
+
+	// Mark the second as done
+	dt.Done(cid2)
+
+	// GetDoneCIDs() should return both CIDs now
+	doneCIDs = dt.GetDoneCIDs()
+	require.Len(t, doneCIDs, 2, "Should have 2 done CIDs (both done)")
+	assert.Contains(t, doneCIDs, cid1, "Should contain CID1")
+	assert.Contains(t, doneCIDs, cid2, "Should contain CID2")
+}
+
+// TestDoneTracker_GetDoneCIDs_MixedOperations tests GetDoneCIDs() with mixed Done() and WaitDone() calls
+func TestDoneTracker_GetDoneCIDs_MixedOperations(t *testing.T) {
+	dt := NewDoneTracker()
+	cid1 := generateTestCIDFromInt(1) // Done first
+	cid2 := generateTestCIDFromInt(2) // WaitDone first
+	cid3 := generateTestCIDFromInt(3) // Done only (no WaitDone ever)
+
+	// Initially no done CIDs
+	doneCIDs := dt.GetDoneCIDs()
+	assert.Empty(t, doneCIDs, "Should initially have no done CIDs")
+
+	// CID1: Done first (plain file scenario)
+	dt.Done(cid1)
+
+	// CID2: Create waiter then Done (CAR file scenario)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	go dt.WaitDone(ctx, cid2)
+	time.Sleep(1 * time.Millisecond)
+	dt.Done(cid2)
+
+	// CID3: Done only (plain file no retrieval)
+	dt.Done(cid3)
+
+	// GetDoneCIDs() should return all 3 CIDs (all are done)
+	// The order of Done() vs WaitDone() doesn't matter - if a CID is done, it should be returned
+	doneCIDs = dt.GetDoneCIDs()
+	require.Len(t, doneCIDs, 3, "Should have 3 done CIDs (all done)")
+	
+	// Verify correct CIDs
+	doneCIDMap := make(map[string]cid.Cid)
+	for _, c := range doneCIDs {
+		doneCIDMap[string(c.Bytes())] = c
+	}
+	_, exists1 := doneCIDMap[string(cid1.Bytes())]
+	_, exists2 := doneCIDMap[string(cid2.Bytes())]
+	_, exists3 := doneCIDMap[string(cid3.Bytes())]
+	assert.True(t, exists1, "Should contain CID1 (Done first)")
+	assert.True(t, exists2, "Should contain CID2 (WaitDone first, but still done)")
+	assert.True(t, exists3, "Should contain CID3 (Done only)")
+
+	// Verify Count() also returns 3
+	assert.Equal(t, 3, dt.Count(), "Count should be 3")
+}
+
+// TestDoneTracker_Count_DoneFirst tests Count() when Done() is called before WaitDone()
+func TestDoneTracker_Count_DoneFirst(t *testing.T) {
+	dt := NewDoneTracker()
+	cid1 := generateTestCIDFromInt(1)
+	cid2 := generateTestCIDFromInt(2)
+
+	// Initially zero count
+	assert.Equal(t, 0, dt.Count(), "Should initially have count of 0")
+
+	// Mark CIDs as done WITHOUT creating waiters first
+	dt.Done(cid1)
+	assert.Equal(t, 1, dt.Count(), "Should have count of 1 after first Done()")
+
+	dt.Done(cid2)
+	assert.Equal(t, 2, dt.Count(), "Should have count of 2 after second Done()")
+}
+
+// TestDoneTracker_Count_WaitDoneFirst tests Count() when WaitDone() is called before Done()
+func TestDoneTracker_Count_WaitDoneFirst(t *testing.T) {
+	dt := NewDoneTracker()
+	cid1 := generateTestCIDFromInt(1)
+	cid2 := generateTestCIDFromInt(2)
+
+	// Initially zero count
+	assert.Equal(t, 0, dt.Count(), "Should initially have count of 0")
+
+	// Create waiters first
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	go dt.WaitDone(ctx, cid1)
+
+	// Give time for waiter to register
+	time.Sleep(1 * time.Millisecond)
+
+	// Still zero count (waiter exists but not done)
+	assert.Equal(t, 0, dt.Count(), "Should have count of 0 with only unnotified waiters")
+
+	// Mark as done (notifies waiter and deletes from waiters map)
+	dt.Done(cid1)
+
+	// Count should be 1 because CID is in completed map
+	assert.Equal(t, 1, dt.Count(), "Should have count of 1 after Done() (CID in completed map)")
+
+	// Add second CID with Done first
+	dt.Done(cid2)
+
+	// Count should be 2
+	assert.Equal(t, 2, dt.Count(), "Should have count of 2 total")
+}
+
+// TestDoneTracker_Count_MixedOperations tests Count() with mixed Done() and WaitDone() calls
+func TestDoneTracker_Count_MixedOperations(t *testing.T) {
+	dt := NewDoneTracker()
+	cid1 := generateTestCIDFromInt(1) // Done first
+	cid2 := generateTestCIDFromInt(2) // WaitDone first
+
+	// Initially zero count
+	assert.Equal(t, 0, dt.Count(), "Should initially have count of 0")
+
+	// CID1: Done first
+	dt.Done(cid1)
+	assert.Equal(t, 1, dt.Count(), "Should have count of 1 after CID1 Done()")
+
+	// CID2: Create waiter then Done
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	go dt.WaitDone(ctx, cid2)
+	time.Sleep(1 * time.Millisecond)
+	dt.Done(cid2)
+
+	// Count should be 2 (both CIDs tracked in completed or waiters)
+	assert.Equal(t, 2, dt.Count(), "Should have count of 2 total")
 }
 
 // randInt returns a random integer in [min, max)

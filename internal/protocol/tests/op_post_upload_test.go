@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"testing"
 
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
@@ -82,6 +83,20 @@ func TestPostUploadOperationHandler_Execute_Integration(t *testing.T) {
 		testArchiveUpload(t, upload.FormatRAR, upload.CreateRARArchive, upload.ArchivePreserve, testPostUploadWorkflow)
 	})
 
+	// Test plain file uploads (FormatFile)
+	t.Run("Plain text file upload", func(t *testing.T) {
+		t.Parallel()
+		testFileUpload(t, "Hello, World! This is a plain text file upload test.", "test.txt")
+	})
+
+	t.Run("JSON config file upload", func(t *testing.T) {
+		t.Parallel()
+		content := `{
+  "name": "test",
+  "version": "1.0"
+}`
+		testFileUpload(t, content, "config.json")
+	})
 }
 
 // testPostUploadWorkflow is a helper function that runs the complete upload workflow test for POST uploads
@@ -102,4 +117,16 @@ func testPostUploadWorkflow(t *testing.T, ctx coreTesting.TestContext, universal
 			}, "json")
 		},
 	)
+}
+
+// testFileUpload tests plain file uploads (FormatFile) through the POST upload workflow
+func testFileUpload(t *testing.T, fileContent string, filename string) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Create a reader from the plain file content
+		fileReader := bytes.NewReader([]byte(fileContent))
+		universalReader := upload.NewUniversalReader(fileReader)
+
+		// Run the upload workflow test
+		testPostUploadWorkflow(t, ctx, universalReader, upload.FormatFile, upload.ArchiveConvert)
+	}, GetStandardTestOptions()...)
 }
