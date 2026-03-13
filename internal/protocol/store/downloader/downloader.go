@@ -47,6 +47,8 @@ type (
 		log       *core.Logger
 		clientIP  string
 		ctx       context.Context
+
+		mu sync.Mutex // protects ch, b, and err fields
 	}
 
 	priorityQueue []*blockResponse
@@ -127,6 +129,10 @@ func (br *blockResponse) block(ctx context.Context, c cid.Cid) (blocks.Block, er
 		return nil, ctx.Err()
 	case <-br.ch:
 	}
+
+	br.mu.Lock()
+	defer br.mu.Unlock()
+
 	if br.err != nil {
 		return nil, br.err
 	}
@@ -239,6 +245,10 @@ func (bd *BlockDownloaderDefault) doDownloadTask(task *blockResponse, log *zap.L
 	defer cancel()
 
 	buf, err := bd.downloadBlockData(ctx, task.cid, task.clientIP)
+	
+	task.mu.Lock()
+	defer task.mu.Unlock()
+	
 	if err != nil {
 		log.Error("failed to download block", zap.Error(err))
 		task.err = err
@@ -248,7 +258,7 @@ func (bd *BlockDownloaderDefault) doDownloadTask(task *blockResponse, log *zap.L
 	}
 	close(task.ch)
 
-	if task.err == nil && task.priority >= downloadPriorityHigh {
+	if err == nil && task.priority >= downloadPriorityHigh {
 		go bd.queueRelated(task.ctx, task.cid)
 	}
 }

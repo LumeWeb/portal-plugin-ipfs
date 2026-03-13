@@ -22,9 +22,11 @@ type DoneTracker interface {
 	IsDone(c cid.Cid) bool
 
 	// GetDoneCIDs returns a copy of all completed CIDs
+	// This includes CIDs with active waiters and CIDs permanently marked as complete
 	GetDoneCIDs() []cid.Cid
 
 	// Count returns the number of done CIDs
+	// This includes CIDs with active waiters and CIDs permanently marked as complete
 	Count() int
 
 	// Reset clears all waiters and done CIDs
@@ -92,6 +94,7 @@ func (dt *DefaultDoneTracker) Done(c cid.Cid) {
 	dt.completed[cidKey] = true
 
 	// Delete the waiter from the map since it's fully processed
+	// Note: The CID remains in the completed map for permanent tracking
 	delete(dt.waiters, cidKey)
 
 	// Release lock before closing channels to avoid deadlock
@@ -165,19 +168,37 @@ func (dt *DefaultDoneTracker) WaitDone(ctx context.Context, c cid.Cid) bool {
 }
 
 // GetDoneCIDs returns a copy of all completed CIDs
-// Note: Completed CIDs are removed from the map after processing,
-// so this only returns CIDs that are currently being waited on but marked as done
+// This includes CIDs with active waiters and CIDs permanently marked as complete
 // This method is thread-safe
 func (dt *DefaultDoneTracker) GetDoneCIDs() []cid.Cid {
-	dt.mu.RLock()
-	defer dt.mu.RUnlock()
+	dt.mu.Lock()
+	defer dt.mu.Unlock()
 
-	var doneCIDs []cid.Cid
+	// Use map to avoid duplicates
+	doneCIDMap := make(map[string]cid.Cid)
+
+	// Add CIDs from waiters that are done
 	for _, waiter := range dt.waiters {
 		if waiter.done {
-			doneCIDs = append(doneCIDs, waiter.cid)
+			cidKey := string(waiter.cid.Bytes())
+			doneCIDMap[cidKey] = waiter.cid
 		}
 	}
+
+	// Add CIDs from permanent completed record
+	for cidKey := range dt.completed {
+		// Parse the binary CID key back to a CID
+		if c, err := cid.Cast([]byte(cidKey)); err == nil {
+			doneCIDMap[cidKey] = c
+		}
+	}
+
+	// Convert map to slice
+	doneCIDs := make([]cid.Cid, 0, len(doneCIDMap))
+	for _, c := range doneCIDMap {
+		doneCIDs = append(doneCIDs, c)
+	}
+
 	return doneCIDs
 }
 
@@ -191,19 +212,28 @@ func (dt *DefaultDoneTracker) Reset() {
 }
 
 // Count returns the number of done CIDs
-// Note: Completed CIDs are removed from the map after processing,
-// so this only counts CIDs that are currently being waited on but marked as done
+// This includes CIDs with active waiters and CIDs permanently marked as complete
 // This method is thread-safe
 func (dt *DefaultDoneTracker) Count() int {
-	dt.mu.RLock()
-	defer dt.mu.RUnlock()
+	dt.mu.Lock()
+	defer dt.mu.Unlock()
 
 	count := 0
+
+	// Count waiters that are done
 	for _, waiter := range dt.waiters {
 		if waiter.done {
 			count++
 		}
 	}
+
+	// Add count from permanent completed record (excluding duplicates with waiters)
+	for cidKey := range dt.completed {
+		if _, exists := dt.waiters[cidKey]; !exists {
+			count++
+		}
+	}
+
 	return count
 }
 

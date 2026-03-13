@@ -25,7 +25,10 @@ func (f Format) IsUploadFormat() bool {
 
 // IsArchiveFormat returns true if this format is an archive type
 func (f Format) IsArchiveFormat() bool {
-	return f != FormatUnknown
+	// FormatFile is a single file, not an archive container
+	// Archives are containers that can be extracted (ZIP, TAR, RAR, 7Z)
+	// FormatCAR is a CAR file that doesn't need extraction
+	return f != FormatUnknown && f != FormatFile && f != FormatCAR
 }
 
 // String returns the string representation of Format
