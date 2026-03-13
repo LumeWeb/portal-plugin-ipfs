@@ -3,6 +3,7 @@ package upload
 import (
 	"bytes"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -153,7 +154,7 @@ func TestSmallFilesFormatDetection(t *testing.T) {
 	sizes := []int{1, 2, 3, 4, 5, 10, 20, 50, 100}
 
 	for _, size := range sizes {
-		t.Run(string(rune(size))+"_bytes", func(t *testing.T) {
+		t.Run(strconv.Itoa(size)+"_bytes", func(t *testing.T) {
 			content := strings.Repeat("x", size)
 			reader := bytes.NewReader([]byte(content))
 			newReader := NewUniversalReader(reader)

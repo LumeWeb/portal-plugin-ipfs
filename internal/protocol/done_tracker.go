@@ -171,8 +171,8 @@ func (dt *DefaultDoneTracker) WaitDone(ctx context.Context, c cid.Cid) bool {
 // This includes CIDs with active waiters and CIDs permanently marked as complete
 // This method is thread-safe
 func (dt *DefaultDoneTracker) GetDoneCIDs() []cid.Cid {
-	dt.mu.RLock()
-	defer dt.mu.RUnlock()
+	dt.mu.Lock()
+	defer dt.mu.Unlock()
 
 	// Use map to avoid duplicates
 	doneCIDMap := make(map[string]cid.Cid)
@@ -215,8 +215,8 @@ func (dt *DefaultDoneTracker) Reset() {
 // This includes CIDs with active waiters and CIDs permanently marked as complete
 // This method is thread-safe
 func (dt *DefaultDoneTracker) Count() int {
-	dt.mu.RLock()
-	defer dt.mu.RUnlock()
+	dt.mu.Lock()
+	defer dt.mu.Unlock()
 
 	count := 0
 
