@@ -237,7 +237,7 @@ Use this to:
 - Search for specific pins
 - Monitor pinning status
 
-See also: POST /api/pins (add pin), GET /api/pins/{id} (get pin details)`),
+See also: POST /pins (add pin), GET /pins/{id} (get pin details)`),
 				router.WithTags("Pinning"),
 				router.WithQueryParam("cid", "Filter by content identifier. Supports multiple CIDs for batch queries. Example: QmHash1, QmHash2", []string{}),
 				router.WithQueryParam("name", "Filter by pin name. Supports partial matching for search functionality.", ""),
@@ -260,7 +260,7 @@ Creates a new pin object for the specified CID. Content will be pinned to the IP
 
 Prerequisites: CID must be valid IPFS content identifier
 
-See also: GET /api/pins (list pins), GET /api/pins/{id} (get pin details)`),
+See also: GET /pins (list pins), GET /pins/{id} (get pin details)`),
 				router.WithTags("Pinning"),
 				router.WithRequestBody(&dto.PinRequest{}, "Pin object", true),
 				router.WithSuccessResponse(http.StatusAccepted, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
@@ -359,13 +359,14 @@ See also:.*`),
 		),
 	)
 
+	// Register pin routes at root level to match IPFS pinning service API specification
+	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), pinRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register pin routes: %w", err)
+	}
+
 	apiGroup, err := r.Group("/api")
 	if err != nil {
 		return fmt.Errorf("failed to create api group: %w", err)
-	}
-
-	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), pinRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
-		return fmt.Errorf("failed to register pin routes: %w", err)
 	}
 
 	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), fileManagerRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {

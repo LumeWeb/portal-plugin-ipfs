@@ -17,7 +17,7 @@ func TestAPI_listPins(t *testing.T) {
 		helper := newMockHelper(t, ctx)
 		token, _, _, _ := helper.SetupAuthenticatedTest()
 
-		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/pins", token, nil)
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/pins", token, nil)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		var response dto.PinResultsResponse
@@ -34,7 +34,7 @@ func TestAPI_addPin(t *testing.T) {
 		token, _, _, _ := helper.SetupAuthenticatedTest()
 
 		reqBody := fmt.Sprintf(`{"cid":"%s","name":"test"}`, TestCID)
-		rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/pins", token, []byte(reqBody))
+		rec := helper.makeAuthenticatedRequest(http.MethodPost, "/pins", token, []byte(reqBody))
 
 		assert.Equal(t, http.StatusAccepted, rec.Code)
 		var response dto.PinStatusResponse
@@ -51,7 +51,7 @@ func TestAPI_getPin(t *testing.T) {
 		helper := newMockHelper(t, ctx)
 		token, _, _, pinID := helper.SetupAuthenticatedTest()
 
-		rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/api/pins/%s", pinID.String()), token, nil)
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/pins/%s", pinID.String()), token, nil)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		var response dto.PinStatusResponse
@@ -70,7 +70,7 @@ func TestAPI_replacePin(t *testing.T) {
 		token, _, _, pinID := helper.SetupAuthenticatedTest()
 
 		reqBody := fmt.Sprintf(`{"cid":"%s","name":"test"}`, TestCID)
-		rec := helper.makeAuthenticatedRequest(http.MethodPost, fmt.Sprintf("/api/pins/%s", pinID.String()), token, []byte(reqBody))
+		rec := helper.makeAuthenticatedRequest(http.MethodPost, fmt.Sprintf("/pins/%s", pinID.String()), token, []byte(reqBody))
 
 		assert.Equal(t, http.StatusAccepted, rec.Code)
 		var response dto.PinStatusResponse
@@ -87,7 +87,7 @@ func TestAPI_deletePin(t *testing.T) {
 		helper := newMockHelper(t, ctx)
 		token, _, _, pinID := helper.SetupAuthenticatedTest()
 
-		rec := helper.makeAuthenticatedRequest(http.MethodDelete, fmt.Sprintf("/api/pins/%s", pinID.String()), token, nil)
+		rec := helper.makeAuthenticatedRequest(http.MethodDelete, fmt.Sprintf("/pins/%s", pinID.String()), token, nil)
 
 		assert.Equal(t, http.StatusAccepted, rec.Code)
 	}, TestOptions)
