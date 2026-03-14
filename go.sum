@@ -120,6 +120,8 @@ github.com/aws/aws-sdk-go-v2 v1.41.1 h1:ABlyEARCDLN034NhxlRUSZr4l71mh+T5KAeGh6ce
 github.com/aws/aws-sdk-go-v2 v1.41.1/go.mod h1:MayyLB8y+buD9hZqkCW3kX1AKq07Y5pXxtgB+rRFhz0=
 github.com/aws/aws-sdk-go-v2 v1.41.3 h1:4kQ/fa22KjDt13QCy1+bYADvdgcxpfH18f0zP542kZA=
 github.com/aws/aws-sdk-go-v2 v1.41.3/go.mod h1:mwsPRE8ceUUpiTgF7QmQIJ7lgsKUPQOUl3o72QBrE1o=
+github.com/aws/aws-sdk-go-v2 v1.41.4 h1:10f50G7WyU02T56ox1wWXq+zTX9I1zxG46HYuG1hH/k=
+github.com/aws/aws-sdk-go-v2 v1.41.4/go.mod h1:mwsPRE8ceUUpiTgF7QmQIJ7lgsKUPQOUl3o72QBrE1o=
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.4 h1:489krEF9xIGkOaaX3CE/Be2uWjiXrkCH6gUX+bZA/BU=
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.4/go.mod h1:IOAPF6oT9KCsceNTvvYMNHy0+kMF8akOjeDvPENWxp4=
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.6 h1:N4lRUXZpZ1KVEUn6hxtco/1d2lgYhNn1fHkkl8WhlyQ=
@@ -1349,6 +1351,8 @@ go.lumeweb.com/portal v0.4.2-0.20260312233310-56c38ead0f3b h1:zT9Fz6XlwnxyRTVMSD
 go.lumeweb.com/portal v0.4.2-0.20260312233310-56c38ead0f3b/go.mod h1:EM2uyngSgCrWWH7CfEunJ4hcpjWTHx0dAW24BGWYGhY=
 go.lumeweb.com/portal v0.4.2-0.20260313060934-fef8ae6b6c05 h1:1ute2KxrqlQN0elM52Ioz2CYWvTzD5YCZoD6Q61EzW0=
 go.lumeweb.com/portal v0.4.2-0.20260313060934-fef8ae6b6c05/go.mod h1:EM2uyngSgCrWWH7CfEunJ4hcpjWTHx0dAW24BGWYGhY=
+go.lumeweb.com/portal v0.4.2-0.20260313235932-613d76dd39d5 h1:xH0A3V4batsGPOreLAQMWDsNQ9cNv+BiKOC0oi3sQ/M=
+go.lumeweb.com/portal v0.4.2-0.20260313235932-613d76dd39d5/go.mod h1:yyR21jaiMhzLk0wHxDE06j45KAi/At8zixfuSrb6UkQ=
 go.lumeweb.com/portal-middleware v0.3.4 h1:A9/Ipo3giX449CCgbKGco97IqDxFG7Z1ppmM1IQBeDQ=
 go.lumeweb.com/portal-middleware v0.3.4/go.mod h1:3dHvOYXApc1b673I1UAoYBpyXg2c7ku4HqxXvef8dj8=
 go.lumeweb.com/portal-middleware v0.3.5 h1:QwW1cvw4VbSK3rfzW7TwbfezueUXNX80Y/WS97qfoyU=

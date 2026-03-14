@@ -44,7 +44,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tus/tusd/v2 v2.9.2
 	go.lumeweb.com/httputil v0.5.4
-	go.lumeweb.com/portal v0.4.2-0.20260313060934-fef8ae6b6c05
+	go.lumeweb.com/portal v0.4.2-0.20260313235932-613d76dd39d5
 	go.lumeweb.com/portal-middleware v0.3.5
 	go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20260312042836-d9dfa043a80d
@@ -83,7 +83,7 @@ require (
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
 	github.com/alicebob/miniredis/v2 v2.37.0 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.41.3 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.41.4 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.6 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.32.11 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.11 // indirect
