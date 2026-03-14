@@ -92,3 +92,28 @@ func TestAPI_deletePin(t *testing.T) {
 		assert.Equal(t, http.StatusAccepted, rec.Code)
 	}, TestOptions)
 }
+
+func TestAPI_listPins_requiresAuthentication(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+
+		rec := helper.makeRequest(http.MethodGet, "/pins", nil)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	}, TestOptions)
+}
+
+func TestAPI_listPins_pathIsolation(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, _, _, _ := helper.SetupAuthenticatedTest()
+
+		// Verify root-level path works
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/pins", token, nil)
+		assert.Equal(t, http.StatusOK, rec.Code)
+
+		// Verify API group path does NOT work (ensures route isolation)
+		rec2 := helper.makeAuthenticatedRequest(http.MethodGet, "/api/pins", token, nil)
+		assert.Equal(t, http.StatusNotFound, rec2.Code)
+	}, TestOptions)
+}
