@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"testing"
 
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/queryutil"
+	"go.lumeweb.com/queryutil/filter"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 )
 
@@ -128,5 +132,44 @@ func testFileUpload(t *testing.T, fileContent string, filename string) {
 
 		// Run the upload workflow test
 		testPostUploadWorkflow(t, ctx, universalReader, upload.FormatFile, upload.ArchiveConvert)
+	}, GetStandardTestOptions()...)
+}
+
+// TestPostUploadOperation_PinStatus verifies that pin status transitions from queued to pinned
+func TestPostUploadOperation_PinStatus(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		fileContent := "Test content for pin status verification"
+		fileReader := bytes.NewReader([]byte(fileContent))
+		universalReader := upload.NewUniversalReader(fileReader)
+
+		// Run the upload workflow
+		testPostUploadWorkflow(t, ctx, universalReader, upload.FormatFile, upload.ArchiveConvert)
+
+		// Retrieve the pin service
+		pinSvc := core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		if pinSvc == nil {
+			t.Fatal("Pin service not available")
+		}
+
+		// Get the most recent pin for this user
+		sort := []filter.Sort{
+			{Field: "created_at", Order: filter.OrderDesc},
+		}
+		pins, total, err := pinSvc.ListPins(ctx, nil, sort, queryutil.DefaultPagination)
+		if err != nil {
+			t.Fatalf("Failed to list pins: %v", err)
+		}
+
+		if total == 0 || len(pins) == 0 {
+			t.Fatal("No pins found")
+		}
+
+		// Get the most recent pin (pins should be ordered by created_at desc)
+		pin := pins[0]
+
+		// Verify the pin status is "pinned"
+		if pin.Status != db.PinningStatusPinned {
+			t.Errorf("Expected pin status to be 'pinned', got '%s'", pin.Status)
+		}
 	}, GetStandardTestOptions()...)
 }
