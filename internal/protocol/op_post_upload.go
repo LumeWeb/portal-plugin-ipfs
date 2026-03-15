@@ -121,6 +121,23 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		return err
 	}
 
+	// Set progress - updating pin status
+	if err := tracker.SetProgress(80); err != nil {
+		h.Logger().Warn("Failed to update progress", zap.Error(err))
+	}
+
+	// Update pin status to pinned
+	pinSvc := core.GetService[pluginCore.IPFSPinService](h.Context(), pluginCore.PIN_SERVICE)
+	if pinSvc != nil {
+		err = pinSvc.UpdatePinStatus(ctx, ipfsPin.RequestID, db.PinningStatusPinned, nil)
+		if err != nil {
+			h.Logger().Error("Failed to update pin status to pinned", zap.Error(err))
+			// Don't fail the whole operation for this
+		}
+	} else {
+		h.Logger().Warn("Pin service not available for status update")
+	}
+
 	err = h.updateWorkflow(ctx, req.ID, rootCids, ipfsPin)
 	if err != nil {
 		return err
