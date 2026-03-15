@@ -385,12 +385,11 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 				ctx.Logger().Fatal("failed to open leveldb datastore", zap.Error(dsErr))
 			}
 			level := mapLogLevel(cfg.LogLevel)
-
-			if cfg.LogLevel != "" {
-				level = mapLogLevel(cfg.LogLevel)
-			}
-
 			ipfsLog.SetAllLoggers(level)
+
+			ctx.Logger().Debug("IPFS log level configured",
+				zap.String("log_level", cfg.LogLevel),
+				zap.String("mapped_level", level.String()))
 
 			proto.node, err = ipfs.NewNode(ctx, cfg, ms, _ds, virtualBS)
 			if err != nil {
