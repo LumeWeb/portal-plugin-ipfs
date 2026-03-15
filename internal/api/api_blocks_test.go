@@ -1,6 +1,6 @@
 package api
 
-// Note: These tests use helper.makeAuthenticatedRequest() which internally
+// Note: These tests use helper.makeAuthenticatedRequest() or helper.makeRequest() which internally
 // uses ctx.Router() and httpSvc.APISubdomain() as required by the specification.
 // This maintains consistency with api_pins_test.go, api_files_test.go, and
 // api_upload_test.go which all use the same helper pattern.
@@ -18,7 +18,6 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	protocol "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/mock_tests"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	coreMocks "go.lumeweb.com/portal/core/testing/mocks"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
@@ -76,9 +75,8 @@ func TestAPI_handleGetBlockMetaBatch(t *testing.T) {
 func TestAPI_handleGetInfo(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		helper := newMockHelper(t, ctx)
-		token, _ := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "test data"))
 
-		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/info", token, nil)
+		rec := helper.makeRequest(http.MethodGet, "/api/info", nil)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		var response dto.InfoResponse
