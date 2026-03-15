@@ -320,6 +320,14 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		return nil, fmt.Errorf("failed to create fullrt: %w", err)
 	}
 
+	// Log configured bootstrap servers for debugging
+	bootstrapPeers := lo.Map(cfg.BootstrapPeers, func(p config.IPFSPeer, _ int) string {
+		return p.ToAddrInfo().String()
+	})
+	ctx.Logger().Debug("IPFS node configured with bootstrap servers",
+		zap.Strings("bootstrap_peers", bootstrapPeers),
+		zap.Int("count", len(bootstrapPeers)))
+
 	bitswapOpts := []bitswap.Option{
 		bitswap.EngineBlockstoreWorkerCount(cfg.BlockStore.MaxConcurrentRequests),
 		bitswap.TaskWorkerCount(cfg.BlockStore.MaxConcurrentRequests),
