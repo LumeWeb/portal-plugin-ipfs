@@ -415,18 +415,6 @@ See also:.*`),
 				router.WithRequestBody(&dto.GetBlockMetaBatchRequest{}, "Batch request for block metadata", true),
 			),
 		),
-		router.NewRoute(http.MethodGet, "/info", a.handleGetInfo,
-			router.WithSwagger(
-				router.WithSummary("Get node information"),
-				router.WithDescription(`Retrieves information about the IPFS node.
-
-Returns node identity (peer ID) and network connection addresses. Useful for diagnostics and verifying node connectivity.
-
-See also:.*`),
-				router.WithTags("Content"),
-				router.WithSuccessResponse(http.StatusOK, "Node information", router.WithJSONContent(dto.InfoResponse{})),
-			),
-		),
 	)
 
 	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), ipfsRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
@@ -936,6 +924,26 @@ See also:.*`),
 
 	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), gatewayRoutes, router.WithMiddlewares(gatewayAuthMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register gateway routes: %w", err)
+	}
+
+	// Public info endpoint
+	publicInfoRoutes := router.DefineRoutes(
+		router.NewRoute(http.MethodGet, "/info", a.handleGetInfo,
+			router.WithSwagger(
+				router.WithSummary("Get node information"),
+				router.WithDescription(`Retrieves information about the IPFS node.
+
+Returns node identity (peer ID) and network connection addresses. Useful for diagnostics and verifying node connectivity.
+
+See also:.*`),
+				router.WithTags("Content"),
+				router.WithSuccessResponse(http.StatusOK, "Node information", router.WithJSONContent(dto.InfoResponse{})),
+			),
+		),
+	)
+
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), publicInfoRoutes, router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register public info routes: %w", err)
 	}
 
 	// SSL status routes
