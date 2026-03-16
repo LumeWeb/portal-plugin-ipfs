@@ -291,6 +291,18 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 				return fmt.Errorf("failed to create root pin: %w", err)
 			}
 
+			// Update pin status to pinned
+			pinSvc := core.GetService[pluginCore.IPFSPinService](helper.Context(), pluginCore.PIN_SERVICE)
+			if pinSvc != nil {
+				err = pinSvc.UpdatePinStatus(ctx, ipfsPin.RequestID, pluginDb.PinningStatusPinned, nil)
+				if err != nil {
+					helper.Logger().Error("Failed to update pin status to pinned", zap.Error(err))
+					// Don't fail the whole operation for this
+				}
+			} else {
+				helper.Logger().Warn("Pin service not available for status update")
+			}
+
 			// Prepare workflow data for publish operation and file path step using only root CIDs
 			workflowData := &PinWorkflowData{
 				PinRequestID: ipfsPin.RequestID.ToUUID(),

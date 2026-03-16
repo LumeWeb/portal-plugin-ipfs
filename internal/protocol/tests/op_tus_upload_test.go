@@ -3,7 +3,13 @@ package tests
 import (
 	"testing"
 
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
+	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/queryutil"
+	"go.lumeweb.com/queryutil/filter"
+	coreTesting "go.lumeweb.com/portal/core/testing"
 )
 
 func TestTUSUploadOperationHandler_Execute_Integration(t *testing.T) {
@@ -68,4 +74,41 @@ func TestTUSUploadOperationHandler_Execute_Integration(t *testing.T) {
 }`
 		testTUSFileUpload(t, content, "config.json")
 	})
+}
+
+// TestTUSUploadOperation_PinStatus verifies that pin status transitions from queued to pinned
+func TestTUSUploadOperation_PinStatus(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		fileContent := "Test content for TUS pin status verification"
+
+		// Run the TUS upload workflow using the internal function
+		runTUSFileUploadInternal(t, ctx, fileContent)
+
+		// Retrieve the pin service
+		pinSvc := core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		if pinSvc == nil {
+			t.Fatal("Pin service not available")
+		}
+
+		// Get the most recent pin for this user
+		sort := []filter.Sort{
+			{Field: "created_at", Order: filter.OrderDesc},
+		}
+		pins, total, err := pinSvc.ListPins(ctx, nil, sort, queryutil.DefaultPagination)
+		if err != nil {
+			t.Fatalf("Failed to list pins: %v", err)
+		}
+
+		if total == 0 || len(pins) == 0 {
+			t.Fatal("No pins found")
+		}
+
+		// Get the most recent pin (pins should be ordered by created_at desc)
+		pin := pins[0]
+
+		// Verify the pin status is "pinned"
+		if pin.Status != db.PinningStatusPinned {
+			t.Errorf("Expected pin status to be 'pinned', got '%s'", pin.Status)
+		}
+	}, GetStandardTestOptions()...)
 }

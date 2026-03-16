@@ -235,58 +235,6 @@ func setupTUSUpload(t *testing.T, ctx coreTesting.TestContext, uploadFile *os.Fi
 	return proto.(core.StorageProtocol), tusUpload.RequestID
 }
 
-// testTUSArchiveUpload is a TUS-specific wrapper for testArchiveUpload
-// It handles TUS-specific upload logic while using the generic archive upload pattern
-func testTUSArchiveUpload(t *testing.T, format upload.Format, creator upload.ArchiveCreator, mode upload.ArchiveMode, testOptions ...coreTesting.TestContextBuilderOption) {
-	// Since TUS doesn't support archive preserve mode yet, only test convert mode
-	if mode != upload.ArchiveConvert {
-		t.Skip("TUS doesn't support archive preserve mode yet")
-	}
-
-	// Create a TUS-specific workflow function that handles the TUS upload logic
-	tusWorkflowFunc := func(t *testing.T, ctx coreTesting.TestContext, universalReader *upload.UniversalReader, format upload.Format, mode upload.ArchiveMode) {
-		// For TUS, we need to convert the UniversalReader back to a file for TUS processing
-		// Read the data from UniversalReader
-		archiveData, err := io.ReadAll(universalReader)
-		require.NoError(t, err)
-
-		// Create a temporary file from the archive data for TUS processing
-		tempFile, err := os.CreateTemp("", "tus-test-*.tmp")
-		require.NoError(t, err)
-		defer func() {
-			tempFile.Close()
-			os.Remove(tempFile.Name())
-		}()
-
-		_, err = tempFile.Write(archiveData)
-		require.NoError(t, err)
-
-		// Seek back to beginning for TUS processing
-		_, err = tempFile.Seek(0, 0)
-		require.NoError(t, err)
-
-		// Use appropriate setup based on format
-		var requestID uint
-		if format == upload.FormatCAR {
-			// For CAR files, we can pre-compute the hash
-			roots, err := upload.GetCarRoots(tempFile, false)
-			require.NoError(t, err)
-			_, requestID = setupTUSUpload(t, ctx, tempFile, internal.NewIPFSHash(roots[0]))
-		} else {
-			// For non-CAR files, hash is not known yet
-			_, requestID = setupTUSUpload(t, ctx, tempFile, nil)
-		}
-
-		// Execute workflow using the helper
-		executeTUSWorkflowHelper(t, ctx, tempFile, format, requestID)
-	}
-
-	// Use the generic testArchiveUpload with TUS-specific workflow function
-	testArchiveUpload(t, format, creator, mode, tusWorkflowFunc, testOptions...)
-}
-
-// testUploadWorkflow is a generic helper function that runs the complete upload workflow test
-// It supports both POST and TUS uploads based on the operationName and workflowDataBuilder parameters
 func testUploadWorkflow(t *testing.T, ctx coreTesting.TestContext, universalReader *upload.UniversalReader, format upload.Format, mode upload.ArchiveMode, operationName string, assertionFunc func(*coreTesting.WorkflowTest, *models.Request), workflowDataBuilder func(string) interface{}) {
 	// Arrange - Setup test user and services
 	testUser := setupTestUser(t, ctx, format, mode)
@@ -366,31 +314,94 @@ func executeTUSWorkflowHelper(t *testing.T, ctx coreTesting.TestContext, tempFil
 	assertTUSWorkflowSuccess(wfTest, req)
 }
 
+// runTUSFileUploadInternal is the internal logic for TUS file uploads
+// This function should be called from within a RunTestCaseWithDB context
+func runTUSFileUploadInternal(t *testing.T, ctx coreTesting.TestContext, fileContent string) {
+	// Read the data for TUS processing
+	fileData := []byte(fileContent)
+
+	// Create a temporary file from the data for TUS processing
+	tempFile, err := os.CreateTemp("", "tus-test-*.tmp")
+	require.NoError(t, err)
+	defer func() {
+		tempFile.Close()
+		os.Remove(tempFile.Name())
+	}()
+
+	_, err = tempFile.Write(fileData)
+	require.NoError(t, err)
+
+	// Seek back to beginning for TUS processing
+	_, err = tempFile.Seek(0, 0)
+	require.NoError(t, err)
+
+	// For plain files, hash is not known yet (will be computed during upload)
+	_, requestID := setupTUSUpload(t, ctx, tempFile, nil)
+
+	// Execute workflow using the helper
+	executeTUSWorkflowHelper(t, ctx, tempFile, upload.FormatFile, requestID)
+}
+
 // testTUSFileUpload tests plain file uploads (FormatFile) through the TUS upload workflow
 func testTUSFileUpload(t *testing.T, fileContent string, filename string) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Read the data for TUS processing
-		fileData := []byte(fileContent)
-
-		// Create a temporary file from the data for TUS processing
-		tempFile, err := os.CreateTemp("", "tus-test-*.tmp")
-		require.NoError(t, err)
-		defer func() {
-			tempFile.Close()
-			os.Remove(tempFile.Name())
-		}()
-
-		_, err = tempFile.Write(fileData)
-		require.NoError(t, err)
-
-		// Seek back to beginning for TUS processing
-		_, err = tempFile.Seek(0, 0)
-		require.NoError(t, err)
-
-		// For plain files, hash is not known yet (will be computed during upload)
-		_, requestID := setupTUSUpload(t, ctx, tempFile, nil)
-
-		// Execute workflow using the helper
-		executeTUSWorkflowHelper(t, ctx, tempFile, upload.FormatFile, requestID)
+		runTUSFileUploadInternal(t, ctx, fileContent)
 	}, GetStandardTestOptions()...)
+}
+
+// runTUSArchiveUploadInternal is the internal logic for TUS archive uploads
+// This function should be called from within a RunTestCaseWithDB context
+func runTUSArchiveUploadInternal(t *testing.T, ctx coreTesting.TestContext, format upload.Format, archiveData []byte) {
+	// Create a temporary file from the archive data for TUS processing
+	tempFile, err := os.CreateTemp("", "tus-test-archive-*.tmp")
+	require.NoError(t, err)
+	defer func() {
+		tempFile.Close()
+		os.Remove(tempFile.Name())
+	}()
+
+	_, err = tempFile.Write(archiveData)
+	require.NoError(t, err)
+
+	// Seek back to beginning for TUS processing
+	_, err = tempFile.Seek(0, 0)
+	require.NoError(t, err)
+
+	// Use appropriate setup based on format
+	var requestID uint
+	if format == upload.FormatCAR {
+		// For CAR files, we can pre-compute the hash
+		roots, err := upload.GetCarRoots(tempFile, false)
+		require.NoError(t, err)
+		_, requestID = setupTUSUpload(t, ctx, tempFile, internal.NewIPFSHash(roots[0]))
+	} else {
+		// For non-CAR files, hash is not known yet
+		_, requestID = setupTUSUpload(t, ctx, tempFile, nil)
+	}
+
+	// Execute workflow using the helper
+	executeTUSWorkflowHelper(t, ctx, tempFile, format, requestID)
+}
+
+// testTUSArchiveUpload is a TUS-specific wrapper for testArchiveUpload
+// It handles TUS-specific upload logic while using the generic archive upload pattern
+func testTUSArchiveUpload(t *testing.T, format upload.Format, creator upload.ArchiveCreator, mode upload.ArchiveMode, testOptions ...coreTesting.TestContextBuilderOption) {
+	// Since TUS doesn't support archive preserve mode yet, only test convert mode
+	if mode != upload.ArchiveConvert {
+		t.Skip("TUS doesn't support archive preserve mode yet")
+	}
+
+	// Create a TUS-specific workflow function that handles the TUS upload logic
+	tusWorkflowFunc := func(t *testing.T, ctx coreTesting.TestContext, universalReader *upload.UniversalReader, _ upload.Format, _ upload.ArchiveMode) {
+		// For TUS, we need to convert the UniversalReader back to a file for TUS processing
+		// Read the data from UniversalReader
+		archiveData, err := io.ReadAll(universalReader)
+		require.NoError(t, err)
+
+		// Use the internal TUS archive upload logic
+		runTUSArchiveUploadInternal(t, ctx, format, archiveData)
+	}
+
+	// Use the generic testArchiveUpload with TUS-specific workflow function
+	testArchiveUpload(t, format, creator, mode, tusWorkflowFunc, testOptions...)
 }
