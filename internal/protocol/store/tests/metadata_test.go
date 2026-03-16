@@ -311,6 +311,126 @@ func TestMetadataStore_GetUnixFSMetadata(t *testing.T) {
 	}, ipfsTestConfig)
 }
 
+func TestMetadataStore_ReaddBlockAfterDeletion(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		metadataStore := store.NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protocol.ProtoNode))
+		testData := "test data for re-add"
+		testCid := generateCid(t, testData)
+		pinnedBlock := createPinnedBlock(tb, ctx, testData)
+
+		// Act & Assert - First Pin
+		err := metadataStore.Pin(context.Background(), pinnedBlock)
+		require.NoError(tb, err)
+
+		// Verify block exists
+		err = metadataStore.BlockExists(context.Background(), pinnedBlock.Cid)
+		require.NoError(tb, err)
+
+		// Act & Assert - Unpin (delete)
+		err = metadataStore.Unpin(context.Background(), pinnedBlock.Cid)
+		require.NoError(tb, err)
+
+		// Verify block is deleted
+		err = metadataStore.BlockExists(context.Background(), pinnedBlock.Cid)
+		assert.Error(tb, err)
+		assert.True(tb, errors.Is(err, format.ErrNotFound{}))
+
+		// Act & Assert - Re-Pin same CID (this tests that unique constraints don't block re-add)
+		err = metadataStore.Pin(context.Background(), pinnedBlock)
+		require.NoError(tb, err, "Should be able to re-add block after deletion")
+
+		// Verify block exists again
+		err = metadataStore.BlockExists(context.Background(), pinnedBlock.Cid)
+		require.NoError(tb, err)
+
+		// Verify we can retrieve the block
+		var block pluginDb.IPFSBlock
+		err = ctx.DB().Where("cid = ?", testCid.Bytes()).First(&block).Error
+		require.NoError(tb, err)
+		assert.Equal(tb, testCid.Bytes(), block.CID)
+		assert.Equal(tb, uint64(len(testData)), block.Size)
+	}, ipfsTestConfig)
+}
+
+func TestMetadataStore_ReaddLinkedBlockAfterDeletion(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		metadataStore := store.NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protocol.ProtoNode))
+		
+		parentData := "parent data"
+		childData := "child data"
+		parentCid := generateCid(t, parentData)
+		childCid := generateCid(t, childData)
+
+		// Create parent block with a link to the child
+		parentBlock := createPinnedBlock(tb, ctx, parentData)
+		parentBlock.Links = []cid.Cid{childCid}
+		childBlock := createPinnedBlock(tb, ctx, childData)
+
+		// Act & Assert - First Pin with linked block
+		err := metadataStore.Pin(context.Background(), parentBlock)
+		require.NoError(tb, err)
+		err = metadataStore.Pin(context.Background(), childBlock)
+		require.NoError(tb, err)
+
+		// Verify linked block exists
+		var linkedBlocks []pluginDb.IPFSLinkedBlock
+		err = ctx.DB().Find(&linkedBlocks).Error
+		require.NoError(tb, err)
+		require.Len(tb, linkedBlocks, 1, "Should have one linked block")
+
+		firstLinkedID := linkedBlocks[0].ID
+
+		// Get parent and child block IDs
+		var parentBlockRecord pluginDb.IPFSBlock
+		var childBlockRecord pluginDb.IPFSBlock
+		err = ctx.DB().Where("cid = ?", parentCid.Bytes()).First(&parentBlockRecord).Error
+		require.NoError(tb, err)
+		err = ctx.DB().Where("cid = ?", childCid.Bytes()).First(&childBlockRecord).Error
+		require.NoError(tb, err)
+
+		// Act & Assert - Unpin parent (should delete linked blocks)
+		err = metadataStore.Unpin(context.Background(), parentBlock.Cid)
+		require.NoError(tb, err)
+
+		// Verify linked block is deleted
+		linkedBlocks = []pluginDb.IPFSLinkedBlock{}
+		err = ctx.DB().Find(&linkedBlocks).Error
+		require.NoError(tb, err)
+		require.Len(tb, linkedBlocks, 0, "Linked blocks should be deleted")
+
+		// Verify parent block is deleted
+		err = metadataStore.BlockExists(context.Background(), parentBlock.Cid)
+		assert.Error(tb, err)
+		assert.True(tb, errors.Is(err, format.ErrNotFound{}))
+
+		// Act & Assert - Re-Pin parent with same link structure
+		// This tests that unique constraints on (parent_id, child_id, link_index) don't block re-add
+		err = metadataStore.Pin(context.Background(), parentBlock)
+		require.NoError(tb, err, "Should be able to re-add parent with same linking after deletion")
+
+		// Get the new parent block record (re-pinned parent gets new ID)
+		var newParentBlockRecord pluginDb.IPFSBlock
+		err = ctx.DB().Where("cid = ?", parentCid.Bytes()).First(&newParentBlockRecord).Error
+		require.NoError(tb, err)
+
+		// Verify new linked block created
+		linkedBlocks = []pluginDb.IPFSLinkedBlock{}
+		err = ctx.DB().Find(&linkedBlocks).Error
+		require.NoError(tb, err)
+		require.Len(tb, linkedBlocks, 1, "Should have one new linked block")
+
+		// Verify it's a new record (different ID from before deletion)
+		assert.NotEqual(tb, firstLinkedID, linkedBlocks[0].ID, "Should create a new linked block record")
+
+		// Verify the link structure is correct
+		assert.Equal(tb, newParentBlockRecord.ID, linkedBlocks[0].ParentID, "ParentID should be new parent's ID")
+		assert.Equal(tb, childBlockRecord.ID, linkedBlocks[0].ChildID, "ChildID should be the child's ID (unchanged)")
+		assert.Equal(tb, 0, linkedBlocks[0].LinkIndex, "LinkIndex should be 0")
+	}, ipfsTestConfig)
+}
+
 func TestMetadataStore_MarkBlockReady(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
