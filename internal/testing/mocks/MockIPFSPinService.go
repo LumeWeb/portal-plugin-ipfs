@@ -309,6 +309,69 @@ func (_c *MockIPFSPinService_DeletePin_Call) RunAndReturn(run func(ctx context.C
 	return _c
 }
 
+// DeletePinForUser provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) DeletePinForUser(ctx context.Context, userID uint, requestID types.BinaryUUID) error {
+	ret := _mock.Called(ctx, userID, requestID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeletePinForUser")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, types.BinaryUUID) error); ok {
+		r0 = returnFunc(ctx, userID, requestID)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockIPFSPinService_DeletePinForUser_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeletePinForUser'
+type MockIPFSPinService_DeletePinForUser_Call struct {
+	*mock.Call
+}
+
+// DeletePinForUser is a helper method to define mock.On call
+//   - ctx context.Context
+//   - userID uint
+//   - requestID types.BinaryUUID
+func (_e *MockIPFSPinService_Expecter) DeletePinForUser(ctx interface{}, userID interface{}, requestID interface{}) *MockIPFSPinService_DeletePinForUser_Call {
+	return &MockIPFSPinService_DeletePinForUser_Call{Call: _e.mock.On("DeletePinForUser", ctx, userID, requestID)}
+}
+
+func (_c *MockIPFSPinService_DeletePinForUser_Call) Run(run func(ctx context.Context, userID uint, requestID types.BinaryUUID)) *MockIPFSPinService_DeletePinForUser_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		var arg2 types.BinaryUUID
+		if args[2] != nil {
+			arg2 = args[2].(types.BinaryUUID)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_DeletePinForUser_Call) Return(err error) *MockIPFSPinService_DeletePinForUser_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockIPFSPinService_DeletePinForUser_Call) RunAndReturn(run func(ctx context.Context, userID uint, requestID types.BinaryUUID) error) *MockIPFSPinService_DeletePinForUser_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetPinByCIDAndUser provides a mock function for the type MockIPFSPinService
 func (_mock *MockIPFSPinService) GetPinByCIDAndUser(ctx context.Context, c cid.Cid, userID uint) (*db.IPFSPin, error) {
 	ret := _mock.Called(ctx, c, userID)
@@ -451,6 +514,80 @@ func (_c *MockIPFSPinService_GetPinByRequestID_Call) RunAndReturn(run func(ctx c
 	return _c
 }
 
+// GetPinByRequestIDForUser provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) GetPinByRequestIDForUser(ctx context.Context, userID uint, requestID types.BinaryUUID) (*db.IPFSPin, error) {
+	ret := _mock.Called(ctx, userID, requestID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetPinByRequestIDForUser")
+	}
+
+	var r0 *db.IPFSPin
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, types.BinaryUUID) (*db.IPFSPin, error)); ok {
+		return returnFunc(ctx, userID, requestID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, types.BinaryUUID) *db.IPFSPin); ok {
+		r0 = returnFunc(ctx, userID, requestID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.IPFSPin)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uint, types.BinaryUUID) error); ok {
+		r1 = returnFunc(ctx, userID, requestID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIPFSPinService_GetPinByRequestIDForUser_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetPinByRequestIDForUser'
+type MockIPFSPinService_GetPinByRequestIDForUser_Call struct {
+	*mock.Call
+}
+
+// GetPinByRequestIDForUser is a helper method to define mock.On call
+//   - ctx context.Context
+//   - userID uint
+//   - requestID types.BinaryUUID
+func (_e *MockIPFSPinService_Expecter) GetPinByRequestIDForUser(ctx interface{}, userID interface{}, requestID interface{}) *MockIPFSPinService_GetPinByRequestIDForUser_Call {
+	return &MockIPFSPinService_GetPinByRequestIDForUser_Call{Call: _e.mock.On("GetPinByRequestIDForUser", ctx, userID, requestID)}
+}
+
+func (_c *MockIPFSPinService_GetPinByRequestIDForUser_Call) Run(run func(ctx context.Context, userID uint, requestID types.BinaryUUID)) *MockIPFSPinService_GetPinByRequestIDForUser_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		var arg2 types.BinaryUUID
+		if args[2] != nil {
+			arg2 = args[2].(types.BinaryUUID)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_GetPinByRequestIDForUser_Call) Return(iPFSPin *db.IPFSPin, err error) *MockIPFSPinService_GetPinByRequestIDForUser_Call {
+	_c.Call.Return(iPFSPin, err)
+	return _c
+}
+
+func (_c *MockIPFSPinService_GetPinByRequestIDForUser_Call) RunAndReturn(run func(ctx context.Context, userID uint, requestID types.BinaryUUID) (*db.IPFSPin, error)) *MockIPFSPinService_GetPinByRequestIDForUser_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ID provides a mock function for the type MockIPFSPinService
 func (_mock *MockIPFSPinService) ID() string {
 	ret := _mock.Called()
@@ -577,6 +714,98 @@ func (_c *MockIPFSPinService_ListPins_Call) Return(iPFSPins []*db.IPFSPin, n int
 }
 
 func (_c *MockIPFSPinService_ListPins_Call) RunAndReturn(run func(ctx context.Context, filter1 []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*db.IPFSPin, int64, error)) *MockIPFSPinService_ListPins_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ListPinsForUser provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) ListPinsForUser(ctx context.Context, userID uint, filter1 []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*db.IPFSPin, int64, error) {
+	ret := _mock.Called(ctx, userID, filter1, sort, pagination)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListPinsForUser")
+	}
+
+	var r0 []*db.IPFSPin
+	var r1 int64
+	var r2 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, []queryutil.CrudFilter, []filter.Sort, queryutil.Pagination) ([]*db.IPFSPin, int64, error)); ok {
+		return returnFunc(ctx, userID, filter1, sort, pagination)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, []queryutil.CrudFilter, []filter.Sort, queryutil.Pagination) []*db.IPFSPin); ok {
+		r0 = returnFunc(ctx, userID, filter1, sort, pagination)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*db.IPFSPin)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uint, []queryutil.CrudFilter, []filter.Sort, queryutil.Pagination) int64); ok {
+		r1 = returnFunc(ctx, userID, filter1, sort, pagination)
+	} else {
+		r1 = ret.Get(1).(int64)
+	}
+	if returnFunc, ok := ret.Get(2).(func(context.Context, uint, []queryutil.CrudFilter, []filter.Sort, queryutil.Pagination) error); ok {
+		r2 = returnFunc(ctx, userID, filter1, sort, pagination)
+	} else {
+		r2 = ret.Error(2)
+	}
+	return r0, r1, r2
+}
+
+// MockIPFSPinService_ListPinsForUser_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListPinsForUser'
+type MockIPFSPinService_ListPinsForUser_Call struct {
+	*mock.Call
+}
+
+// ListPinsForUser is a helper method to define mock.On call
+//   - ctx context.Context
+//   - userID uint
+//   - filter1 []queryutil.CrudFilter
+//   - sort []filter.Sort
+//   - pagination queryutil.Pagination
+func (_e *MockIPFSPinService_Expecter) ListPinsForUser(ctx interface{}, userID interface{}, filter1 interface{}, sort interface{}, pagination interface{}) *MockIPFSPinService_ListPinsForUser_Call {
+	return &MockIPFSPinService_ListPinsForUser_Call{Call: _e.mock.On("ListPinsForUser", ctx, userID, filter1, sort, pagination)}
+}
+
+func (_c *MockIPFSPinService_ListPinsForUser_Call) Run(run func(ctx context.Context, userID uint, filter1 []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination)) *MockIPFSPinService_ListPinsForUser_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		var arg2 []queryutil.CrudFilter
+		if args[2] != nil {
+			arg2 = args[2].([]queryutil.CrudFilter)
+		}
+		var arg3 []filter.Sort
+		if args[3] != nil {
+			arg3 = args[3].([]filter.Sort)
+		}
+		var arg4 queryutil.Pagination
+		if args[4] != nil {
+			arg4 = args[4].(queryutil.Pagination)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_ListPinsForUser_Call) Return(iPFSPins []*db.IPFSPin, n int64, err error) *MockIPFSPinService_ListPinsForUser_Call {
+	_c.Call.Return(iPFSPins, n, err)
+	return _c
+}
+
+func (_c *MockIPFSPinService_ListPinsForUser_Call) RunAndReturn(run func(ctx context.Context, userID uint, filter1 []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*db.IPFSPin, int64, error)) *MockIPFSPinService_ListPinsForUser_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -709,6 +938,92 @@ func (_c *MockIPFSPinService_ReplacePin_Call) Return(iPFSPin *db.IPFSPin, err er
 }
 
 func (_c *MockIPFSPinService_ReplacePin_Call) RunAndReturn(run func(ctx context.Context, userId uint, userIp string, oldRequestID types.BinaryUUID, newPin *db.IPFSPin) (*db.IPFSPin, error)) *MockIPFSPinService_ReplacePin_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ReplacePinForUser provides a mock function for the type MockIPFSPinService
+func (_mock *MockIPFSPinService) ReplacePinForUser(ctx context.Context, userID uint, userIp string, oldRequestID types.BinaryUUID, newPin *db.IPFSPin) (*db.IPFSPin, error) {
+	ret := _mock.Called(ctx, userID, userIp, oldRequestID, newPin)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ReplacePinForUser")
+	}
+
+	var r0 *db.IPFSPin
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, types.BinaryUUID, *db.IPFSPin) (*db.IPFSPin, error)); ok {
+		return returnFunc(ctx, userID, userIp, oldRequestID, newPin)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, types.BinaryUUID, *db.IPFSPin) *db.IPFSPin); ok {
+		r0 = returnFunc(ctx, userID, userIp, oldRequestID, newPin)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.IPFSPin)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uint, string, types.BinaryUUID, *db.IPFSPin) error); ok {
+		r1 = returnFunc(ctx, userID, userIp, oldRequestID, newPin)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIPFSPinService_ReplacePinForUser_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ReplacePinForUser'
+type MockIPFSPinService_ReplacePinForUser_Call struct {
+	*mock.Call
+}
+
+// ReplacePinForUser is a helper method to define mock.On call
+//   - ctx context.Context
+//   - userID uint
+//   - userIp string
+//   - oldRequestID types.BinaryUUID
+//   - newPin *db.IPFSPin
+func (_e *MockIPFSPinService_Expecter) ReplacePinForUser(ctx interface{}, userID interface{}, userIp interface{}, oldRequestID interface{}, newPin interface{}) *MockIPFSPinService_ReplacePinForUser_Call {
+	return &MockIPFSPinService_ReplacePinForUser_Call{Call: _e.mock.On("ReplacePinForUser", ctx, userID, userIp, oldRequestID, newPin)}
+}
+
+func (_c *MockIPFSPinService_ReplacePinForUser_Call) Run(run func(ctx context.Context, userID uint, userIp string, oldRequestID types.BinaryUUID, newPin *db.IPFSPin)) *MockIPFSPinService_ReplacePinForUser_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		var arg3 types.BinaryUUID
+		if args[3] != nil {
+			arg3 = args[3].(types.BinaryUUID)
+		}
+		var arg4 *db.IPFSPin
+		if args[4] != nil {
+			arg4 = args[4].(*db.IPFSPin)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPFSPinService_ReplacePinForUser_Call) Return(iPFSPin *db.IPFSPin, err error) *MockIPFSPinService_ReplacePinForUser_Call {
+	_c.Call.Return(iPFSPin, err)
+	return _c
+}
+
+func (_c *MockIPFSPinService_ReplacePinForUser_Call) RunAndReturn(run func(ctx context.Context, userID uint, userIp string, oldRequestID types.BinaryUUID, newPin *db.IPFSPin) (*db.IPFSPin, error)) *MockIPFSPinService_ReplacePinForUser_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -583,3 +583,77 @@ func (s *PinServiceDefault) getDelegatesJSON() ([]byte, error) {
 
 	return delegatesJSON, nil
 }
+
+// ListPinsForUser retrieves a paginated and filtered list of pin jobs for a specific user.
+func (s *PinServiceDefault) ListPinsForUser(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.IPFSPin, int64, error) {
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.ListPinsForUser")
+	defer span.End()
+
+	// Add user_id filter to ensure user isolation
+	userFilter := filter.NewLogicalFilter("user_id", filter.OpEq, userID)
+	allFilters := append([]queryutil.CrudFilter{userFilter}, filters...)
+
+	return s.ListPins(ctx, allFilters, sort, pagination)
+}
+
+// GetPinByRequestIDForUser retrieves a single pin job by its RequestID for a specific user.
+func (s *PinServiceDefault) GetPinByRequestIDForUser(ctx context.Context, userID uint, requestID types.BinaryUUID) (*pluginDb.IPFSPin, error) {
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.GetPinByRequestIDForUser")
+	defer span.End()
+
+	pin, err := s.GetPinByRequestID(ctx, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if pin == nil {
+		return nil, fmt.Errorf("pin not found for user")
+	}
+	if pin.UserID != userID {
+		return nil, fmt.Errorf("pin not found for user")
+	}
+	return pin, nil
+}
+
+// DeletePinForUser soft-deletes a pin job by its RequestID for a specific user.
+func (s *PinServiceDefault) DeletePinForUser(ctx context.Context, userID uint, requestID types.BinaryUUID) error {
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.DeletePinForUser")
+	defer span.End()
+
+	// Verify pin exists and belongs to user before proceeding
+	var pin pluginDb.IPFSPin
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		return tx.Where("request_id = ? AND user_id = ?", requestID, userID).First(&pin)
+	})
+	
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("pin not found for user")
+		}
+		return err
+	}
+
+	// Delegate to DeletePin for the actual deletion logic
+	return s.DeletePin(ctx, requestID)
+}
+
+// ReplacePinForUser creates a new pin job to replace an old one, verifying ownership.
+func (s *PinServiceDefault) ReplacePinForUser(ctx context.Context, userID uint, userIp string, oldRequestID types.BinaryUUID, newPin *pluginDb.IPFSPin) (*pluginDb.IPFSPin, error) {
+	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.ReplacePinForUser")
+	defer span.End()
+
+	// Verify the old pin exists and belongs to user
+	var oldPin pluginDb.IPFSPin
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		return tx.Where("request_id = ? AND user_id = ?", oldRequestID, userID).First(&oldPin)
+	})
+	
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("pin not found for user")
+		}
+		return nil, err
+	}
+
+	// Delegate to ReplacePin for the actual replacement logic
+	return s.ReplacePin(ctx, userID, userIp, oldRequestID, newPin)
+}
