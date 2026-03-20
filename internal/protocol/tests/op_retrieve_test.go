@@ -150,7 +150,7 @@ func TestRetrieveOperationHandler_Execute_Integration(t *testing.T) {
 
 		// Assertions
 		wfTest.AssertOperationSuccess(req)
-		wfTest.AssertOperationStatusMessageContains(req, "Retrieve completed")
+		wfTest.AssertOperationStatusMessageContains(req, "Finalizing Retrieve")
 		wfTest.AssertOperationStatusProgress(req, 100)
 
 	}, GetStandardTestOptions()...)
