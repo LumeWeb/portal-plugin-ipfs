@@ -140,8 +140,8 @@ func (m *mockHelper) SetupPinServiceMocks(userID uint, testCID cid.Cid, pinID ty
 	// Setup GetPinByCIDAndUser expectation
 	mockPinService.EXPECT().GetPinByCIDAndUser(mock.Anything, mock.AnythingOfType("cid.Cid"), userID).Return(createMockIPFSPin(userID, testCID, pinID, pluginDb.PinningStatusPinned), nil).Maybe()
 
-	// Setup GetPinByRequestIDForUser error expectation for 404 cases (wrong user or not found)
-	mockPinService.EXPECT().GetPinByRequestIDForUser(mock.Anything, userID+1, pinID).Return(nil, fmt.Errorf("pin not found for user")).Maybe()
+	// Setup GetPinByRequestIDForUser expectation for 404 cases (wrong user or not found)
+	mockPinService.EXPECT().GetPinByRequestIDForUser(mock.Anything, userID+1, pinID).Return(nil, nil).Maybe()
 
 	// Setup GetPinByRequestIDForUser expectation
 	mockPinService.EXPECT().GetPinByRequestIDForUser(mock.Anything, userID, pinID).Return(createMockIPFSPin(userID, testCID, pinID, pluginDb.PinningStatusPinned), nil).Maybe()

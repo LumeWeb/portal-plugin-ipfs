@@ -603,13 +603,16 @@ func (s *PinServiceDefault) GetPinByRequestIDForUser(ctx context.Context, userID
 
 	pin, err := s.GetPinByRequestID(ctx, requestID)
 	if err != nil {
+		// Propagate non-record-not-found errors (connection, timeout, etc.)
 		return nil, err
 	}
 	if pin == nil {
-		return nil, fmt.Errorf("pin not found for user")
+		// Record not found - return nil, nil for 404
+		return nil, nil
 	}
 	if pin.UserID != userID {
-		return nil, fmt.Errorf("pin not found for user")
+		// Not this user's pin - return nil, nil for 404
+		return nil, nil
 	}
 	return pin, nil
 }
