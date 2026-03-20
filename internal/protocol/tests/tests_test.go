@@ -127,7 +127,7 @@ func handleUploadWithMode(uploadService pluginCore.UploadService, ctx coreTestin
 // assertWorkflowSuccess performs common workflow assertions
 func assertWorkflowSuccess(wfTest *coreTesting.WorkflowTest, req *models.Request) {
 	wfTest.AssertOperationSuccess(req)
-	wfTest.AssertOperationStatusMessageContains(req, "Upload completed")
+	wfTest.AssertOperationStatusMessageContains(req, "Finalizing Upload")
 	wfTest.AssertOperationStatusProgress(req, 100)
 }
 
