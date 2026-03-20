@@ -40,5 +40,17 @@ type IPFSPinService interface {
 	// GetPinByCIDAndUser retrieves a pin by CID and user ID
 	GetPinByCIDAndUser(ctx context.Context, c cid.Cid, userID uint) (*db.IPFSPin, error)
 
+	// ListPinsForUser retrieves a paginated and filtered list of pin jobs for a specific user.
+	ListPinsForUser(ctx context.Context, userID uint, filter []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*db.IPFSPin, int64, error)
+
+	// GetPinByRequestIDForUser retrieves a single pin job by its RequestID for a specific user.
+	GetPinByRequestIDForUser(ctx context.Context, userID uint, requestID types.BinaryUUID) (*db.IPFSPin, error)
+
+	// DeletePinForUser soft-deletes a pin job by its RequestID for a specific user.
+	DeletePinForUser(ctx context.Context, userID uint, requestID types.BinaryUUID) error
+
+	// ReplacePinForUser creates a new pin job to replace an old one, verifying ownership.
+	ReplacePinForUser(ctx context.Context, userID uint, userIp string, oldRequestID types.BinaryUUID, newPin *db.IPFSPin) (*db.IPFSPin, error)
+
 	core.Service
 }

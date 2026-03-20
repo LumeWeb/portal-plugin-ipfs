@@ -41,6 +41,10 @@ func (a *API) startPinWorkflow(ctx httputil.RequestContext, c echo.Context, user
 func (a *API) listPins(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
+	user, err := mcontext.GetUserID(c)
+	if err != nil {
+		return err
+	}
 
 	filter := dto.IPFSPinFilter{}
 	if _, ok := httputil.DecodeAndValidateRequest(ctx, &filter); !ok {
@@ -62,7 +66,9 @@ func (a *API) listPins(c echo.Context) error {
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
-	pins, total, err := a.pinService.ListPins(reqCtx, filters, sort, pagination)
+	
+	// Use ForUser variant to ensure user isolation
+	pins, total, err := a.pinService.ListPinsForUser(reqCtx, user, filters, sort, pagination)
 	if err != nil {
 		a.Logger().Error("Failed to list pins", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
@@ -93,6 +99,9 @@ func (a *API) addPin(c echo.Context) error {
 		return nil
 	}
 
+	// Set the user_id on the model to ensure user isolation
+	model.UserID = user
+
 	_pin, err := a.pinService.AddPin(reqCtx, model)
 	if err != nil {
 		a.Logger().Error("Failed to add pin", zap.Error(err))
@@ -118,6 +127,10 @@ func (a *API) addPin(c echo.Context) error {
 func (a *API) getPin(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
+	user, err := mcontext.GetUserID(c)
+	if err != nil {
+		return err
+	}
 
 	_uuid, err := uuid.Parse(c.Param("requestid"))
 	if err != nil {
@@ -127,7 +140,8 @@ func (a *API) getPin(c echo.Context) error {
 
 	requestID := types.FromUUID(_uuid)
 
-	_pin, err := a.pinService.GetPinByRequestID(reqCtx, requestID)
+	// Use ForUser variant to ensure user isolation
+	_pin, err := a.pinService.GetPinByRequestIDForUser(reqCtx, user, requestID)
 	if err != nil {
 		a.Logger().Error("Failed to get pin", zap.Error(err))
 		apiErr := NewError(ErrKeyPinFetchFailed, err)
@@ -166,9 +180,11 @@ func (a *API) replacePin(c echo.Context) error {
 		return nil
 	}
 
-	// TODO: Clarify meaning of hardcoded 0 and "" parameters
-	// Consider: a.pinService.ReplacePin(reqCtx, accountID, name, requestID, model)
-	_pin, err := a.pinService.ReplacePin(reqCtx, 0, "", requestID, model)
+	// Set the user_id on the model to ensure user isolation
+	model.UserID = user
+
+	// Use ForUser variant to ensure user isolation
+	_pin, err := a.pinService.ReplacePinForUser(reqCtx, user, c.RealIP(), requestID, model)
 	if err != nil {
 		a.Logger().Error("Failed to replace pin", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
@@ -194,6 +210,10 @@ func (a *API) deletePin(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
 	reqCtx = store.ClientIPOption(reqCtx, c.RealIP())
+	user, err := mcontext.GetUserID(c)
+	if err != nil {
+		return err
+	}
 
 	_uuid, err := uuid.Parse(c.Param("requestid"))
 	if err != nil {
@@ -203,7 +223,8 @@ func (a *API) deletePin(c echo.Context) error {
 
 	requestID := types.FromUUID(_uuid)
 
-	if err := a.pinService.DeletePin(reqCtx, requestID); err != nil {
+	// Use ForUser variant to ensure user isolation
+	if err := a.pinService.DeletePinForUser(reqCtx, user, requestID); err != nil {
 		a.Logger().Error("Failed to delete pin", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
