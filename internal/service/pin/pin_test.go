@@ -388,9 +388,10 @@ func TestPinService_GetPinByRequestIDForUser_Success(t *testing.T) {
 		// Act - Try to get pin for wrong user
 		retrievedPin2, err2 := pinService.GetPinByRequestIDForUser(context.Background(), user2, pin1.RequestID)
 
-		// Assert - Should return nil because pin belongs to user1
-		require.NoError(tb, err2)
+		// Assert - Should return error because pin belongs to user1
+		require.Error(tb, err2)
 		assert.Nil(tb, retrievedPin2)
+		assert.Contains(tb, err2.Error(), "pin not found for user")
 	}, TestOptions)
 }
 
@@ -406,8 +407,9 @@ func TestPinService_GetPinByRequestIDForUser_NotFound(t *testing.T) {
 		retrievedPin, err := pinService.GetPinByRequestIDForUser(context.Background(), user, nonExistentRequestID)
 
 		// Assert
-		require.NoError(tb, err)
+		require.Error(tb, err)
 		assert.Nil(tb, retrievedPin)
+		assert.Contains(tb, err.Error(), "pin not found for user")
 	}, TestOptions)
 }
 

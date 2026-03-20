@@ -606,10 +606,10 @@ func (s *PinServiceDefault) GetPinByRequestIDForUser(ctx context.Context, userID
 		return nil, err
 	}
 	if pin == nil {
-		return nil, nil
+		return nil, fmt.Errorf("pin not found for user")
 	}
 	if pin.UserID != userID {
-		return nil, nil
+		return nil, fmt.Errorf("pin not found for user")
 	}
 	return pin, nil
 }
