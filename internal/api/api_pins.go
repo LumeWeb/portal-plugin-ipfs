@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -145,6 +146,11 @@ func (a *API) getPin(c echo.Context) error {
 		a.Logger().Error("Failed to get pin", zap.Error(err))
 		apiErr := NewError(ErrKeyPinFetchFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	if _pin == nil {
+		apiErr := NewError(ErrKeyPinFetchFailed, fmt.Errorf("pin not found"))
+		return ctx.Error(apiErr, http.StatusNotFound)
 	}
 
 	return httputil.EncodeResponse(ctx, _pin, &dto.PinStatusResponse{})

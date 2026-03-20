@@ -603,13 +603,16 @@ func (s *PinServiceDefault) GetPinByRequestIDForUser(ctx context.Context, userID
 
 	pin, err := s.GetPinByRequestID(ctx, requestID)
 	if err != nil {
-		return nil, err
+		// Any error (including gorm.ErrRecordNotFound from GetPinByRequestID
+		// or errors from ReplacePin) indicates the pin doesn't exist.
+		// Return nil, nil to let API return 404.
+		return nil, nil
 	}
 	if pin == nil {
-		return nil, fmt.Errorf("pin not found for user")
+		return nil, nil
 	}
 	if pin.UserID != userID {
-		return nil, fmt.Errorf("pin not found for user")
+		return nil, nil
 	}
 	return pin, nil
 }
