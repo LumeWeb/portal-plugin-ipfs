@@ -125,26 +125,26 @@ func (m *mockHelper) SetupPinServiceMocks(userID uint, testCID cid.Cid, pinID ty
 	// Setup ListPinsForUser expectation
 	mockPinService.EXPECT().ListPinsForUser(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.IPFSPin{createMockIPFSPin(userID, testCID, pinID, pluginDb.PinningStatusPinned)}, int64(1), nil).Maybe()
 
+	// Setup DeletePinForUser error expectation for 404 cases (wrong user or not found)
+	mockPinService.EXPECT().DeletePinForUser(mock.Anything, userID+1, pinID).Return(fmt.Errorf("pin not found for user")).Maybe()
+
 	// Setup DeletePinForUser expectation
 	mockPinService.EXPECT().DeletePinForUser(mock.Anything, userID, pinID).Return(nil).Maybe()
 
-	// Setup DeletePinForUser error expectation for 404 cases
-	mockPinService.EXPECT().DeletePinForUser(mock.Anything, mock.Anything, pinID).Return(fmt.Errorf("pin not found for user")).Maybe()
+	// Setup ReplacePinForUser error expectation for 404 cases (wrong user or not found)
+	mockPinService.EXPECT().ReplacePinForUser(mock.Anything, userID+1, mock.AnythingOfType("string"), pinID, mock.AnythingOfType("*db.IPFSPin")).Return(nil, fmt.Errorf("pin not found for user")).Maybe()
 
 	// Setup ReplacePinForUser expectation
 	mockPinService.EXPECT().ReplacePinForUser(mock.Anything, userID, mock.AnythingOfType("string"), pinID, mock.AnythingOfType("*db.IPFSPin")).Return(createMockIPFSPin(userID, testCID, pinID, pluginDb.PinningStatusPinned), nil).Maybe()
 
-	// Setup ReplacePinForUser error expectation for 404 cases
-	mockPinService.EXPECT().ReplacePinForUser(mock.Anything, mock.Anything, mock.AnythingOfType("string"), pinID, mock.AnythingOfType("*db.IPFSPin")).Return(nil, fmt.Errorf("pin not found for user")).Maybe()
-
 	// Setup GetPinByCIDAndUser expectation
 	mockPinService.EXPECT().GetPinByCIDAndUser(mock.Anything, mock.AnythingOfType("cid.Cid"), userID).Return(createMockIPFSPin(userID, testCID, pinID, pluginDb.PinningStatusPinned), nil).Maybe()
 
+	// Setup GetPinByRequestIDForUser error expectation for 404 cases (wrong user or not found)
+	mockPinService.EXPECT().GetPinByRequestIDForUser(mock.Anything, userID+1, pinID).Return(nil, fmt.Errorf("pin not found for user")).Maybe()
+
 	// Setup GetPinByRequestIDForUser expectation
 	mockPinService.EXPECT().GetPinByRequestIDForUser(mock.Anything, userID, pinID).Return(createMockIPFSPin(userID, testCID, pinID, pluginDb.PinningStatusPinned), nil).Maybe()
-
-	// Setup GetPinByRequestIDForUser error expectation for 404 cases
-	mockPinService.EXPECT().GetPinByRequestIDForUser(mock.Anything, mock.Anything, pinID).Return(nil, fmt.Errorf("pin not found for user")).Maybe()
 
 	return mockPinService
 }
