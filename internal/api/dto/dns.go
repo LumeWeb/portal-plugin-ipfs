@@ -96,6 +96,19 @@ type ZoneListRequest struct {
 	Domain string `json:"domain,omitempty"` // Filter by domain (partial match)
 }
 
+// ZoneListResponseResponse is a swagger-only DTO that represents the paginated response for DNS zones.
+// It merges the generic queryutil.Response[*dto.ZoneListResponse] for OpenAPI documentation.
+//
+// This struct exists due to a TODO bug where queryutil.Response generics are not getting detected
+// properly as an array type in the swagger documentation generation. By providing a concrete struct,
+// we ensure the swagger docs correctly show the data field as an array of ZoneListResponse items.
+//
+// Note: This struct is only used for swagger documentation, not for actual encoding.
+type ZoneListResponseResponse struct {
+	Data  []ZoneListResponse `json:"data"`
+	Total int64              `json:"total"`
+}
+
 func (r ZoneListRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
 		"Status": config.ZogStringLike[string]().OneOf([]string{
@@ -184,6 +197,19 @@ type RecordListRequest struct {
 	Type  string `json:"type,omitempty"`  // Filter by record type
 	Name  string `json:"name,omitempty"`  // Filter by name (partial match)
 	Limit uint   `json:"limit,omitempty"` // Maximum number of records to return
+}
+
+// RecordResponseResponse is a swagger-only DTO that represents the paginated response for DNS records.
+// It merges the generic queryutil.Response[*dto.RecordResponse] for OpenAPI documentation.
+//
+// This struct exists due to a TODO bug where queryutil.Response generics are not getting detected
+// properly as an array type in the swagger documentation generation. By providing a concrete struct,
+// we ensure the swagger docs correctly show the data field as an array of RecordResponse items.
+//
+// Note: This struct is only used for swagger documentation, not for actual encoding.
+type RecordResponseResponse struct {
+	Data  []RecordResponse `json:"data"`
+	Total int64            `json:"total"`
 }
 
 func (r RecordListRequest) Schema() *zog.StructSchema {
