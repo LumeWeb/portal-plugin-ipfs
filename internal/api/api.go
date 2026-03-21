@@ -698,7 +698,7 @@ Returns paginated list of zones with filtering support.
 
 See also:.*`),
 				router.WithTags("DNS", "Zones"),
-				router.WithSuccessResponse(http.StatusOK, "List of zones", router.WithJSONContent(queryutil.Response[dto.ZoneListResponse]{})),
+				router.WithSuccessResponse(http.StatusOK, "List of zones", router.WithJSONContent(dto.ZoneListResponseResponse{})),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/dns/zones/:id", a.getZone,
@@ -783,7 +783,7 @@ Returns paginated list of records with filtering support.
 See also:.*`),
 				router.WithTags("DNS", "Records"),
 				router.WithPathParam("id", "Zone ID", ""),
-				router.WithSuccessResponse(http.StatusOK, "List of records", router.WithJSONContent(queryutil.Response[dto.RecordResponse]{})),
+				router.WithSuccessResponse(http.StatusOK, "List of records", router.WithJSONContent(dto.RecordResponseResponse{})),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/dns/zones/:id/records/:name/:type", a.getRecord,
