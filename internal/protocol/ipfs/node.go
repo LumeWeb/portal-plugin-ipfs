@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"net"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -319,15 +318,28 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	var dhtProvider pluginCore.Provider
 	var hasProvider bool
 
+	// Detect if we should use LAN DHT mode
+	// Use LAN DHT when all bootstrap peers are local (for e2e testing without public swarm)
+	useLANMode := allPeersLocal(cfg)
+
+	// Build common DHT options
+	dhtOpts := []dht.Option{
+		dht.Mode(dht.ModeServer),
+		dht.BootstrapPeers(lo.Map(cfg.BootstrapPeers, func(p config.IPFSPeer, _ int) peer.AddrInfo {
+			return lo.FromPtr(p.ToAddrInfo())
+		})...),
+		dht.Datastore(ds),
+	}
+
+	// Add LAN protocol extension for local-only deployments if needed
+	if useLANMode {
+		dhtOpts = append(dhtOpts, dht.ProtocolExtension("/lan"))
+	}
+
 	switch cfg.DHTMode {
 	case config.DHTModeBasic:
 		// Use basic DHT
-		basicDHT, dhtErr := dht.New(ctx, node, dht.Mode(dht.ModeServer),
-			dht.BootstrapPeers(lo.Map(cfg.BootstrapPeers, func(p config.IPFSPeer, _ int) peer.AddrInfo {
-				return lo.FromPtr(p.ToAddrInfo())
-			})...),
-			dht.Datastore(ds),
-		)
+		basicDHT, dhtErr := dht.New(ctx, node, dhtOpts...)
 		if dhtErr != nil {
 			return nil, fmt.Errorf("failed to create basic dht: %w", dhtErr)
 		}
@@ -337,16 +349,15 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		hasProvider = true
 	case config.DHTModeFullRT, "":
 		// Use FullRT (default)
+
+		// FullRT requires specific BucketSize and Concurrency
 		fullRTOpts := []fullrt.Option{
-			fullrt.DHTOption([]dht.Option{
-				dht.Mode(dht.ModeServer),
-				dht.BootstrapPeers(lo.Map(cfg.BootstrapPeers, func(p config.IPFSPeer, _ int) peer.AddrInfo {
-					return lo.FromPtr(p.ToAddrInfo())
-				})...),
-				dht.BucketSize(20), // this cannot be changed
-				dht.Concurrency(30),
-				dht.Datastore(ds),
-			}...),
+			fullrt.DHTOption(
+				append(dhtOpts,
+					dht.BucketSize(20), // this cannot be changed
+					dht.Concurrency(30),
+				)...,
+			),
 		}
 
 		frt, dhtErr := fullrt.NewFullRT(node, dht.DefaultPrefix, fullRTOpts...)
@@ -452,7 +463,7 @@ func AnnouncementAddresses() ([]multiaddr.Multiaddr, error) {
 	}
 
 	announcementAddrs = lo.Filter(announcementAddrs, func(addr multiaddr.Multiaddr, i int) bool {
-		return !manet.IsIPLoopback(addr) && !manet.IsIPUnspecified(addr) && !isIPv4PrivateRange(addr)
+		return !manet.IsIPLoopback(addr) && !manet.IsIPUnspecified(addr) && !manet.IsPrivateAddr(addr)
 	})
 
 	cachedAnnouncementAddresses = announcementAddrs
@@ -493,21 +504,42 @@ func (n *Node) GetPrivateKey() crypto.PrivKey {
 	return n.host.Peerstore().PrivKey(n.host.ID())
 }
 
-func isIPv4PrivateRange(addr multiaddr.Multiaddr) bool {
-	ip4, err := addr.ValueForProtocol(multiaddr.P_IP4)
-	if err != nil {
+// allPeersLocal checks if all configured bootstrap peers are local/private addresses
+// Returns true if the node should use LAN DHT mode instead of WAN DHT
+func allPeersLocal(cfg *config.ProtocolConfig) bool {
+	if len(cfg.BootstrapPeers) == 0 {
+		// No bootstrap peers configured, default to WAN mode
 		return false
 	}
 
-	ip := net.ParseIP(ip4)
-	if ip == nil {
-		return false
+	// Check each bootstrap peer
+	for _, bp := range cfg.BootstrapPeers {
+		peerInfo := bp.ToAddrInfo()
+
+		// Check if any address is public
+		for _, addr := range peerInfo.Addrs {
+			// Treat DNS addresses as public (non-local) since they typically resolve to public IPs
+			if _, err := addr.ValueForProtocol(multiaddr.P_DNSADDR); err == nil {
+				return false
+			}
+			if _, err := addr.ValueForProtocol(multiaddr.P_DNS); err == nil {
+				return false
+			}
+			if _, err := addr.ValueForProtocol(multiaddr.P_DNS4); err == nil {
+				return false
+			}
+			if _, err := addr.ValueForProtocol(multiaddr.P_DNS6); err == nil {
+				return false
+			}
+			if isPublic := manet.IsPublicAddr(addr); isPublic {
+				// Found a public address, need WAN DHT
+				return false
+			}
+		}
 	}
 
-	// Check for private IPv4 ranges
-	private10 := net.IPNet{IP: net.ParseIP("10.0.0.0"), Mask: net.CIDRMask(8, 32)}
-	private172 := net.IPNet{IP: net.ParseIP("172.16.0.0"), Mask: net.CIDRMask(12, 32)}
-	private192 := net.IPNet{IP: net.ParseIP("192.168.0.0"), Mask: net.CIDRMask(16, 32)}
-
-	return private10.Contains(ip) || private172.Contains(ip) || private192.Contains(ip)
+	// All addresses are local/private, use LAN DHT
+	return true
 }
+
+
