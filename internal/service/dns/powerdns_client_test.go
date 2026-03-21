@@ -675,7 +675,7 @@ func TestCreateZoneCanonicalNameservers(t *testing.T) {
 
 				// Verify nameservers are normalized
 				if capturedBody.Nameservers == nil {
-					t.Errorf("expected nameservers to be set, got nil")
+					t.Fatalf("expected nameservers to be set, got nil")
 				}
 
 				actualNameservers := *capturedBody.Nameservers
