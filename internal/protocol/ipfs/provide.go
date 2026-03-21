@@ -9,15 +9,34 @@ import (
 	"go.lumeweb.com/portal/core"
 
 	"github.com/ipfs/go-cid"
+	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/multiformats/go-multihash"
 	"github.com/samber/lo"
 	"go.uber.org/zap"
 )
 
-type (
-// PinnedCID is a CID that needs to be periodically announced.
+// basicDHTProvider is a wrapper around basic DHT that implements pluginCore.Provider
+// For basic DHT which doesn't implement ProvideMany natively, we provide it by iterating
+type basicDHTProvider struct {
+	dht routing.ContentRouting
+}
 
-)
+func (b *basicDHTProvider) Ready() bool {
+	return true
+}
+
+func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Multihash) error {
+	for _, k := range keys {
+		if err := b.dht.Provide(ctx, cid.NewCidV1(cid.Raw, k), true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func newBasicDHTProvider(dht routing.ContentRouting) pluginCore.Provider {
+	return &basicDHTProvider{dht: dht}
+}
 
 // A Reprovider periodically announces CIDs to the IPFS network.
 type Reprovider struct {
