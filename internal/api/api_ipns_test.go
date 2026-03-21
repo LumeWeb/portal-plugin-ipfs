@@ -12,7 +12,6 @@ import (
 	mh "github.com/multiformats/go-multihash"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/ipfs/boxo/ipns"
-	"github.com/ipfs/boxo/path"
 	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -510,9 +509,6 @@ func TestAPI_RepublishIPNS(t *testing.T) {
 
 			mockIPNSKeyService := helper.SetupIPNSServiceMocksNoDefaults(userID)
 
-			targetCID := cid.MustParse(TestCID)
-			ipnsPath := path.FromCid(targetCID)
-
 			// Create a valid IPNS record with a value
 			mockRecord := createMockIPNSRecord(t, TestCID)
 			ipnsName, _ := ipns.NameFromString(TestIPNSName)
@@ -522,7 +518,7 @@ func TestAPI_RepublishIPNS(t *testing.T) {
 
 			mockIPNSKeyService.EXPECT().ListPublished(mock.Anything).Return(records, nil)
 			mockIPNSKeyService.EXPECT().GetPrivateKeyByPeerID(mock.Anything, ipnsName.Peer().String()).Return(nil, userID, nil).Times(1)
-			mockIPNSKeyService.EXPECT().PublishWithKey(mock.Anything, nil, ipnsPath.String(), mock.AnythingOfType("time.Duration")).Return(nil)
+			mockIPNSKeyService.EXPECT().PublishWithKey(mock.Anything, nil, TestCID, mock.AnythingOfType("time.Duration")).Return(nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/ipns/republish", token, nil)
 
@@ -544,16 +540,13 @@ func TestAPI_RepublishIPNS(t *testing.T) {
 
 			mockKey := createTestIPNSKey(1, userID, "test-key", TestPeerID)
 
-			targetCID := cid.MustParse(TestCID)
-			ipnsPath := path.FromCid(targetCID)
-
 			// Create a valid IPNS record with a value
 			mockRecord := createMockIPNSRecord(t, TestCID)
 
 			mockIPNSKeyService.EXPECT().GetKeyByID(mock.Anything, userID, uint(1)).Return(&mockKey, nil)
 			mockIPNSKeyService.EXPECT().GetPublished(mock.Anything, mockKey.PeerID().String(), false).Return(mockRecord, nil)
 			mockIPNSKeyService.EXPECT().GetPrivateKeyByPeerID(mock.Anything, mockKey.PeerID().String()).Return(nil, userID, nil)
-			mockIPNSKeyService.EXPECT().PublishWithKey(mock.Anything, nil, ipnsPath.String(), mock.AnythingOfType("time.Duration")).Return(nil)
+			mockIPNSKeyService.EXPECT().PublishWithKey(mock.Anything, nil, TestCID, mock.AnythingOfType("time.Duration")).Return(nil)
 
 			reqBody := `{"key_id":1}`
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/ipns/republish", token, []byte(reqBody))
@@ -604,6 +597,69 @@ func TestAPI_RepublishIPNS(t *testing.T) {
 			rec := httptest.NewRecorder()
 			ctx.Router().ServeHTTP(rec, req)
 			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("regression_path_extraction_single_key", func(t *testing.T) {
+		// Regression test: Ensures CID is extracted from path, not full path string passed to PublishWithKey
+		// This tests the fix for the bug where valuePath.String() was passed instead of just the CID
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockIPNSKeyService := helper.SetupIPNSServiceMocks(userID)
+
+			mockKey := createTestIPNSKey(1, userID, "test-key", TestPeerID)
+
+			// Create a mock IPNS record that will return a path like /ipfs/{cid}
+			mockRecord := createMockIPNSRecord(t, TestCID)
+
+			mockIPNSKeyService.EXPECT().GetKeyByID(mock.Anything, userID, uint(1)).Return(&mockKey, nil)
+			mockIPNSKeyService.EXPECT().GetPublished(mock.Anything, mockKey.PeerID().String(), false).Return(mockRecord, nil)
+			mockIPNSKeyService.EXPECT().GetPrivateKeyByPeerID(mock.Anything, mockKey.PeerID().String()).Return(nil, userID, nil)
+			// Important: This test expects the CID string, NOT the full path string (/ipfs/{cid})
+			mockIPNSKeyService.EXPECT().PublishWithKey(mock.Anything, nil, TestCID, mock.AnythingOfType("time.Duration")).Return(nil)
+
+			reqBody := `{"key_id":1}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/ipns/republish", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			var response dto.IPNSRepublishResponse
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Equal(t, 1, response.Count)
+		}, TestOptions)
+	})
+
+	t.Run("regression_path_extraction_bulk_keys", func(t *testing.T) {
+		// Regression test: Ensures CID extraction from path works correctly in bulk republish loop
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockIPNSKeyService := helper.SetupIPNSServiceMocksNoDefaults(userID)
+
+			// Create a mock IPNS record
+			mockRecord := createMockIPNSRecord(t, TestCID)
+			ipnsName, _ := ipns.NameFromString(TestIPNSName)
+			records := map[ipns.Name]*ipns.Record{
+				ipnsName: mockRecord,
+			}
+
+			mockIPNSKeyService.EXPECT().ListPublished(mock.Anything).Return(records, nil)
+			mockIPNSKeyService.EXPECT().GetPrivateKeyByPeerID(mock.Anything, ipnsName.Peer().String()).Return(nil, userID, nil).Times(1)
+			// Important: This test expects the CID string, NOT the full path string (/ipfs/{cid})
+			mockIPNSKeyService.EXPECT().PublishWithKey(mock.Anything, nil, TestCID, mock.AnythingOfType("time.Duration")).Return(nil)
+
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/ipns/republish", token, nil)
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			var response dto.IPNSRepublishResponse
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Equal(t, 1, response.Count)
 		}, TestOptions)
 	})
 }
