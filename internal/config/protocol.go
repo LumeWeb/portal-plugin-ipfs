@@ -5,6 +5,13 @@ import (
 	"go.lumeweb.com/portal/config"
 )
 
+const (
+	// DHTModeBasic represents a standard libp2p Kademlia DHT
+	DHTModeBasic = "basic"
+	// DHTModeFullRT represents the FullRT DHT with full network visibility
+	DHTModeFullRT = "fullrt"
+)
+
 var _ config.Defaults = (*ProtocolConfig)(nil)
 
 type ProtocolConfig struct {
@@ -15,12 +22,14 @@ type ProtocolConfig struct {
 	BlockStore              BlockStore      `config:"blockstore"`
 	LogLevel                string          `config:"log_level"`
 	AutoScaleResourceLimits bool            `config:"auto_scale_resource_limits"`
+	DHTMode                 string          `config:"dht_mode"`
 }
 
 func (c ProtocolConfig) Defaults() map[string]any {
 	return map[string]any{
 		"ListenAddresses": []string{"/ip4/0.0.0.0/tcp/4001"},
 		"BootstrapPeers":  BootstrapPeers,
+		"DHTMode":         "fullrt",
 	}
 }
 func (l ProtocolConfig) Schema() z.ZogSchema {
@@ -28,5 +37,8 @@ func (l ProtocolConfig) Schema() z.ZogSchema {
 		"LogLevel": z.String().
 			Default("info").
 			OneOf([]string{"debug", "info", "warn", "error", "fatal"}, z.Message("log level must be one of: debug, info, warn, error, fatal")),
+		"DHTMode": z.String().
+			Default(DHTModeFullRT).
+			OneOf([]string{DHTModeBasic, DHTModeFullRT}, z.Message("dht mode must be one of: basic, fullrt")),
 	})
 }

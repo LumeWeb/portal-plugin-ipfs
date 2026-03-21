@@ -12,6 +12,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 	"github.com/prometheus/client_golang/prometheus"
@@ -50,6 +51,16 @@ const (
 )
 
 var cachedAnnouncementAddresses []multiaddr.Multiaddr
+
+// DHTRouting combines the interfaces needed from a DHT routing implementation
+type DHTRouting interface {
+	Close() error
+	Host() host.Host
+	routing.ValueStore
+	routing.ContentRouting
+	routing.PeerRouting
+}
+
 
 // IPFSNode defines the interface for IPFS node operations
 type IPFSNode interface {
@@ -91,7 +102,7 @@ func (n *NopExchange) NotifyNewBlocks(ctx context.Context, blocks ...blocks.Bloc
 type Node struct {
 	log              *core.Logger
 	host             host.Host
-	frt              *fullrt.FullRT
+	routing          DHTRouting
 	reprovider       *Reprovider
 	blockService     blockservice.BlockService
 	dagService       format.DAGService
@@ -107,7 +118,7 @@ func (n *Node) Close() error {
 	if n.reproviderCancel != nil {
 		n.reproviderCancel()
 	}
-	err := n.frt.Close()
+	err := n.routing.Close()
 	if err != nil {
 		return err
 	}
@@ -163,7 +174,7 @@ func (n *Node) GetBlockstore() blockstore.Blockstore {
 
 // PeerID returns the peer ID of the node
 func (n *Node) PeerID() peer.ID {
-	return n.frt.Host().ID()
+	return n.routing.Host().ID()
 }
 
 func (n *Node) ConnectionAddresses() ([]multiaddr.Multiaddr, error) {
@@ -303,21 +314,49 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	if err != nil {
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
-	fullRTOpts := []fullrt.Option{
-		fullrt.DHTOption([]dht.Option{
-			dht.Mode(dht.ModeServer),
+	var routingImpl DHTRouting
+
+	var dhtProvider pluginCore.Provider
+	var hasProvider bool
+
+	switch cfg.DHTMode {
+	case config.DHTModeBasic:
+		// Use basic DHT
+		basicDHT, dhtErr := dht.New(ctx, node, dht.Mode(dht.ModeServer),
 			dht.BootstrapPeers(lo.Map(cfg.BootstrapPeers, func(p config.IPFSPeer, _ int) peer.AddrInfo {
 				return lo.FromPtr(p.ToAddrInfo())
 			})...),
-			dht.BucketSize(20), // this cannot be changed
-			dht.Concurrency(30),
 			dht.Datastore(ds),
-		}...),
-	}
+		)
+		if dhtErr != nil {
+			return nil, fmt.Errorf("failed to create basic dht: %w", dhtErr)
+		}
+		routingImpl = basicDHT
+		// Wrap basic DHT to implement pluginCore.Provider
+		dhtProvider = newBasicDHTProvider(basicDHT)
+		hasProvider = true
+	case config.DHTModeFullRT, "":
+		// Use FullRT (default)
+		fullRTOpts := []fullrt.Option{
+			fullrt.DHTOption([]dht.Option{
+				dht.Mode(dht.ModeServer),
+				dht.BootstrapPeers(lo.Map(cfg.BootstrapPeers, func(p config.IPFSPeer, _ int) peer.AddrInfo {
+					return lo.FromPtr(p.ToAddrInfo())
+				})...),
+				dht.BucketSize(20), // this cannot be changed
+				dht.Concurrency(30),
+				dht.Datastore(ds),
+			}...),
+		}
 
-	frt, err := fullrt.NewFullRT(node, dht.DefaultPrefix, fullRTOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create fullrt: %w", err)
+		frt, dhtErr := fullrt.NewFullRT(node, dht.DefaultPrefix, fullRTOpts...)
+		if dhtErr != nil {
+			return nil, fmt.Errorf("failed to create fullrt: %w", dhtErr)
+		}
+		routingImpl = frt
+		// FullRT already implements pluginCore.Provider
+		dhtProvider = frt
+		hasProvider = true
 	}
 
 	// Log configured bootstrap servers for debugging
@@ -326,7 +365,8 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	})
 	ctx.Logger().Debug("IPFS node configured with bootstrap servers",
 		zap.Strings("bootstrap_peers", bootstrapPeers),
-		zap.Int("count", len(bootstrapPeers)))
+		zap.Int("count", len(bootstrapPeers)),
+		zap.String("dht_mode", cfg.DHTMode))
 
 	bitswapOpts := []bitswap.Option{
 		bitswap.EngineBlockstoreWorkerCount(cfg.BlockStore.MaxConcurrentRequests),
@@ -337,7 +377,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	bs = &blockstore.ValidatingBlockstore{bs}
 
 	bitswapNet := bsnet.NewFromIpfsHost(node)
-	_bitswap := bitswap.New(ctx, bitswapNet, frt, bs, bitswapOpts...)
+	_bitswap := bitswap.New(ctx, bitswapNet, routingImpl, bs, bitswapOpts...)
 
 	// Wrap the bitswap exchange with NopExchange to disable automatic block announcements
 	nopExchange := &NopExchange{_bitswap}
@@ -354,9 +394,14 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		node.Peerstore().AddAddrs(p.ToAddrInfo().ID, addrs, peerstore.PermanentAddrTTL)
 	}
 
-	rp := NewReprovider(frt, rs, ctx.Logger().Named("reprovider"))
-	reproviderCtx, reproviderCancel := context.WithCancel(ctx)
-	go rp.Run(reproviderCtx, cfg.Provider.Interval, cfg.Provider.Timeout, cfg.Provider.BatchSize)
+	var rp *Reprovider
+	var reproviderCancel context.CancelFunc
+	if hasProvider {
+		rp = NewReprovider(dhtProvider, rs, ctx.Logger().Named("reprovider"))
+		reproviderCtx, cancel := context.WithCancel(ctx)
+		reproviderCancel = cancel
+		go rp.Run(reproviderCtx, cfg.Provider.Interval, cfg.Provider.Timeout, cfg.Provider.BatchSize)
+	}
 
 	// Create boxo keystore for IPNS key management
 	boxoKeystore := keystore.NewMemKeystore()
@@ -364,11 +409,11 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	safeKeystore := NewSafeKeystore(boxoKeystore, ctx.Logger())
 
 	// Create boxo IPNS publisher
-	boxoPublisher := namesys.NewIPNSPublisher(frt, ds)
+	boxoPublisher := namesys.NewIPNSPublisher(routingImpl, ds)
 
 	return &Node{
 		log:              ctx.Logger(),
-		frt:              frt,
+		routing:          routingImpl,
 		host:             node,
 		bitswap:          _bitswap,
 		blockService:     blockServ,
