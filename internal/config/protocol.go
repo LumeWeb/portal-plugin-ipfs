@@ -5,6 +5,13 @@ import (
 	"go.lumeweb.com/portal/config"
 )
 
+const (
+	// DHTModeBasic represents a standard libp2p Kademlia DHT
+	DHTModeBasic = "basic"
+	// DHTModeFullRT represents the FullRT DHT with full network visibility
+	DHTModeFullRT = "fullrt"
+)
+
 var _ config.Defaults = (*ProtocolConfig)(nil)
 
 type ProtocolConfig struct {
@@ -31,7 +38,7 @@ func (l ProtocolConfig) Schema() z.ZogSchema {
 			Default("info").
 			OneOf([]string{"debug", "info", "warn", "error", "fatal"}, z.Message("log level must be one of: debug, info, warn, error, fatal")),
 		"DHTMode": z.String().
-			Default("fullrt").
-			OneOf([]string{"basic", "fullrt"}, z.Message("dht mode must be one of: basic, fullrt")),
+			Default(DHTModeFullRT).
+			OneOf([]string{DHTModeBasic, DHTModeFullRT}, z.Message("dht mode must be one of: basic, fullrt")),
 	})
 }

@@ -320,7 +320,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	var hasProvider bool
 
 	switch cfg.DHTMode {
-	case "basic":
+	case config.DHTModeBasic:
 		// Use basic DHT
 		basicDHT, dhtErr := dht.New(ctx, node, dht.Mode(dht.ModeServer),
 			dht.BootstrapPeers(lo.Map(cfg.BootstrapPeers, func(p config.IPFSPeer, _ int) peer.AddrInfo {
@@ -335,7 +335,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		// Wrap basic DHT to implement pluginCore.Provider
 		dhtProvider = newBasicDHTProvider(basicDHT)
 		hasProvider = true
-	case "fullrt", "":
+	case config.DHTModeFullRT, "":
 		// Use FullRT (default)
 		fullRTOpts := []fullrt.Option{
 			fullrt.DHTOption([]dht.Option{
@@ -357,8 +357,6 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		// FullRT already implements pluginCore.Provider
 		dhtProvider = frt
 		hasProvider = true
-	default:
-		return nil, fmt.Errorf("invalid dht mode: %s (must be 'basic' or 'fullrt')", cfg.DHTMode)
 	}
 
 	// Log configured bootstrap servers for debugging
