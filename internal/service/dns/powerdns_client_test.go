@@ -613,6 +613,132 @@ func TestCreateZoneCanonicalDomain(t *testing.T) {
 		})
 	}
 }
+func TestCreateZoneCanonicalNameservers(t *testing.T) {
+	tests := []struct {
+		name           string
+		domain         string
+		nameservers    []string
+		expectedNS     []string
+		expectError    bool
+	}{
+		{
+			name:        "normalize nameservers without trailing dots",
+			domain:      "example.com",
+			nameservers: []string{"ns1.example.com", "ns2.example.com"},
+			expectedNS:  []string{"ns1.example.com.", "ns2.example.com."},
+			expectError: false,
+		},
+		{
+			name:        "preserve nameservers with trailing dots",
+			domain:      "example.com",
+			nameservers: []string{"ns1.example.com.", "ns2.example.com."},
+			expectedNS:  []string{"ns1.example.com.", "ns2.example.com."},
+			expectError: false,
+		},
+		{
+			name:        "mix of normalized and non-normalized nameservers",
+			domain:      "example.com",
+			nameservers: []string{"ns1.example.com", "ns2.example.com.", "ns3.example.com"},
+			expectedNS:  []string{"ns1.example.com.", "ns2.example.com.", "ns3.example.com."},
+			expectError: false,
+		},
+		{
+			name:        "single nameserver without trailing dot",
+			domain:      "example.com",
+			nameservers: []string{"ns1.example.com"},
+			expectedNS:  []string{"ns1.example.com."},
+			expectError: false,
+		},
+		{
+			name:        "empty nameserver list",
+			domain:      "example.com",
+			nameservers: []string{},
+			expectedNS:  []string{},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var capturedBody powerdns.ZoneCreate
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Read and parse request body
+				bodyBytes, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("failed to read request body: %v", err)
+				}
+
+				if err := json.Unmarshal(bodyBytes, &capturedBody); err != nil {
+					t.Errorf("failed to decode request body: %v", err)
+				}
+
+				// Verify nameservers are normalized
+				if capturedBody.Nameservers == nil {
+					t.Errorf("expected nameservers to be set, got nil")
+				}
+
+				actualNameservers := *capturedBody.Nameservers
+
+				if len(actualNameservers) != len(tt.expectedNS) {
+					t.Errorf("expected %d nameservers, got %d", len(tt.expectedNS), len(actualNameservers))
+				}
+
+				for i, expected := range tt.expectedNS {
+					if i >= len(actualNameservers) {
+						t.Errorf("missing nameserver at index %d", i)
+						break
+					}
+					if actualNameservers[i] != expected {
+						t.Errorf("expected nameserver[%d] to be %q, got %q", i, expected, actualNameservers[i])
+					}
+				}
+
+				// Verify all nameservers have trailing dots
+				for _, ns := range actualNameservers {
+					if !strings.HasSuffix(ns, ".") {
+						t.Errorf("expected nameserver '%s' to have trailing dot", ns)
+					}
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(powerdns.Zone{
+					Id:   strPtr(capturedBody.Name),
+					Name: strPtr(capturedBody.Name),
+					Kind: (*powerdns.ZoneKind)(strPtr("Native")),
+				})
+			}))
+			defer server.Close()
+
+			logger := zap.NewNop()
+			coreLogger := &core.Logger{Logger: logger}
+			client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+			if err != nil {
+				t.Fatalf("NewPowerDNSClient failed: %v", err)
+			}
+
+			ctx := context.Background()
+			zone, err := client.CreateZone(ctx, tt.domain, tt.nameservers)
+
+			if tt.expectError && err == nil {
+				t.Error("expected error but got nil")
+			}
+
+			if !tt.expectError && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if !tt.expectError && zone != nil {
+				if zone.Name == nil {
+					t.Errorf("expected zone name, got nil")
+				} else if !strings.HasSuffix(*zone.Name, ".") {
+					t.Errorf("expected zone name to have trailing dot, got '%s'", *zone.Name)
+				}
+			}
+		})
+	}
+}
 
 func TestCreateZoneHTTPErrorHandling(t *testing.T) {
 	tests := []struct {
