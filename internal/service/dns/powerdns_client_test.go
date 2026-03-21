@@ -528,19 +528,19 @@ func TestCreateZoneCanonicalDomain(t *testing.T) {
 		{
 			name:         "canonicalize domain without trailing dot",
 			inputDomain:  "example.com",
-			expectedBody: `{"name":"example.com."}`,
+			expectedBody: `{"kind":"Native","name":"example.com.","nameservers":[]}`,
 			expectError:  false,
 		},
 		{
 			name:         "preserve existing trailing dot",
 			inputDomain:  "example.com.",
-			expectedBody: `{"name":"example.com."}`,
+			expectedBody: `{"kind":"Native","name":"example.com.","nameservers":[]}`,
 			expectError:  false,
 		},
 		{
 			name:         "canonicalize subdomain without trailing dot",
 			inputDomain:  "test.example.com",
-			expectedBody: `{"name":"test.example.com."}`,
+			expectedBody: `{"kind":"Native","name":"test.example.com.","nameservers":[]}`,
 			expectError:  false,
 		},
 	}
@@ -548,8 +548,26 @@ func TestCreateZoneCanonicalDomain(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Read raw request body to compare with expectedBody
+				bodyBytes, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("failed to read request body: %v", err)
+				}
+
+				// Compare actual body with expected body
+				actualBody := string(bodyBytes)
+				expectedBody := tt.expectedBody
+
+				// Normalize whitespace for comparison
+				actualNormalized := strings.ReplaceAll(actualBody, " ", "")
+				expectedNormalized := strings.ReplaceAll(expectedBody, " ", "")
+
+				if !tt.expectError && actualNormalized != expectedNormalized {
+					t.Errorf("expected request body %q, got %q", expectedBody, actualBody)
+				}
+
 				var body powerdns.ZoneCreate
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				if err := json.Unmarshal(bodyBytes, &body); err != nil {
 					t.Errorf("failed to decode request body: %v", err)
 				}
 
