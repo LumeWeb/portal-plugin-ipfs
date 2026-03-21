@@ -914,13 +914,11 @@ func (s *IPNSKeyServiceDefault) MigrateEncryptionSeed(ctx core.Context) error {
 // cidStr is the CID to publish as the IPNS record value
 // ttl is the time-to-live for the IPNS record (use 0 for default)
 func (s *IPNSKeyServiceDefault) PublishCID(ctx context.Context, keyID string, cidStr string, ttl time.Duration) error {
-	// Convert to core.Context for tracing
-	coreCtx := ctx.(core.Context)
-	_, span := core.TraceMethod(coreCtx, "IPNSKeyServiceDefault.PublishCID")
+	_, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.PublishCID")
 	defer span.End()
 
 	// Get the private key by peer ID
-	privKey, _, err := s.GetPrivateKeyByPeerID(coreCtx, keyID)
+	privKey, _, err := s.GetPrivateKeyByPeerID(ctx, keyID)
 	if err != nil {
 		s.Logger().Error("Failed to get private key for IPNS publish",
 			zap.Error(err),
@@ -935,9 +933,7 @@ func (s *IPNSKeyServiceDefault) PublishCID(ctx context.Context, keyID string, ci
 
 // PublishWithKey publishes a CID using the provided private key
 func (s *IPNSKeyServiceDefault) PublishWithKey(ctx context.Context, privKey ic.PrivKey, cidStr string, ttl time.Duration) error {
-	// Convert to core.Context for tracing
-	coreCtx := ctx.(core.Context)
-	traceCtx, span := core.TraceMethod(coreCtx, "IPNSKeyServiceDefault.PublishWithKey")
+	traceCtx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.PublishWithKey")
 	defer span.End()
 
 	// Parse the CID
@@ -976,9 +972,7 @@ func (s *IPNSKeyServiceDefault) PublishWithKey(ctx context.Context, privKey ic.P
 
 // GetPublished retrieves the latest published record for an IPNS name
 func (s *IPNSKeyServiceDefault) GetPublished(ctx context.Context, keyID string, checkRouting bool) (*ipns.Record, error) {
-	// Convert to core.Context for tracing
-	coreCtx := ctx.(core.Context)
-	traceCtx, span := core.TraceMethod(coreCtx, "IPNSKeyServiceDefault.GetPublished")
+	traceCtx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.GetPublished")
 	defer span.End()
 
 	// Parse the peer ID
@@ -1001,9 +995,7 @@ func (s *IPNSKeyServiceDefault) GetPublished(ctx context.Context, keyID string, 
 
 // ListPublished returns all IPNS records published by this node
 func (s *IPNSKeyServiceDefault) ListPublished(ctx context.Context) (map[ipns.Name]*ipns.Record, error) {
-	// Convert to core.Context for tracing
-	coreCtx := ctx.(core.Context)
-	traceCtx, span := core.TraceMethod(coreCtx, "IPNSKeyServiceDefault.ListPublished")
+	traceCtx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.ListPublished")
 	defer span.End()
 
 	records, err := s.publisher.ListPublished(traceCtx)
