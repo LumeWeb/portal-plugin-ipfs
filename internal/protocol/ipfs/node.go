@@ -518,6 +518,19 @@ func allPeersLocal(cfg *config.ProtocolConfig) bool {
 
 		// Check if any address is public
 		for _, addr := range peerInfo.Addrs {
+			// Treat DNS addresses as public (non-local) since they typically resolve to public IPs
+			if _, err := addr.ValueForProtocol(multiaddr.P_DNSADDR); err == nil {
+				return false
+			}
+			if _, err := addr.ValueForProtocol(multiaddr.P_DNS); err == nil {
+				return false
+			}
+			if _, err := addr.ValueForProtocol(multiaddr.P_DNS4); err == nil {
+				return false
+			}
+			if _, err := addr.ValueForProtocol(multiaddr.P_DNS6); err == nil {
+				return false
+			}
 			if isPublic := manet.IsPublicAddr(addr); isPublic {
 				// Found a public address, need WAN DHT
 				return false
