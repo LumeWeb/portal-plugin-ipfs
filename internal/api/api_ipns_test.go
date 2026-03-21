@@ -51,7 +51,7 @@ func TestAPI_CreateIPNSKey(t *testing.T) {
 			reqBody := `{"name":"test-key"}`
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/ipns/keys", token, []byte(reqBody))
 
-			assert.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, http.StatusCreated, rec.Code)
 
 			var response dto.IPNSKeyResponse
 			err := json.Unmarshal(rec.Body.Bytes(), &response)
@@ -82,7 +82,7 @@ func TestAPI_CreateIPNSKey(t *testing.T) {
 			reqBody := `{"name":"imported-key","key":"CAESQAoY8f9K8u0p9c0f1e2d3c4b5a6987654321fedcba"}`
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/ipns/keys", token, []byte(reqBody))
 
-			assert.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, http.StatusCreated, rec.Code)
 
 			var response dto.IPNSKeyResponse
 			err := json.Unmarshal(rec.Body.Bytes(), &response)

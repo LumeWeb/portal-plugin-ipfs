@@ -65,6 +65,9 @@ func (a *API) createIPNSKey(c echo.Context) error {
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
+	ctx.Response().Before(func() {
+		ctx.Response().Status = http.StatusCreated
+	})
 	return httputil.EncodeResponse(ctx, key, &resp)
 }
 
