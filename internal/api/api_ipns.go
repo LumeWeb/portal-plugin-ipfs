@@ -398,8 +398,16 @@ func (a *API) republishIPNS(c echo.Context) error {
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
 
+		// Extract CID from the path
+		pathSegments := valuePath.Segments()
+		if len(pathSegments) < 2 {
+			apiErr := NewError(ErrKeyInvalidRequest, fmt.Errorf("invalid IPNS record path format"))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		cidStr := pathSegments[1]
+
 		// Republish with the same value
-		err = ipnsKeyService.PublishWithKey(reqCtx, privKey, valuePath.String(), 0)
+		err = ipnsKeyService.PublishWithKey(reqCtx, privKey, cidStr, 0)
 		if err != nil {
 			a.Logger().Error("Failed to republish IPNS record", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
 			apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to republish IPNS record: %w", err))
@@ -432,7 +440,15 @@ func (a *API) republishIPNS(c echo.Context) error {
 				continue
 			}
 
-			err = ipnsKeyService.PublishWithKey(reqCtx, privKey, valuePath.String(), 0)
+			// Extract CID from the path
+			pathSegments := valuePath.Segments()
+			if len(pathSegments) < 2 {
+				a.Logger().Warn("Invalid IPNS record path format, skipping", zap.String("peer_id", peerID))
+				continue
+			}
+			cidStr := pathSegments[1]
+
+			err = ipnsKeyService.PublishWithKey(reqCtx, privKey, cidStr, 0)
 			if err != nil {
 				a.Logger().Warn("Failed to republish IPNS record, skipping", zap.Error(err), zap.String("peer_id", peerID))
 				continue
