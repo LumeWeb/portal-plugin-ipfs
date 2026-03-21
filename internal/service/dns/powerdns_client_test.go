@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"go.lumeweb.com/portal/core"
@@ -514,6 +515,207 @@ func TestDeleteZoneIntegration(t *testing.T) {
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateZoneCanonicalDomain(t *testing.T) {
+	tests := []struct {
+		name         string
+		inputDomain  string
+		expectedBody string
+		expectError  bool
+	}{
+		{
+			name:         "canonicalize domain without trailing dot",
+			inputDomain:  "example.com",
+			expectedBody: `{"kind":"Native","name":"example.com.","nameservers":[]}`,
+			expectError:  false,
+		},
+		{
+			name:         "preserve existing trailing dot",
+			inputDomain:  "example.com.",
+			expectedBody: `{"kind":"Native","name":"example.com.","nameservers":[]}`,
+			expectError:  false,
+		},
+		{
+			name:         "canonicalize subdomain without trailing dot",
+			inputDomain:  "test.example.com",
+			expectedBody: `{"kind":"Native","name":"test.example.com.","nameservers":[]}`,
+			expectError:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Read raw request body to compare with expectedBody
+				bodyBytes, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("failed to read request body: %v", err)
+				}
+
+				// Compare actual body with expected body
+				actualBody := string(bodyBytes)
+				expectedBody := tt.expectedBody
+
+				// Normalize whitespace for comparison
+				actualNormalized := strings.ReplaceAll(actualBody, " ", "")
+				expectedNormalized := strings.ReplaceAll(expectedBody, " ", "")
+
+				if !tt.expectError && actualNormalized != expectedNormalized {
+					t.Errorf("expected request body %q, got %q", expectedBody, actualBody)
+				}
+
+				var body powerdns.ZoneCreate
+				if err := json.Unmarshal(bodyBytes, &body); err != nil {
+					t.Errorf("failed to decode request body: %v", err)
+				}
+
+				if body.Name != "example.com." && body.Name != "test.example.com." {
+					t.Errorf("expected canonical domain, got '%s'", body.Name)
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(powerdns.Zone{
+					Id:   strPtr(body.Name),
+					Name: strPtr(body.Name),
+					Kind: (*powerdns.ZoneKind)(strPtr("Native")),
+				})
+			}))
+			defer server.Close()
+
+			logger := zap.NewNop()
+			coreLogger := &core.Logger{Logger: logger}
+			client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+			if err != nil {
+				t.Fatalf("NewPowerDNSClient failed: %v", err)
+			}
+
+			ctx := context.Background()
+			zone, err := client.CreateZone(ctx, tt.inputDomain, []string{})
+
+			if tt.expectError && err == nil {
+				t.Error("expected error but got nil")
+			}
+
+			if !tt.expectError && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if !tt.expectError && zone != nil {
+				if zone.Name == nil {
+					t.Errorf("expected zone name, got nil")
+				} else if !strings.HasSuffix(*zone.Name, ".") {
+					t.Errorf("expected zone name to have trailing dot, got '%s'", *zone.Name)
+				}
+			}
+		})
+	}
+}
+
+func TestCreateZoneHTTPErrorHandling(t *testing.T) {
+	tests := []struct {
+		name          string
+		statusCode    int
+		errorBody     string
+		expectedError string
+	}{
+		{
+			name:          "HTTP 422 unprocessable entity with error message",
+			statusCode:    http.StatusUnprocessableEntity,
+			errorBody:     `{"error": "DNS Name 'test.example.com' is not canonical"}`,
+			expectedError: "PowerDNS API returned status 422",
+		},
+		{
+			name:          "HTTP 400 bad request",
+			statusCode:    http.StatusBadRequest,
+			errorBody:     `{"error": "Invalid request"}`,
+			expectedError: "PowerDNS API returned status 400",
+		},
+		{
+			name:          "HTTP 500 internal server error",
+			statusCode:    http.StatusInternalServerError,
+			errorBody:     `Internal Server Error`,
+			expectedError: "PowerDNS API returned status 500",
+		},
+		{
+			name:          "HTTP 404 not found",
+			statusCode:    http.StatusNotFound,
+			errorBody:     `{"error": "Not found"}`,
+			expectedError: "PowerDNS API returned status 404",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.statusCode)
+				w.Write([]byte(tt.errorBody))
+			}))
+			defer server.Close()
+
+			logger := zap.NewNop()
+			coreLogger := &core.Logger{Logger: logger}
+			client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+			if err != nil {
+				t.Fatalf("NewPowerDNSClient failed: %v", err)
+			}
+
+			ctx := context.Background()
+			zone, err := client.CreateZone(ctx, "example.com", []string{})
+
+			if err == nil {
+				t.Error("expected error but got nil")
+			}
+
+			if !strings.Contains(err.Error(), tt.expectedError) {
+				t.Errorf("expected error to contain %q, got %v", tt.expectedError, err)
+			}
+
+			if zone != nil {
+				t.Errorf("expected nil zone on error, got %v", zone)
+			}
+
+			if strings.Contains(err.Error(), tt.errorBody) {
+				t.Logf("✓ Error body included in error message: %v", err)
+			}
+		})
+	}
+}
+
+func TestCreateZoneErrorResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write([]byte(`{"error": "DNS Name is not canonical", "details": "must end with a dot"}`))
+	}))
+	defer server.Close()
+
+	logger := zap.NewNop()
+	coreLogger := &core.Logger{Logger: logger}
+	client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+	if err != nil {
+		t.Fatalf("NewPowerDNSClient failed: %v", err)
+	}
+
+	ctx := context.Background()
+	zone, err := client.CreateZone(ctx, "invalid-domain", []string{})
+
+	if err == nil {
+		t.Fatal("expected error but got nil")
+	}
+
+	if zone != nil {
+		t.Errorf("expected nil zone on error, got %v", zone)
+	}
+
+	// Verify the error message includes the HTTP status and body
+	if !strings.Contains(err.Error(), "422") {
+		t.Errorf("expected error to contain status code 422, got %v", err)
+	}
+
+	if !strings.Contains(err.Error(), "DNS Name is not canonical") {
+		t.Errorf("expected error to contain PowerDNS error message, got %v", err)
 	}
 }
 

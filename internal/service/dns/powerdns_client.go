@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
@@ -37,8 +39,15 @@ func NewPowerDNSClient(baseURL, apiKey string, logger *core.Logger) (*PowerDNSCl
 func (c *PowerDNSClient) CreateZone(ctx context.Context, domain string, nameservers []string) (*powerdns.Zone, error) {
 	serverID := "localhost"
 
+	// PowerDNS requires canonical zone names with trailing dots
+	canonicalDomain := strings.TrimSuffix(domain, ".") + "."
+	c.logger.Debug("Creating zone in PowerDNS",
+		zap.String("domain", domain),
+		zap.String("canonical_domain", canonicalDomain),
+		zap.Strings("nameservers", nameservers))
+
 	zoneCreate := powerdns.ZoneCreate{
-		Name:        domain,
+		Name:        canonicalDomain,
 		Nameservers: &nameservers,
 	}
 
@@ -50,6 +59,12 @@ func (c *PowerDNSClient) CreateZone(ctx context.Context, domain string, nameserv
 		return nil, fmt.Errorf("failed to create zone: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// Check HTTP status code
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("PowerDNS API returned status %d, body: %s", resp.StatusCode, string(bodyBytes))
+	}
 
 	var zone powerdns.Zone
 	if err := json.NewDecoder(resp.Body).Decode(&zone); err != nil {
