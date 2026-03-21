@@ -318,6 +318,13 @@ func (a *API) resolveIPNS(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
+	// Check if record is nil (key not yet published)
+	if record == nil {
+		a.Logger().Debug("IPNS record not found", zap.String("name", name))
+		apiErr := NewError(ErrKeyPinFetchFailed, fmt.Errorf("IPNS name not found: %s", name))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
 	// Convert IPNS record to response
 	valuePath, err := record.Value()
 	if err != nil {
