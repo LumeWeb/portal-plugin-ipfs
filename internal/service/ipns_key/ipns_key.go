@@ -177,15 +177,6 @@ func NewIPNSKeyService() (core.Service, []core.ContextBuilderOption, error) {
 				return fmt.Errorf("failed to initialize republisher: %w", err)
 			}
 
-			// Migrate encryption seed from placeholder to actual portal identity seed
-			err = svc.MigrateEncryptionSeed(ctx)
-			if err != nil {
-				svc.Logger().Warn("IPNS key encryption seed migration encountered issues",
-					zap.Error(err),
-				)
-				// Don't fail startup - log and continue
-			}
-
 			// Sync all IPNS keys to the boxo keystore during startup
 			err = svc.SyncToBoxoKeystore(ctx)
 			if err != nil {
@@ -791,122 +782,6 @@ func (s *IPNSKeyServiceDefault) decryptPrivateKey(encryptedKey []byte) (ic.PrivK
 	}
 
 	return ic.UnmarshalPrivateKey(keyBytes)
-}
-
-// decryptPrivateKeyWithSeed decrypts an encrypted private key using a specific seed
-// This is used for migration from old seed to new seed
-func (s *IPNSKeyServiceDefault) decryptPrivateKeyWithSeed(encryptedKey []byte, seed []byte) (ic.PrivKey, error) {
-	ctx := s.Context()
-	hasher := hkdf.New(sha256.New, seed, ctx.Config().Config().Core.NodeID.Bytes(), []byte("ipns-key-encryption"))
-	derivedSeed := make([]byte, 32)
-
-	if _, err := io.ReadFull(hasher, derivedSeed); err != nil {
-		return nil, fmt.Errorf("failed to derive decryption seed: %w", err)
-	}
-
-	block, err := aes.NewCipher(derivedSeed)
-	if err != nil {
-		return nil, err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(encryptedKey) < nonceSize {
-		return nil, fmt.Errorf("ciphertext too short")
-	}
-
-	nonce, ciphertext := encryptedKey[:nonceSize], encryptedKey[nonceSize:]
-	keyBytes, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return ic.UnmarshalPrivateKey(keyBytes)
-}
-
-// MigrateEncryptionSeed migrates all IPNS keys from old placeholder seed to new portal identity seed
-func (s *IPNSKeyServiceDefault) MigrateEncryptionSeed(ctx core.Context) error {
-	s.Logger().Info("Starting IPNS key encryption seed migration")
-
-	var keys []pluginDb.IPFSIPNSKey
-	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		return tx.Find(&keys)
-	})
-	if err != nil {
-		s.Logger().Error("Failed to list IPNS keys for migration", zap.Error(err))
-		return fmt.Errorf("failed to list IPNS keys: %w", err)
-	}
-
-	if len(keys) == 0 {
-		s.Logger().Info("No IPNS keys to migrate")
-		return nil
-	}
-
-	oldSeed := []byte("placeholder-portal-seed")
-	migratedCount := 0
-	failedCount := 0
-
-	for _, key := range keys {
-		privKey, err := s.decryptPrivateKeyWithSeed(key.PrivateKeyEncrypted, oldSeed)
-		if err != nil {
-			s.Logger().Warn("Failed to decrypt key with old seed during migration",
-				zap.Error(err),
-				zap.Uint("key_id", key.ID),
-				zap.Stringer("peer_id", key.PeerID()),
-			)
-			failedCount++
-			continue
-		}
-
-		newEncryptedKey, err := s.encryptPrivateKey(privKey)
-		if err != nil {
-			s.Logger().Error("Failed to encrypt key with new seed during migration",
-				zap.Error(err),
-				zap.Uint("key_id", key.ID),
-				zap.Stringer("peer_id", key.PeerID()),
-			)
-			failedCount++
-			continue
-		}
-
-		updateErr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-			return tx.Model(&pluginDb.IPFSIPNSKey{}).
-				Where("id = ?", key.ID).
-				Update("private_key_encrypted", newEncryptedKey)
-		})
-		if updateErr != nil {
-			s.Logger().Error("Failed to update encrypted key in database",
-				zap.Error(updateErr),
-				zap.Uint("key_id", key.ID),
-				zap.Stringer("peer_id", key.PeerID()),
-			)
-			failedCount++
-			continue
-		}
-
-		migratedCount++
-		s.Logger().Debug("Migrated IPNS key",
-			zap.Uint("key_id", key.ID),
-			zap.Stringer("peer_id", key.PeerID()),
-			zap.String("name", key.Name),
-		)
-	}
-
-	s.Logger().Info("Completed IPNS key encryption seed migration",
-		zap.Int("migrated", migratedCount),
-		zap.Int("failed", failedCount),
-		zap.Int("total", len(keys)),
-	)
-
-	if failedCount > 0 {
-		return fmt.Errorf("migration completed with %d failures out of %d keys", failedCount, len(keys))
-	}
-
-	return nil
 }
 
 // PublishCID publishes a CID to an IPNS key
