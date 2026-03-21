@@ -289,6 +289,19 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 		return nil
 	}
 
+	// Check if record is nil (key not yet published)
+	if record == nil {
+		j.logger.Warn("IPNS record not found",
+			zap.Uint("website_id", website.ID),
+			zap.String("domain", website.Domain),
+			zap.String("peer_id", website.TargetHash()),
+		)
+		website.Status = string(pluginDb.WebsiteStatusBroken)
+		now := time.Now()
+		website.LastCheckedAt = &now
+		return nil
+	}
+
 	// Extract CID from record
 	recordCID, err := record.Value()
 	if err != nil {

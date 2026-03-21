@@ -499,6 +499,22 @@ func TestAPI_ResolveIPNS(t *testing.T) {
 			assert.Equal(t, http.StatusUnauthorized, rec.Code)
 		}, TestOptions)
 	})
+
+	t.Run("error_nil_record", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, _ := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockIPNSKeyService := helper.SetupIPNSServiceMocks(1)
+
+			// Return nil record to simulate key not yet published
+			mockIPNSKeyService.EXPECT().GetPublished(mock.Anything, TestIPNSName, false).Return((*ipns.Record)(nil), nil)
+
+			rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/api/ipns/resolve/%s", TestIPNSName), token, nil)
+
+			assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		}, TestOptions)
+	})
 }
 
 func TestAPI_RepublishIPNS(t *testing.T) {
