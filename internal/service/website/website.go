@@ -972,11 +972,11 @@ func (s *WebsiteServiceDefault) validateTarget(targetType string, targetHash str
 			return fmt.Errorf("%w: %v", ErrInvalidCID, err)
 		}
 	case pluginDb.WebsiteTargetTypeIPNS:
-		// Validate IPNS name format (peer ID in base36 format)
-		_, err := cid.Decode(targetHash)
+		// Try peer ID decode first (IPNS uses libp2p peer IDs in base36)
+		_, err := peer.Decode(targetHash)
 		if err != nil {
-			// If CID decode fails, try peer ID decode
-			_, err = peer.Decode(targetHash)
+			// FALLBACK: Try CID decode (supports CIDv1 with libp2p-key codec)
+			_, err := cid.Decode(targetHash)
 			if err != nil {
 				return fmt.Errorf("%w: %v", ErrInvalidIPNS, err)
 			}
