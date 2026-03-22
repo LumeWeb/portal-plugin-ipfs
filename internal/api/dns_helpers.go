@@ -2,13 +2,16 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/samber/lo"
 	"go.lumeweb.com/httputil"
 	mcontext "go.lumeweb.com/portal-middleware/context"
+	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"gorm.io/gorm"
 )
@@ -88,4 +91,61 @@ func parseZoneIDParamWithResponse(c echo.Context) (uint, error) {
 // handleNoContent returns a 204 No Content response
 func handleNoContent(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
+}
+
+// mapDNSErrorToAPIError converts DNS service errors to appropriate API error types
+// Returns the correct error key to ensure proper HTTP status codes:
+// - ErrKeyZoneNotFound (404): when the zone or zone-related resource is not found
+// - ErrKeyDuplicateRecord (409): when PowerDNS returns a 409 Conflict
+// - ErrKeyValidationFailed (422): when PowerDNS returns a 422 Unprocessable Entity
+// - ErrKeyUpdateFailed (500): for all other internal errors
+func mapDNSErrorToAPIError(err error) core.ErrorType {
+	if err == nil {
+		return ErrKeyUpdateFailed
+	}
+
+	// Check for gorm.ErrRecordNotFound (zone not found in database)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ErrKeyZoneNotFound
+	}
+
+	// Check for PowerDNS API errors by examining the error message
+	// The handleResponse function in powerdns_client.go includes the HTTP status code
+	errMsg := err.Error()
+
+	// Check for HTTP 409 Conflict (duplicate record)
+	if containsStatusCode(errMsg, 409) {
+		return ErrKeyDuplicateRecord
+	}
+
+	// Check for HTTP 404 Not Found from PowerDNS
+	if containsStatusCode(errMsg, 404) {
+		return ErrKeyZoneNotFound
+	}
+
+	// Check for HTTP 422 Unprocessable Entity (validation error)
+	if containsStatusCode(errMsg, 422) {
+		return ErrKeyValidationFailed
+	}
+
+	// For all other errors, return 500 Internal Server Error
+	return ErrKeyUpdateFailed
+}
+
+// containsStatusCode checks if an error message contains a specific HTTP status code
+func containsStatusCode(errMsg string, statusCode int) bool {
+	// Look for patterns like "status 409", "returned 409", "HTTP 409", etc.
+	patterns := []string{
+		fmt.Sprintf("status %d", statusCode),
+		fmt.Sprintf("returned %d", statusCode),
+		fmt.Sprintf("HTTP %d", statusCode),
+		fmt.Sprintf("%d", statusCode),
+	}
+
+	for _, pattern := range patterns {
+		if strings.Contains(errMsg, pattern) {
+			return true
+		}
+	}
+	return false
 }
