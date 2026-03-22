@@ -253,6 +253,19 @@ type WebsiteValidateResponse struct {
 // WebsiteItem represents a website listing item (used in list responses)
 type WebsiteItem WebsiteResponse
 
+// WebsiteItemResponse is a swagger-only DTO that represents the paginated response for websites.
+// It merges the generic queryutil.Response[dto.WebsiteItem] for OpenAPI documentation.
+//
+// This struct exists due to a TODO bug where queryutil.Response generics are not getting detected
+// properly as an array type in the swagger documentation generation. By providing a concrete struct,
+// we ensure the swagger docs correctly show the data field as an array of WebsiteItem items.
+//
+// Note: This struct is only used for swagger documentation, not for actual encoding.
+type WebsiteItemResponse struct {
+	Data  []WebsiteItem `json:"data"`
+	Total int64         `json:"total"`
+}
+
 // WebsiteFilter represents filtering options for website listings
 type WebsiteFilter struct {
 	Domain     *string              `json:"domain,omitempty" query:"domain"`
