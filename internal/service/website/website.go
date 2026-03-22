@@ -39,11 +39,11 @@ var (
 // WebsiteServiceDefault implements the WebsiteService interface
 type WebsiteServiceDefault struct {
 	*core.BaseComponent
-	pinSvc           pluginCore.IPFSPinService
-	ipnsKeySvc       pluginCore.IPNSKeyService
-	mailerSvc        core.MailerService
-	dnsSvc           pluginCore.DNSService
-	config           *pluginConfig.WebsiteConfig
+	pinSvc     pluginCore.IPFSPinService
+	ipnsKeySvc pluginCore.IPNSKeyService
+	mailerSvc  core.MailerService
+	dnsSvc     pluginCore.DNSService
+	config     *pluginConfig.WebsiteConfig
 }
 
 // Ensure WebsiteServiceDefault implements the interface
@@ -409,7 +409,7 @@ func (s *WebsiteServiceDefault) ListWebsites(ctx context.Context, userID uint, f
 }
 
 // UpdateWebsite updates an existing website
-func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, websiteID uint, updates map[string]interface{}) (*pluginDb.Website, error) {
+func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, websiteID uint, updates map[string]any) (*pluginDb.Website, error) {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.UpdateWebsite")
 	defer span.End()
 
@@ -454,6 +454,13 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 					targetType := website.TargetType
 					if tt, ok := updates["target_type"].(string); ok {
 						targetType = tt
+					}
+
+					// Auto-detect targetType if it's IPFS but target_hash is a peer ID
+					// This handles cases where user updates target_hash without updating target_type
+					if targetType == string(pluginDb.WebsiteTargetTypeIPFS) && isValidIPNSTarget(targetHashStr) {
+						targetType = string(pluginDb.WebsiteTargetTypeIPNS)
+						updates["target_type"] = targetType
 					}
 
 					// Validate target hash
