@@ -171,10 +171,12 @@ func buildRRSet(name, recordType string, changetype powerdns.RRSetChangetype, tt
 	}
 }
 
-// recordToDTO converts a PowerDNS RRSet and Record to an API DNSRecord DTO
+// recordToDTOWithZoneID converts a PowerDNS RRSet and Record to an API DNSRecord DTO
 // It strips the domain from the record name and extracts TTL and disabled status
-func recordToDTO(rrset powerdns.RRSet, record powerdns.Record, zoneDomain string) *apiDTO.DNSRecord {
+// It populates all fields including ZoneID and timestamps
+func recordToDTOWithZoneID(rrset powerdns.RRSet, record powerdns.Record, zoneDomain string, zoneID uint) *apiDTO.DNSRecord {
 	return &apiDTO.DNSRecord{
+		ZoneID:   zoneID,
 		Name:     stripDomain(rrset.Name, zoneDomain),
 		Type:     rrset.Type,
 		Content:  record.Content,
@@ -182,6 +184,8 @@ func recordToDTO(rrset powerdns.RRSet, record powerdns.Record, zoneDomain string
 		Disabled: getDisabled(record.Disabled),
 	}
 }
+
+
 
 // buildCreatedRecord creates a CreatedRecord response from zone file entry data
 func buildCreatedRecord(name, recordType, content string, ttl uint) apiDTO.CreatedRecord {
