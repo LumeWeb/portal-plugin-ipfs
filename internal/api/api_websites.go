@@ -75,10 +75,6 @@ func (a *API) createWebsite(c echo.Context) error {
 	// Set user ID
 	model.UserID = user
 
-	// Ensure default enabled value regardless of DTO implementation details
-	// This provides defensive validation and creates a single source of truth
-	model.Enabled = model.Enabled || DefaultWebsiteEnabled
-
 	website, err := a.websiteService.CreateWebsite(reqCtx, model)
 	if err != nil {
 		a.Logger().Error("Failed to create website", zap.Error(err), zap.Uint("user_id", user), zap.String("domain", req.Domain))
