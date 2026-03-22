@@ -1934,3 +1934,39 @@ func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite2.TargetType, "Second website should use IPNS target")
 	}, TestOptions)
 }
+
+// TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS tests updating a website
+// from IPFS target to IPNS target when only target_hash is provided.
+// It validates that targetType is correctly auto-detected when target_hash
+// is a peer ID, avoiding the validation bug where cid.Decode() would be
+// called on a peer ID string.
+func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "convert-test.com"
+
+		ipfsWebsite := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), ipfsWebsite)
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPFS), createdWebsite.TargetType)
+
+		// Update to IPNS by changing target_hash to a peer ID
+		// targetType will be auto-detected as IPNS
+		testPeerID := "12D3KooWCqvCZqaG6LmG4mtoWZZwrvYB911DK8qqwE9gc25s4Hft"
+		updates := map[string]interface{}{
+			"target_hash": testPeerID,
+		}
+
+		// Act
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
+
+		// Assert
+		require.NoError(tb, err)
+		require.NotNil(tb, updatedWebsite)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), updatedWebsite.TargetType)
+		assert.Equal(tb, testPeerID, updatedWebsite.TargetHash())
+	}, TestOptions)
+}
