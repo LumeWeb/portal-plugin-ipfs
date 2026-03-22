@@ -62,7 +62,7 @@ func TestValidateTarget_IPNS_InvalidPeerID(t *testing.T) {
 		// Act & Assert
 		err := websiteService.(*WebsiteServiceDefault).validateTarget(string(pluginDb.WebsiteTargetTypeIPNS), invalidPeerID)
 		require.Error(tb, err, "Invalid peer ID should fail validation")
-		require.Contains(t, err.Error(), "invalid IPNS", "Error should mention IPNS validation failure")
+		require.Contains(tb, err.Error(), "invalid IPNS", "Error should mention IPNS validation failure")
 	}, TestOptions)
 }
 
@@ -78,7 +78,7 @@ func TestValidateTarget_IPNS_InvalidCID(t *testing.T) {
 		// Act & Assert
 		err := websiteService.(*WebsiteServiceDefault).validateTarget(string(pluginDb.WebsiteTargetTypeIPNS), invalidCID)
 		require.Error(tb, err, "Invalid CID should fail validation")
-		require.Contains(t, err.Error(), "invalid IPNS", "Error should mention IPNS validation failure")
+		require.Contains(tb, err.Error(), "invalid IPNS", "Error should mention IPNS validation failure")
 	}, TestOptions)
 }
 
@@ -95,7 +95,7 @@ func TestValidateTarget_IPNS_CIDNotLibp2pKey(t *testing.T) {
 		// Act & Assert
 		err := websiteService.(*WebsiteServiceDefault).validateTarget(string(pluginDb.WebsiteTargetTypeIPNS), nonLibp2pKeyCID)
 		require.Error(tb, err, "CID without libp2p-key codec should fail validation")
-		require.Contains(t, err.Error(), "invalid IPNS", "Error should mention IPNS validation failure")
+		require.Contains(tb, err.Error(), "invalid IPNS", "Error should mention IPNS validation failure")
 	}, TestOptions)
 }
 
@@ -126,7 +126,7 @@ func TestValidateTarget_IPFS_InvalidCID(t *testing.T) {
 		// Act & Assert
 		err := websiteService.(*WebsiteServiceDefault).validateTarget(string(pluginDb.WebsiteTargetTypeIPFS), invalidCID)
 		require.Error(tb, err, "Invalid CID should fail validation")
-		require.Contains(t, err.Error(), "invalid CID", "Error should mention CID validation failure")
+		require.Contains(tb, err.Error(), "invalid CID", "Error should mention CID validation failure")
 	}, TestOptions)
 }
 
@@ -142,7 +142,7 @@ func TestValidateTarget_UnknownType(t *testing.T) {
 		// Act & Assert
 		err := websiteService.(*WebsiteServiceDefault).validateTarget("unknown_type", anyHash)
 		require.Error(tb, err, "Unknown target type should fail validation")
-		require.Contains(t, err.Error(), "invalid target", "Error should mention invalid target type")
+		require.Contains(tb, err.Error(), "invalid target", "Error should mention invalid target type")
 	}, TestOptions)
 }
 
