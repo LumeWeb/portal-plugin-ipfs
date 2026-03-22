@@ -113,7 +113,7 @@ type WebsiteRequest struct {
 	Domain          string              `json:"domain"`
 	TargetType      db.WebsiteTargetType `json:"target_type"` // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
 	TargetHash      string              `json:"target_hash"` // CID or IPNS peer ID
-	DNSEnabled      bool                `json:"dns_hosting_enabled"` // Whether DNS hosting is enabled for this website
+	DNSEnabled      *bool               `json:"dns_hosting_enabled,omitempty"` // Whether DNS hosting is enabled for this website (defaults to true if not specified)
 }
 
 func (r WebsiteRequest) Schema() *zog.StructSchema {
@@ -124,7 +124,7 @@ func (r WebsiteRequest) Schema() *zog.StructSchema {
 			db.WebsiteTargetTypeIPNS,
 		}).Required(),
 		"TargetHash": zog.String().Required().Min(1).Max(255),
-		"DNSEnabled": zog.Bool(),
+		"DNSEnabled": zog.Ptr(zog.Bool()),
 	})
 }
 
@@ -144,8 +144,12 @@ func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 		Status:     string(db.WebsiteStatusPendingValidation),
 	}
 
-	// Set DNS hosting enabled flag
-	website.Enabled = r.DNSEnabled
+	// Set DNS hosting enabled flag (defaults to true if not specified)
+	if r.DNSEnabled != nil {
+		website.Enabled = *r.DNSEnabled
+	} else {
+		website.Enabled = true
+	}
 
 	// Validate and parse CID for IPFS targets
 	if r.TargetType == db.WebsiteTargetTypeIPFS {
