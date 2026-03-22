@@ -969,8 +969,15 @@ func isValidIPNSTarget(targetHash string) bool {
 	_, err := peer.Decode(targetHash)
 	if err != nil {
 		// FALLBACK: Try CID decode (supports CIDv1 with libp2p-key codec)
-		_, err = cid.Decode(targetHash)
-		return err == nil
+		c, err := cid.Decode(targetHash)
+		if err != nil {
+			return false
+		}
+		// Validate that CID uses libp2p-key codec (0x72) for IPNS
+		if c.Type() != cid.Libp2pKey {
+			return false
+		}
+		return true
 	}
 	return true
 }

@@ -210,8 +210,8 @@ func TestValidateIPNSTarget_InvalidPeerID(t *testing.T) {
 
 		// Act & Assert
 		valid, err := websiteService.(*WebsiteServiceDefault).validateIPNSTarget(ctx, invalidPeerID)
-		require.Error(t, err, "Invalid peer ID should fail validation")
-		require.False(t, valid, "Invalid peer ID should return false")
+		require.Error(tb, err, "Invalid peer ID should fail validation")
+		require.False(tb, valid, "Invalid peer ID should return false")
 	}, TestOptions)
 }
 
@@ -226,8 +226,8 @@ func TestValidateIPNSTarget_InvalidCID(t *testing.T) {
 
 		// Act & Assert
 		valid, err := websiteService.(*WebsiteServiceDefault).validateIPNSTarget(ctx, invalidCID)
-		require.Error(t, err, "Invalid CID should fail validation")
-		require.False(t, valid, "Invalid CID should return false")
+		require.Error(tb, err, "Invalid CID should fail validation")
+		require.False(tb, valid, "Invalid CID should return false")
 	}, TestOptions)
 }
 
@@ -242,8 +242,8 @@ func TestValidateIPNSTarget_CIDNotLibp2pKey(t *testing.T) {
 
 		// Act & Assert
 		valid, err := websiteService.(*WebsiteServiceDefault).validateIPNSTarget(ctx, nonLibp2pKeyCID)
-		require.Error(t, err, "CID without libp2p-key codec should fail validation")
-		require.False(t, valid, "CID without libp2p-key codec should return false")
+		require.Error(tb, err, "CID without libp2p-key codec should fail validation")
+		require.False(tb, valid, "CID without libp2p-key codec should return false")
 	}, TestOptions)
 }
 
