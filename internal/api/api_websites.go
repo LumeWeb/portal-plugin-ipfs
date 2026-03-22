@@ -22,6 +22,10 @@ import (
 
 // Website Handlers
 
+// DefaultWebsiteEnabled is the default value for website DNS hosting enabled field
+// Applications should use this constant to ensure consistency across the codebase
+const DefaultWebsiteEnabled = true
+
 // handleWebsiteValidationError is a DRY helper for handling website validation errors with proper context
 func (a *API) handleWebsiteValidationError(err error, c echo.Context) (error, bool) {
 	if err == nil {
@@ -71,8 +75,9 @@ func (a *API) createWebsite(c echo.Context) error {
 	// Set user ID
 	model.UserID = user
 
-	// Website is enabled by default regardless of DNS configuration
-	model.Enabled = true
+	// Ensure default enabled value regardless of DTO implementation details
+	// This provides defensive validation and creates a single source of truth
+	model.Enabled = model.Enabled || DefaultWebsiteEnabled
 
 	website, err := a.websiteService.CreateWebsite(reqCtx, model)
 	if err != nil {
@@ -221,6 +226,11 @@ func (a *API) updateWebsite(c echo.Context) error {
 		"domain":      req.Domain,
 		"target_type": req.TargetType,
 		"target_hash": req.TargetHash,
+	}
+
+	// Add dns_enabled if specified in request
+	if req.DNSEnabled != nil {
+		updates["dns_enabled"] = *req.DNSEnabled
 	}
 
 	website, err := a.websiteService.UpdateWebsite(reqCtx, user, uint(websiteID), updates)
