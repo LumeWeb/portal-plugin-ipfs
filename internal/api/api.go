@@ -603,7 +603,7 @@ Returns paginated list of website configurations with status, domain, and target
 
 See also:.*`),
 				router.WithTags("Websites"),
-				router.WithSuccessResponse(http.StatusOK, "List of websites", router.WithJSONContent(queryutil.Response[dto.WebsiteItem]{})),
+				router.WithSuccessResponse(http.StatusOK, "List of websites", router.WithJSONContent(dto.WebsiteItemResponse{})),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/websites/:id", a.getWebsite,
