@@ -95,17 +95,25 @@ func handleNoContent(c echo.Context) error {
 
 // mapDNSErrorToAPIError converts DNS service errors to appropriate API error types
 // Returns the correct error key to ensure proper HTTP status codes:
-// - ErrKeyZoneNotFound (404): when the zone or zone-related resource is not found
+// - ErrKeyZoneNotFound (404): when zone is not found
+// - ErrKeyRecordNotFound (404): when DNS record is not found
 // - ErrKeyDuplicateRecord (409): when PowerDNS returns a 409 Conflict
 // - ErrKeyValidationFailed (422): when PowerDNS returns a 422 Unprocessable Entity
 // - ErrKeyUpdateFailed (500): for all other internal errors
-func mapDNSErrorToAPIError(err error) core.ErrorType {
+//
+// The resourceType parameter distinguishes between zone and record not found errors:
+// - "zone": returns ErrKeyZoneNotFound for gorm.ErrRecordNotFound
+// - "record": returns ErrKeyRecordNotFound for gorm.ErrRecordNotFound
+func mapDNSErrorToAPIError(err error, resourceType string) core.ErrorType {
 	if err == nil {
 		return ErrKeyUpdateFailed
 	}
 
-	// Check for gorm.ErrRecordNotFound (zone not found in database)
+	// Check for gorm.ErrRecordNotFound - distinguish based on resource type
 	if errors.Is(err, gorm.ErrRecordNotFound) {
+		if resourceType == "record" {
+			return ErrKeyRecordNotFound
+		}
 		return ErrKeyZoneNotFound
 	}
 
@@ -134,12 +142,12 @@ func mapDNSErrorToAPIError(err error) core.ErrorType {
 
 // containsStatusCode checks if an error message contains a specific HTTP status code
 func containsStatusCode(errMsg string, statusCode int) bool {
-	// Look for patterns like "status 409", "returned 409", "HTTP 409", etc.
+	// Look for specific status code patterns with word boundaries to avoid false positives
 	patterns := []string{
 		fmt.Sprintf("status %d", statusCode),
 		fmt.Sprintf("returned %d", statusCode),
 		fmt.Sprintf("HTTP %d", statusCode),
-		fmt.Sprintf("%d", statusCode),
+		fmt.Sprintf("code %d", statusCode),
 	}
 
 	for _, pattern := range patterns {

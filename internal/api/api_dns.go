@@ -327,7 +327,7 @@ func (a *API) createRecord(c echo.Context) error {
 	record, err := a.dnsService.CreateRecord(reqCtx, zoneID, req.Name, req.Type, req.Content, ttl)
 	if err != nil {
 		a.Logger().Error("Failed to create DNS record", zap.Error(err), zap.Uint("zone_id", zoneID))
-		apiErr := NewError(mapDNSErrorToAPIError(err), err)
+		apiErr := NewError(mapDNSErrorToAPIError(err, "record"), err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -363,7 +363,7 @@ func (a *API) updateRecord(c echo.Context) error {
 	records, err := a.dnsService.UpdateRecord(reqCtx, zoneID, name, recordType, []string{req.Content}, ttl)
 	if err != nil {
 		a.Logger().Error("Failed to update DNS record", zap.Error(err), zap.String("name", name), zap.String("type", recordType))
-		apiErr := NewError(mapDNSErrorToAPIError(err), err)
+		apiErr := NewError(mapDNSErrorToAPIError(err, "record"), err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -396,7 +396,7 @@ func (a *API) deleteRecord(c echo.Context) error {
 	err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType)
 	if err != nil {
 		a.Logger().Error("Failed to delete DNS record", zap.Error(err), zap.String("name", name), zap.String("type", recordType))
-		apiErr := NewError(mapDNSErrorToAPIError(err), err)
+		apiErr := NewError(mapDNSErrorToAPIError(err, "record"), err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
