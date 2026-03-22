@@ -11,6 +11,12 @@ import (
 	"go.lumeweb.com/portal/config"
 )
 
+// Website Constants
+
+// DefaultWebsiteEnabled is the default value for website DNS hosting enabled field
+// Applications should use this constant to ensure consistency across the codebase
+const DefaultWebsiteEnabled = true
+
 // IPNS Key DTOs
 
 // IPNSKeyRequest represents a request to create or import an IPNS key
@@ -148,7 +154,7 @@ func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 	if r.DNSEnabled != nil {
 		website.Enabled = *r.DNSEnabled
 	} else {
-		website.Enabled = true
+		website.Enabled = DefaultWebsiteEnabled
 	}
 
 	// Validate and parse CID for IPFS targets
