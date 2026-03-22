@@ -962,6 +962,19 @@ func (s *WebsiteServiceDefault) validateDomain(domain string) error {
 	return nil
 }
 
+// isValidIPNSTarget checks if a target hash is a valid IPNS target
+// Returns true if the peer ID or CIDv1 with libp2p-key codec is valid
+func isValidIPNSTarget(targetHash string) bool {
+	// Try peer ID decode first (IPNS uses libp2p peer IDs in base36)
+	_, err := peer.Decode(targetHash)
+	if err != nil {
+		// FALLBACK: Try CID decode (supports CIDv1 with libp2p-key codec)
+		_, err = cid.Decode(targetHash)
+		return err == nil
+	}
+	return true
+}
+
 // validateTarget validates the target type and hash
 func (s *WebsiteServiceDefault) validateTarget(targetType string, targetHash string) error {
 	switch pluginDb.WebsiteTargetType(targetType) {
@@ -972,14 +985,9 @@ func (s *WebsiteServiceDefault) validateTarget(targetType string, targetHash str
 			return fmt.Errorf("%w: %v", ErrInvalidCID, err)
 		}
 	case pluginDb.WebsiteTargetTypeIPNS:
-		// Try peer ID decode first (IPNS uses libp2p peer IDs in base36)
-		_, err := peer.Decode(targetHash)
-		if err != nil {
-			// FALLBACK: Try CID decode (supports CIDv1 with libp2p-key codec)
-			_, err := cid.Decode(targetHash)
-			if err != nil {
-				return fmt.Errorf("%w: %v", ErrInvalidIPNS, err)
-			}
+		// Validate IPNS target (peer ID or CIDv1 libp2p-key codec)
+		if !isValidIPNSTarget(targetHash) {
+			return fmt.Errorf("%w: invalid IPNS target", ErrInvalidIPNS)
 		}
 	default:
 		return fmt.Errorf("%w: invalid type %s", ErrInvalidTarget, targetType)
@@ -1009,9 +1017,8 @@ func (s *WebsiteServiceDefault) validateIPFSTarget(ctx context.Context, targetHa
 func (s *WebsiteServiceDefault) validateIPNSTarget(ctx context.Context, targetHash string) (bool, error) {
 	// For Phase 1, we'll just check if the IPNS name is valid
 	// In production, we would check if the key exists in the database
-	_, err := cid.Decode(targetHash)
-	if err != nil {
-		return false, err
+	if !isValidIPNSTarget(targetHash) {
+		return false, fmt.Errorf("invalid IPNS target")
 	}
 
 	return true, nil
