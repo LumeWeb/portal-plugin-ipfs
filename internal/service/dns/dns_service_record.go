@@ -35,7 +35,7 @@ func (s *DNSServiceDefault) GetZoneRecords(ctx context.Context, zoneID uint, fil
 				return []*apiDTO.DNSRecord{}
 			}
 			return lo.Map(rrset.Records, func(record powerdns.Record, _ int) *apiDTO.DNSRecord {
-				return recordToDTO(rrset, record, zone.Domain)
+				return recordToDTOWithZoneID(rrset, record, zone.Domain, zoneID)
 			})
 		})
 	}
@@ -72,7 +72,7 @@ func (s *DNSServiceDefault) GetRRSet(ctx context.Context, zoneID uint, name stri
 
 		if found && matchingRRSet.Records != nil {
 			records := lo.Map(matchingRRSet.Records, func(record powerdns.Record, _ int) *apiDTO.DNSRecord {
-				return recordToDTO(matchingRRSet, record, zone.Domain)
+				return recordToDTOWithZoneID(matchingRRSet, record, zone.Domain, zoneID)
 			})
 			return records, nil
 		}
@@ -109,13 +109,25 @@ func (s *DNSServiceDefault) CreateRecord(ctx context.Context, zoneID uint, name 
 		zap.String("name", name),
 		zap.String("type", recordType))
 
-	return &apiDTO.DNSRecord{
-		Name:     name,
-		Type:     recordType,
-		Content:  content,
-		TTL:      ttl,
-		Disabled: false,
-	}, nil
+	// Query the created record back to get complete data with all fields populated
+	records, err := s.GetRRSet(ctx, zoneID, name, recordType)
+	if err != nil {
+		s.Logger().Error("Failed to retrieve created record",
+			zap.Error(err),
+			zap.Uint("zone_id", zoneID),
+			zap.String("name", name),
+			zap.String("type", recordType))
+		return nil, fmt.Errorf("failed to retrieve created record: %w", err)
+	}
+	if len(records) == 0 {
+		s.Logger().Error("No records found after creation",
+			zap.Uint("zone_id", zoneID),
+			zap.String("name", name),
+			zap.String("type", recordType))
+		return nil, fmt.Errorf("record not found after creation")
+	}
+
+	return records[0], nil
 }
 
 // UpdateRecord updates an existing DNS RRSet in PowerDNS

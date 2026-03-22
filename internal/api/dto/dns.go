@@ -125,16 +125,14 @@ func (r ZoneListRequest) ToModel() (ZoneListRequest, error) {
 
 // DNSRecord represents a DNS record from PowerDNS
 // This is a data structure for API responses, records are managed entirely by PowerDNS
+// Records are identified by (name, type) within a zone, not by persistent IDs
 type DNSRecord struct {
-	ID        uint      `json:"id"`
-	ZoneID    uint      `json:"zone_id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	Content   string    `json:"content"`
-	TTL       uint      `json:"ttl"`
-	Disabled  bool      `json:"disabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ZoneID   uint    `json:"zone_id"`
+	Name     string  `json:"name"`
+	Type     string  `json:"type"`
+	Content  string  `json:"content"`
+	TTL      uint    `json:"ttl"`
+	Disabled bool    `json:"disabled"`
 }
 
 // Record DTOs
@@ -168,27 +166,21 @@ var _ httputil.DTOValidator = (*RecordRequest)(nil)
 
 // RecordResponse represents a DNS record response
 type RecordResponse struct {
-	ID        uint      `json:"id"`
-	ZoneID    uint      `json:"zone_id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	Content   string    `json:"content"`
-	TTL       uint      `json:"ttl"`
-	Disabled  bool      `json:"disabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ZoneID   uint    `json:"zone_id"`
+	Name     string  `json:"name"`
+	Type     string  `json:"type"`
+	Content  string  `json:"content"`
+	TTL      uint    `json:"ttl"`
+	Disabled bool    `json:"disabled"`
 }
 
 func (r *RecordResponse) FromModel(model *DNSRecord) error {
-	r.ID = model.ID
 	r.ZoneID = model.ZoneID
 	r.Name = model.Name
 	r.Type = model.Type
 	r.Content = model.Content
 	r.TTL = model.TTL
 	r.Disabled = model.Disabled
-	r.CreatedAt = model.CreatedAt
-	r.UpdatedAt = model.UpdatedAt
 	return nil
 }
 
@@ -422,28 +414,22 @@ func (r *ValidationResponse) FromModel(model any) error {
 
 // RecordListResponse represents a DNS record in a list response
 type RecordListResponse struct {
-	ID        uint      `json:"id"`
-	ZoneID    uint      `json:"zone_id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	Content   string    `json:"content"`
-	TTL       uint      `json:"ttl"`
-	Disabled  bool      `json:"disabled"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ZoneID   uint    `json:"zone_id"`
+	Name     string  `json:"name"`
+	Type     string  `json:"type"`
+	Content  string  `json:"content"`
+	TTL      uint    `json:"ttl"`
+	Disabled bool    `json:"disabled"`
 }
 
 func (r *RecordListResponse) FromModel(model any) error {
 	if dnsRecord, ok := model.(*DNSRecord); ok {
-		r.ID = dnsRecord.ID
 		r.ZoneID = dnsRecord.ZoneID
 		r.Name = dnsRecord.Name
 		r.Type = dnsRecord.Type
 		r.Content = dnsRecord.Content
 		r.TTL = dnsRecord.TTL
 		r.Disabled = dnsRecord.Disabled
-		r.CreatedAt = dnsRecord.CreatedAt
-		r.UpdatedAt = dnsRecord.UpdatedAt
 	}
 	return nil
 }
