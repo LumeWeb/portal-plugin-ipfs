@@ -3,6 +3,7 @@ package ipfs
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
@@ -49,6 +50,12 @@ type Reprovider struct {
 
 	mu             sync.Mutex
 	reprovideSleep time.Duration
+
+	// cancelTrigger signals to stop timer callbacks
+	cancelTrigger chan struct{}
+
+	// cancelledFlag is an atomic flag to track cancellation state
+	cancelledFlag atomic.Bool
 }
 
 // Trigger triggers the reprovider loop to run immediately.
@@ -78,7 +85,9 @@ func (r *Reprovider) Run(ctx context.Context, interval, timeout time.Duration, b
 		time.Sleep(30 * time.Second)
 	}
 
-	go r.handleTriggers(ctx, interval, timeout, batchSize)
+	go func() {
+		r.handleTriggers(ctx, interval, timeout, batchSize)
+	}()
 
 	for {
 		r.mu.Lock()
@@ -104,21 +113,45 @@ func (r *Reprovider) handleTriggers(ctx context.Context, interval, timeout time.
 	ctx, span := core.TraceMethod(ctx, "Reprovider.handleTriggers")
 	defer span.End()
 
-	var triggerTimer *time.Timer
+	// Use a channel instead of AfterFunc for cleaner cancellation
+	// When a trigger comes, we wait for the delay then check if cancelled
 	for {
 		select {
 		case <-ctx.Done():
-			if triggerTimer != nil {
-				triggerTimer.Stop()
-			}
+			r.cancelledFlag.Store(true)
+			close(r.cancelTrigger)
 			return
+
 		case <-r.triggerProvide:
-			if triggerTimer != nil {
-				triggerTimer.Stop()
-			}
-			triggerTimer = time.AfterFunc(r.triggerDelayDuration, func() {
+			// Wait for delay with cancellation support
+			delayTimer := time.NewTimer(r.triggerDelayDuration)
+
+			select {
+			case <-ctx.Done():
+				delayTimer.Stop()
+				r.cancelledFlag.Store(true)
+				close(r.cancelTrigger)
+				return
+
+			case <-delayTimer.C:
+				// Timer fired, but context might have been cancelled during wait
+				select {
+				case <-ctx.Done():
+					r.cancelledFlag.Store(true)
+					close(r.cancelTrigger)
+					return
+				default:
+					// Context still valid, proceed
+				}
+
+				// Double-check cancelled flag before calling performProvide
+				if r.cancelledFlag.Load() {
+					return
+				}
+
 				r.performProvide(ctx, interval, timeout, batchSize)
-			})
+			}
+
 			r.log.Debug("reprovide triggered")
 		}
 	}
@@ -127,6 +160,12 @@ func (r *Reprovider) handleTriggers(ctx context.Context, interval, timeout time.
 func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.Duration, batchSize int) time.Duration {
 	ctx, span := core.TraceMethod(ctx, "Reprovider.performProvide")
 	defer span.End()
+
+	// Check cancellation flag at start of performProvide
+	// This prevents running after context is cancelled
+	if r.cancelledFlag.Load() {
+		return 10 * time.Minute
+	}
 
 	doProvide := func(ctx context.Context, keys []multihash.Multihash) error {
 		ctx, span := core.TraceMethod(ctx, "anonymous")
@@ -140,6 +179,11 @@ func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.
 	reprovideSleep := 10 * time.Minute // Default sleep time if no CIDs to provide
 
 	start := time.Now()
+
+	// Check cancellation again before calling mocks to prevent race
+	if r.cancelledFlag.Load() {
+		return reprovideSleep
+	}
 
 	cids, err := r.store.ProvideCIDs(ctx, batchSize)
 	if err != nil {
@@ -163,7 +207,7 @@ func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.
 	eligibleCIDs := lo.Filter(cids, func(c pluginCore.PinnedCID, _ int) bool {
 		return !c.LastAnnouncement.After(minAnnouncement)
 	})
-	
+
 	announced := lo.Map(eligibleCIDs, func(c pluginCore.PinnedCID, _ int) cid.Cid {
 		return c.CID
 	})
@@ -200,5 +244,6 @@ func NewReprovider(provider pluginCore.Provider, store pluginCore.ReprovideStore
 		triggerProvide:       make(chan struct{}, 1),
 		triggerDelayDuration: 30 * time.Second,
 		reprovideSleep:       time.Duration(0),
+		cancelTrigger:        make(chan struct{}),
 	}
 }
