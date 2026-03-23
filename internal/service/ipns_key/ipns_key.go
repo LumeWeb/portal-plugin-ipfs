@@ -375,7 +375,7 @@ func (s *IPNSKeyServiceDefault) ListKeys(ctx context.Context, userID uint) ([]pl
 }
 
 // ListKeysWithFilters lists IPNS keys for a user with optional filters, sorting, and pagination
-func (s *IPNSKeyServiceDefault) ListKeysWithFilters(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.IPFSIPNSKey, int64, error) {
+func (s *IPNSKeyServiceDefault) ListKeysWithFilters(ctx context.Context, userID uint, filters []filter.CrudFilter, sort []filter.Sort, pagination filter.Pagination) ([]*pluginDb.IPFSIPNSKey, int64, error) {
 	ctx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.ListKeysWithFilters")
 	defer span.End()
 
@@ -388,18 +388,20 @@ func (s *IPNSKeyServiceDefault) ListKeysWithFilters(ctx context.Context, userID 
 
 		// Add user_id filter for isolation and append to other filters
 		userFilter := filter.NewLogicalFilter("user_id", filter.OpEq, userID)
-		allFilters := append([]queryutil.CrudFilter{userFilter}, filters...)
+		allFilters := append([]filter.CrudFilter{userFilter}, filters...)
 
 		// Apply filters
 		query = queryutil.ApplyFilters(query, allFilters, nil)
 		query = queryutil.ApplySort(query, sort)
-		query = queryutil.ApplyPagination(query, pagination)
 
-		// Get total count
+		// Get total count (before pagination)
 		if err := query.Count(&total).Error; err != nil {
 			_ = tx.AddError(fmt.Errorf("failed to count IPNS keys: %w", err))
 			return tx
 		}
+
+		// Apply pagination after count
+		query = queryutil.ApplyPagination(query, pagination)
 
 		// Get the records
 		if err := query.Find(&keys).Error; err != nil {
