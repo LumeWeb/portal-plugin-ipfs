@@ -52,6 +52,13 @@ func ExtractCIDFromPathStrict(valuePath path.Path) (string, error) {
 // If the path contains a valid CID, it will be normalized to v1 format.
 // If the path does not contain a valid CID, the original path string is returned unchanged.
 // This is useful when you want to normalize CIDs when possible but handle non-CID paths gracefully.
+//
+// The function includes defensive error handling:
+// - If CID parsing fails, returns the original path unchanged
+// - If normalization returns cid.Undef (unsupported CID version), returns the original path unchanged
+//
+// In practice, cid.Undef is rare as only v0 and v1 CIDs are supported and both normalize correctly.
+// This handling exists as a defensive measure for edge cases or future CID versions.
 func TryNormalizeCIDFromPath(valuePath path.Path) string {
 	// Try to extract CID string from the path
 	cidStr := ExtractCIDFromPathLenient(valuePath)
