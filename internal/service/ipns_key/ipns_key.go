@@ -30,6 +30,9 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/hkdf"
 	"gorm.io/gorm"
+	"go.lumeweb.com/queryutil"
+	"go.lumeweb.com/queryutil/filter"
+	"github.com/samber/lo"
 )
 
 // Key type constants from libp2p
@@ -358,19 +361,65 @@ func (s *IPNSKeyServiceDefault) ExportKey(ctx context.Context, userID uint, keyI
 
 // ListKeys lists all IPNS keys for a user
 func (s *IPNSKeyServiceDefault) ListKeys(ctx context.Context, userID uint) ([]pluginDb.IPFSIPNSKey, error) {
-	ctx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.ListKeys")
-	defer span.End()
-
-	var keys []pluginDb.IPFSIPNSKey
-	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		return tx.Where("user_id = ?", userID).Find(&keys)
-	})
+	keysPtr, _, err := s.ListKeysWithFilters(ctx, userID, nil, nil, queryutil.Pagination{})
 	if err != nil {
-		s.Logger().Error("Failed to list IPNS keys", zap.Error(err), zap.Uint("user_id", userID))
-		return nil, fmt.Errorf("failed to list IPNS keys: %w", err)
+		return nil, err
 	}
 
+	// Convert pointers to values using lo
+	keys := lo.Map(keysPtr, func(keyPtr *pluginDb.IPFSIPNSKey, _ int) pluginDb.IPFSIPNSKey {
+		return *keyPtr
+	})
+
 	return keys, nil
+}
+
+// ListKeysWithFilters lists IPNS keys for a user with optional filters, sorting, and pagination
+func (s *IPNSKeyServiceDefault) ListKeysWithFilters(ctx context.Context, userID uint, filters []filter.CrudFilter, sort []filter.Sort, pagination filter.Pagination) ([]*pluginDb.IPFSIPNSKey, int64, error) {
+	ctx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.ListKeysWithFilters")
+	defer span.End()
+
+	var keys []*pluginDb.IPFSIPNSKey
+	var total int64
+
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		// Construct the query
+		query := tx.Model(&pluginDb.IPFSIPNSKey{})
+
+		// Add user_id filter for isolation and append to other filters
+		userFilter := filter.NewLogicalFilter("user_id", filter.OpEq, userID)
+		allFilters := append([]filter.CrudFilter{userFilter}, filters...)
+
+		// Apply filters
+		query = queryutil.ApplyFilters(query, allFilters, nil)
+		query = queryutil.ApplySort(query, sort)
+
+		// Get total count (before pagination)
+		if err := query.Count(&total).Error; err != nil {
+			_ = tx.AddError(fmt.Errorf("failed to count IPNS keys: %w", err))
+			return tx
+		}
+
+		// Apply pagination after count
+		query = queryutil.ApplyPagination(query, pagination)
+
+		// Get the records
+		if err := query.Find(&keys).Error; err != nil {
+			_ = tx.AddError(fmt.Errorf("failed to list IPNS keys: %w", err))
+			return tx
+		}
+
+		return tx
+	})
+
+	if err != nil {
+		s.Logger().Error("Failed to list IPNS keys with filters",
+			zap.Error(err),
+			zap.Uint("user_id", userID))
+		return nil, 0, fmt.Errorf("failed to list IPNS keys: %w", err)
+	}
+
+	return keys, total, nil
 }
 
 // GetKeyByName retrieves a single IPNS key by name for a user

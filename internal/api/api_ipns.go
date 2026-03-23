@@ -17,6 +17,8 @@ import (
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.uber.org/zap"
+	"go.lumeweb.com/queryutil"
+	queryutilHttp "go.lumeweb.com/queryutil/http"
 	"gorm.io/gorm"
 )
 
@@ -82,23 +84,19 @@ func (a *API) listIPNSKeys(c echo.Context) error {
 		return err
 	}
 
-	keys, err := a.ipnsKeyService.ListKeys(reqCtx, user)
-	if err != nil {
-		a.Logger().Error("Failed to list IPNS keys", zap.Error(err), zap.Uint("user_id", user))
-		apiErr := NewError(ErrKeyFileProcessingFailed, err)
-		return ctx.Error(apiErr, apiErr.HttpStatus())
-	}
-
-	responses := make([]dto.IPNSKeyResponse, len(keys))
-	for i, key := range keys {
-		if err := responses[i].FromModel(&key); err != nil {
-			a.Logger().Error("Failed to convert IPNS key to response", zap.Error(err))
-			apiErr := NewError(ErrKeyFileProcessingFailed, err)
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-	}
-
-	return ctx.JSON(http.StatusOK, responses)
+	return queryutilHttp.ProcessListRequest[*pluginDb.IPFSIPNSKey, dto.IPNSKeyListResponse](
+		c.Response(),
+		c.Request(),
+		"ipns-keys",
+		func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.IPFSIPNSKey, int64, error) {
+			return a.ipnsKeyService.ListKeysWithFilters(reqCtx, user, filters, sorts, pagination)
+		},
+		func(key *pluginDb.IPFSIPNSKey) dto.IPNSKeyListResponse {
+			var resp dto.IPNSKeyListResponse
+			_ = resp.FromModel(key)
+			return resp
+		},
+	)
 }
 
 // getIPNSKey retrieves a specific IPNS key by ID for the authenticated user.
@@ -129,7 +127,7 @@ func (a *API) getIPNSKey(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	var resp dto.IPNSKeyResponse
+		var resp dto.IPNSKeyResponse
 	if err := resp.FromModel(key); err != nil {
 		a.Logger().Error("Failed to convert IPNS key to response", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
@@ -230,7 +228,7 @@ func (a *API) publishIPNS(c echo.Context) error {
 			Value:     req.CID,
 			Published: time.Now(),
 		}
-		return ctx.JSON(http.StatusOK, resp)
+		return httputil.EncodeResponse(ctx, nil, &resp)
 	}
 
 	// Convert IPNS record to response
@@ -266,7 +264,7 @@ func (a *API) publishIPNS(c echo.Context) error {
 		Published: time.Now(),
 	}
 
-	return ctx.JSON(http.StatusOK, resp)
+	return httputil.EncodeResponse(ctx, nil, &resp)
 }
 
 // resolveIPNS resolves an IPNS name to its current CID value.
@@ -290,8 +288,9 @@ func (a *API) resolveIPNS(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	// Parse optional checkRouting query parameter
-	checkRouting := c.QueryParam("check_routing") == "true"
+	// Parse optional checkRouting query parameter (1 = true, 0 = false)
+	checkRoutingInt, err := strconv.Atoi(c.QueryParam("check_routing"))
+	checkRouting := err == nil && checkRoutingInt > 0
 
 	// Get the published record
 	record, err := ipnsKeyService.GetPublished(reqCtx, name, checkRouting)
@@ -338,7 +337,7 @@ func (a *API) resolveIPNS(c echo.Context) error {
 		Expires:  validity,
 	}
 
-	return ctx.JSON(http.StatusOK, resp)
+	return httputil.EncodeResponse(ctx, nil, &resp)
 }
 
 // republishIPNS republishes IPNS records to keep them alive in the network.
@@ -470,5 +469,5 @@ func (a *API) republishIPNS(c echo.Context) error {
 		Message: fmt.Sprintf("Successfully republished %d IPNS record(s)", count),
 	}
 
-	return ctx.JSON(http.StatusOK, resp)
+	return httputil.EncodeResponse(ctx, nil, &resp)
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/queryutil/filter"
 )
 
 const (
@@ -58,6 +59,9 @@ type IPNSKeyService interface {
 
 	// ListKeys lists all IPNS keys for a user
 	ListKeys(ctx context.Context, userID uint) ([]pluginDb.IPFSIPNSKey, error)
+
+	// ListKeysWithFilters lists IPNS keys for a user with optional filters, sorting, and pagination
+	ListKeysWithFilters(ctx context.Context, userID uint, filters []filter.CrudFilter, sort []filter.Sort, pagination filter.Pagination) ([]*pluginDb.IPFSIPNSKey, int64, error)
 
 	// GetKeyByName retrieves a single IPNS key by name for a user
 	GetKeyByName(ctx context.Context, userID uint, name string) (*pluginDb.IPFSIPNSKey, error)

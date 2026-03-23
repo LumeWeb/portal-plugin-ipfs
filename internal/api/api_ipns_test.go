@@ -143,16 +143,27 @@ func TestAPI_ListIPNSKeys(t *testing.T) {
 				createTestIPNSKey(2, userID, "key2", "k51qzi5uqu5dljj4y7g7lq43z7z8p9c0f1e2d3c4b5a6987654321fedcba"),
 			}
 
-			mockIPNSKeyService.EXPECT().ListKeys(mock.Anything, userID).Return(mockKeys, nil)
+			// New implementation uses ListKeysWithFilters
+			keyPointers := []*db.IPFSIPNSKey{&mockKeys[0], &mockKeys[1]}
+			mockIPNSKeyService.EXPECT().ListKeysWithFilters(
+				mock.Anything,
+				userID,
+				mock.Anything,
+				mock.Anything,
+				mock.Anything,
+			).Return(keyPointers, int64(2), nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/ipns/keys", token, nil)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
 
-			var response []dto.IPNSKeyResponse
+			// Parse paginated response
+			var response struct {
+				Data []dto.IPNSKeyListResponse `json:"data"`
+			}
 			err := json.Unmarshal(rec.Body.Bytes(), &response)
 			require.NoError(t, err)
-			assert.Len(t, response, 2)
+			assert.Len(t, response.Data, 2)
 		}, TestOptions)
 	})
 
@@ -163,16 +174,26 @@ func TestAPI_ListIPNSKeys(t *testing.T) {
 
 			mockIPNSKeyService := helper.SetupIPNSServiceMocks(userID)
 
-			mockIPNSKeyService.EXPECT().ListKeys(mock.Anything, userID).Return([]db.IPFSIPNSKey{}, nil)
+			// New implementation uses ListKeysWithFilters
+			mockIPNSKeyService.EXPECT().ListKeysWithFilters(
+				mock.Anything,
+				userID,
+				mock.Anything,
+				mock.Anything,
+				mock.Anything,
+			).Return([]*db.IPFSIPNSKey{}, int64(0), nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/ipns/keys", token, nil)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
 
-			var response []dto.IPNSKeyResponse
+			// Parse paginated response
+			var response struct {
+				Data []dto.IPNSKeyListResponse `json:"data"`
+			}
 			err := json.Unmarshal(rec.Body.Bytes(), &response)
 			require.NoError(t, err)
-			assert.Empty(t, response)
+			assert.Empty(t, response.Data)
 		}, TestOptions)
 	})
 
@@ -183,7 +204,14 @@ func TestAPI_ListIPNSKeys(t *testing.T) {
 
 			mockIPNSKeyService := helper.SetupIPNSServiceMocks(userID)
 
-			mockIPNSKeyService.EXPECT().ListKeys(mock.Anything, userID).Return(nil, errors.New("list failed"))
+			// New implementation uses ListKeysWithFilters
+			mockIPNSKeyService.EXPECT().ListKeysWithFilters(
+				mock.Anything,
+				userID,
+				mock.Anything,
+				mock.Anything,
+				mock.Anything,
+			).Return(nil, int64(0), errors.New("list failed"))
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/ipns/keys", token, nil)
 
@@ -442,7 +470,7 @@ func TestAPI_ResolveIPNS(t *testing.T) {
 			mockRecord := createMockIPNSRecord(t, TestCID)
 			mockIPNSKeyService.EXPECT().GetPublished(mock.Anything, TestIPNSName, false).Return(mockRecord, nil)
 
-			rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/api/ipns/resolve/%s", TestIPNSName), token, nil)
+			rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/api/ipns/resolve/%s?check_routing=0", TestIPNSName), token, nil)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
 		}, TestOptions)
@@ -459,7 +487,7 @@ func TestAPI_ResolveIPNS(t *testing.T) {
 			mockRecord := createMockIPNSRecord(t, TestCID)
 			mockIPNSKeyService.EXPECT().GetPublished(mock.Anything, TestIPNSName, true).Return(mockRecord, nil)
 
-			rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/api/ipns/resolve/%s?check_routing=true", TestIPNSName), token, nil)
+			rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/api/ipns/resolve/%s?check_routing=1", TestIPNSName), token, nil)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
 		}, TestOptions)
@@ -485,7 +513,7 @@ func TestAPI_ResolveIPNS(t *testing.T) {
 
 			mockIPNSKeyService.EXPECT().GetPublished(mock.Anything, TestIPNSName, false).Return(nil, errors.New("resolve failed"))
 
-			rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/api/ipns/resolve/%s", TestIPNSName), token, nil)
+			rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/api/ipns/resolve/%s?check_routing=0", TestIPNSName), token, nil)
 
 			assert.Equal(t, http.StatusInternalServerError, rec.Code)
 		}, TestOptions)
@@ -510,7 +538,7 @@ func TestAPI_ResolveIPNS(t *testing.T) {
 			// Return nil record to simulate key not yet published
 			mockIPNSKeyService.EXPECT().GetPublished(mock.Anything, TestIPNSName, false).Return((*ipns.Record)(nil), nil)
 
-			rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/api/ipns/resolve/%s", TestIPNSName), token, nil)
+			rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/api/ipns/resolve/%s?check_routing=0", TestIPNSName), token, nil)
 
 			assert.Equal(t, http.StatusInternalServerError, rec.Code)
 		}, TestOptions)
