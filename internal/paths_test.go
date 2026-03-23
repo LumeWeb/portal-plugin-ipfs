@@ -11,7 +11,7 @@ import (
 func TestTryNormalizeCIDFromPath(t *testing.T) {
 	t.Run("v0_to_v1", func(t *testing.T) {
 		// Create a v0 CID
-		v0Cid, err := cid.Parse("QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")
+		v0Cid, err := cid.Parse("QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdD")
 		require.NoError(t, err)
 		
 		// Create a path from the v0 CID

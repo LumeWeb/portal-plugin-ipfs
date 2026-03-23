@@ -62,20 +62,14 @@ func TryNormalizeCIDFromPath(valuePath path.Path) string {
 		// Not a valid CID, return the original path unchanged
 		return valuePath.String()
 	}
-	
+
 	// Normalize the CID
 	normalizedCid := encoding.NormalizeCid(parsedCid)
-	
-	// Reconstruct the path with the normalized CID
-	segments := valuePath.Segments()
-	if len(segments) > 0 && segments[0] == "ipfs" {
-		// This is /ipfs/{cid} format, reconstruct with normalized CID
-		return path.FromCid(normalizedCid).String()
-	} else if len(segments) == 0 {
-		// Just a CID without prefix, return normalized CID string
-		return normalizedCid.String()
+	if normalizedCid == cid.Undef {
+		// Unsupported CID version, return original path unchanged
+		return valuePath.String()
 	}
-	
-	// Some other path format, return normalized as string
-	return normalizedCid.String()
+
+	// Create a new path from the normalized CID
+	return path.FromCid(normalizedCid).String()
 }
