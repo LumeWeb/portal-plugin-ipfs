@@ -14,6 +14,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/queryutil/filter"
 	"gorm.io/gorm"
 )
 
@@ -955,6 +956,98 @@ func (_c *MockIPNSKeyService_ListKeys_Call) Return(iPFSIPNSKeys []db.IPFSIPNSKey
 }
 
 func (_c *MockIPNSKeyService_ListKeys_Call) RunAndReturn(run func(ctx context.Context, userID uint) ([]db.IPFSIPNSKey, error)) *MockIPNSKeyService_ListKeys_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ListKeysWithFilters provides a mock function for the type MockIPNSKeyService
+func (_mock *MockIPNSKeyService) ListKeysWithFilters(ctx context.Context, userID uint, filters []filter.CrudFilter, sort []filter.Sort, pagination filter.Pagination) ([]*db.IPFSIPNSKey, int64, error) {
+	ret := _mock.Called(ctx, userID, filters, sort, pagination)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListKeysWithFilters")
+	}
+
+	var r0 []*db.IPFSIPNSKey
+	var r1 int64
+	var r2 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, []filter.CrudFilter, []filter.Sort, filter.Pagination) ([]*db.IPFSIPNSKey, int64, error)); ok {
+		return returnFunc(ctx, userID, filters, sort, pagination)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, []filter.CrudFilter, []filter.Sort, filter.Pagination) []*db.IPFSIPNSKey); ok {
+		r0 = returnFunc(ctx, userID, filters, sort, pagination)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*db.IPFSIPNSKey)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uint, []filter.CrudFilter, []filter.Sort, filter.Pagination) int64); ok {
+		r1 = returnFunc(ctx, userID, filters, sort, pagination)
+	} else {
+		r1 = ret.Get(1).(int64)
+	}
+	if returnFunc, ok := ret.Get(2).(func(context.Context, uint, []filter.CrudFilter, []filter.Sort, filter.Pagination) error); ok {
+		r2 = returnFunc(ctx, userID, filters, sort, pagination)
+	} else {
+		r2 = ret.Error(2)
+	}
+	return r0, r1, r2
+}
+
+// MockIPNSKeyService_ListKeysWithFilters_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListKeysWithFilters'
+type MockIPNSKeyService_ListKeysWithFilters_Call struct {
+	*mock.Call
+}
+
+// ListKeysWithFilters is a helper method to define mock.On call
+//   - ctx context.Context
+//   - userID uint
+//   - filters []filter.CrudFilter
+//   - sort []filter.Sort
+//   - pagination filter.Pagination
+func (_e *MockIPNSKeyService_Expecter) ListKeysWithFilters(ctx interface{}, userID interface{}, filters interface{}, sort interface{}, pagination interface{}) *MockIPNSKeyService_ListKeysWithFilters_Call {
+	return &MockIPNSKeyService_ListKeysWithFilters_Call{Call: _e.mock.On("ListKeysWithFilters", ctx, userID, filters, sort, pagination)}
+}
+
+func (_c *MockIPNSKeyService_ListKeysWithFilters_Call) Run(run func(ctx context.Context, userID uint, filters []filter.CrudFilter, sort []filter.Sort, pagination filter.Pagination)) *MockIPNSKeyService_ListKeysWithFilters_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		var arg2 []filter.CrudFilter
+		if args[2] != nil {
+			arg2 = args[2].([]filter.CrudFilter)
+		}
+		var arg3 []filter.Sort
+		if args[3] != nil {
+			arg3 = args[3].([]filter.Sort)
+		}
+		var arg4 filter.Pagination
+		if args[4] != nil {
+			arg4 = args[4].(filter.Pagination)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPNSKeyService_ListKeysWithFilters_Call) Return(iPFSIPNSKeys []*db.IPFSIPNSKey, n int64, err error) *MockIPNSKeyService_ListKeysWithFilters_Call {
+	_c.Call.Return(iPFSIPNSKeys, n, err)
+	return _c
+}
+
+func (_c *MockIPNSKeyService_ListKeysWithFilters_Call) RunAndReturn(run func(ctx context.Context, userID uint, filters []filter.CrudFilter, sort []filter.Sort, pagination filter.Pagination) ([]*db.IPFSIPNSKey, int64, error)) *MockIPNSKeyService_ListKeysWithFilters_Call {
 	_c.Call.Return(run)
 	return _c
 }

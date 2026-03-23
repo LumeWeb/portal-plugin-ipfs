@@ -32,8 +32,17 @@ func (r IPNSKeyRequest) Schema() *zog.StructSchema {
 	})
 }
 
-func (r *IPNSKeyRequest) ToModel() (*IPNSKeyRequest, error) {
-	return r, nil
+func (r *IPNSKeyRequest) ToModel() (*db.IPFSIPNSKey, error) {
+	if r.Name == "" {
+		return nil, &httputil.ValidationError{
+			FieldErrors: map[string]string{
+				"name": "name is required",
+			},
+		}
+	}
+	return &db.IPFSIPNSKey{
+		Name: r.Name,
+	}, nil
 }
 
 // IPNSKeyResponse represents an IPNS key response
@@ -52,6 +61,37 @@ func (r *IPNSKeyResponse) FromModel(model *db.IPFSIPNSKey) error {
 	r.PeerID = model.PeerID().String()
 	r.Created = model.CreatedAt
 	return nil
+}
+
+// IPNSKeyListResponse represents an IPNS key in a list response
+type IPNSKeyListResponse struct {
+	ID       uint      `json:"id"`
+	Name     string    `json:"name"`
+	IPNSName string    `json:"ipns_name"`
+	PeerID   string    `json:"peer_id"`
+	Created  time.Time `json:"created"`
+}
+
+func (r *IPNSKeyListResponse) FromModel(model *db.IPFSIPNSKey) error {
+	r.ID = model.ID
+	r.Name = model.Name
+	r.IPNSName = model.IPNSName()
+	r.PeerID = model.PeerID().String()
+	r.Created = model.CreatedAt
+	return nil
+}
+
+// IPNSKeyListResponseResponse is a swagger-only DTO that represents the paginated response for IPNS keys.
+// It merges the generic queryutil.Response[*dto.IPNSKeyListResponse] for OpenAPI documentation.
+//
+// This struct exists due to a TODO bug where queryutil.Response generics are not getting detected
+// properly as an array type in the swagger documentation generation. By providing a concrete struct,
+// we ensure the swagger docs correctly show the data field as an array of IPNSKeyListResponse items.
+//
+// Note: This struct is only used for swagger documentation, not for actual encoding.
+type IPNSKeyListResponseResponse struct {
+	Data  []IPNSKeyListResponse `json:"data"`
+	Total int64                 `json:"total"`
 }
 
 // IPNSKeyExportResponse represents an IPNS key export response
@@ -96,6 +136,10 @@ type IPNSPublishResponse struct {
 	Published time.Time `json:"published"` // Published at
 }
 
+func (r *IPNSPublishResponse) FromModel(any) error {
+	return nil
+}
+
 // IPNSResolveResponse represents an IPNS resolve response
 type IPNSResolveResponse struct {
 	Name     string    `json:"name"`     // IPNS name
@@ -106,10 +150,18 @@ type IPNSResolveResponse struct {
 	Expires  time.Time `json:"expires"`  // Expiration time
 }
 
+func (r *IPNSResolveResponse) FromModel(any) error {
+	return nil
+}
+
 // IPNSRepublishResponse represents an IPNS republish response
 type IPNSRepublishResponse struct {
 	Count   int    `json:"count"`   // Number of records republished
 	Message string `json:"message"` // Status message
+}
+
+func (r *IPNSRepublishResponse) FromModel(any) error {
+	return nil
 }
 
 // Website DTOs
@@ -337,7 +389,13 @@ func (r *SSLStatusUpdateRequest) ToModel() (*SSLStatusUpdateRequest, error) {
 }
 
 // Ensure DTOs implement httputil interfaces
+var _ httputil.DTORequest[*db.IPFSIPNSKey] = (*IPNSKeyRequest)(nil)
+var _ httputil.DTOResponse[*db.IPFSIPNSKey] = (*IPNSKeyResponse)(nil)
 var _ httputil.DTOValidator = (*IPNSKeyRequest)(nil)
+var _ httputil.DTOResponse[any] = (*IPNSPublishResponse)(nil)
+var _ httputil.DTOResponse[any] = (*IPNSResolveResponse)(nil)
+var _ httputil.DTOResponse[any] = (*IPNSRepublishResponse)(nil)
+var _ httputil.DTORequest[*IPNSPublishRequest] = (*IPNSPublishRequest)(nil)
 var _ httputil.DTOValidator = (*IPNSPublishRequest)(nil)
 var _ httputil.DTORequest[*IPNSPublishRequest] = (*IPNSPublishRequest)(nil)
 var _ httputil.DTOValidator = (*WebsiteRequest)(nil)
