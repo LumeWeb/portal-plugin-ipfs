@@ -81,7 +81,7 @@ func getPluginInfoWithoutTemplates() core.PluginInfo {
 		},
 		CronJobs: []core.PluginCronJob{
 			{
-				Name:    core.GetCronJobIdentifier(core.JobOriginPlugin, "ipfs.website_janitor"),
+				Name:    "website_janitor",
 				Factory: func() (core.CronJob, error) { return website.NewWebsiteJanitorJob(), nil },
 				Schedule: core.NewCronScheduleDefinition(core.CronScheduleTypeCron).
 					WithCronExpression("*/30 * * * *"),
