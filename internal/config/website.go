@@ -12,7 +12,7 @@ var _ config.Defaults = (*WebsiteConfig)(nil)
 type WebsiteConfig struct {
 	// Janitor configuration
 	JanitorEnabled      bool          `config:"janitor_enabled"`
-	JanitorInterval     time.Duration `config:"janitor_interval"`
+	CheckInterval       time.Duration `config:"check_interval"` // How often to re-validate individual websites
 	JanitorWorkerCount  int           `config:"janitor_worker_count"`
 	JanitorBatchSize    int           `config:"janitor_batch_size"`
 
@@ -27,10 +27,10 @@ type WebsiteConfig struct {
 
 func (c WebsiteConfig) Defaults() map[string]any {
 	return map[string]any{
-		"JanitorEnabled":       true,
-		"JanitorInterval":      30 * time.Minute,
-		"JanitorWorkerCount":   10,
-		"JanitorBatchSize":     500,
+		"JanitorEnabled":  true,
+		"CheckInterval":   30 * time.Minute,
+		"JanitorWorkerCount": 10,
+		"JanitorBatchSize":   500,
 		"ValidationTokenTTL":   24 * time.Hour,
 		"VerificationTokenKey": "lumeweb-verify",
 		"NotificationsEnabled": true,

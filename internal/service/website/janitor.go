@@ -39,7 +39,7 @@ func NewWebsiteJanitorJob() core.CronJob {
 	// Initialize BaseCronJob with default values
 	jobID := uuid.New()
 	scheduleDef := core.NewCronScheduleDefinition(core.CronScheduleTypeCron).
-		WithCronExpression("*/30 * * * *") // Every 30 minutes (default)
+		WithCronExpression("* * * * *") // Every minute
 
 	job.BaseCronJob = core.NewBaseCronJob(
 		jobID,
@@ -72,7 +72,7 @@ func (j *WebsiteJanitorJob) Run(ctx core.Context, eventCtx context.Context) erro
 	}
 
 	j.logger.Info("Starting website janitor run",
-		zap.Duration("interval", j.config.JanitorInterval),
+		zap.Duration("check_interval", j.config.CheckInterval),
 		zap.Int("workers", j.config.JanitorWorkerCount),
 		zap.Int("batch_size", j.config.JanitorBatchSize))
 
@@ -80,7 +80,7 @@ func (j *WebsiteJanitorJob) Run(ctx core.Context, eventCtx context.Context) erro
 	var websites []*pluginDb.Website
 	err := j.db.WithContext(eventCtx).
 		Where("deleted_at IS NULL").
-		Where("last_checked_at IS NULL OR last_checked_at < ?", time.Now().Add(-j.config.JanitorInterval)).
+		Where("last_checked_at IS NULL OR last_checked_at < ?", time.Now().Add(-j.config.CheckInterval)).
 		Find(&websites).Error
 
 	if err != nil {

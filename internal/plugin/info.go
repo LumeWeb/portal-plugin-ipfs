@@ -84,7 +84,7 @@ func getPluginInfoWithoutTemplates() core.PluginInfo {
 				Name:    "website_janitor",
 				Factory: func() (core.CronJob, error) { return website.NewWebsiteJanitorJob(), nil },
 				Schedule: core.NewCronScheduleDefinition(core.CronScheduleTypeCron).
-					WithCronExpression("*/30 * * * *"),
+					WithCronExpression("* * * * *"),
 			},
 		},
 		Models: []any{
