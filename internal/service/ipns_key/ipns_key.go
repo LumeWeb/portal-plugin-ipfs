@@ -434,8 +434,9 @@ func (s *IPNSKeyServiceDefault) DeleteKey(ctx context.Context, userID uint, keyI
 	// Check if key is referenced by any active websites
 	var websiteCount int64
 	checkErr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		return tx.Table("ipfs_websites").
-			Where("target_multihash = ? AND target_type = ? AND status = ?", key.PeerIDMultihash, "ipns", "active").
+		return tx.Model(&pluginDb.Website{}).
+			Where("target_multihash = ? AND target_type = ? AND status = ?", 
+				 key.PeerIDMultihash, pluginDb.WebsiteTargetTypeIPNS, pluginDb.WebsiteStatusActive).
 			Count(&websiteCount)
 	})
 	if checkErr != nil {

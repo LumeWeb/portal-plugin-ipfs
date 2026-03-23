@@ -14,6 +14,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
@@ -366,6 +367,120 @@ func TestIPNSKeyService_DeleteKey_NotFound(t *testing.T) {
 		err := keyService.DeleteKey(context.Background(), userID, nonExistentKeyID)
 
 		// Assert
+		assert.Error(tb, err)
+	}, TestOptions)
+}
+
+func TestIPNSKeyService_DeleteKey_WithActiveWebsite(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		keyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, keyService)
+
+		userID := uint(1)
+
+		// Create a key
+		createdKey, err := keyService.CreateKey(context.Background(), userID, "test-delete-key-active", KeyType_Ed25519)
+		require.NoError(tb, err)
+
+		// Create an active website that references this IPNS key
+		website := &pluginDb.Website{
+			UserID:          userID,
+			Domain:          "test.example.com",
+			TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
+			TargetMultihash: createdKey.PeerIDMultihash,
+			Status:          string(pluginDb.WebsiteStatusActive),
+			ValidationToken: "test-token-123",
+		}
+		
+		err = ctx.DB().Create(website).Error
+		require.NoError(tb, err)
+
+		// Act - Try to delete the key
+		err = keyService.DeleteKey(context.Background(), userID, createdKey.ID)
+
+		// Assert - Should fail because key is referenced by active website
+		assert.Error(tb, err)
+		assert.Contains(tb, err.Error(), "cannot delete IPNS key")
+		assert.Contains(tb, err.Error(), "referenced by 1 active website")
+
+		// Verify key still exists
+		_, err = keyService.GetKeyByID(context.Background(), userID, createdKey.ID)
+		assert.NoError(tb, err)
+	}, TestOptions)
+}
+
+func TestIPNSKeyService_DeleteKey_WithInactiveWebsite(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		keyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, keyService)
+
+		userID := uint(1)
+
+		// Create a key
+		createdKey, err := keyService.CreateKey(context.Background(), userID, "test-delete-key-inactive", KeyType_Ed25519)
+		require.NoError(tb, err)
+
+		// Create an INACTIVE (broken) website that references this IPNS key
+		// This simulates the scenario where user wants to clean up a failed website and its key
+		website := &pluginDb.Website{
+			UserID:          userID,
+			Domain:          "test-broken.example.com",
+			TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
+			TargetMultihash: createdKey.PeerIDMultihash,
+			Status:          string(pluginDb.WebsiteStatusBroken),
+			ValidationToken: "test-token-456",
+		}
+		
+		err = ctx.DB().Create(website).Error
+		require.NoError(tb, err)
+
+		// Act - Try to delete the key
+		err = keyService.DeleteKey(context.Background(), userID, createdKey.ID)
+
+		// Assert - Should succeed because website is not active
+		require.NoError(tb, err)
+
+		// Verify key is soft-deleted
+		_, err = keyService.GetKeyByID(context.Background(), userID, createdKey.ID)
+		assert.Error(tb, err)
+	}, TestOptions)
+}
+
+func TestIPNSKeyService_DeleteKey_WithPendingWebsite(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		keyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, keyService)
+
+		userID := uint(1)
+
+		// Create a key
+		createdKey, err := keyService.CreateKey(context.Background(), userID, "test-delete-key-pending", KeyType_Ed25519)
+		require.NoError(tb, err)
+
+		// Create a pending validation website that references this IPNS key
+		website := &pluginDb.Website{
+			UserID:          userID,
+			Domain:          "test-pending.example.com",
+			TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
+			TargetMultihash: createdKey.PeerIDMultihash,
+			Status:          string(pluginDb.WebsiteStatusPendingValidation),
+			ValidationToken: "test-token-789",
+		}
+		
+		err = ctx.DB().Create(website).Error
+		require.NoError(tb, err)
+
+		// Act - Try to delete the key
+		err = keyService.DeleteKey(context.Background(), userID, createdKey.ID)
+
+		// Assert - Should succeed because website is pending, not active
+		require.NoError(tb, err)
+
+		// Verify key is soft-deleted
+		_, err = keyService.GetKeyByID(context.Background(), userID, createdKey.ID)
 		assert.Error(tb, err)
 	}, TestOptions)
 }
