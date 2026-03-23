@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"strings"
 	"time"
@@ -932,8 +933,8 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 					return tx
 				}
 
-				// Query DNS for TXT records using dnslink library
-				// The library handles the _dnslink. prefix automatically
+				// Query DNS for DNSlink records using dnslink library
+				// Validation token is checked separately using direct TXT lookup
 				result, err := dnslink.Resolve(website.Domain)
 				if err != nil {
 					// Check if this is an NXDOMAIN error (no DNS records exist)
@@ -983,10 +984,19 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 					}
 				}
 
-				// Check for validation token in raw TXT entries
+				// Check for validation token using direct TXT query
 				expectedTokenRecord := fmt.Sprintf("%s=%s", s.config.VerificationTokenKey, website.ValidationToken)
-				for _, txtEntry := range result.TxtEntries {
-					if strings.Contains(txtEntry.Value, expectedTokenRecord) {
+				txtRecords, err := net.LookupTXT(website.Domain)
+				if err != nil {
+					s.Logger().Debug("DNS TXT lookup failed for validation token",
+						zap.Error(err),
+						zap.String("domain", website.Domain))
+					_ = tx.AddError(fmt.Errorf("DNS TXT lookup failed for %s: %w", website.Domain, err))
+					return tx
+				}
+				
+				for _, txtRecord := range txtRecords {
+					if strings.Contains(txtRecord, expectedTokenRecord) {
 						hasToken = true
 						s.Logger().Debug("Found valid validation token",
 							zap.String("domain", website.Domain),
