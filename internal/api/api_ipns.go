@@ -315,6 +315,9 @@ func (a *API) resolveIPNS(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
+	// Normalize CID if the resolved value contains one
+	normalizedValue := internal.TryNormalizeCIDFromPath(valuePath)
+
 	sequence, err := record.Sequence()
 	if err != nil {
 		a.Logger().Error("Failed to get IPNS record sequence", zap.Error(err))
@@ -330,9 +333,9 @@ func (a *API) resolveIPNS(c echo.Context) error {
 
 	resp := dto.IPNSResolveResponse{
 		Name:     name,
-		Value:    valuePath.String(),
+		Value:    normalizedValue,
 		Sequence: sequence,
-		Path:     dto.IPFSPath(valuePath.String()),
+		Path:     dto.IPFSPath(normalizedValue),
 		Expired:  time.Now().After(validity),
 		Expires:  validity,
 	}

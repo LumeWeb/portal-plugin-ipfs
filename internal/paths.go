@@ -3,7 +3,10 @@ package internal
 import (
 	"fmt"
 
+	"github.com/ipfs/go-cid"
 	"github.com/ipfs/boxo/path"
+
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 )
 
 const (
@@ -43,4 +46,36 @@ func ExtractCIDFromPathLenient(valuePath path.Path) string {
 // Use this when path format errors should be propagated.
 func ExtractCIDFromPathStrict(valuePath path.Path) (string, error) {
 	return extractCIDFromPath(valuePath)
+}
+
+// TryNormalizeCIDFromPath attempts to normalize a CID from a path.
+// If the path contains a valid CID, it will be normalized to v1 format.
+// If the path does not contain a valid CID, the original path string is returned unchanged.
+// This is useful when you want to normalize CIDs when possible but handle non-CID paths gracefully.
+func TryNormalizeCIDFromPath(valuePath path.Path) string {
+	// Try to extract CID string from the path
+	cidStr := ExtractCIDFromPathLenient(valuePath)
+	
+	// Try to parse it as a CID
+	parsedCid, err := cid.Parse(cidStr)
+	if err != nil {
+		// Not a valid CID, return the original path unchanged
+		return valuePath.String()
+	}
+	
+	// Normalize the CID
+	normalizedCid := encoding.NormalizeCid(parsedCid)
+	
+	// Reconstruct the path with the normalized CID
+	segments := valuePath.Segments()
+	if len(segments) > 0 && segments[0] == "ipfs" {
+		// This is /ipfs/{cid} format, reconstruct with normalized CID
+		return path.FromCid(normalizedCid).String()
+	} else if len(segments) == 0 {
+		// Just a CID without prefix, return normalized CID string
+		return normalizedCid.String()
+	}
+	
+	// Some other path format, return normalized as string
+	return normalizedCid.String()
 }
