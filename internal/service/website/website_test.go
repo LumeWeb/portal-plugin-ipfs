@@ -1957,6 +1957,34 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingTransition(t *testing.T) 
 	}, TestOptions)
 }
 
+func TestWebsiteService_UpdateWebsite_DNSEnabledInvalidType(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "invalid-dns-type-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = false
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		// Act - Try to update dns_enabled with an invalid type (string instead of bool)
+		updates := map[string]interface{}{
+			"dns_enabled": "true", // Invalid: should be bool
+		}
+
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
+
+		// Assert
+		assert.Error(tb, err)
+		assert.Nil(tb, updatedWebsite)
+		assert.Contains(tb, err.Error(), "dns_enabled must be a boolean")
+	}, TestOptions)
+}
+
 func TestWebsiteService_UpdateWebsite_DNSHostingTransitionWithExistingZone(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange

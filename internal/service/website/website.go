@@ -506,8 +506,13 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 					delete(updates, "target_hash")
 				}
 
-				// Check if dns_enabled is being changed
-				if newDNSEnabled, ok := updates["dns_enabled"].(bool); ok {
+				// Check if dns_enabled is being changed with validation
+				if dnsEnabledVal, exists := updates["dns_enabled"]; exists {
+					newDNSEnabled, ok := dnsEnabledVal.(bool)
+					if !ok {
+						_ = tx.AddError(fmt.Errorf("dns_enabled must be a boolean"))
+						return tx
+					}
 					dnsEnabledChanged = (newDNSEnabled != oldEnabled)
 				}
 
