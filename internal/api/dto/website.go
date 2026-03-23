@@ -8,6 +8,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"go.lumeweb.com/httputil"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal/config"
 )
 
@@ -219,9 +220,14 @@ func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 				},
 			}
 		}
-		website.TargetMultihash = c.Hash()
-		version := uint8(c.Version())
+
+		// Normalize to v1 for consistent storage
+		normalizedCid := encoding.NormalizeCid(c)
+		website.TargetMultihash = normalizedCid.Hash()
+		version := uint8(normalizedCid.Version())
 		website.CIDVersion = &version
+		codec := uint8(normalizedCid.Type())
+		website.CIDType = &codec
 	}
 
 	// Validate peer ID for IPNS targets
