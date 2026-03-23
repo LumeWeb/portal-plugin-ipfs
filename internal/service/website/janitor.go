@@ -15,6 +15,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 )
 
 const (
@@ -220,11 +221,14 @@ func (j *WebsiteJanitorJob) validateCIDTarget(ctx context.Context, targetHash st
 		return false, fmt.Errorf("invalid CID: %w", err)
 	}
 
+	// Normalize to match database storage format (pins are stored as normalized CID v1)
+	normalizedCid := encoding.NormalizeCid(parsedCid)
+
 	// Check if CID is pinned for any user
 	// We need to scan through pins since GetPinByCIDAndUser requires a userID
 	var pins []*pluginDb.IPFSPin
 	err = j.db.WithContext(ctx).
-		Where("cid = ?", parsedCid.Bytes()).
+		Where("cid = ?", normalizedCid.Bytes()).
 		Where("deleted_at IS NULL").
 		Where("status = ?", pluginDb.PinningStatusPinned).
 		Limit(1).
