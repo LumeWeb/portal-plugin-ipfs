@@ -15,30 +15,13 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 // KeyTypeEd25519 is the key type identifier for Ed25519 keys.
 const KeyTypeEd25519 = 1
-
-// ipfsPathSegment is the expected first segment for IPFS paths
-const ipfsPathSegment = "ipfs"
-
-// extractCIDFromIPNSPath extracts the CID from an IPNS record path.
-// The path should be formatted as /ipfs/{cid}, where the CID is at segment 1.
-// Returns an error if the path format is invalid or doesn't start with "ipfs".
-func extractCIDFromIPNSPath(valuePath path.Path) (string, error) {
-	pathSegments := valuePath.Segments()
-	if len(pathSegments) < 2 {
-		return "", fmt.Errorf("invalid IPNS record path format: expected at least 2 segments, got %d", len(pathSegments))
-	}
-	// Validate first segment is "ipfs" to ensure we're extracting the right component
-	if pathSegments[0] != ipfsPathSegment {
-		return "", fmt.Errorf("unexpected path protocol: %s", pathSegments[0])
-	}
-	return pathSegments[1], nil
-}
 
 // IPNS Key Handlers
 
@@ -424,7 +407,7 @@ func (a *API) republishIPNS(c echo.Context) error {
 		}
 
 		// Extract CID from the path
-		cidStr, err := extractCIDFromIPNSPath(valuePath)
+		cidStr, err := internal.ExtractCIDFromPathStrict(valuePath)
 		if err != nil {
 			apiErr := NewError(ErrKeyInvalidRequest, err)
 			return ctx.Error(apiErr, apiErr.HttpStatus())
@@ -465,7 +448,7 @@ func (a *API) republishIPNS(c echo.Context) error {
 			}
 
 			// Extract CID from the path
-			cidStr, err := extractCIDFromIPNSPath(valuePath)
+			cidStr, err := internal.ExtractCIDFromPathStrict(valuePath)
 			if err != nil {
 				a.Logger().Warn("Invalid IPNS record path format, skipping", zap.Error(err), zap.String("peer_id", peerID))
 				continue

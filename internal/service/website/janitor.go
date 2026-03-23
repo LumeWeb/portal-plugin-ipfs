@@ -8,12 +8,13 @@ import (
 	"github.com/gammazero/workerpool"
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
-	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
-	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
 
 const (
@@ -304,10 +305,10 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 		return nil
 	}
 
-	// Extract CID from record
-	recordCID, err := record.Value()
+	// Extract target path from IPNS record
+	targetPath, err := record.Value()
 	if err != nil {
-		j.logger.Error("Failed to extract CID from IPNS record",
+		j.logger.Error("Failed to extract target path from IPNS record",
 			zap.Error(err),
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", website.Domain),
@@ -319,14 +320,15 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 		return nil
 	}
 
-	// Validate CID is pinned
-	cidValid, err := j.validateCIDTarget(ctx, recordCID.String())
+	// Extract CID from path using lenient matcher that handles both /ipfs/{cid} and plain CID strings
+	cidStr := internal.ExtractCIDFromPathLenient(targetPath)
+	cidValid, err := j.validateCIDTarget(ctx, cidStr)
 	if err != nil {
 		j.logger.Warn("Failed to validate resolved CID",
 			zap.Error(err),
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", website.Domain),
-			zap.String("cid", recordCID.String()),
+			zap.String("cid", cidStr),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
 		now := time.Now()
@@ -338,7 +340,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 		j.logger.Warn("Resolved CID is not pinned",
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", website.Domain),
-			zap.String("cid", recordCID.String()),
+			zap.String("cid", cidStr),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
 		now := time.Now()
