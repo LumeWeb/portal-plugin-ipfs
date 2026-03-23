@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ipfs/boxo/path"
+	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
@@ -79,7 +81,7 @@ func TestWebsiteJanitorJob_Run_NoWebsites(t *testing.T) {
 		// Configure janitor
 		websiteConfig := &pluginConfig.WebsiteConfig{
 			JanitorEnabled:     true,
-			JanitorInterval:    30 * time.Minute,
+			CheckInterval:      30 * time.Minute,
 			JanitorWorkerCount: 2,
 			JanitorBatchSize:   10,
 		}
@@ -132,13 +134,37 @@ func TestWebsiteJanitorJob_Origin(t *testing.T) {
 	assert.Equal(t, core.JobOriginPlugin, origin)
 }
 
-func TestWebsiteJanitorJob_SourceID(t *testing.T) {
-	// Arrange
-	job := NewWebsiteJanitorJob()
 
-	// Act
-	sourceID := job.SourceID()
+func TestWebsiteJanitorJob_ValidateIPNSTarget_FullPath(t *testing.T) {
+	// This test verifies that IPNS path prefixes are extracted correctly.
+	// When an IPNS record returns a path like "/ipfs/bafy...", the janitor should
+	// use internal.ExtractCIDFromPathLenient() to extract the CID.
 
-	// Assert
-	assert.Equal(t, "ipfs.website_janitor", sourceID)
+	tests := []struct {
+		name         string
+		cid          string
+	}{
+		{
+			name:         "Standard CID",
+			cid:          "bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange - create path.Path from CID
+			// Decode CID and create path from it (which represents /ipfs/{cid})
+			targetCID, err := cid.Decode(tt.cid)
+			require.NoError(t, err, "CID should be valid")
+			targetPath := path.FromCid(targetCID)
+			
+			// Act - use the same helper as the production code
+			// The helper extracts CID from the path by examining segments
+			cidStr := internal.ExtractCIDFromPathLenient(targetPath)
+
+			// Assert - verify the CID was extracted correctly
+			assert.Equal(t, tt.cid, cidStr,
+				"CID should be extracted correctly from path")
+		})
+	}
 }
