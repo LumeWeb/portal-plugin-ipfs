@@ -145,18 +145,23 @@ func TestWebsiteJanitorJob_ValidateIPNSTarget_FullPath(t *testing.T) {
 		cid          string
 	}{
 		{
-			name:         "Standard CID",
-			cid:          "bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4",
+			name: "Path with /ipfs/ prefix",
+			cid:  "bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Arrange - create path.Path from CID
-			// Decode CID and create path from it (which represents /ipfs/{cid})
+			// Decode CID and create full path from it (which represents /ipfs/{cid})
+			// This is the format returned by ipns.Record.Value()
 			targetCID, err := cid.Decode(tt.cid)
 			require.NoError(t, err, "CID should be valid")
 			targetPath := path.FromCid(targetCID)
+
+			// Verify the path has the /ipfs/ prefix
+			assert.Equal(t, "/ipfs/"+tt.cid, targetPath.String(),
+				"path.FromCid() should create path with /ipfs/ prefix")
 			
 			// Act - use the same helper as the production code
 			// The helper extracts CID from the path by examining segments
