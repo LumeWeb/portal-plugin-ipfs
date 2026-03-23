@@ -436,7 +436,7 @@ func (s *IPNSKeyServiceDefault) DeleteKey(ctx context.Context, userID uint, keyI
 	checkErr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		return tx.Model(&pluginDb.Website{}).
 			Where("target_multihash = ? AND target_type = ? AND status = ?", 
-				 key.PeerIDMultihash, "ipns", "active").
+				 key.PeerIDMultihash, pluginDb.WebsiteTargetTypeIPNS, pluginDb.WebsiteStatusActive).
 			Count(&websiteCount)
 	})
 	if checkErr != nil {
