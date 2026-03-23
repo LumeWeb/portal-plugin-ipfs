@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	JanitorJobSourceID = "ipfs.website_janitor"
+	JanitorJobSourceID = "ipfs"
 )
 
 // WebsiteJanitorJob implements core.CronJob for periodic website validation
