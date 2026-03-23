@@ -414,6 +414,8 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 	defer span.End()
 
 	var updatedWebsite *pluginDb.Website
+	var oldEnabled bool
+	var dnsEnabledChanged bool
 
 	err := core.MetricTrack(
 		UpdateWebsiteDuration.WithLabelValues(),
@@ -431,9 +433,11 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 					return tx
 				}
 
-				// Store old values for DNS update
+				// Store old values for DNS updates and state transitions
 				oldTargetHash := website.TargetHash()
+				oldEnabled = website.Enabled
 				targetHashChanged := false
+				dnsEnabledChanged = false
 
 				// Validate domain if being updated
 				if domain, ok := updates["domain"].(string); ok {
@@ -500,6 +504,16 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 
 					// Remove old target_hash from updates
 					delete(updates, "target_hash")
+				}
+
+				// Check if dns_enabled is being changed with validation
+				if dnsEnabledVal, exists := updates["dns_enabled"]; exists {
+					newDNSEnabled, ok := dnsEnabledVal.(bool)
+					if !ok {
+						_ = tx.AddError(fmt.Errorf("dns_enabled must be a boolean"))
+						return tx
+					}
+					dnsEnabledChanged = (newDNSEnabled != oldEnabled)
 				}
 
 				// Apply updates
@@ -569,6 +583,27 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 		return nil, err
 	}
 
+	// Handle DNS hosting transitions if dns_enabled changed
+	if dnsEnabledChanged {
+		if updatedWebsite.Enabled && !oldEnabled {
+			// DNS hosting enabled: create zone/records and reset to pending_validation
+			if err := s.handleDNSEnabledTransition(ctx, updatedWebsite); err != nil {
+				s.Logger().Warn("Failed to handle DNS hosting enable transition",
+					zap.Error(err),
+					zap.Uint("website_id", websiteID))
+				// Continue despite failure - website is updated but DNS setup incomplete
+			}
+		} else if !updatedWebsite.Enabled && oldEnabled {
+			// DNS hosting disabled: delete records and reset to pending_validation
+			if err := s.handleDNSDisabledTransition(ctx, updatedWebsite); err != nil {
+				s.Logger().Warn("Failed to handle DNS hosting disable transition",
+					zap.Error(err),
+					zap.Uint("website_id", websiteID))
+				// Continue despite failure - website is updated but DNS cleanup incomplete
+			}
+		}
+	}
+
 	s.Logger().Info("Website updated",
 		zap.Uint("id", websiteID),
 		zap.Uint("user_id", userID),
@@ -580,6 +615,132 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 	}
 
 	return updatedWebsite, nil
+}
+
+// handleDNSEnabledTransition handles the transition when DNS hosting is enabled for a website
+func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, website *pluginDb.Website) error {
+	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.handleDNSEnabledTransition")
+	defer span.End()
+
+	s.Logger().Info("Handling DNS hosting enable transition",
+		zap.Uint("website_id", website.ID),
+		zap.String("domain", website.Domain))
+
+	// Create DNS zone if it doesn't exist
+	if website.DNSZoneID == nil && s.dnsSvc != nil {
+		dnsZone, err := s.dnsSvc.CreateZone(ctx, website.Domain, website.UserID)
+		if err != nil {
+			return fmt.Errorf("failed to create DNS zone: %w", err)
+		}
+
+		// Update website with DNS zone ID
+		err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			return tx.Model(website).Update("dns_zone_id", dnsZone.ID)
+		})
+		if err != nil {
+			s.Logger().Error("Failed to update website with DNS zone ID",
+				zap.Error(err),
+				zap.Uint("website_id", website.ID))
+			// Attempt cleanup
+			_ = s.dnsSvc.DeleteZone(ctx, dnsZone.ID)
+			return fmt.Errorf("failed to associate DNS zone with website: %w", err)
+		}
+
+		website.DNSZoneID = &dnsZone.ID
+		s.Logger().Info("DNS zone created for website",
+			zap.Uint("website_id", website.ID),
+			zap.Uint("dns_zone_id", dnsZone.ID),
+			zap.String("domain", website.Domain))
+	}
+
+	// Create DNS records if zone exists
+	if website.DNSZoneID != nil && s.dnsSvc != nil {
+		// Regenerate validation token if expired or not set
+		var newToken string
+		if website.IsExpired() || website.ValidationToken == "" {
+			var err error
+			newToken, err = s.generateValidationToken()
+			if err != nil {
+				return fmt.Errorf("failed to generate validation token: %w", err)
+			}
+		} else {
+			newToken = website.ValidationToken
+		}
+
+		// Create DNS records
+		err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), newToken)
+		if err != nil {
+			return fmt.Errorf("failed to create DNS records: %w", err)
+		}
+
+		// Update website with new token and status
+		expiresAt := time.Now().Add(s.config.ValidationTokenTTL)
+		err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			return tx.Model(website).Updates(map[string]interface{}{
+				"validation_token":      newToken,
+				"validation_expires_at": expiresAt,
+				"status":                string(pluginDb.WebsiteStatusPendingValidation),
+			})
+		})
+		if err != nil {
+			s.Logger().Error("Failed to update website validation info",
+				zap.Error(err),
+				zap.Uint("website_id", website.ID))
+			return fmt.Errorf("failed to update website validation: %w", err)
+		}
+
+		s.Logger().Info("DNS records created, website reset to pending_validation",
+			zap.Uint("website_id", website.ID),
+			zap.String("domain", website.Domain))
+	}
+
+	return nil
+}
+
+// handleDNSDisabledTransition handles the transition when DNS hosting is disabled for a website
+func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context, website *pluginDb.Website) error {
+	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.handleDNSDisabledTransition")
+	defer span.End()
+
+	s.Logger().Info("Handling DNS hosting disable transition",
+		zap.Uint("website_id", website.ID),
+		zap.String("domain", website.Domain))
+
+	// Delete DNS zone if it exists
+	if website.DNSZoneID != nil && s.dnsSvc != nil {
+		err := s.dnsSvc.DeleteZone(ctx, *website.DNSZoneID)
+		if err != nil {
+			s.Logger().Warn("Failed to delete DNS zone for website",
+				zap.Error(err),
+				zap.Uint("website_id", website.ID),
+				zap.Uint("dns_zone_id", *website.DNSZoneID))
+			// Continue despite DNS zone deletion failure
+		} else {
+			s.Logger().Info("DNS zone deleted for website",
+				zap.Uint("website_id", website.ID),
+				zap.Uint("dns_zone_id", *website.DNSZoneID))
+		}
+	}
+
+	// Reset status to pending_validation and clear dns_zone_id so user can re-validate without DNS
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		return tx.Model(website).Updates(map[string]interface{}{
+			"status":      string(pluginDb.WebsiteStatusPendingValidation),
+			"dns_zone_id": nil,
+		})
+	})
+	if err != nil {
+		s.Logger().Error("Failed to update website",
+			zap.Error(err),
+			zap.Uint("website_id", website.ID))
+		return fmt.Errorf("failed to update website: %w", err)
+	}
+
+	s.Logger().Info("DNS zone deleted, website reset to pending_validation",
+		zap.Uint("website_id", website.ID),
+		zap.String("domain", website.Domain))
+
+	return nil
 }
 
 // DeleteWebsite soft-deletes a website by ID
