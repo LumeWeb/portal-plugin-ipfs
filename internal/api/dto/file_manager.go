@@ -87,6 +87,19 @@ type FileManagerItem struct {
 	Unpinnable  bool      `json:"unpinnable"`
 }
 
+// FileManagerItemResponse is a swagger-only DTO that represents the paginated response for file manager items.
+// It merges the generic queryutil.Response[*dto.FileManagerItem] for OpenAPI documentation.
+//
+// This struct exists due to a TODO bug where queryutil.Response generics are not getting detected
+// properly as an array type in the swagger documentation generation. By providing a concrete struct,
+// we ensure the swagger docs correctly show the data field as an array of FileManagerItem items.
+//
+// Note: This struct is only used for swagger documentation, not for actual encoding.
+type FileManagerItemResponse struct {
+	Data  []FileManagerItem `json:"data"`
+	Total int64             `json:"total"`
+}
+
 // FileManagerListRequest represents the request for listing files
 type FileManagerListRequest struct {
 	Filters []interface{} `json:"filters,omitempty"`
