@@ -2,10 +2,12 @@ package store
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/ipfs/go-cid"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal/core"
+	"go.uber.org/zap"
 )
 
 type (
@@ -115,4 +117,16 @@ func GetUserID(ctx context.Context) uint {
 		return 0
 	}
 	return value
+}
+
+// IsValidUserID checks if the user ID is valid (greater than 0)
+func IsValidUserID(userID uint) bool {
+	return userID > 0
+}
+
+// LogIfClientIPMissing logs a debug warning if client IP is not set in context
+func LogIfClientIPMissing(ctx context.Context, log *core.Logger, cid fmt.Stringer) {
+	if GetClientIP(ctx) == "" {
+		log.Debug("Client IP not set in context for quota tracking", zap.Stringer("cid", cid))
+	}
 }

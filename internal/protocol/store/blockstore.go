@@ -188,7 +188,7 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 	}
 
 	// Validate upload quota for authenticated users if no existing upload
-	if userID > 0 && existingUpload == nil && !IsQuotaCheckSkipped(ctx) {
+	if IsValidUserID(userID) && existingUpload == nil && !IsQuotaCheckSkipped(ctx) {
 		if err := quota.ValidateUploadQuota(ctx, bs.ctx, userID, size); err != nil {
 			bs.log.Warn("Upload quota validation failed",
 				zap.Uint("user_id", userID),
@@ -202,7 +202,7 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 		log.Debug("Upload already exists, skipping upload record creation",
 			zap.Stringer("cid", b.Cid()),
 			zap.Uint("existing_user_id", existingUpload.UserID))
-	} else if userID > 0 {
+	} else if IsValidUserID(userID) {
 		log.Debug("No existing upload, will create new record via storage upload",
 			zap.Stringer("cid", b.Cid()),
 			zap.Uint("user_id", userID))
@@ -223,10 +223,8 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 	log.Debug("object uploaded", zap.Duration("elapsed", time.Since(start)))
 
 	// Emit upload completion event if we have an authenticated user and this is a new upload
-	if userID > 0 && existingUpload == nil && storageUpload != nil {
-		if clientIP == "" {
-			bs.log.Debug("Client IP not set in context for quota tracking", zap.Stringer("cid", b.Cid()))
-		}
+	if IsValidUserID(userID) && existingUpload == nil && storageUpload != nil {
+		LogIfClientIPMissing(ctx, bs.log, b.Cid())
 		quota.EmitUploadCompleted(ctx, bs.ctx, &userID, storageUpload.ID, size, clientIP)
 	}
 
@@ -250,11 +248,6 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 		return fmt.Errorf("failed to pin block %q: %w", b.Cid(), err)
 	}
 
-	// Emit storage object pinned event for quota tracking
-	if clientIP == "" {
-		bs.log.Debug("Client IP not set in context for storage quota tracking", zap.Stringer("cid", b.Cid()))
-	}
-
 	// Use the upload record from storage or existing upload for quota tracking
 	storageUserID := userID
 	var storageUploadID uint
@@ -266,7 +259,8 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 		storageUserID = existingUpload.UserID
 	}
 
-	if storageUserID > 0 {
+	if IsValidUserID(storageUserID) {
+		LogIfClientIPMissing(ctx, bs.log, b.Cid())
 		metaPin := &models.Pin{
 			UserID:   storageUserID,
 			UploadID: storageUploadID,
