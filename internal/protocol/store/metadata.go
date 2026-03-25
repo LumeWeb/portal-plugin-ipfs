@@ -215,7 +215,9 @@ func (s *MetadataStoreDefault) resolveNameFromParentWithBlock(childCid cid.Cid, 
 		zap.Stringer("parent_cid", parentCid))
 
 	// Get the parent block data
-	block, err := s.proto.GetNode().GetBlock(s.ctx, parentCid)
+	// Skip quota check for internal name resolution - this is metadata extraction from already-pinned data
+	getCtx := SkipQuotaCheckOption(s.ctx, true)
+	block, err := s.proto.GetNode().GetBlock(getCtx, parentCid)
 	if err != nil {
 		s.logger.Debug("Failed to get parent block",
 			zap.Stringer("child_cid", childCid),
