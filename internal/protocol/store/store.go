@@ -19,6 +19,7 @@ const (
 	DisableMetaCheck ContextKey = "disableMetaCheck"
 	ClientIPKey      ContextKey = "clientIP"
 	SkipQuotaCheck   ContextKey = "skipQuotaCheck"
+	UserIDKey        ContextKey = "userID"
 )
 
 // VirtualReadOption sets the virtual read option in the context
@@ -94,4 +95,24 @@ func IsQuotaCheckSkipped(ctx context.Context) bool {
 
 func cidKey(c cid.Cid) string {
 	return encoding.ToV1(c).String()
+}
+
+// UserOption sets user ID in the context
+func UserOption(ctx context.Context, userID uint) context.Context {
+	ctx, span := core.TraceMethod(ctx, "UserOption")
+	defer span.End()
+
+	return context.WithValue(ctx, UserIDKey, userID)
+}
+
+// GetUserID retrieves the user ID from the context
+func GetUserID(ctx context.Context) uint {
+	ctx, span := core.TraceMethod(ctx, "GetUserID")
+	defer span.End()
+
+	value, ok := ctx.Value(UserIDKey).(uint)
+	if !ok {
+		return 0
+	}
+	return value
 }
