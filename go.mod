@@ -38,7 +38,7 @@ require (
 	github.com/multiformats/go-multicodec v0.10.0
 	github.com/multiformats/go-multihash v0.2.3
 	github.com/multiformats/go-varint v0.1.0
-	github.com/oapi-codegen/runtime v1.3.0
+	github.com/oapi-codegen/runtime v1.3.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/samber/lo v1.53.0
 	github.com/stretchr/testify v1.11.1
