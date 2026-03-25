@@ -8,6 +8,7 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/event"
+	"go.uber.org/zap"
 )
 
 // WithQuotaService executes a function with quota service if available
@@ -89,9 +90,18 @@ func EmitStorageObjectUnpinned(cctx context.Context, ctx core.Context, pin *mode
 func ValidateUploadQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64) error {
 	result, err := CheckUploadQuota(cctx, ctx, userID, requestedBytes)
 	if err != nil {
+		ctx.Logger().Warn("Upload quota check failed",
+			zap.Uint("user_id", userID),
+			zap.Uint64("requested_bytes", requestedBytes),
+			zap.Error(err))
 		return fmt.Errorf("quota check failed: %w", err)
 	}
 	if result != nil && !result.Allowed {
+		ctx.Logger().Debug("Upload quota exceeded",
+			zap.Uint("user_id", userID),
+			zap.Uint64("requested_bytes", requestedBytes),
+			zap.Uint64("current_usage", result.Details.CurrentUsage),
+			zap.Any("limit", result.Details.Limit))
 		return core.ErrUploadQuotaExceeded
 	}
 	return nil
@@ -101,9 +111,18 @@ func ValidateUploadQuota(cctx context.Context, ctx core.Context, userID uint, re
 func ValidateDownloadQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64) error {
 	result, err := CheckDownloadQuota(cctx, ctx, userID, requestedBytes)
 	if err != nil {
+		ctx.Logger().Warn("Download quota check failed",
+			zap.Uint("user_id", userID),
+			zap.Uint64("requested_bytes", requestedBytes),
+			zap.Error(err))
 		return fmt.Errorf("quota check failed: %w", err)
 	}
 	if result != nil && !result.Allowed {
+		ctx.Logger().Debug("Download quota exceeded",
+			zap.Uint("user_id", userID),
+			zap.Uint64("requested_bytes", requestedBytes),
+			zap.Uint64("current_usage", result.Details.CurrentUsage),
+			zap.Any("limit", result.Details.Limit))
 		return core.ErrDownloadQuotaExceeded
 	}
 	return nil
@@ -113,9 +132,18 @@ func ValidateDownloadQuota(cctx context.Context, ctx core.Context, userID uint, 
 func ValidateStorageQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64) error {
 	result, err := CheckStorageQuota(cctx, ctx, userID, requestedBytes)
 	if err != nil {
+		ctx.Logger().Warn("Storage quota check failed",
+			zap.Uint("user_id", userID),
+			zap.Uint64("requested_bytes", requestedBytes),
+			zap.Error(err))
 		return fmt.Errorf("quota check failed: %w", err)
 	}
 	if result != nil && !result.Allowed {
+		ctx.Logger().Debug("Storage quota exceeded",
+			zap.Uint("user_id", userID),
+			zap.Uint64("requested_bytes", requestedBytes),
+			zap.Uint64("current_usage", result.Details.CurrentUsage),
+			zap.Any("limit", result.Details.Limit))
 		return core.ErrStorageQuotaExceeded
 	}
 	return nil

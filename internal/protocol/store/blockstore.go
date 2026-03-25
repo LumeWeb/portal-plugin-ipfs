@@ -107,8 +107,11 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 
 	// Validate download quota - always anonymous (nil userID), unless skipped
 	if !IsQuotaCheckSkipped(ctx) {
+		bs.log.Debug("Performing anonymous download quota check",
+			zap.String("cid", c.String()),
+			zap.Uint64("size", size))
 		if err := quota.ValidateDownloadQuota(ctx, bs.ctx, 0, uint64(size)); err != nil {
-			bs.log.Debug("download quota validation failed", zap.String("cid", c.String()), zap.Error(err))
+			bs.log.Warn("Anonymous quota check failed", zap.String("cid", c.String()), zap.Error(err))
 			return nil, err
 		}
 	}

@@ -81,7 +81,11 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	userID := upload.UserID
 
 	if err := quota.ValidateDownloadQuota(reqCtx, a.Context(), userID, upload.Size); err != nil {
-		a.Logger().Warn("Download quota validation failed", zap.Uint("user_id", userID), zap.Error(err))
+		a.Logger().Warn("Download quota validation failed",
+			zap.Uint("user_id", userID),
+			zap.Uint64("upload_size", upload.Size),
+			zap.Stringer("cid", _cid),
+			zap.Error(err))
 		apiErr := NewError(ErrKeyDownloadQuotaExceeded, err)
 		_ = ctx.Error(apiErr, http.StatusTooManyRequests)
 		return apiErr
