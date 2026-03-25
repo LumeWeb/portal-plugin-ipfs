@@ -2,10 +2,12 @@ package store
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/ipfs/go-cid"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal/core"
+	"go.uber.org/zap"
 )
 
 type (
@@ -19,6 +21,7 @@ const (
 	DisableMetaCheck ContextKey = "disableMetaCheck"
 	ClientIPKey      ContextKey = "clientIP"
 	SkipQuotaCheck   ContextKey = "skipQuotaCheck"
+	UserIDKey        ContextKey = "userID"
 )
 
 // VirtualReadOption sets the virtual read option in the context
@@ -94,4 +97,36 @@ func IsQuotaCheckSkipped(ctx context.Context) bool {
 
 func cidKey(c cid.Cid) string {
 	return encoding.ToV1(c).String()
+}
+
+// UserOption sets user ID in the context
+func UserOption(ctx context.Context, userID uint) context.Context {
+	ctx, span := core.TraceMethod(ctx, "UserOption")
+	defer span.End()
+
+	return context.WithValue(ctx, UserIDKey, userID)
+}
+
+// GetUserID retrieves the user ID from the context
+func GetUserID(ctx context.Context) uint {
+	ctx, span := core.TraceMethod(ctx, "GetUserID")
+	defer span.End()
+
+	value, ok := ctx.Value(UserIDKey).(uint)
+	if !ok {
+		return 0
+	}
+	return value
+}
+
+// IsValidUserID checks if the user ID is valid (greater than 0)
+func IsValidUserID(userID uint) bool {
+	return userID > 0
+}
+
+// LogIfClientIPMissing logs a debug warning if client IP is not set in context
+func LogIfClientIPMissing(ctx context.Context, log *core.Logger, cid fmt.Stringer) {
+	if GetClientIP(ctx) == "" {
+		log.Debug("Client IP not set in context for quota tracking", zap.Stringer("cid", cid))
+	}
 }

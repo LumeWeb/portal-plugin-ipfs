@@ -11,6 +11,7 @@ import (
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/multiformats/go-multicodec"
 	"github.com/multiformats/go-multihash"
+	"go.lumeweb.com/portal/db/models"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
@@ -31,6 +32,7 @@ type (
 		metadata   pluginCore.MetadataStore
 		downloader pluginCore.BlockDownloader
 		storage    core.StorageService
+		upload     core.UploadService
 		proto      core.StorageProtocol
 	}
 )
@@ -175,8 +177,39 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 	start := time.Now()
 
 	size := uint64(len(b.RawData()))
+	userID := GetUserID(ctx)
+	clientIP := GetClientIP(ctx)
 
-	_, err := bs.storage.UploadObject(ctx, service.NewStorageUploadRequest(
+	// Check if upload already exists: if so, skip quota checks and upload record creation
+	existingUpload, err := bs.upload.GetUpload(ctx, internal.NewIPFSHash(b.Cid()))
+	if err != nil {
+		log.Warn("Failed to check existing upload", zap.Error(err))
+		// Continue even if check fails - we'll get upload record from storage
+	}
+
+	// Validate upload quota for authenticated users if no existing upload
+	if IsValidUserID(userID) && existingUpload == nil && !IsQuotaCheckSkipped(ctx) {
+		if err := quota.ValidateUploadQuota(ctx, bs.ctx, userID, size); err != nil {
+			bs.log.Warn("Upload quota validation failed",
+				zap.Uint("user_id", userID),
+				zap.Uint64("size", size),
+				zap.Error(err))
+			return fmt.Errorf("upload quota validation failed: %w", err)
+		}
+	}
+
+	if existingUpload != nil {
+		log.Debug("Upload already exists, skipping upload record creation",
+			zap.Stringer("cid", b.Cid()),
+			zap.Uint("existing_user_id", existingUpload.UserID))
+	} else if IsValidUserID(userID) {
+		log.Debug("No existing upload, will create new record via storage upload",
+			zap.Stringer("cid", b.Cid()),
+			zap.Uint("user_id", userID))
+	}
+
+	// Upload to storage - this will return an upload record
+	storageUpload, err := bs.storage.UploadObject(ctx, service.NewStorageUploadRequest(
 		core.StorageUploadWithProtocol(bs.proto),
 		core.StorageUploadWithData(bytes.NewReader(b.RawData())),
 		core.StorageUploadWithSize(size),
@@ -188,6 +221,12 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 	}
 
 	log.Debug("object uploaded", zap.Duration("elapsed", time.Since(start)))
+
+	// Emit upload completion event if we have an authenticated user and this is a new upload
+	if IsValidUserID(userID) && existingUpload == nil && storageUpload != nil {
+		LogIfClientIPMissing(ctx, bs.log, b.Cid())
+		quota.EmitUploadCompleted(ctx, bs.ctx, &userID, storageUpload.ID, size, clientIP)
+	}
 
 	node, err := encoding.DecodeBlock(ctx, b)
 	if err != nil {
@@ -208,6 +247,27 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 		log.Debug("failed to pin block", zap.Error(err))
 		return fmt.Errorf("failed to pin block %q: %w", b.Cid(), err)
 	}
+
+	// Use the upload record from storage or existing upload for quota tracking
+	storageUserID := userID
+	var storageUploadID uint
+	if storageUpload != nil {
+		storageUploadID = storageUpload.ID
+		storageUserID = storageUpload.UserID
+	} else if existingUpload != nil {
+		storageUploadID = existingUpload.ID
+		storageUserID = existingUpload.UserID
+	}
+
+	if IsValidUserID(storageUserID) {
+		LogIfClientIPMissing(ctx, bs.log, b.Cid())
+		metaPin := &models.Pin{
+			UserID:   storageUserID,
+			UploadID: storageUploadID,
+		}
+		quota.EmitStorageObjectPinned(ctx, bs.ctx, metaPin, clientIP)
+	}
+
 	log.Debug("put block", zap.Duration("duration", time.Since(start)), zap.Error(err))
 	return nil
 }
@@ -296,12 +356,18 @@ func NewBlockStore(ctx core.Context, downloader pluginCore.BlockDownloader, meta
 		return nil, fmt.Errorf("storage service not initialized")
 	}
 
+	uploadSvc := core.GetService[core.UploadService](ctx, core.UPLOAD_SERVICE)
+	if uploadSvc == nil {
+		return nil, fmt.Errorf("upload service not initialized")
+	}
+
 	return &BlockStore{
 		ctx:        ctx,
 		log:        ctx.Logger(),
 		metadata:   metadata,
 		downloader: downloader,
 		storage:    storageSvc,
+		upload:     uploadSvc,
 		proto:      proto,
 	}, nil
 }
