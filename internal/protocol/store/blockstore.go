@@ -125,7 +125,9 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 	}
 
 	// Emit download completion event - anonymous (nil userID)
-	quota.EmitDownloadCompleted(ctx, bs.ctx, 0, uint64(len(block.RawData())), clientIP, nil)
+	if !IsQuotaCheckSkipped(ctx) {
+		quota.EmitDownloadCompleted(core.DetachContext(ctx), bs.ctx, 0, uint64(len(block.RawData())), clientIP, nil)
+	}
 
 	return block, nil
 }
