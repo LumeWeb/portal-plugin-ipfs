@@ -8,6 +8,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/labstack/echo/v4"
 	"go.lumeweb.com/httputil"
+	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
@@ -111,7 +112,8 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	}
 
 	// Emit download completion event only after successful write
-	quota.EmitDownloadCompleted(reqCtx, a.Context(), upload.ID, uint64(n), ip, &userID)
+	// Use DetachContext to prevent canceled request context from reaching event handlers
+	quota.EmitDownloadCompleted(core.DetachContext(reqCtx), a.Context(), upload.ID, uint64(n), ip, &userID)
 	return nil
 }
 
