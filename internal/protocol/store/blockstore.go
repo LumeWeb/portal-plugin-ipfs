@@ -107,15 +107,34 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 		return nil, err
 	}
 
-	// Validate download quota - always anonymous (nil userID), unless skipped
+	// Validate download quota - checks if any users pinning this content have sufficient quota
+	// NOTE: Anonymous downloads (userID=0) check group availability instead of individual quota.
+	// Usage will be distributed among users who have pinned this upload.
 	if !IsQuotaCheckSkipped(ctx) {
-		bs.log.Debug("Performing anonymous download quota check",
+		bs.log.Debug("Performing anonymous download quota group availability check",
 			zap.String("cid", c.String()),
 			zap.Uint64("size", size))
-		if err := quota.ValidateDownloadQuota(ctx, bs.ctx, 0, uint64(size)); err != nil {
-			bs.log.Warn("Anonymous quota check failed", zap.String("cid", c.String()), zap.Error(err))
-			return nil, err
+
+		// Check if any pinners have sufficient quota to serve this block
+		available, err := quota.CheckCIDGroupDownloadAvailability(ctx, bs.ctx, internal.NewIPFSHash(c), uint64(size))
+		if err != nil {
+			bs.log.Warn("Group quota availability check failed",
+				zap.String("cid", c.String()),
+				zap.Uint64("size", size),
+				zap.Error(err))
+			return nil, fmt.Errorf("failed to check group quota availability: %w", err)
 		}
+
+		if !available {
+			bs.log.Debug("Group quota not available for anonymous download",
+				zap.String("cid", c.String()),
+				zap.Uint64("size", size))
+			return nil, format.ErrNotFound{Cid: c}
+		}
+
+		bs.log.Debug("Group quota available for anonymous download",
+			zap.String("cid", c.String()),
+			zap.Uint64("size", size))
 	}
 
 	// Proceed with download
@@ -124,7 +143,8 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 		return nil, err
 	}
 
-	// Emit download completion event - anonymous (nil userID)
+	// Emit download completion event - anonymous (userID=0)
+	// Usage will be distributed among users who have pinned this upload
 	if !IsQuotaCheckSkipped(ctx) {
 		quota.EmitDownloadCompleted(core.DetachContext(ctx), bs.ctx, 0, uint64(len(block.RawData())), clientIP, nil)
 	}

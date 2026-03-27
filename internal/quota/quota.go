@@ -148,3 +148,15 @@ func ValidateStorageQuota(cctx context.Context, ctx core.Context, userID uint, r
 	}
 	return nil
 }
+// CheckCIDGroupDownloadAvailability checks if any users with pinned content have sufficient quota for anonymous downloads
+func CheckCIDGroupDownloadAvailability(cctx context.Context, ctx core.Context, cid core.StorageHash, requiredBytes uint64) (bool, error) {
+	var available bool
+
+	err := core.WithService[quotaCore.QuotaService](ctx, quotaCore.QUOTA_SERVICE, func(qs quotaCore.QuotaService) error {
+		var err error
+		available, err = qs.CheckCIDGroupQuotaAvailability(cctx, cid, requiredBytes, quotaCore.UsageTypeDownload)
+		return err
+	})
+
+	return available, err
+}
