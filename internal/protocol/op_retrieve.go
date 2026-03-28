@@ -15,6 +15,7 @@ import (
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
@@ -166,7 +167,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 			}
 
 			// Set client IP in context for quota tracking
-			ctx = store.ClientIPOption(ctx, req.SourceIP)
+			ctx = pc.ClientIPOption(ctx, req.SourceIP)
 
 			err = uploadSvc.ProcessUpload(ctx, validChildCids, *req.UserID)
 			if err != nil {
@@ -204,7 +205,7 @@ func isRecoverableNodeError(err error) bool {
 
 func collectDAGCids(ctx core.Context, ipfs *Protocol, c cid.Cid) ([]cid.Cid, error) {
 
-	getCtx := store.VirtualReadOption(ctx, true)
+	getCtx := pc.VirtualReadOption(ctx, true)
 	getCtx, cancel := context.WithTimeout(getCtx, ctx.Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig).BlockStore.Timeout)
 
 	sess := merkledag.NewSession(getCtx, ipfs.GetNode().DagService())

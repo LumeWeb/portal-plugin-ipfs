@@ -9,7 +9,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/db/types"
@@ -50,7 +50,7 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 	metadataStore := proto.GetMetadataStore()
 
 	// Set client IP in context for quota tracking before any operations
-	ctx = store.ClientIPOption(ctx, req.SourceIP)
+	ctx = pc.ClientIPOption(ctx, req.SourceIP)
 
 	var cidList []cid.Cid
 

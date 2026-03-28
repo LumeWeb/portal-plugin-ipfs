@@ -19,6 +19,7 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/service"
 	"go.uber.org/zap"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 )
 
 type (
@@ -29,11 +30,12 @@ type (
 
 		bucket string
 
-		metadata   pluginCore.MetadataStore
-		downloader pluginCore.BlockDownloader
-		storage    core.StorageService
+		metadata    pluginCore.MetadataStore
+		downloader  pluginCore.BlockDownloader
+		storage     core.StorageService
+		upload      core.UploadService
 
-		proto      core.StorageProtocol
+		proto       core.StorageProtocol
 	}
 )
 
@@ -45,7 +47,7 @@ func (bs *BlockStore) DeleteBlock(ctx context.Context, c cid.Cid) error {
 	key := cidKey(c)
 	log := bs.log.Named("DeleteBlock").With(zap.Stack("stack"), zap.Stringer("cid", c), zap.String("key", key))
 
-	if isVirtualReadEnabled(ctx) {
+	if pc.IsVirtualReadEnabled(ctx) {
 		log.Debug("virtual read enabled, skipping delete")
 		return nil
 	}
@@ -70,7 +72,7 @@ func (bs *BlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
 
 	log := bs.log.Named("Has").With(zap.Stringer("cid", c))
 
-	if isVirtualReadEnabled(ctx) {
+	if pc.IsVirtualReadEnabled(ctx) {
 		log.Debug("virtual read enabled, assuming block does not exist")
 		return false, nil
 	}
@@ -93,13 +95,13 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 	ctx, span := core.TraceMethod(ctx, "BlockStore.Get")
 	defer span.End()
 
-	if isVirtualReadEnabled(ctx) {
+	if pc.IsVirtualReadEnabled(ctx) {
 		bs.log.Debug("virtual read enabled, fetching block without storing")
 		return bs.downloader.Get(ctx, c)
 	}
 
 	// Get client IP for tracking (may be empty)
-	clientIP := GetClientIP(ctx)
+	clientIP := pc.GetClientIP(ctx)
 
 	// Get block size for quota validation
 	size, err := bs.metadata.Size(ctx, c)
@@ -143,10 +145,20 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 		return nil, err
 	}
 
-	// Emit download completion event - anonymous (userID=0)
-	// Usage will be distributed among users who have pinned this upload
+	// Emit download completion event with upload tracking
+	// Only emit if we can successfully retrieve upload information
 	if !IsQuotaCheckSkipped(ctx) {
-		quota.EmitDownloadCompleted(core.DetachContext(ctx), bs.ctx, 0, uint64(len(block.RawData())), clientIP, nil)
+		upload, err := bs.upload.GetUpload(ctx, internal.NewIPFSHash(c))
+		if err != nil {
+			bs.log.Debug("Failed to get upload for download tracking, skipping event emission",
+				zap.Stringer("cid", c),
+				zap.Error(err))
+		} else if upload != nil {
+			quota.EmitDownloadCompleted(core.DetachContext(ctx), bs.ctx, upload.ID, uint64(len(block.RawData())), clientIP, &upload.UserID)
+		} else {
+			bs.log.Debug("Upload not found for CID, skipping download event emission",
+				zap.Stringer("cid", c))
+		}
 	}
 
 	return block, nil
@@ -160,7 +172,7 @@ func (bs *BlockStore) GetSize(ctx context.Context, c cid.Cid) (int, error) {
 	key := cidKey(c)
 	log := bs.log.Named("GetSize").With(zap.Stringer("cid", c), zap.String("key", key))
 
-	if isVirtualReadEnabled(ctx) {
+	if pc.IsVirtualReadEnabled(ctx) {
 		log.Debug("virtual read enabled, fetching block size without storing")
 		block, err := bs.Get(ctx, c)
 		if err != nil {
@@ -191,7 +203,7 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 	key := cidKey(b.Cid())
 	log := bs.log.Named("Put").With(zap.Stringer("cid", b.Cid()), zap.String("key", key), zap.Int("size", len(b.RawData())))
 
-	if isVirtualReadEnabled(ctx) {
+	if pc.IsVirtualReadEnabled(ctx) {
 		log.Debug("virtual read enabled, skipping actual storage")
 		return nil
 	}
@@ -265,7 +277,7 @@ func (bs *BlockStore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, error) {
 
 	log := bs.log.Named("AllKeysChan")
 
-	if isVirtualReadEnabled(ctx) {
+	if pc.IsVirtualReadEnabled(ctx) {
 		log.Debug("virtual read enabled, returning empty channel")
 		ch := make(chan cid.Cid)
 		close(ch)
@@ -322,12 +334,18 @@ func NewBlockStore(ctx core.Context, downloader pluginCore.BlockDownloader, meta
 		return nil, fmt.Errorf("storage service not initialized")
 	}
 
+	uploadSvc := core.GetService[core.UploadService](ctx, core.UPLOAD_SERVICE)
+	if uploadSvc == nil {
+		return nil, fmt.Errorf("upload service not initialized")
+	}
+
 	return &BlockStore{
 		ctx:        ctx,
 		log:        ctx.Logger(),
 		metadata:   metadata,
 		downloader: downloader,
 		storage:    storageSvc,
+		upload:     uploadSvc,
 		proto:      proto,
 	}, nil
 }

@@ -21,6 +21,7 @@ import (
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store/downloader"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/config"
@@ -269,7 +270,7 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 			}
 
 			// Set client IP in context for quota tracking
-			ctx = store.ClientIPOption(ctx, request.SourceIP)
+			ctx = pc.ClientIPOption(ctx, request.SourceIP)
 
 			err = uploadSvc.ProcessUpload(ctx, allCids, *request.UserID)
 			if err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 )
@@ -54,7 +55,7 @@ func TestVirtualBlockStoreGetVirtualReadEnabled(t *testing.T) {
 		// Use Any() to match any context type
 		mockDirectBS.EXPECT().Get(mock.Anything, cid1).Return(block1, nil).Once()
 
-		readCtx := store.VirtualReadOption(ctx, true)
+		readCtx := pc.VirtualReadOption(ctx, true)
 		block, err := virtualBS.Get(readCtx, cid1)
 
 		assert.NoError(tb, err)
@@ -81,7 +82,7 @@ func TestVirtualBlockStoreHasVirtualReadEnabled(t *testing.T) {
 
 		mockDirectBS.EXPECT().Has(mock.Anything, cid1).Return(true, nil).Once()
 
-		readCtx := store.VirtualReadOption(ctx, true)
+		readCtx := pc.VirtualReadOption(ctx, true)
 		has, err := virtualBS.Has(readCtx, cid1)
 
 		assert.NoError(tb, err)
@@ -108,7 +109,7 @@ func TestVirtualBlockStorePutVirtualReadEnabled(t *testing.T) {
 
 		mockDirectBS.EXPECT().Put(mock.Anything, block1).Return(nil).Once()
 
-		readCtx := store.VirtualReadOption(ctx, true)
+		readCtx := pc.VirtualReadOption(ctx, true)
 		err := virtualBS.Put(readCtx, block1)
 
 		assert.NoError(tb, err)
@@ -133,7 +134,7 @@ func TestVirtualBlockStoreDeleteBlockVirtualReadEnabled(t *testing.T) {
 
 		mockDirectBS.EXPECT().DeleteBlock(mock.Anything, cid1).Return(nil).Once()
 
-		readCtx := store.VirtualReadOption(ctx, true)
+		readCtx := pc.VirtualReadOption(ctx, true)
 		err := virtualBS.DeleteBlock(readCtx, cid1)
 
 		assert.NoError(tb, err)
@@ -158,7 +159,7 @@ func TestVirtualBlockStoreGetSizeVirtualReadEnabled(t *testing.T) {
 
 		mockDirectBS.EXPECT().GetSize(mock.Anything, cid1).Return(100, nil).Once()
 
-		readCtx := store.VirtualReadOption(ctx, true)
+		readCtx := pc.VirtualReadOption(ctx, true)
 		size, err := virtualBS.GetSize(readCtx, cid1)
 
 		assert.NoError(tb, err)
@@ -186,7 +187,7 @@ func TestVirtualBlockStorePutManyVirtualReadEnabled(t *testing.T) {
 		_blocks := []blocks.Block{block1}
 		mockDirectBS.EXPECT().PutMany(mock.Anything, _blocks).Return(nil).Once()
 
-		readCtx := store.VirtualReadOption(ctx, true)
+		readCtx := pc.VirtualReadOption(ctx, true)
 		err := virtualBS.PutMany(readCtx, _blocks)
 
 		assert.NoError(tb, err)
@@ -210,7 +211,7 @@ func TestVirtualBlockStoreAllKeysChanVirtualReadEnabled(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		virtualBS, _ := setupVirtualTest(tb, ctx, cid1, 2)
 
-		readCtx := store.VirtualReadOption(ctx, true)
+		readCtx := pc.VirtualReadOption(ctx, true)
 		ch, err := virtualBS.AllKeysChan(readCtx)
 
 		assert.NoError(tb, err)
@@ -236,7 +237,7 @@ func TestVirtualBlockStoreErrorFromDirectBlockstore(t *testing.T) {
 		expectedErr := errors.New("direct blockstore error")
 		mockDirectBS.EXPECT().Get(mock.Anything, cid1).Return(nil, expectedErr).Once()
 
-		readCtx := store.VirtualReadOption(ctx, true)
+		readCtx := pc.VirtualReadOption(ctx, true)
 		_, err := virtualBS.Get(readCtx, cid1)
 
 		assert.Error(tb, err)
