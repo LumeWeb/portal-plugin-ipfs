@@ -394,6 +394,11 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	// This allows downstream handlers to access the remote peer's IP for quota tracking
 	_bitswapWithPeerIP := NewPeerIPBitswap(_bitswap, node)
 
+	// Stop the network to deregister the inner bitswap instance as the receiver,
+	// then start it again with our wrapper so our ReceiveMessage override gets called
+	bitswapNet.Stop()
+	bitswapNet.Start(_bitswapWithPeerIP)
+
 	// Wrap the bitswap exchange with NopExchange to disable automatic block announcements
 	nopExchange := &NopExchange{_bitswapWithPeerIP}
 
