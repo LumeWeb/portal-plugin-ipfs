@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	"go.lumeweb.com/portal/core/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
@@ -36,6 +37,12 @@ func TestBlockStore_Get(t *testing.T) {
 
 		// Mock the downloader's Get method
 		mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(expectedBlock, nil).Once()
+
+		// Mock the upload service's GetUpload method for download attribution
+		mockUploadService := core.GetService[*mocks.MockUploadService](ctx, core.UPLOAD_SERVICE)
+		if mockUploadService != nil {
+			mockUploadService.EXPECT().GetUpload(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+		}
 
 		// Act
 		block, err := bs.Get(context.Background(), testCid)
@@ -473,6 +480,13 @@ func TestBlockStore_VirtualReadEnabled(t *testing.T) {
 
 		// Test Get
 		mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(testBlock, nil).Once()
+		
+		// Mock the upload service's GetUpload method for download attribution
+		mockUploadService := core.GetService[*mocks.MockUploadService](ctx, core.UPLOAD_SERVICE)
+		if mockUploadService != nil {
+			mockUploadService.EXPECT().GetUpload(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+		}
+		
 		block, err := bs.Get(readCtx, testCid)
 		require.NoError(tb, err)
 		assert.Equal(tb, testBlock, block)
@@ -527,6 +541,13 @@ func TestBlockStore_VirtualReadDisabled(t *testing.T) {
 		// Test Get
 		mockMetadata.EXPECT().Size(mock.Anything, testCid).Return(uint64(len(testData)), nil).Once()
 		mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(testBlock, nil).Once()
+		
+		// Mock the upload service's GetUpload method for download attribution
+		mockUploadService := core.GetService[*mocks.MockUploadService](ctx, core.UPLOAD_SERVICE)
+		if mockUploadService != nil {
+			mockUploadService.EXPECT().GetUpload(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+		}
+		
 		block, err := bs.Get(normalCtx, testCid)
 		require.NoError(tb, err)
 		assert.Equal(tb, testBlock, block)
