@@ -1513,6 +1513,8 @@ go.lumeweb.com/portal-plugin-quota v0.0.0-20260326090012-888796c9f230 h1:94LCRW6
 go.lumeweb.com/portal-plugin-quota v0.0.0-20260326090012-888796c9f230/go.mod h1:KZaKnfDPqCWmRXigQg+RVpp/ry621+1AkeIq3H2zIWc=
 go.lumeweb.com/portal-plugin-quota v0.0.0-20260327130524-a5f36b636964 h1:PtB2/hSXQClvdCt7JSEQ/q8cuH6jGUqwyopK0VR48/M=
 go.lumeweb.com/portal-plugin-quota v0.0.0-20260327130524-a5f36b636964/go.mod h1:9c/Zufq8POREdoSwqQrl+JabC34LXIVV+YTYJadSjd8=
+go.lumeweb.com/portal-plugin-quota v0.0.0-20260328042559-43251c77574d h1:ccqkwp/fGMuF9VmUw0K9u2YhFHiMGBVkeqCeXFoAZE0=
+go.lumeweb.com/portal-plugin-quota v0.0.0-20260328042559-43251c77574d/go.mod h1:9c/Zufq8POREdoSwqQrl+JabC34LXIVV+YTYJadSjd8=
 go.lumeweb.com/portal-router v0.6.11 h1:0PTej57mtNcRpKZNukD0j0ZYp5ntbR7fl5g6DO+0mvk=
 go.lumeweb.com/portal-router v0.6.11/go.mod h1:4tb+XYa0GYiFVraMoossGgMBTN9z4U54v8SL+EOBvbs=
 go.lumeweb.com/portal-router v0.6.13 h1:WqBNN4naPuERAwLqjCwxpAhpvzBxom8w8KqdP+EoTvw=
