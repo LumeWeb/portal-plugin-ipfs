@@ -280,7 +280,7 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 			// Fix any UnixFS metadata gaps before proceeding
 			_store := p.(ProtoNode).GetMetadataStore()
 			if _store != nil {
-				err = _store.ProcessMissingUnixFSNames(allCids)
+				err = _store.ProcessMissingUnixFSNames(ctx, allCids)
 				if err != nil {
 					helper.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
 				}
@@ -346,6 +346,12 @@ func (p Protocol) GetNode() ipfs.IPFSNode {
 	return p.node
 }
 
+func (p Protocol) GetPeerTracker() *ipfs.BlockRequestTracker {
+	// For now, return nil - tracker is managed differently
+	// Can be used to access tracker for testing/inspection
+	return nil
+}
+
 func (p Protocol) GetMetadataStore() pluginCore.MetadataStore {
 	return p.metadataStore
 }
@@ -379,7 +385,11 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 			if err != nil {
 				return fmt.Errorf("failed to create block downloader: %w", err)
 			}
-			directBS, err := store.NewBlockStore(ctx, bd, ms)
+			
+			// Create peer request tracker for probabilistic attribution
+			peerTracker := ipfs.NewBlockRequestTracker()
+			
+			directBS, err := store.NewBlockStore(ctx, bd, ms, peerTracker)
 			if err != nil {
 				return fmt.Errorf("failed to create blockstore: %w", err)
 			}
@@ -403,7 +413,7 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 				zap.String("log_level", cfg.LogLevel),
 				zap.String("mapped_level", level.String()))
 
-			proto.node, err = ipfs.NewNode(ctx, cfg, ms, _ds, virtualBS)
+			proto.node, err = ipfs.NewNode(ctx, cfg, ms, _ds, virtualBS, peerTracker)
 			if err != nil {
 				return fmt.Errorf("failed to create ipfs node: %w", err)
 			}

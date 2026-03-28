@@ -433,16 +433,16 @@ func (_c *MockMetadataStore_Pinned_Call) RunAndReturn(run func(ctx context.Conte
 }
 
 // ProcessMissingUnixFSNames provides a mock function for the type MockMetadataStore
-func (_mock *MockMetadataStore) ProcessMissingUnixFSNames(cids []cid.Cid) error {
-	ret := _mock.Called(cids)
+func (_mock *MockMetadataStore) ProcessMissingUnixFSNames(ctx context.Context, cids []cid.Cid) error {
+	ret := _mock.Called(ctx, cids)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ProcessMissingUnixFSNames")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func([]cid.Cid) error); ok {
-		r0 = returnFunc(cids)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, []cid.Cid) error); ok {
+		r0 = returnFunc(ctx, cids)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -455,19 +455,25 @@ type MockMetadataStore_ProcessMissingUnixFSNames_Call struct {
 }
 
 // ProcessMissingUnixFSNames is a helper method to define mock.On call
+//   - ctx context.Context
 //   - cids []cid.Cid
-func (_e *MockMetadataStore_Expecter) ProcessMissingUnixFSNames(cids interface{}) *MockMetadataStore_ProcessMissingUnixFSNames_Call {
-	return &MockMetadataStore_ProcessMissingUnixFSNames_Call{Call: _e.mock.On("ProcessMissingUnixFSNames", cids)}
+func (_e *MockMetadataStore_Expecter) ProcessMissingUnixFSNames(ctx interface{}, cids interface{}) *MockMetadataStore_ProcessMissingUnixFSNames_Call {
+	return &MockMetadataStore_ProcessMissingUnixFSNames_Call{Call: _e.mock.On("ProcessMissingUnixFSNames", ctx, cids)}
 }
 
-func (_c *MockMetadataStore_ProcessMissingUnixFSNames_Call) Run(run func(cids []cid.Cid)) *MockMetadataStore_ProcessMissingUnixFSNames_Call {
+func (_c *MockMetadataStore_ProcessMissingUnixFSNames_Call) Run(run func(ctx context.Context, cids []cid.Cid)) *MockMetadataStore_ProcessMissingUnixFSNames_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 []cid.Cid
+		var arg0 context.Context
 		if args[0] != nil {
-			arg0 = args[0].([]cid.Cid)
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 []cid.Cid
+		if args[1] != nil {
+			arg1 = args[1].([]cid.Cid)
 		}
 		run(
 			arg0,
+			arg1,
 		)
 	})
 	return _c
@@ -478,7 +484,7 @@ func (_c *MockMetadataStore_ProcessMissingUnixFSNames_Call) Return(err error) *M
 	return _c
 }
 
-func (_c *MockMetadataStore_ProcessMissingUnixFSNames_Call) RunAndReturn(run func(cids []cid.Cid) error) *MockMetadataStore_ProcessMissingUnixFSNames_Call {
+func (_c *MockMetadataStore_ProcessMissingUnixFSNames_Call) RunAndReturn(run func(ctx context.Context, cids []cid.Cid) error) *MockMetadataStore_ProcessMissingUnixFSNames_Call {
 	_c.Call.Return(run)
 	return _c
 }

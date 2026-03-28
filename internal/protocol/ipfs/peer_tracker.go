@@ -1,0 +1,172 @@
+package ipfs
+
+import (
+	"crypto/rand"
+	"math/big"
+	"slices"
+	"sync"
+
+	"github.com/ipfs/go-cid"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
+)
+
+// BlockRequestTracker tracks which peers have requested specific blocks.
+// This enables probabilistic peer attribution when the actual client IP context
+// is not available (e.g., in bitswap scenarios).
+type BlockRequestTracker struct {
+	mu      sync.RWMutex
+	requests map[cid.Cid][]string
+}
+
+// NewBlockRequestTracker creates a new empty BlockRequestTracker
+func NewBlockRequestTracker() *BlockRequestTracker {
+	return &BlockRequestTracker{
+		requests: make(map[cid.Cid][]string),
+	}
+}
+
+// AddRequest records that a peer with the given IP has requested a block with the given CID
+func (br *BlockRequestTracker) AddRequest(c cid.Cid, peerIP string) {
+	br.mu.Lock()
+	defer br.mu.Unlock()
+
+	c = encoding.NormalizeCid(c)
+	if peerIP == "" || !c.Defined() {
+		return
+	}
+
+	peers := br.requests[c]
+	if slices.Contains(peers, peerIP) {
+		return
+	}
+
+	br.requests[c] = append(peers, peerIP)
+}
+
+// GetAndRemoveRandomPeer selects a random peer IP for the given CID and removes it from the tracker
+// Returns (peerIP, true) if a peer was found, or ("", false) otherwise
+func (br *BlockRequestTracker) GetAndRemoveRandomPeer(c cid.Cid) (string, bool) {
+	br.mu.Lock()
+	defer br.mu.Unlock()
+
+	c = encoding.NormalizeCid(c)
+	peers, exists := br.requests[c]
+	if !exists || len(peers) == 0 {
+		return "", false
+	}
+
+	// Select random peer using crypto/rand
+	index, err := randomIndex(len(peers))
+	if err != nil {
+		index = 0
+	}
+
+	selected := peers[index]
+
+	// Remove selected peer from list
+	if len(peers) == 1 {
+		delete(br.requests, c)
+	} else {
+		peers[index] = peers[len(peers)-1]
+		br.requests[c] = peers[:len(peers)-1]
+	}
+
+	return selected, true
+}
+
+// PopPeer removes and returns the first peer IP for the given CID
+// Returns (peerIP, true) if a peer was found, or ("", false) otherwise
+func (br *BlockRequestTracker) PopPeer(c cid.Cid) (string, bool) {
+	br.mu.Lock()
+	defer br.mu.Unlock()
+
+	c = encoding.NormalizeCid(c)
+	peers, exists := br.requests[c]
+	if !exists || len(peers) == 0 {
+		return "", false
+	}
+
+	selected := peers[0]
+
+	if len(peers) == 1 {
+		delete(br.requests, c)
+	} else {
+		br.requests[c] = peers[1:]
+	}
+
+	return selected, true
+}
+
+// RemovePeer removes a specific peer from the CID's peer list
+func (br *BlockRequestTracker) RemovePeer(c cid.Cid, peerIP string) {
+	br.mu.Lock()
+	defer br.mu.Unlock()
+
+	c = encoding.NormalizeCid(c)
+	peers, exists := br.requests[c]
+	if !exists {
+		return
+	}
+
+	for i, p := range peers {
+		if p == peerIP {
+			if len(peers) == 1 {
+				delete(br.requests, c)
+			} else {
+				br.requests[c] = append(peers[:i], peers[i+1:]...)
+			}
+			return
+		}
+	}
+}
+
+// RemovePeerFromAll removes a specific peer from all CIDs in the tracker.
+// This is useful for cleaning up tracking data when a peer disconnects.
+func (br *BlockRequestTracker) RemovePeerFromAll(peerIP string) {
+	br.mu.Lock()
+	defer br.mu.Unlock()
+
+	if peerIP == "" {
+		return
+	}
+
+	for c, peers := range br.requests {
+		found := false
+		for i, p := range peers {
+			if p == peerIP {
+				found = true
+				if len(peers) == 1 {
+					// Remove the entire entry if this was the only peer
+					delete(br.requests, c)
+				} else {
+					// Remove just this peer from the list
+					br.requests[c] = append(peers[:i], peers[i+1:]...)
+				}
+				break
+			}
+		}
+		// If we found and removed the peer, we can continue to next CID
+		// (we only need to remove each peer once per CID)
+		if found {
+			continue
+		}
+	}
+}
+
+// randomIndex returns a cryptographically secure random index in [0, n)
+func randomIndex(n int) (int, error) {
+	if n <= 0 {
+		return 0, nil
+	}
+	
+	// Calculate the range size
+	rangeSize := big.NewInt(int64(n))
+	
+	// Generate a random number in [0, n)
+	index, err := rand.Int(rand.Reader, rangeSize)
+	if err != nil {
+		return 0, err
+	}
+	
+	return int(index.Int64()), nil
+}

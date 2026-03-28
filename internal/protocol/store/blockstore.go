@@ -12,6 +12,7 @@ import (
 	"github.com/multiformats/go-multicodec"
 	"github.com/multiformats/go-multihash"
 
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
@@ -34,6 +35,7 @@ type (
 		downloader  pluginCore.BlockDownloader
 		storage     core.StorageService
 		upload      core.UploadService
+		tracker     *ipfs.BlockRequestTracker
 
 		proto       core.StorageProtocol
 	}
@@ -103,6 +105,12 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 	// Get client IP for tracking (may be empty)
 	clientIP := pc.GetClientIP(ctx)
 
+	// Track which peers are requesting this block when serving through bitswap
+	// This enables probabilistic attribution when clientIP context is not available
+	if clientIP != "" && bs.tracker != nil {
+		bs.tracker.AddRequest(c, clientIP)
+	}
+
 	// Get block size for quota validation
 	size, err := bs.metadata.Size(ctx, c)
 	if err != nil {
@@ -112,7 +120,7 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 	// Validate download quota - checks if any users pinning this content have sufficient quota
 	// NOTE: Anonymous downloads (userID=0) check group availability instead of individual quota.
 	// Usage will be distributed among users who have pinned this upload.
-	if !IsQuotaCheckSkipped(ctx) {
+	if !pc.IsQuotaCheckSkipped(ctx) {
 		bs.log.Debug("Performing anonymous download quota group availability check",
 			zap.String("cid", c.String()),
 			zap.Uint64("size", size))
@@ -147,14 +155,33 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 
 	// Emit download completion event with upload tracking
 	// Only emit if we can successfully retrieve upload information
-	if !IsQuotaCheckSkipped(ctx) {
+	if !pc.IsQuotaCheckSkipped(ctx) {
 		upload, err := bs.upload.GetUpload(ctx, internal.NewIPFSHash(c))
 		if err != nil {
 			bs.log.Debug("Failed to get upload for download tracking, skipping event emission",
 				zap.Stringer("cid", c),
 				zap.Error(err))
 		} else if upload != nil {
-			quota.EmitDownloadCompleted(core.DetachContext(ctx), bs.ctx, upload.ID, uint64(len(block.RawData())), clientIP, &upload.UserID)
+			// Use probabilistic attribution if clientIP is empty
+			attributionIP := clientIP
+			if attributionIP == "" && bs.tracker != nil {
+				if peerIP, ok := bs.tracker.GetAndRemoveRandomPeer(c); ok {
+					attributionIP = peerIP
+					bs.log.Debug("Using probabilistic peer attribution",
+						zap.Stringer("cid", c),
+						zap.String("attributed_ip", attributionIP))
+				} else {
+					bs.log.Debug("No peers available for attribution",
+						zap.Stringer("cid", c))
+				}
+			}
+			
+			if attributionIP != "" {
+				quota.EmitDownloadCompleted(core.DetachContext(ctx), bs.ctx, upload.ID, uint64(len(block.RawData())), attributionIP, &upload.UserID)
+			} else {
+				bs.log.Debug("No attribution IP available, skipping download event emission",
+					zap.Stringer("cid", c))
+			}
 		} else {
 			bs.log.Debug("Upload not found for CID, skipping download event emission",
 				zap.Stringer("cid", c))
@@ -323,7 +350,7 @@ func (bs *BlockStore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, error) {
 }
 
 // NewBlockStore creates a new blockstore backed by a renterd node
-func NewBlockStore(ctx core.Context, downloader pluginCore.BlockDownloader, metadata pluginCore.MetadataStore) (*BlockStore, error) {
+func NewBlockStore(ctx core.Context, downloader pluginCore.BlockDownloader, metadata pluginCore.MetadataStore, tracker *ipfs.BlockRequestTracker) (*BlockStore, error) {
 	proto, ok := core.GetProtocol(internal.ProtocolName).(core.StorageProtocol)
 	if !ok {
 		return nil, fmt.Errorf("protocol not found: %s", internal.ProtocolName)
@@ -346,6 +373,7 @@ func NewBlockStore(ctx core.Context, downloader pluginCore.BlockDownloader, meta
 		downloader: downloader,
 		storage:    storageSvc,
 		upload:     uploadSvc,
+		tracker:    tracker,
 		proto:      proto,
 	}, nil
 }

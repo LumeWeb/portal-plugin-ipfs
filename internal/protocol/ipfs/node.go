@@ -24,6 +24,7 @@ import (
 	"golang.org/x/crypto/hkdf"
 
 	"github.com/ipfs/boxo/bitswap"
+	tracerpkg "github.com/ipfs/boxo/bitswap/tracer"
 	"github.com/ipfs/boxo/bitswap/network/bsnet"
 	"github.com/ipfs/boxo/blockservice"
 	"github.com/ipfs/boxo/blockstore"
@@ -250,7 +251,7 @@ func (n *Node) Pin(ctx context.Context, root cid.Cid, recursive bool) error {
 }
 
 // NewNode creates a new IPFS node
-func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.ReprovideStore, ds datastore.Batching, bs blockstore.Blockstore) (*Node, error) {
+func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.ReprovideStore, ds datastore.Batching, bs blockstore.Blockstore, peerTracker *BlockRequestTracker) (*Node, error) {
 	hasher := hkdf.New(sha256.New, ctx.Config().Config().Core.Identity.PrivateKey(), ctx.Config().Config().Core.NodeID.Bytes(), []byte(internal.ProtocolName))
 	derivedSeed := make([]byte, 32)
 
@@ -387,20 +388,18 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 
 	bs = &blockstore.ValidatingBlockstore{bs}
 
+	// Create tracer to track peer-to-peer block requests for probabilistic attribution
+	bitswapTracer := NewBitswapTracer(peerTracker, node)
+	bitswapOpts = append(bitswapOpts, bitswap.WithTracer(tracerpkg.Tracer(bitswapTracer)))
+
+	// Setup disconnect listeners to clean up peer requests when peers disconnect
+	bitswapTracer.SetupDisconnectListeners()
+
 	bitswapNet := bsnet.NewFromIpfsHost(node)
 	_bitswap := bitswap.New(ctx, bitswapNet, routingImpl, bs, bitswapOpts...)
 
-	// Wrap bitswap with PeerIPBitswap to inject peer IP into context during message handling
-	// This allows downstream handlers to access the remote peer's IP for quota tracking
-	_bitswapWithPeerIP := NewPeerIPBitswap(_bitswap, node)
-
-	// Stop the network to deregister the inner bitswap instance as the receiver,
-	// then start it again with our wrapper so our ReceiveMessage override gets called
-	bitswapNet.Stop()
-	bitswapNet.Start(_bitswapWithPeerIP)
-
 	// Wrap the bitswap exchange with NopExchange to disable automatic block announcements
-	nopExchange := &NopExchange{_bitswapWithPeerIP}
+	nopExchange := &NopExchange{_bitswap}
 
 	blockServ := blockservice.New(bs, nopExchange)
 	dagService := merkledag.NewDAGService(blockServ)

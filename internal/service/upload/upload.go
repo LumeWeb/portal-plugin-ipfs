@@ -10,8 +10,8 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	pluginErrors "go.lumeweb.com/portal-plugin-ipfs/internal/errors"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
@@ -165,7 +165,7 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 			}
 
 			// Create upload records and core pin records for ALL CIDs (both roots and children)
-			clientIP := store.GetClientIP(ctx)
+			clientIP := pc.GetClientIP(ctx)
 			for _, c := range cids {
 
 				size, exists := cidSizes[c.String()]
