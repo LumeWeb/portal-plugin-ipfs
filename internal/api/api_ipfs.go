@@ -9,9 +9,9 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.lumeweb.com/httputil"
 	"go.lumeweb.com/portal/core"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.uber.org/zap"
 )
@@ -45,9 +45,9 @@ func (a *API) handleIPFSGet(c echo.Context) error {
 func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w http.ResponseWriter, r *http.Request, c echo.Context) error {
 	// Create context with client IP for quota tracking
 	reqCtx := ctx.Request().Context()
-	reqCtx = store.ClientIPOption(reqCtx, c.RealIP())
+	reqCtx = pc.ClientIPOption(reqCtx, c.RealIP())
 	// Skip quota check in store since API already validates it
-	reqCtx = store.SkipQuotaCheckOption(reqCtx, true)
+	reqCtx = pc.SkipQuotaCheckOption(reqCtx, true)
 
 	// Check if the block exists before trying to fetch it
 	exists, err := a.ipfs.GetNode().HasBlock(reqCtx, _cid)

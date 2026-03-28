@@ -7,6 +7,7 @@ import (
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal/core"
 )
 
@@ -41,7 +42,7 @@ func (v *VirtualBlockStore) DeleteBlock(ctx context.Context, c cid.Cid) error {
 	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.DeleteBlock")
 	defer span.End()
 
-	if isVirtualReadEnabled(ctx) {
+	if pc.IsVirtualReadEnabled(ctx) {
 		return v.directBS.DeleteBlock(ctx, c)
 	}
 	return v.cachedBS.DeleteBlock(ctx, c)
@@ -52,7 +53,7 @@ func (v *VirtualBlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
 	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.Has")
 	defer span.End()
 
-	if isVirtualReadEnabled(ctx) {
+	if pc.IsVirtualReadEnabled(ctx) {
 		return v.directBS.Has(ctx, c)
 	}
 	return v.cachedBS.Has(ctx, c)
@@ -63,7 +64,7 @@ func (v *VirtualBlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, e
 	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.Get")
 	defer span.End()
 
-	if isVirtualReadEnabled(ctx) {
+	if pc.IsVirtualReadEnabled(ctx) {
 		return v.directBS.Get(ctx, c)
 	}
 	return v.cachedBS.Get(ctx, c)
@@ -74,7 +75,7 @@ func (v *VirtualBlockStore) GetSize(ctx context.Context, c cid.Cid) (int, error)
 	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.GetSize")
 	defer span.End()
 
-	if isVirtualReadEnabled(ctx) {
+	if pc.IsVirtualReadEnabled(ctx) {
 		return v.directBS.GetSize(ctx, c)
 	}
 	return v.cachedBS.GetSize(ctx, c)
@@ -85,7 +86,7 @@ func (v *VirtualBlockStore) Put(ctx context.Context, b blocks.Block) error {
 	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.Put")
 	defer span.End()
 
-	if isVirtualReadEnabled(ctx) {
+	if pc.IsVirtualReadEnabled(ctx) {
 		return v.directBS.Put(ctx, b)
 	}
 	return v.cachedBS.Put(ctx, b)
@@ -96,7 +97,7 @@ func (v *VirtualBlockStore) PutMany(ctx context.Context, bs []blocks.Block) erro
 	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.PutMany")
 	defer span.End()
 
-	if isVirtualReadEnabled(ctx) {
+	if pc.IsVirtualReadEnabled(ctx) {
 		return v.directBS.PutMany(ctx, bs)
 	}
 	return v.cachedBS.PutMany(ctx, bs)
@@ -107,7 +108,7 @@ func (v *VirtualBlockStore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, er
 	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.AllKeysChan")
 	defer span.End()
 
-	if isVirtualReadEnabled(ctx) {
+	if pc.IsVirtualReadEnabled(ctx) {
 		return v.directBS.AllKeysChan(ctx)
 	}
 	return v.cachedBS.AllKeysChan(ctx)

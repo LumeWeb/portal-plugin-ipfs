@@ -12,7 +12,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
@@ -266,7 +266,7 @@ func (h *PostUploadOperationHandler) processCIDs(ctx context.Context, allCids []
 		return fmt.Errorf("upload service not available")
 	}
 
-	ctx = store.ClientIPOption(ctx, sourceIP)
+	ctx = pc.ClientIPOption(ctx, sourceIP)
 	err := uploadSvc.ProcessUpload(ctx, allCids, userID)
 	if err != nil {
 		return fmt.Errorf("failed to process upload: %w", err)

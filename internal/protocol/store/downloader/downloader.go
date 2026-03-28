@@ -16,7 +16,6 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 
 	blocks "github.com/ipfs/go-block-format"
@@ -180,10 +179,8 @@ func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.C
 		return nil, fmt.Errorf("block hash mismatch: expected %s, actual %s", c.Hash().HexString(), h.HexString())
 	}
 
-	// Emit download completion event for block retrieval
-	// uploadID=0 indicates this download is not associated with a specific upload record
-	// The clientIP is still tracked for quota purposes when available
-	quota.EmitDownloadCompleted(ctx, bd.ctx, 0, uint64(blockBuf.Len()), clientIP, nil)
+	// Note: Download emission is handled by BlockStore.Get which has access to
+	// upload information and can properly attribute downloads to uploads
 
 	return blockBuf.Bytes(), nil
 }

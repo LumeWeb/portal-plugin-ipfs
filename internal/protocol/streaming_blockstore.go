@@ -14,7 +14,7 @@ import (
 	"github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 )
@@ -350,7 +350,7 @@ func (s *DefaultStreamingBlockstore) Get(ctx context.Context, c cid.Cid) (blocks
 						zap.String("cid", c.String()))
 				}
 				// Add SkipQuotaCheckOption for passthrough operations
-				passthroughCtx := store.SkipQuotaCheckOption(ctx, store.IsQuotaCheckSkipped(ctx))
+				passthroughCtx := pc.SkipQuotaCheckOption(ctx, pc.IsQuotaCheckSkipped(ctx))
 				return s.passthrough.Get(passthroughCtx, c)
 			}
 		}
@@ -413,7 +413,7 @@ func (s *DefaultStreamingBlockstore) Has(ctx context.Context, c cid.Cid) (bool, 
 	// Check passthrough
 	if s.passthrough != nil {
 		// Add SkipQuotaCheckOption for passthrough operations
-		passthroughCtx := store.SkipQuotaCheckOption(ctx, store.IsQuotaCheckSkipped(ctx))
+		passthroughCtx := pc.SkipQuotaCheckOption(ctx, pc.IsQuotaCheckSkipped(ctx))
 		return s.passthrough.Has(passthroughCtx, c)
 	}
 
@@ -443,7 +443,7 @@ func (s *DefaultStreamingBlockstore) GetSize(ctx context.Context, c cid.Cid) (in
 	// Check passthrough
 	if s.passthrough != nil {
 		// Add SkipQuotaCheckOption for passthrough operations
-		passthroughCtx := store.SkipQuotaCheckOption(ctx, store.IsQuotaCheckSkipped(ctx))
+		passthroughCtx := pc.SkipQuotaCheckOption(ctx, pc.IsQuotaCheckSkipped(ctx))
 		return s.passthrough.GetSize(passthroughCtx, c)
 	}
 
@@ -499,7 +499,7 @@ func (s *DefaultStreamingBlockstore) AllKeysChan(ctx context.Context) (<-chan ci
 		// Add results from passthrough if available
 		if s.passthrough != nil {
 			// Add SkipQuotaCheckOption for passthrough operations
-			passthroughCtx := store.SkipQuotaCheckOption(ctx, store.IsQuotaCheckSkipped(ctx))
+			passthroughCtx := pc.SkipQuotaCheckOption(ctx, pc.IsQuotaCheckSkipped(ctx))
 			passthroughChan, err := s.passthrough.AllKeysChan(passthroughCtx)
 			if err == nil {
 				for cid := range passthroughChan {

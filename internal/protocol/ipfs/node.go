@@ -390,8 +390,12 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	bitswapNet := bsnet.NewFromIpfsHost(node)
 	_bitswap := bitswap.New(ctx, bitswapNet, routingImpl, bs, bitswapOpts...)
 
+	// Wrap bitswap with PeerIPBitswap to inject peer IP into context during message handling
+	// This allows downstream handlers to access the remote peer's IP for quota tracking
+	_bitswapWithPeerIP := NewPeerIPBitswap(_bitswap, node)
+
 	// Wrap the bitswap exchange with NopExchange to disable automatic block announcements
-	nopExchange := &NopExchange{_bitswap}
+	nopExchange := &NopExchange{_bitswapWithPeerIP}
 
 	blockServ := blockservice.New(bs, nopExchange)
 	dagService := merkledag.NewDAGService(blockServ)

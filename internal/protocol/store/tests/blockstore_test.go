@@ -468,7 +468,7 @@ func TestBlockStore_VirtualReadEnabled(t *testing.T) {
 		require.NoError(t, err)
 
 		// Enable virtual read
-		readCtx := store.VirtualReadOption(context.Background(), true)
+		readCtx := pc.VirtualReadOption(context.Background(), true)
 
 		// Test Get
 		mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(testBlock, nil).Once()

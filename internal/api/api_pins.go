@@ -14,8 +14,8 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal/core"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal/db/types"
 	"go.lumeweb.com/queryutil"
 	queryUtilHttp "go.lumeweb.com/queryutil/http"
@@ -209,7 +209,7 @@ func (a *API) replacePin(c echo.Context) error {
 func (a *API) deletePin(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
-	reqCtx = store.ClientIPOption(reqCtx, c.RealIP())
+	reqCtx = pc.ClientIPOption(reqCtx, c.RealIP())
 	user, err := mcontext.GetUserID(c)
 	if err != nil {
 		return err
