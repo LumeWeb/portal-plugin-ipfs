@@ -139,7 +139,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		var validChildCids []cid.Cid
 		for _, childCid := range childCids {
 			// Skip quota check for internal retrieve operations
-			childGetCtx := pc.SkipQuotaCheckOption(ctx, true)
+			childGetCtx := pc.SkipQuotaCheckOption(getCtx, true)
 			block, err := proto.GetNode().GetBlock(childGetCtx, childCid)
 			if err != nil {
 				h.Logger().Error("Failed to fetch child block", zap.Stringer("cid", childCid), zap.Error(err))

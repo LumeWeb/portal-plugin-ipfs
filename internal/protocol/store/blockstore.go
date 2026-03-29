@@ -102,15 +102,6 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 		return bs.downloader.Get(ctx, c)
 	}
 
-	// Get client IP for tracking (may be empty)
-	clientIP := pc.GetClientIP(ctx)
-
-	// Track which peers are requesting this block when serving through bitswap
-	// This enables probabilistic attribution when clientIP context is not available
-	if clientIP != "" && bs.tracker != nil {
-		bs.tracker.AddRequest(c, clientIP)
-	}
-
 	// Get block size for quota validation
 	size, err := bs.metadata.Size(ctx, c)
 	if err != nil {
@@ -162,6 +153,9 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 				zap.Stringer("cid", c),
 				zap.Error(err))
 		} else if upload != nil {
+			// Get client IP for direct requests (may be empty for internal/bitswap requests)
+			clientIP := pc.GetClientIP(ctx)
+
 			// Use probabilistic attribution if clientIP is empty
 			attributionIP := clientIP
 			if attributionIP == "" && bs.tracker != nil {

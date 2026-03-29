@@ -25,7 +25,7 @@ func TestBlockStore_Get(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -58,7 +58,7 @@ func TestBlockStore_GetSize(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -83,7 +83,7 @@ func TestBlockStore_GetSize_BlockExistsError(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -107,7 +107,7 @@ func TestBlockStore_GetSize_SizeError(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -132,7 +132,7 @@ func TestBlockStore_Has(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -155,7 +155,7 @@ func TestBlockStore_Has_NotFound(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -182,7 +182,7 @@ func TestBlockStore_Put(t *testing.T) {
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -211,7 +211,7 @@ func TestBlockStore_Put_UploadError(t *testing.T) {
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -239,7 +239,7 @@ func TestBlockStore_Put_PinError(t *testing.T) {
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -273,7 +273,7 @@ func TestBlockStore_DeleteBlock(t *testing.T) {
 		testData := "test data"
 		testCid := generateCid(t, testData)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		// Mock the metadata's Unpin method
@@ -300,7 +300,7 @@ func TestBlockStore_DeleteBlock_UnpinError(t *testing.T) {
 		testCid := generateCid(t, testData)
 		expectedError := errors.New("unpin failed")
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		// Mock the metadata's Unpin method to return an error
@@ -322,7 +322,7 @@ func TestBlockStore_PutMany(t *testing.T) {
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData1 := "test data 1"
@@ -358,7 +358,7 @@ func TestBlockStore_PutMany_PutError(t *testing.T) {
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData1 := "test data 1"
@@ -391,7 +391,7 @@ func TestBlockStore_AllKeysChan(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData1 := "test data 1"
@@ -424,7 +424,7 @@ func TestBlockStore_AllKeysChan_MetadataError(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		expectedError := errors.New("failed to get pinned CIDs")
@@ -454,7 +454,7 @@ func TestNewBlockStore_ProtocolNotFound(t *testing.T) {
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 
 		// Attempt to create a new BlockStore - should return an error
-		_, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		_, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		assert.Error(tb, err)
 		assert.Contains(t, err.Error(), "protocol not found")
 	}, coreTesting.WithConfig("core.protocols."+internal.ProtocolName+".enabled", false))
@@ -466,7 +466,7 @@ func TestBlockStore_VirtualReadEnabled(t *testing.T) {
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -527,7 +527,7 @@ func TestBlockStore_VirtualReadDisabled(t *testing.T) {
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -592,7 +592,7 @@ func TestBlockStore_AllKeysChan_ContextDone(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		// Create a context that is already done
