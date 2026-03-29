@@ -170,12 +170,13 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 				}
 			}
 			
-			if attributionIP != "" {
-				quota.EmitDownloadCompleted(core.DetachContext(ctx), bs.ctx, upload.ID, uint64(len(block.RawData())), attributionIP, &upload.UserID)
-			} else {
-				bs.log.Debug("No attribution IP available, skipping download event emission",
+				// Emit download event regardless of attribution IP availability
+			// as long as quotas are not disabled
+			if attributionIP == "" {
+				bs.log.Debug("No attribution IP available, emitting download event without IP",
 					zap.Stringer("cid", c))
 			}
+			quota.EmitDownloadCompleted(core.DetachContext(ctx), bs.ctx, upload.ID, uint64(len(block.RawData())), attributionIP, &upload.UserID)
 		} else {
 			bs.log.Debug("Upload not found for CID, skipping download event emission",
 				zap.Stringer("cid", c))
