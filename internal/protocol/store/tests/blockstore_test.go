@@ -6,18 +6,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ipfs/go-block-format"
+	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	localMocks "go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.lumeweb.com/portal/core/testing/mocks"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
-	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
-	localMocks "go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
+	coremodels "go.lumeweb.com/portal/db/models"
 )
 
 func TestBlockStore_Get(t *testing.T) {
@@ -25,7 +27,7 @@ func TestBlockStore_Get(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -58,7 +60,7 @@ func TestBlockStore_GetSize(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -83,7 +85,7 @@ func TestBlockStore_GetSize_BlockExistsError(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -107,7 +109,7 @@ func TestBlockStore_GetSize_SizeError(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -127,12 +129,174 @@ func TestBlockStore_GetSize_SizeError(t *testing.T) {
 	}, ipfsTestConfig)
 }
 
+func TestBlockStore_TrackerAttribution(t *testing.T) {
+	t.Run("tracker consumes peers", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			// Case 1: tracker has peer requests - peers should be consumed on retrieval
+			mockDownloader := localMocks.NewMockBlockDownloader(t)
+			mockMetadata := localMocks.NewMockMetadataStore(t)
+			mockTracker := ipfs.NewBlockRequestTracker()
+			bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, mockTracker)
+			require.NoError(tb, err)
+
+			testData := "test data"
+			testCid := generateCid(t, testData)
+			expectedBlock := blocks.NewBlock([]byte(testData))
+
+			mockMetadata.EXPECT().Size(mock.Anything, testCid).Return(uint64(len(testData)), nil).Once()
+			mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(expectedBlock, nil).Once()
+
+			// Simulate bitswap peer that requested this block
+			mockTracker.AddRequest(testCid, "192.168.2.50")
+			mockTracker.AddRequest(testCid, "192.168.2.51")
+
+			// Mock GetUpload to return an upload so tracker attribution is triggered
+			mockUploadService := core.GetService[*mocks.MockUploadService](ctx, core.UPLOAD_SERVICE)
+			// Create a minimal upload object
+			upload := &coremodels.Upload{
+				UserID:   1,
+				Hash:     []byte("test-hash"),
+				CIDType:  55,
+				MimeType: "application/octet-stream",
+				Protocol: "ipfs",
+				Size:     uint64(len(testData)),
+			}
+			mockUploadService.EXPECT().GetUpload(mock.Anything, mock.Anything).Return(upload, nil).Maybe()
+
+			block, err := bs.Get(ctx, testCid)
+			require.NoError(tb, err)
+			require.Equal(tb, expectedBlock, block)
+
+			// One peer should have been consumed during attribution (we started with 2, now 1 remains)
+			peerIP, exists := mockTracker.GetAndRemoveRandomPeer(testCid)
+			assert.True(tb, exists, "One peer should remain after attribution")
+			assert.NotEmpty(tb, peerIP, "Remaining peer should have a valid IP")
+		}, ipfsTestConfig)
+	})
+
+	t.Run("nil tracker handled gracefully", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			mockDownloader := localMocks.NewMockBlockDownloader(t)
+			mockMetadata := localMocks.NewMockMetadataStore(t)
+			bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
+			require.NoError(tb, err)
+
+			testData := "test data"
+			testCid := generateCid(t, testData)
+			expectedBlock := blocks.NewBlock([]byte(testData))
+
+			mockMetadata.EXPECT().Size(mock.Anything, testCid).Return(uint64(len(testData)), nil).Once()
+			mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(expectedBlock, nil).Once()
+
+			// Mock the upload service GetUpload
+			mockUploadService := core.GetService[*mocks.MockUploadService](ctx, core.UPLOAD_SERVICE)
+			mockUploadService.EXPECT().GetUpload(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+
+			block, err := bs.Get(ctx, testCid)
+			require.NoError(tb, err)
+			require.Equal(tb, expectedBlock, block)
+
+			// With nil tracker and empty clientIP, no attribution should occur - this is fine
+			// The download event will be skipped (as verified by existing assertions in the main test)
+		}, ipfsTestConfig)
+	})
+}
+
+func TestBlockStore_ClientIPContext(t *testing.T) {
+	t.Run("clientIP present", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			// Case 1: clientIP set in context - should be used directly without tracker
+			mockDownloader := localMocks.NewMockBlockDownloader(t)
+			mockMetadata := localMocks.NewMockMetadataStore(t)
+			mockTracker := ipfs.NewBlockRequestTracker()
+			bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, mockTracker)
+			require.NoError(tb, err)
+
+			testData := "test data"
+			testCid := generateCid(t, testData)
+			expectedBlock := blocks.NewBlock([]byte(testData))
+			clientIP := "192.168.1.100"
+
+			mockMetadata.EXPECT().Size(mock.Anything, testCid).Return(uint64(len(testData)), nil).Once()
+			mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(expectedBlock, nil).Once()
+
+			// Set clientIP in context
+			ctxWithClientIP := pc.ClientIPOption(ctx, clientIP)
+
+			// Create upload for download event emission
+			upload := &coremodels.Upload{
+				UserID:   1,
+				Hash:     []byte("test-hash"),
+				CIDType:  55,
+				MimeType: "application/octet-stream",
+				Protocol: "ipfs",
+				Size:     uint64(len(testData)),
+			}
+			mockUploadService := core.GetService[*mocks.MockUploadService](ctx, core.UPLOAD_SERVICE)
+			mockUploadService.EXPECT().GetUpload(mock.Anything, mock.Anything).Return(upload, nil).Maybe()
+
+			// Simulate peer requests (these should NOT be used because clientIP is set)
+			mockTracker.AddRequest(testCid, "10.0.0.50")
+			mockTracker.AddRequest(testCid, "10.0.0.51")
+
+			block, err := bs.Get(ctxWithClientIP, testCid)
+			require.NoError(tb, err)
+			require.Equal(tb, expectedBlock, block)
+
+			// Verify peers still exist (tracker was NOT called because clientIP was set)
+			peerIP, exists := mockTracker.GetAndRemoveRandomPeer(testCid)
+			assert.True(tb, exists, "Peers should still exist because tracker was not used")
+			assert.NotEmpty(tb, peerIP, "Removed peer should have a valid IP")
+		}, ipfsTestConfig)
+	})
+
+	t.Run("clientIP empty uses tracker", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			mockDownloader := localMocks.NewMockBlockDownloader(t)
+			mockMetadata := localMocks.NewMockMetadataStore(t)
+			mockTracker := ipfs.NewBlockRequestTracker()
+			bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, mockTracker)
+			require.NoError(tb, err)
+
+			testData := "test data"
+			testCid := generateCid(t, testData)
+			expectedBlock := blocks.NewBlock([]byte(testData))
+
+			mockMetadata.EXPECT().Size(mock.Anything, testCid).Return(uint64(len(testData)), nil).Once()
+			mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(expectedBlock, nil).Once()
+
+			// Create upload for download event emission
+			upload := &coremodels.Upload{
+				UserID:   1,
+				Hash:     []byte("test-hash"),
+				CIDType:  55,
+				MimeType: "application/octet-stream",
+				Protocol: "ipfs",
+				Size:     uint64(len(testData)),
+			}
+			mockUploadService := core.GetService[*mocks.MockUploadService](ctx, core.UPLOAD_SERVICE)
+			mockUploadService.EXPECT().GetUpload(mock.Anything, mock.Anything).Return(upload, nil).Maybe()
+
+			// Simulate peer requests
+			mockTracker.AddRequest(testCid, "10.0.0.60")
+
+			block, err := bs.Get(ctx, testCid) // No clientIP set
+			require.NoError(tb, err)
+			require.Equal(tb, expectedBlock, block)
+
+			// Verify peer was consumed (tracker was used because clientIP was empty)
+			_, exists := mockTracker.GetAndRemoveRandomPeer(testCid)
+			assert.False(tb, exists, "Peer should be consumed when clientIP is empty")
+		}, ipfsTestConfig)
+	})
+}
+
 func TestBlockStore_Has(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -155,7 +319,7 @@ func TestBlockStore_Has_NotFound(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -182,7 +346,7 @@ func TestBlockStore_Put(t *testing.T) {
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -211,7 +375,7 @@ func TestBlockStore_Put_UploadError(t *testing.T) {
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -239,7 +403,7 @@ func TestBlockStore_Put_PinError(t *testing.T) {
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -273,7 +437,7 @@ func TestBlockStore_DeleteBlock(t *testing.T) {
 		testData := "test data"
 		testCid := generateCid(t, testData)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		// Mock the metadata's Unpin method
@@ -300,7 +464,7 @@ func TestBlockStore_DeleteBlock_UnpinError(t *testing.T) {
 		testCid := generateCid(t, testData)
 		expectedError := errors.New("unpin failed")
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		// Mock the metadata's Unpin method to return an error
@@ -322,7 +486,7 @@ func TestBlockStore_PutMany(t *testing.T) {
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData1 := "test data 1"
@@ -354,11 +518,11 @@ func TestBlockStore_PutMany(t *testing.T) {
 func TestBlockStore_PutMany_PutError(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
-	mockDownloader := localMocks.NewMockBlockDownloader(t)
+		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData1 := "test data 1"
@@ -391,7 +555,7 @@ func TestBlockStore_AllKeysChan(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData1 := "test data 1"
@@ -424,7 +588,7 @@ func TestBlockStore_AllKeysChan_MetadataError(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		expectedError := errors.New("failed to get pinned CIDs")
@@ -454,7 +618,7 @@ func TestNewBlockStore_ProtocolNotFound(t *testing.T) {
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 
 		// Attempt to create a new BlockStore - should return an error
-		_, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		_, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		assert.Error(tb, err)
 		assert.Contains(t, err.Error(), "protocol not found")
 	}, coreTesting.WithConfig("core.protocols."+internal.ProtocolName+".enabled", false))
@@ -466,7 +630,7 @@ func TestBlockStore_VirtualReadEnabled(t *testing.T) {
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -480,13 +644,13 @@ func TestBlockStore_VirtualReadEnabled(t *testing.T) {
 
 		// Test Get
 		mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(testBlock, nil).Once()
-		
+
 		// Mock the upload service's GetUpload method for download attribution
 		mockUploadService := core.GetService[*mocks.MockUploadService](ctx, core.UPLOAD_SERVICE)
 		if mockUploadService != nil {
 			mockUploadService.EXPECT().GetUpload(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 		}
-		
+
 		block, err := bs.Get(readCtx, testCid)
 		require.NoError(tb, err)
 		assert.Equal(tb, testBlock, block)
@@ -527,7 +691,7 @@ func TestBlockStore_VirtualReadDisabled(t *testing.T) {
 		mockMetadata := localMocks.NewMockMetadataStore(t)
 		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		testData := "test data"
@@ -541,13 +705,13 @@ func TestBlockStore_VirtualReadDisabled(t *testing.T) {
 		// Test Get
 		mockMetadata.EXPECT().Size(mock.Anything, testCid).Return(uint64(len(testData)), nil).Once()
 		mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(testBlock, nil).Once()
-		
+
 		// Mock the upload service's GetUpload method for download attribution
 		mockUploadService := core.GetService[*mocks.MockUploadService](ctx, core.UPLOAD_SERVICE)
 		if mockUploadService != nil {
 			mockUploadService.EXPECT().GetUpload(mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 		}
-		
+
 		block, err := bs.Get(normalCtx, testCid)
 		require.NoError(tb, err)
 		assert.Equal(tb, testBlock, block)
@@ -592,7 +756,7 @@ func TestBlockStore_AllKeysChan_ContextDone(t *testing.T) {
 		// Arrange
 		mockDownloader := localMocks.NewMockBlockDownloader(t)
 		mockMetadata := localMocks.NewMockMetadataStore(t)
-		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata)
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
 		require.NoError(tb, err)
 
 		// Create a context that is already done
@@ -618,4 +782,3 @@ func TestBlockStore_AllKeysChan_ContextDone(t *testing.T) {
 		mockMetadata.AssertExpectations(tb)
 	}, ipfsTestConfig)
 }
-

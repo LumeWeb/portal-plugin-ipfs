@@ -88,7 +88,7 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 		}
 
 		// Fix any UnixFS metadata gaps before proceeding
-		err = metadataStore.ProcessMissingUnixFSNames(cidList)
+		err = metadataStore.ProcessMissingUnixFSNames(ctx, cidList)
 		if err != nil {
 			h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
 		}

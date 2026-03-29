@@ -15,7 +15,7 @@ import (
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal/core"
 
 	blocks "github.com/ipfs/go-block-format"
@@ -340,7 +340,7 @@ func (bd *BlockDownloaderDefault) Get(ctx context.Context, c cid.Cid) (blocks.Bl
 	}
 
 	// Get client IP from context before locking
-	clientIP := store.GetClientIP(ctx)
+	clientIP := pc.GetClientIP(ctx)
 
 	bd.mu.Lock()
 

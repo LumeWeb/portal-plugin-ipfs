@@ -9,8 +9,8 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
@@ -330,7 +330,7 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 
 				// Emit storage object unpinned event for quota tracking
 				if corePin != nil {
-					clientIP := store.GetClientIP(ctx)
+					clientIP := pc.GetClientIP(ctx)
 					quota.EmitStorageObjectUnpinned(ctx, s.Context(), corePin, clientIP)
 				}
 

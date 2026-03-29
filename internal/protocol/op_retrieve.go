@@ -63,6 +63,9 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 	getCtx, cancel := context.WithTimeout(ctx, protoCfg.BlockStore.Timeout)
 	defer cancel()
 
+	// Skip quota check for internal retrieve operations
+	getCtx = pc.SkipQuotaCheckOption(getCtx, true)
+
 	proto := h.Protocol().(*Protocol)
 	block, err = proto.GetNode().GetBlock(getCtx, c)
 	if err != nil {
@@ -98,7 +101,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 	// Fix any UnixFS metadata gaps before proceeding with child block processing
 	_store := proto.GetMetadataStore()
 	if _store != nil {
-		err = _store.ProcessMissingUnixFSNames(cids)
+		err = _store.ProcessMissingUnixFSNames(ctx, cids)
 		if err != nil {
 			h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
 		}
@@ -135,7 +138,9 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		// Prepare all child blocks and metadata first
 		var validChildCids []cid.Cid
 		for _, childCid := range childCids {
-			block, err := proto.GetNode().GetBlock(ctx, childCid)
+			// Skip quota check for internal retrieve operations
+			childGetCtx := pc.SkipQuotaCheckOption(getCtx, true)
+			block, err := proto.GetNode().GetBlock(childGetCtx, childCid)
 			if err != nil {
 				h.Logger().Error("Failed to fetch child block", zap.Stringer("cid", childCid), zap.Error(err))
 				continue
@@ -206,6 +211,8 @@ func isRecoverableNodeError(err error) bool {
 func collectDAGCids(ctx core.Context, ipfs *Protocol, c cid.Cid) ([]cid.Cid, error) {
 
 	getCtx := pc.VirtualReadOption(ctx, true)
+	// Skip quota check for internal retrieve operations
+	getCtx = pc.SkipQuotaCheckOption(getCtx, true)
 	getCtx, cancel := context.WithTimeout(getCtx, ctx.Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig).BlockStore.Timeout)
 
 	sess := merkledag.NewSession(getCtx, ipfs.GetNode().DagService())

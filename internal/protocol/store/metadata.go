@@ -14,6 +14,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.lumeweb.com/portal/core"
@@ -88,7 +89,7 @@ func (s *MetadataStoreDefault) Pin(ctx context.Context, b pluginCore.PinnedBlock
 
 			if existingNode.Name == "" {
 				s.logger.Debug("Attempting to resolve name from parent", zap.Stringer("cid", b.Cid))
-				name, err := s.resolveNameFromParentWithBlock(b.Cid, &parentBlock, tx)
+				name, err := s.resolveNameFromParentWithBlock(ctx, b.Cid, &parentBlock, tx)
 				if err == nil {
 					unixfsNode.Name = name
 					s.logger.Debug("Resolved name on the fly", zap.String("name", name), zap.Stringer("cid", b.Cid))
@@ -169,7 +170,7 @@ func (s *MetadataStoreDefault) Pin(ctx context.Context, b pluginCore.PinnedBlock
 	})
 }
 
-func (s *MetadataStoreDefault) resolveNameFromParentWithBlock(childCid cid.Cid, childBlock *pluginDb.IPFSBlock, tx *gorm.DB) (string, error) {
+func (s *MetadataStoreDefault) resolveNameFromParentWithBlock(ctx context.Context, childCid cid.Cid, childBlock *pluginDb.IPFSBlock, tx *gorm.DB) (string, error) {
 	childCid = encoding.NormalizeCid(childCid)
 
 	s.logger.Debug("Resolving name from parent",
@@ -216,7 +217,7 @@ func (s *MetadataStoreDefault) resolveNameFromParentWithBlock(childCid cid.Cid, 
 
 	// Get the parent block data
 	// Skip quota check for internal name resolution - this is metadata extraction from already-pinned data
-	getCtx := SkipQuotaCheckOption(s.ctx, true)
+	getCtx := pc.SkipQuotaCheckOption(ctx, true)
 	block, err := s.proto.GetNode().GetBlock(getCtx, parentCid)
 	if err != nil {
 		s.logger.Debug("Failed to get parent block",
@@ -231,7 +232,7 @@ func (s *MetadataStoreDefault) resolveNameFromParentWithBlock(childCid cid.Cid, 
 		zap.Stringer("parent_cid", parentCid))
 
 	// Decode the parent block
-	ipldNode, err := encoding.DecodeBlock(s.ctx, block)
+	ipldNode, err := encoding.DecodeBlock(ctx, block)
 	if err != nil {
 		s.logger.Debug("Failed to decode parent block",
 			zap.Stringer("child_cid", childCid),
@@ -272,7 +273,7 @@ func (s *MetadataStoreDefault) resolveNameFromParentWithBlock(childCid cid.Cid, 
 	return "", fmt.Errorf("name not found in parent links")
 }
 
-func (s *MetadataStoreDefault) resolveNameFromParent(childCid cid.Cid, tx *gorm.DB) (string, error) {
+func (s *MetadataStoreDefault) resolveNameFromParent(ctx context.Context, childCid cid.Cid, tx *gorm.DB) (string, error) {
 	// First find the child block ID
 	childCid = encoding.NormalizeCid(childCid)
 	var childBlock pluginDb.IPFSBlock
@@ -280,7 +281,7 @@ func (s *MetadataStoreDefault) resolveNameFromParent(childCid cid.Cid, tx *gorm.
 		return "", fmt.Errorf("failed to find child block: %w", err)
 	}
 
-	return s.resolveNameFromParentWithBlock(childCid, &childBlock, tx)
+	return s.resolveNameFromParentWithBlock(ctx, childCid, &childBlock, tx)
 }
 
 func (s *MetadataStoreDefault) Unpin(ctx context.Context, c cid.Cid) error {
@@ -590,14 +591,16 @@ func (s *MetadataStoreDefault) Size(ctx context.Context, c cid.Cid) (uint64, err
 	return size, nil
 }
 
-func (s *MetadataStoreDefault) ProcessMissingUnixFSNames(cids []cid.Cid) error {
+func (s *MetadataStoreDefault) ProcessMissingUnixFSNames(ctx context.Context, cids []cid.Cid) error {
+	// Skip quota check for internal name resolution - this is metadata extraction from already-pinned data
+	ctx = pc.SkipQuotaCheckOption(ctx, true)
 	for _, c := range cids {
 		c = encoding.NormalizeCid(c)
 
 		var unixfsNode pluginDb.UnixFSNode
 		var block pluginDb.IPFSBlock
 
-		if err := db.RetryableTransaction(s.ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		if err := db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
 			if err := tx.Where("cid = ?", c.Bytes()).First(&block).Error; err != nil {
 				_ = tx.AddError(fmt.Errorf("failed to find block for CID %s: %w", c.String(), err))
 				return tx
@@ -617,7 +620,7 @@ func (s *MetadataStoreDefault) ProcessMissingUnixFSNames(cids []cid.Cid) error {
 				return tx // Name already exists, skip
 			}
 
-			name, err := s.resolveNameFromParentWithBlock(c, &block, tx)
+			name, err := s.resolveNameFromParentWithBlock(ctx, c, &block, tx)
 			if err != nil {
 				s.logger.Warn("Failed to resolve name for CID, skipping", zap.Stringer("cid", c), zap.Error(err))
 				return tx // Failed to resolve, skip

@@ -109,7 +109,7 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		h.Logger().Warn("Failed to update progress", zap.Error(err))
 	}
 
-	h.processMetadata(allCids)
+	h.processMetadata(ctx, allCids)
 
 	// Set progress - creating root pin
 	if err := tracker.SetProgress(70); err != nil {
@@ -276,10 +276,10 @@ func (h *PostUploadOperationHandler) processCIDs(ctx context.Context, allCids []
 }
 
 // processMetadata processes missing UnixFS metadata
-func (h *PostUploadOperationHandler) processMetadata(allCids []cid.Cid) {
+func (h *PostUploadOperationHandler) processMetadata(ctx context.Context, allCids []cid.Cid) {
 	metadataStore := h.Protocol().(*Protocol).GetMetadataStore()
 	if metadataStore != nil {
-		err := metadataStore.ProcessMissingUnixFSNames(allCids)
+		err := metadataStore.ProcessMissingUnixFSNames(ctx, allCids)
 		if err != nil {
 			h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
 		}
