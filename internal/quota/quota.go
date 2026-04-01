@@ -104,6 +104,10 @@ func ValidateUploadQuota(cctx context.Context, ctx core.Context, userID uint, re
 			zap.Any("limit", result.Details.Limit))
 		return core.ErrUploadQuotaExceeded
 	}
+	ctx.Logger().Debug("Upload quota validated successfully",
+		zap.Uint("user_id", userID),
+		zap.Uint64("requested_bytes", requestedBytes),
+		zap.Uint64("current_usage", result.Details.CurrentUsage))
 	return nil
 }
 
@@ -125,6 +129,10 @@ func ValidateDownloadQuota(cctx context.Context, ctx core.Context, userID uint, 
 			zap.Any("limit", result.Details.Limit))
 		return core.ErrDownloadQuotaExceeded
 	}
+	ctx.Logger().Debug("Download quota validated successfully",
+		zap.Uint("user_id", userID),
+		zap.Uint64("requested_bytes", requestedBytes),
+		zap.Uint64("current_usage", result.Details.CurrentUsage))
 	return nil
 }
 
@@ -146,6 +154,10 @@ func ValidateStorageQuota(cctx context.Context, ctx core.Context, userID uint, r
 			zap.Any("limit", result.Details.Limit))
 		return core.ErrStorageQuotaExceeded
 	}
+	ctx.Logger().Debug("Storage quota validated successfully",
+		zap.Uint("user_id", userID),
+		zap.Uint64("requested_bytes", requestedBytes),
+		zap.Uint64("current_usage", result.Details.CurrentUsage))
 	return nil
 }
 // CheckCIDGroupDownloadAvailability checks if any users with pinned content have sufficient quota for anonymous downloads
