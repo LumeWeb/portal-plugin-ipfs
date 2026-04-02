@@ -72,7 +72,7 @@ func EmitUploadCompleted(cctx context.Context, ctx core.Context, userID *uint, u
 }
 
 // EmitDownloadCompleted emits a download completed event for quota tracking
-func EmitDownloadCompleted(cctx context.Context, ctx core.Context, uploadID uint, bytes uint64, ip string, userID *uint, reservationID *string, successful bool) {
+func EmitDownloadCompleted(cctx context.Context, ctx core.Context, userID *uint, uploadID uint, bytes uint64, ip string, reservationID *string, successful bool) {
 	core.FireAsync(ctx, event.EVENT_DOWNLOAD_COMPLETED, event.NewDownloadCompletedEvent(cctx, uploadID, bytes, ip, userID, reservationID, successful))
 }
 

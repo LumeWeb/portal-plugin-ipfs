@@ -144,13 +144,13 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 			checkResult.ReleaseReservation()
 		}
 		// Emit completion event even on failure for audit trail
-		quota.EmitDownloadCompleted(core.DetachContext(reqCtx), a.Context(), upload.ID, uint64(n), ip, &userID, reservationID, false)
+		quota.EmitDownloadCompleted(core.DetachContext(reqCtx), a.Context(), &userID, upload.ID, uint64(n), ip, reservationID, false)
 		return err
 	}
 
 	// Emit download completion event only after successful write
 	// Use DetachContext to prevent canceled request context from reaching event handlers
-	quota.EmitDownloadCompleted(core.DetachContext(reqCtx), a.Context(), upload.ID, uint64(n), ip, &userID, reservationID, true)
+	quota.EmitDownloadCompleted(core.DetachContext(reqCtx), a.Context(), &userID, upload.ID, uint64(n), ip, reservationID, true)
 	return nil
 }
 
