@@ -128,7 +128,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 							api.Logger().Warn("Unexpected negative upload size in TUS completed hook", zap.Int64("size", size))
 							return
 						}
-						quota.EmitUploadCompleted(eventCtx, ctx, userID, uint(uploadID), uint64(size), ip)
+						quota.EmitUploadCompleted(eventCtx, ctx, userID, uint(uploadID), uint64(size), ip, nil, true)
 					}, protocol.TUS_UPLOAD_WORKFLOW,
 						func(handlr core.TusHandler, hook handler.HookEvent, reader io.Reader) (core.StorageHash, error) {
 							return getCARUploadHash(reader, api.tus, ctx, sproto, hook.Upload.ID, api.Logger())

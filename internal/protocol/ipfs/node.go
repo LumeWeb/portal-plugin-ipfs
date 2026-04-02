@@ -115,6 +115,9 @@ type Node struct {
 
 // Close closes the node
 func (n *Node) Close() error {
+	if n == nil {
+		return nil
+	}
 	if n.reproviderCancel != nil {
 		n.reproviderCancel()
 	}

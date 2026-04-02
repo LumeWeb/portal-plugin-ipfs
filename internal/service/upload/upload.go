@@ -203,7 +203,7 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 				quota.EmitStorageObjectPinned(ctx, s.Context(), createdPin, clientIP)
 
 				// Emit upload completion event for quota tracking
-				quota.EmitUploadCompleted(ctx, s.Context(), &userId, uploadMeta.ID, size, clientIP)
+				quota.EmitUploadCompleted(ctx, s.Context(), &userId, uploadMeta.ID, size, clientIP, nil, true)
 			}
 
 			return nil
