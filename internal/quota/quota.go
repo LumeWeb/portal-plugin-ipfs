@@ -19,7 +19,7 @@ func WithQuotaService(cctx context.Context, ctx core.Context, fn func(quotaCore.
 }
 
 // CheckUploadQuota checks upload quota if service is available
-func CheckUploadQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64, opts ...func(*quotaCore.CheckOptions)) (*quotaCore.QuotaCheckResult, error) {
+func CheckUploadQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64, opts ...quotaCore.CheckOption) (*quotaCore.QuotaCheckResult, error) {
 	var result *quotaCore.QuotaCheckResult
 
 	err := WithQuotaService(cctx, ctx, func(qs quotaCore.QuotaService, c context.Context) error {
@@ -35,7 +35,7 @@ func CheckUploadQuota(cctx context.Context, ctx core.Context, userID uint, reque
 }
 
 // CheckDownloadQuota checks download quota if service is available
-func CheckDownloadQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64, opts ...func(*quotaCore.CheckOptions)) (*quotaCore.QuotaCheckResult, error) {
+func CheckDownloadQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64, opts ...quotaCore.CheckOption) (*quotaCore.QuotaCheckResult, error) {
 	var result *quotaCore.QuotaCheckResult
 
 	err := WithQuotaService(cctx, ctx, func(qs quotaCore.QuotaService, c context.Context) error {
@@ -51,7 +51,7 @@ func CheckDownloadQuota(cctx context.Context, ctx core.Context, userID uint, req
 }
 
 // CheckStorageQuota checks storage quota if service is available
-func CheckStorageQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64, opts ...func(*quotaCore.CheckOptions)) (*quotaCore.QuotaCheckResult, error) {
+func CheckStorageQuota(cctx context.Context, ctx core.Context, userID uint, requestedBytes uint64, opts ...quotaCore.CheckOption) (*quotaCore.QuotaCheckResult, error) {
 	var result *quotaCore.QuotaCheckResult
 
 	err := WithQuotaService(cctx, ctx, func(qs quotaCore.QuotaService, c context.Context) error {
@@ -67,12 +67,12 @@ func CheckStorageQuota(cctx context.Context, ctx core.Context, userID uint, requ
 }
 
 // EmitUploadCompleted emits an upload completed event for quota tracking
-func EmitUploadCompleted(cctx context.Context, ctx core.Context, userID *uint, uploadID uint, bytes uint64, ip string, reservationID *uint, successful bool) {
+func EmitUploadCompleted(cctx context.Context, ctx core.Context, userID *uint, uploadID uint, bytes uint64, ip string, reservationID *string, successful bool) {
 	core.FireAsync(ctx, event.EVENT_UPLOAD_COMPLETED, event.NewUploadCompletedEvent(cctx, uploadID, bytes, ip, userID, reservationID, successful))
 }
 
 // EmitDownloadCompleted emits a download completed event for quota tracking
-func EmitDownloadCompleted(cctx context.Context, ctx core.Context, uploadID uint, bytes uint64, ip string, userID *uint, reservationID *uint, successful bool) {
+func EmitDownloadCompleted(cctx context.Context, ctx core.Context, uploadID uint, bytes uint64, ip string, userID *uint, reservationID *string, successful bool) {
 	core.FireAsync(ctx, event.EVENT_DOWNLOAD_COMPLETED, event.NewDownloadCompletedEvent(cctx, uploadID, bytes, ip, userID, reservationID, successful))
 }
 
@@ -166,6 +166,7 @@ func ValidateStorageQuota(cctx context.Context, ctx core.Context, userID uint, r
 	}
 	return nil
 }
+
 // CheckCIDGroupDownloadAvailability checks if any users with pinned content have sufficient quota for anonymous downloads
 func CheckCIDGroupDownloadAvailability(cctx context.Context, ctx core.Context, cid core.StorageHash, requiredBytes uint64) (bool, error) {
 	available := true
@@ -180,7 +181,6 @@ func CheckCIDGroupDownloadAvailability(cctx context.Context, ctx core.Context, c
 		return nil
 	})
 
-	// If quota service is not found, assume availability (quota enforcement disabled)
 	if !serviceFound {
 		ctx.Logger().Debug("Quota service not available, assuming group quota available for anonymous download",
 			zap.String("cid", cid.String()),
