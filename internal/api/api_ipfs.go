@@ -83,7 +83,7 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	userID := upload.UserID
 
 	// Use reservation system for HTTP handlers
-	checkResult, err := quota.CheckDownloadQuota(reqCtx, a.Context(), userID, upload.Size, quotaCore.WithCreateReservation(c.RealIP()))
+	checkResult, err := quota.CheckDownloadQuota(reqCtx, a.Context(), userID, upload.Size, quotaCore.WithCreateReservation())
 	if err != nil {
 		a.Logger().Warn("Download quota check failed",
 			zap.Uint("user_id", userID),
@@ -102,9 +102,9 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 			zap.Uint64("upload_size", upload.Size),
 			zap.Uint64("current_usage", checkResult.Details.CurrentUsage),
 			zap.Any("limit", checkResult.Details.Limit))
-		
+			
 		// Release reservation if one was created
-		_ = checkResult.ReleaseReservation(core.DetachContext(reqCtx))
+		checkResult.ReleaseReservation()
 		
 		apiErr := NewError(ErrKeyDownloadQuotaExceeded, core.ErrDownloadQuotaExceeded)
 		_ = ctx.Error(apiErr, http.StatusTooManyRequests)
@@ -112,19 +112,20 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	}
 
 	// Extract reservation ID for use throughout the function
-	var reservationID *uint
-	if checkResult != nil {
-		reservationID = checkResult.ReservationID
+	var reservationID *string
+	if checkResult != nil && checkResult.Reservation != nil {
+		uuid := checkResult.Reservation.UUID()
+		reservationID = &uuid
 	}
 
 	// Only fetch block data after quota validation passes
 	block, err := a.ipfs.GetNode().GetBlock(reqCtx, _cid)
 	if err != nil {
 		a.Logger().Error("Failed to get block", zap.Error(err))
-		
+			
 		// Release reservation if one was created
 		if checkResult != nil {
-			_ = checkResult.ReleaseReservation(core.DetachContext(reqCtx))
+			checkResult.ReleaseReservation()
 		}
 		
 		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
@@ -140,16 +141,16 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	if err != nil {
 		// Release reservation if write failed
 		if checkResult != nil {
-			_ = checkResult.ReleaseReservation(core.DetachContext(reqCtx))
+			checkResult.ReleaseReservation()
 		}
 		// Emit completion event even on failure for audit trail
-		quota.EmitDownloadCompleted(core.DetachContext(reqCtx), a.Context(), upload.ID, uint64(n), ip, &userID, reservationID, false)
+		quota.EmitDownloadCompleted(core.DetachContext(reqCtx), a.Context(), &userID, upload.ID, uint64(n), ip, reservationID, false)
 		return err
 	}
 
 	// Emit download completion event only after successful write
 	// Use DetachContext to prevent canceled request context from reaching event handlers
-	quota.EmitDownloadCompleted(core.DetachContext(reqCtx), a.Context(), upload.ID, uint64(n), ip, &userID, reservationID, true)
+	quota.EmitDownloadCompleted(core.DetachContext(reqCtx), a.Context(), &userID, upload.ID, uint64(n), ip, reservationID, true)
 	return nil
 }
 
