@@ -10,6 +10,7 @@ import (
 	"go.lumeweb.com/httputil"
 	"go.lumeweb.com/portal/core"
 	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
+	quotaCore "go.lumeweb.com/portal-plugin-quota/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
@@ -81,8 +82,10 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	// Check download quota if quota service is available
 	userID := upload.UserID
 
-	if err := quota.ValidateDownloadQuota(reqCtx, a.Context(), userID, upload.Size); err != nil {
-		a.Logger().Warn("Download quota validation failed",
+	// Use reservation system for HTTP handlers
+	checkResult, err := quota.CheckDownloadQuota(reqCtx, a.Context(), userID, upload.Size, quotaCore.WithCreateReservation(c.RealIP()))
+	if err != nil {
+		a.Logger().Warn("Download quota check failed",
 			zap.Uint("user_id", userID),
 			zap.Uint64("upload_size", upload.Size),
 			zap.Stringer("cid", _cid),
@@ -92,10 +95,38 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 		return apiErr
 	}
 
+	// Check if quota is not allowed
+	if checkResult != nil && !checkResult.Allowed {
+		a.Logger().Debug("Download quota exceeded",
+			zap.Uint("user_id", userID),
+			zap.Uint64("upload_size", upload.Size),
+			zap.Uint64("current_usage", checkResult.Details.CurrentUsage),
+			zap.Any("limit", checkResult.Details.Limit))
+		
+		// Release reservation if one was created
+		_ = checkResult.ReleaseReservation(core.DetachContext(reqCtx))
+		
+		apiErr := NewError(ErrKeyDownloadQuotaExceeded, core.ErrDownloadQuotaExceeded)
+		_ = ctx.Error(apiErr, http.StatusTooManyRequests)
+		return apiErr
+	}
+
+	// Extract reservation ID for use throughout the function
+	var reservationID *uint
+	if checkResult != nil {
+		reservationID = checkResult.ReservationID
+	}
+
 	// Only fetch block data after quota validation passes
 	block, err := a.ipfs.GetNode().GetBlock(reqCtx, _cid)
 	if err != nil {
 		a.Logger().Error("Failed to get block", zap.Error(err))
+		
+		// Release reservation if one was created
+		if checkResult != nil {
+			_ = checkResult.ReleaseReservation(core.DetachContext(reqCtx))
+		}
+		
 		apiErr := NewError(ErrKeyMetadataFetchFailed, err)
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
 		return apiErr
@@ -107,13 +138,18 @@ func (a API) handleRawBlockRequest(ctx httputil.RequestContext, _cid cid.Cid, w 
 	a.setTrustlessHeaders(w, r, _cid.String())
 	n, err := w.Write(block.RawData())
 	if err != nil {
-		// Don't emit quota event if write failed
+		// Release reservation if write failed
+		if checkResult != nil {
+			_ = checkResult.ReleaseReservation(core.DetachContext(reqCtx))
+		}
+		// Emit completion event even on failure for audit trail
+		quota.EmitDownloadCompleted(core.DetachContext(reqCtx), a.Context(), upload.ID, uint64(n), ip, &userID, reservationID, false)
 		return err
 	}
 
 	// Emit download completion event only after successful write
 	// Use DetachContext to prevent canceled request context from reaching event handlers
-	quota.EmitDownloadCompleted(core.DetachContext(reqCtx), a.Context(), upload.ID, uint64(n), ip, &userID)
+	quota.EmitDownloadCompleted(core.DetachContext(reqCtx), a.Context(), upload.ID, uint64(n), ip, &userID, reservationID, true)
 	return nil
 }
 
