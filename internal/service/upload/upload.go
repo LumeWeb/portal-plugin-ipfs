@@ -200,10 +200,10 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 				if clientIP == "" {
 					s.Context().Logger().Warn("Client IP not set in context for quota tracking", zap.String("cid", c.String()))
 				}
-				quota.EmitStorageObjectPinned(ctx, s.Context(), createdPin, clientIP)
+				quota.EmitStorageObjectPinned(core.DetachContext(ctx), s.Context(), createdPin, clientIP)
 
 				// Emit upload completion event for quota tracking
-				quota.EmitUploadCompleted(ctx, s.Context(), &userId, uploadMeta.ID, size, clientIP, nil, true)
+				quota.EmitUploadCompleted(core.DetachContext(ctx), s.Context(), &userId, uploadMeta.ID, size, clientIP, nil, true)
 			}
 
 			return nil
