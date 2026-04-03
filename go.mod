@@ -44,7 +44,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tus/tusd/v2 v2.9.2
 	go.lumeweb.com/httputil v0.5.4
-	go.lumeweb.com/portal v0.4.2-0.20260403114348-fc026cd80146
+	go.lumeweb.com/portal v0.4.2-0.20260403170114-df71ca8ea75b
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20260312042836-d9dfa043a80d
@@ -224,7 +224,7 @@ require (
 	github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-sqlite3 v1.14.39 // indirect
+	github.com/mattn/go-sqlite3 v1.14.40 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/microsoft/go-mssqldb v1.9.6 // indirect
 	github.com/miekg/dns v1.1.72 // indirect
