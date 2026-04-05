@@ -206,7 +206,8 @@ func CheckWithReservation(cctx context.Context, ctx core.Context, checkType stri
 			quotaLimit = *checkResult.Details.Limit
 		}
 		ctx.Logger().Warn("Quota exceeded", zap.String("check_type", checkType), zap.Uint("user_id", userID), zap.Uint64("requested_bytes", requestedBytes), zap.Uint64("current_usage", currentUsage), zap.Uint64("quota_limit", quotaLimit))
-		return checkResult, fmt.Errorf("%s quota exceeded: current usage %d bytes + requested %d bytes would exceed quota limit of %d bytes", checkType, currentUsage, requestedBytes, quotaLimit)
+		checkResult.ReleaseReservation()
+		return nil, fmt.Errorf("%s quota exceeded: current usage %d bytes + requested %d bytes would exceed quota limit of %d bytes", checkType, currentUsage, requestedBytes, quotaLimit)
 	}
 	return checkResult, nil
 }

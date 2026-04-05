@@ -66,15 +66,27 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	if err != nil {
 		return err
 	}
+	defer sizeCheckFile.Close()
 
-	// Read entire file to determine size
-	fileData, err := io.ReadAll(sizeCheckFile)
-	sizeCheckFile.Close()
-	if err != nil {
-		return fmt.Errorf("failed to read upload file for size calculation: %w", err)
+	// Determine file size efficiently
+	var uploadFileSize int64
+	if seeker, ok := sizeCheckFile.(io.Seeker); ok {
+		uploadFileSize, err = seeker.Seek(0, io.SeekEnd)
+		if err != nil {
+			return fmt.Errorf("failed to seek to end of upload file: %w", err)
+		}
+		_, err = seeker.Seek(0, io.SeekStart)
+		if err != nil {
+			return fmt.Errorf("failed to seek to start of upload file: %w", err)
+		}
+	} else {
+		// Fallback to reading all data only if seek not supported
+		fileData, err := io.ReadAll(sizeCheckFile)
+		if err != nil {
+			return fmt.Errorf("failed to read upload file for size calculation: %w", err)
+		}
+		uploadFileSize = int64(len(fileData))
 	}
-
-	uploadFileSize := int64(len(fileData))
 
 	// Get fresh upload file handle for actual processing
 	uploadFile, err := h.getUpload(ctx, workflow.UploadID)
@@ -172,6 +184,7 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 
 	ipfsPin, err := h.createRootPin(ctx, rootCids[0], userID)
 	if err != nil {
+		quota.ReleaseReservations(checkResults.Upload, checkResults.Storage)
 		return err
 	}
 
@@ -194,6 +207,7 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 
 	err = h.updateWorkflow(ctx, req.ID, rootCids, ipfsPin)
 	if err != nil {
+		quota.ReleaseReservations(checkResults.Upload, checkResults.Storage)
 		return err
 	}
 

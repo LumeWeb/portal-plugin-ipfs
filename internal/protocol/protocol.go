@@ -254,7 +254,9 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 			// Get upload reader for processing
 			reader, err := tusHandler.UploadReader(ctx, tsReq.TUSUploadID, proto, 0)
 			if err != nil {
-				checkResults.ReleaseAll()
+				if uploadSize > 0 {
+					checkResults.ReleaseAll()
+				}
 				return fmt.Errorf("failed to get upload reader: %w", err)
 			}
 
@@ -273,7 +275,9 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 			// Detect format using IPFS plugin logic
 			uploadedFormat, err := upload.DetectFormat(reader)
 			if err != nil {
-				checkResults.ReleaseAll()
+				if uploadSize > 0 {
+					checkResults.ReleaseAll()
+				}
 				return fmt.Errorf("failed to detect upload format: %w", err)
 			}
 
@@ -283,7 +287,9 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 				// CAR format
 				processor, err = NewCARBlockProcessor(reader)
 				if err != nil {
-					checkResults.ReleaseAll()
+					if uploadSize > 0 {
+						checkResults.ReleaseAll()
+					}
 					return fmt.Errorf("failed to create CAR processor: %w", err)
 				}
 			} else {
@@ -291,7 +297,9 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 				protoNode := p.(ProtoNode)
 				processor, err = createFileProcessorForTUS(reader, protoNode, helper.Logger())
 				if err != nil {
-					checkResults.ReleaseAll()
+					if uploadSize > 0 {
+						checkResults.ReleaseAll()
+					}
 					return fmt.Errorf("failed to create file processor: %w", err)
 				}
 			}
@@ -300,7 +308,9 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 			// Process the upload
 			allCids, rootCids, err := ProcessBlocks(helper.Context(), processor)
 			if err != nil {
-				checkResults.ReleaseAll()
+				if uploadSize > 0 {
+					checkResults.ReleaseAll()
+				}
 				return fmt.Errorf("failed to process upload: %w", err)
 			}
 
@@ -313,7 +323,9 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 				helper.Logger().Error("Upload service not available")
 
 				// Release reservations on error
-				quota.ReleaseReservations(checkResults.Upload, checkResults.Storage)
+				if uploadSize > 0 {
+					checkResults.ReleaseAll()
+				}
 				return fmt.Errorf("upload service not available")
 			}
 
@@ -323,7 +335,9 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 			err = uploadSvc.ProcessUpload(ctx, allCids, *request.UserID, reservations)
 			if err != nil {
 				// Release reservations on error
-				checkResults.ReleaseAll()
+				if uploadSize > 0 {
+					checkResults.ReleaseAll()
+				}
 				return fmt.Errorf("failed to process upload: %w", err)
 			}
 
