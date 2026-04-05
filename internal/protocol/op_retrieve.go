@@ -74,14 +74,17 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 
 	blockSize = uint64(len(block.RawData()))
 
+	// Store quota check results for reservation management
+	checkResults := &quota.QuotaCheckResults{}
+
 	// Check download quota if user ID is available
 	if req.UserID != nil && *req.UserID > 0 {
-		// Validate download quota using the already fetched block
-		err = quota.ValidateDownloadQuota(ctx, h.Context(), *req.UserID, blockSize)
+		// Check download quota with reservation
+		checkResult, err := quota.CheckWithReservation(ctx, h.Context(), "download", *req.UserID, blockSize, quota.CheckDownloadQuota)
 		if err != nil {
-			h.Logger().Warn("Download quota exceeded", zap.Uint("user_id", *req.UserID), zap.Uint64("block_size", blockSize), zap.Error(err))
 			return err
 		}
+		checkResults.Download = checkResult
 	}
 
 	cids, err := collectDAGCids(h.Context(), proto, c)
@@ -168,15 +171,38 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		if len(validChildCids) > 0 {
 			// Validate user ID before processing
 			if req.UserID == nil || *req.UserID == 0 {
+				// Release download reservation on error
+				quota.ReleaseReservations(checkResults.Download)
 				return fmt.Errorf("user ID is required")
 			}
+
+			// Calculate total size of child blocks for quota check
+			totalSize, _ := CalculateTotalCIDSize(h.Context(), proto, validChildCids, h.Logger())
+
+			// Check upload quota with reservation for child blocks
+			if totalSize > 0 {
+				checkResult, err := quota.CheckWithReservation(ctx, h.Context(), "upload", *req.UserID, totalSize, quota.CheckUploadQuota)
+				if err != nil {
+					// Release download reservation on error
+					quota.ReleaseReservations(checkResults.Download)
+					return err
+				}
+				checkResults.Upload = checkResult
+			}
+
+			// Create reservations map for child CIDs
+			reservations := CreateReservationMap(validChildCids, checkResults.Upload)
 
 			// Set client IP in context for quota tracking
 			ctx = pc.ClientIPOption(ctx, req.SourceIP)
 
-			err = uploadSvc.ProcessUpload(ctx, validChildCids, *req.UserID)
+			err = uploadSvc.ProcessUpload(ctx, validChildCids, *req.UserID, reservations)
 			if err != nil {
 				h.Logger().Error("Failed to batch process child blocks", zap.Error(err))
+
+				// Release reservations on error
+				quota.ReleaseReservations(checkResults.Download, checkResults.Upload)
+				return err
 			}
 		}
 	}

@@ -82,7 +82,7 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 			return fmt.Errorf("upload service not available")
 		}
 
-		err := uploadSvc.ProcessUpload(ctx, cidList, lo.FromPtrOr(req.UserID, 0))
+		err := uploadSvc.ProcessUpload(ctx, cidList, lo.FromPtrOr(req.UserID, 0), nil)
 		if err != nil {
 			return fmt.Errorf("failed to process upload: %w", err)
 		}

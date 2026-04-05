@@ -14,6 +14,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
+	quotaCore "go.lumeweb.com/portal-plugin-quota/core"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.uber.org/zap"
@@ -121,7 +122,7 @@ func (s *UploadServiceDefault) HandleUploadWithMode(ctx context.Context, reader 
 	return result.CID, result.UploadID, err
 }
 
-func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid, userId uint) error {
+func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid, userId uint, reservations map[cid.Cid]*quotaCore.QuotaCheckResult) error {
 	ctx, span := core.TraceMethod(ctx, "UploadServiceDefault.ProcessUpload")
 	defer span.End()
 
@@ -133,8 +134,7 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 				return fmt.Errorf("no CIDs provided")
 			}
 
-			// Calculate total size for quota check and cache CID sizes
-			var totalSize uint64
+			// Cache CID sizes
 			cidSizes := make(map[string]uint64, len(cids))
 			for _, c := range cids {
 				size, err := s.ipfs.GetMetadataStore().Size(ctx, c)
@@ -143,25 +143,6 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 					continue
 				}
 				cidSizes[c.String()] = size
-				totalSize += size
-			}
-
-			// Validate upload quota
-			if totalSize > 0 {
-				result, err := quota.CheckUploadQuota(ctx, s.Context(), userId, totalSize)
-				if err != nil {
-					s.Context().Logger().Warn("Failed to check upload quota", zap.Uint("user_id", userId), zap.Uint64("total_size", totalSize), zap.Error(err))
-					return fmt.Errorf("failed to check upload quota: %w", err)
-				}
-				if result != nil && !result.Allowed {
-					currentUsage := result.Details.CurrentUsage
-					quotaLimit := uint64(0)
-					if result.Details.Limit != nil {
-						quotaLimit = *result.Details.Limit
-					}
-					s.Context().Logger().Warn("Upload quota exceeded", zap.Uint("user_id", userId), zap.Uint64("total_size", totalSize), zap.Uint64("current_usage", currentUsage), zap.Uint64("quota_limit", quotaLimit))
-					return fmt.Errorf("upload quota exceeded: current usage %d bytes + requested %d bytes would exceed quota limit of %d bytes", currentUsage, totalSize, quotaLimit)
-				}
 			}
 
 			// Create upload records and core pin records for ALL CIDs (both roots and children)
@@ -202,8 +183,17 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 				}
 				quota.EmitStorageObjectPinned(core.DetachContext(ctx), s.Context(), createdPin, clientIP)
 
+				// Get reservation ID for this CID
+				var uploadResID *string
+				if reservations != nil {
+					if checkResult, exists := reservations[c]; exists && checkResult != nil && checkResult.Reservation != nil {
+						uuid := checkResult.Reservation.UUID()
+						uploadResID = &uuid
+					}
+				}
+
 				// Emit upload completion event for quota tracking
-				quota.EmitUploadCompleted(core.DetachContext(ctx), s.Context(), &userId, uploadMeta.ID, size, clientIP, nil, true)
+				quota.EmitUploadCompleted(core.DetachContext(ctx), s.Context(), &userId, uploadMeta.ID, size, clientIP, uploadResID, true)
 			}
 
 			return nil

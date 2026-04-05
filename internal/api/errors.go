@@ -31,6 +31,8 @@ const (
 	ErrKeyBlockNotFound         core.ErrorType = "BLOCK_NOT_FOUND"
 	ErrKeyUploadNotFound        core.ErrorType = "UPLOAD_NOT_FOUND"
 	ErrKeyUnauthorized          core.ErrorType = "UNAUTHORIZED"
+	ErrKeyUploadQuotaExceeded   core.ErrorType = "UPLOAD_QUOTA_EXCEEDED"
+	ErrKeyStorageQuotaExceeded  core.ErrorType = "STORAGE_QUOTA_EXCEEDED"
 	ErrKeyDownloadQuotaExceeded core.ErrorType = "DOWNLOAD_QUOTA_EXCEEDED"
 	ErrKeyInvalidRequest        core.ErrorType = "INVALID_REQUEST"
 	ErrKeyInvalidIdentifier    core.ErrorType = "INVALID_IDENTIFIER"
@@ -123,6 +125,8 @@ func init() {
 		ErrKeyBlockNotFound:         {Key: ErrKeyBlockNotFound, Message: "Block not found."},
 		ErrKeyUploadNotFound:        {Key: ErrKeyUploadNotFound, Message: "Upload not found."},
 		ErrKeyUnauthorized:          {Key: ErrKeyUnauthorized, Message: "Access denied. Please check your credentials and try again."},
+		ErrKeyUploadQuotaExceeded:   {Key: ErrKeyUploadQuotaExceeded, Message: "Upload quota exceeded. Please try again later."},
+		ErrKeyStorageQuotaExceeded:  {Key: ErrKeyStorageQuotaExceeded, Message: "Storage quota exceeded. Please try again later."},
 		ErrKeyDownloadQuotaExceeded: {Key: ErrKeyDownloadQuotaExceeded, Message: "Download quota exceeded. Please try again later."},
 		ErrKeyInvalidRequest:        {Key: ErrKeyInvalidRequest, Message: "Invalid request parameter: %s"},
 		ErrKeyInvalidIdentifier:     {Key: ErrKeyInvalidIdentifier, Message: "Invalid identifier format"},
@@ -153,6 +157,8 @@ func init() {
 		ErrKeyBlockNotFound:         http.StatusNotFound,
 		ErrKeyUploadNotFound:        http.StatusNotFound,
 		ErrKeyUnauthorized:          http.StatusUnauthorized,
+		ErrKeyUploadQuotaExceeded:   http.StatusTooManyRequests,
+		ErrKeyStorageQuotaExceeded:  http.StatusTooManyRequests,
 		ErrKeyDownloadQuotaExceeded: http.StatusTooManyRequests,
 		ErrKeyInvalidDomainFormat:   http.StatusBadRequest,
 		ErrKeyRecordNotFound:        http.StatusNotFound,

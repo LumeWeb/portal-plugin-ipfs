@@ -19,10 +19,11 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
-	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store/downloader"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
@@ -204,14 +205,56 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 		NewPostUploadOperation(p.Context()),
 		NewFilePathOperation(p.Context()),
 		service.NewTUSOperationHandler(p.Context(), p, func(ctx context.Context, helper core.OperationHelper, request *models.Request, tsReq *models.TUSRequest) error {
-			ctx, span := core.TraceMethod(ctx, "anonymous")
+			ctx, span := core.TraceMethod(ctx, "IPFS.NewTUSOperationHandler")
 			defer span.End()
 
-			tusHandler := core.GetAPI(internal.ProtocolName).(core.APITusHandler).GetTusHandler()
+			// Validate user ID
+			if request.UserID == nil || *request.UserID == 0 {
+				return fmt.Errorf("user ID is required")
+			}
+
+			// Get TUS handler to retrieve upload size
+			apiName := p.Name()
+			api := core.GetAPI(apiName)
+			if _, ok := api.(core.APITusHandler); !ok {
+				return fmt.Errorf("API %T does not implement core.APITusHandler", api)
+			}
+			tusProto := api.(core.APITusHandler)
+			tusHandler := tusProto.GetTusHandler()
 
 			proto := p.(core.StorageProtocol)
+
+			// Get upload size for quota check
+			uploadSize, err := tusHandler.UploadSize(ctx, proto, tsReq.TUSUploadID)
+			if err != nil {
+				return fmt.Errorf("failed to get upload size: %w", err)
+			}
+
+			// Store quota check results for reservation management
+			checkResults := &quota.QuotaCheckResults{}
+
+			// Check upload and storage quota with reservation before processing
+			if uploadSize > 0 {
+				// Check upload quota with reservation
+				checkResult, err := quota.CheckWithReservation(ctx, helper.Context(), "upload", *request.UserID, uploadSize, quota.CheckUploadQuota)
+				if err != nil {
+					return err
+				}
+				checkResults.Upload = checkResult
+
+				// Check storage quota with reservation
+				checkResult, err = quota.CheckWithReservation(ctx, helper.Context(), "storage", *request.UserID, uploadSize, quota.CheckStorageQuota)
+				if err != nil {
+					checkResults.ReleaseAll()
+					return err
+				}
+				checkResults.Storage = checkResult
+			}
+
+			// Get upload reader for processing
 			reader, err := tusHandler.UploadReader(ctx, tsReq.TUSUploadID, proto, 0)
 			if err != nil {
+				checkResults.ReleaseAll()
 				return fmt.Errorf("failed to get upload reader: %w", err)
 			}
 
@@ -230,6 +273,7 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 			// Detect format using IPFS plugin logic
 			uploadedFormat, err := upload.DetectFormat(reader)
 			if err != nil {
+				checkResults.ReleaseAll()
 				return fmt.Errorf("failed to detect upload format: %w", err)
 			}
 
@@ -239,13 +283,15 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 				// CAR format
 				processor, err = NewCARBlockProcessor(reader)
 				if err != nil {
+					checkResults.ReleaseAll()
 					return fmt.Errorf("failed to create CAR processor: %w", err)
 				}
 			} else {
 				// Single file format (archives treated as files, not extracted)
-				proto := p.(ProtoNode)
-				processor, err = createFileProcessorForTUS(reader, proto, helper.Logger())
+				protoNode := p.(ProtoNode)
+				processor, err = createFileProcessorForTUS(reader, protoNode, helper.Logger())
 				if err != nil {
+					checkResults.ReleaseAll()
 					return fmt.Errorf("failed to create file processor: %w", err)
 				}
 			}
@@ -254,26 +300,30 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 			// Process the upload
 			allCids, rootCids, err := ProcessBlocks(helper.Context(), processor)
 			if err != nil {
+				checkResults.ReleaseAll()
 				return fmt.Errorf("failed to process upload: %w", err)
 			}
+
+			// Create reservations map for upload service
+			reservations := CreateReservationMap(allCids, checkResults.Upload)
 
 			// Process all CIDs to create upload and core pin records
 			uploadSvc := core.GetService[pluginCore.UploadService](helper.Context(), pluginCore.UPLOAD_SERVICE)
 			if uploadSvc == nil {
 				helper.Logger().Error("Upload service not available")
-				return fmt.Errorf("upload service not available")
-			}
 
-			// Validate user ID before processing
-			if request.UserID == nil || *request.UserID == 0 {
-				return fmt.Errorf("user ID is required")
+				// Release reservations on error
+				quota.ReleaseReservations(checkResults.Upload, checkResults.Storage)
+				return fmt.Errorf("upload service not available")
 			}
 
 			// Set client IP in context for quota tracking
 			ctx = pc.ClientIPOption(ctx, request.SourceIP)
 
-			err = uploadSvc.ProcessUpload(ctx, allCids, *request.UserID)
+			err = uploadSvc.ProcessUpload(ctx, allCids, *request.UserID, reservations)
 			if err != nil {
+				// Release reservations on error
+				checkResults.ReleaseAll()
 				return fmt.Errorf("failed to process upload: %w", err)
 			}
 
@@ -385,10 +435,10 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 			if err != nil {
 				return fmt.Errorf("failed to create block downloader: %w", err)
 			}
-			
+
 			// Create peer request tracker for probabilistic attribution
 			peerTracker := ipfs.NewBlockRequestTracker()
-			
+
 			directBS, err := store.NewBlockStore(ctx, bd, ms, peerTracker)
 			if err != nil {
 				return fmt.Errorf("failed to create blockstore: %w", err)

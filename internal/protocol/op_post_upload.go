@@ -13,7 +13,9 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
+	quotaCore "go.lumeweb.com/portal-plugin-quota/core"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.uber.org/zap"
@@ -40,6 +42,9 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.Execute")
 	defer span.End()
 
+	// Store quota check results for reservation management
+	checkResults := &quota.QuotaCheckResults{}
+
 	// Initialize progress tracker with manual mode for simple milestones
 	tracker, err := InitializeManualProgressTracker(h, req.ID, core.OpTypeUpload, 10)
 	if err != nil {
@@ -56,9 +61,25 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		h.Logger().Warn("Failed to update progress", zap.Error(err))
 	}
 
-	uploadFile, err := h.getUpload(ctx, workflow.UploadID)
+	// Get upload file to read size for quota sanity check
+	sizeCheckFile, err := h.getUpload(ctx, workflow.UploadID)
 	if err != nil {
 		return err
+	}
+
+	// Read entire file to determine size
+	fileData, err := io.ReadAll(sizeCheckFile)
+	sizeCheckFile.Close()
+	if err != nil {
+		return fmt.Errorf("failed to read upload file for size calculation: %w", err)
+	}
+
+	uploadFileSize := int64(len(fileData))
+
+	// Get fresh upload file handle for actual processing
+	uploadFile, err := h.getUpload(ctx, workflow.UploadID)
+	if err != nil {
+		return fmt.Errorf("failed to get fresh upload file handle: %w", err)
 	}
 	defer func(upload io.ReadCloser) {
 		err := upload.Close()
@@ -67,8 +88,34 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		}
 	}(uploadFile)
 
+	// Sanity check quota (no reservation) before processing
+	userID := lo.FromPtrOr(req.UserID, 0)
+	if userID == 0 {
+		return fmt.Errorf("user ID is required")
+	}
+
+	if uploadFileSize > 0 {
+		requestedBytes := uint64(uploadFileSize)
+
+		// Check upload quota with reservation
+		checkResult, err := quota.CheckWithReservation(ctx, h.Context(), "upload", userID, requestedBytes, quota.CheckUploadQuota)
+		if err != nil {
+			return err
+		}
+		checkResults.Upload = checkResult
+
+		// Check storage quota with reservation
+		checkResult, err = quota.CheckWithReservation(ctx, h.Context(), "storage", userID, requestedBytes, quota.CheckStorageQuota)
+		if err != nil {
+			checkResults.ReleaseAll()
+			return err
+		}
+		checkResults.Storage = checkResult
+	}
+
 	uploadedFormat, err := upload.DetectFormat(uploadFile)
 	if err != nil {
+		checkResults.ReleaseAll()
 		return err
 	}
 
@@ -79,6 +126,7 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 
 	processor, err := h.createProcessor(uploadFile, uploadedFormat)
 	if err != nil {
+		checkResults.ReleaseAll()
 		return err
 	}
 	defer processor.Release()
@@ -90,17 +138,23 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 
 	allCids, rootCids, err := ProcessBlocks(h.Context(), processor)
 	if err != nil {
+		checkResults.ReleaseAll()
 		return fmt.Errorf("failed to process CIDs from upload: %w", err)
 	}
 
 	// Check if any root CIDs were returned
 	if len(rootCids) == 0 {
+		checkResults.ReleaseAll()
 		return fmt.Errorf("no root CIDs found during block processing")
 	}
 
-	userID := lo.FromPtrOr(req.UserID, 0)
-	err = h.processCIDs(ctx, allCids, userID, req.SourceIP)
+	// Create reservations map
+	reservations := CreateReservationMap(allCids, checkResults.Upload)
+
+	err = h.processCIDs(ctx, allCids, userID, req.SourceIP, reservations)
 	if err != nil {
+		// Release reservations on error
+		quota.ReleaseReservations(checkResults.Upload, checkResults.Storage)
 		return err
 	}
 
@@ -256,7 +310,7 @@ func (h *PostUploadOperationHandler) createFileProcessor(uploadFile io.ReadClose
 }
 
 // processCIDs processes all CIDs and creates upload records
-func (h *PostUploadOperationHandler) processCIDs(ctx context.Context, allCids []cid.Cid, userID uint, sourceIP string) error {
+func (h *PostUploadOperationHandler) processCIDs(ctx context.Context, allCids []cid.Cid, userID uint, sourceIP string, reservations map[cid.Cid]*quotaCore.QuotaCheckResult) error {
 	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.processCIDs")
 	defer span.End()
 
@@ -267,7 +321,7 @@ func (h *PostUploadOperationHandler) processCIDs(ctx context.Context, allCids []
 	}
 
 	ctx = pc.ClientIPOption(ctx, sourceIP)
-	err := uploadSvc.ProcessUpload(ctx, allCids, userID)
+	err := uploadSvc.ProcessUpload(ctx, allCids, userID, reservations)
 	if err != nil {
 		return fmt.Errorf("failed to process upload: %w", err)
 	}

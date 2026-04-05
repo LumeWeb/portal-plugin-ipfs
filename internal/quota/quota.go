@@ -190,3 +190,45 @@ func CheckCIDGroupDownloadAvailability(cctx context.Context, ctx core.Context, c
 
 	return available, nil
 }
+
+// CheckWithReservation performs a quota check with reservation and provides unified error handling
+// This encapsulates the common pattern of checking quota with reservation and returning appropriate errors
+func CheckWithReservation(cctx context.Context, ctx core.Context, checkType string, userID uint, requestedBytes uint64, checkFunc func(context.Context, core.Context, uint, uint64, ...quotaCore.CheckOption) (*quotaCore.QuotaCheckResult, error)) (*quotaCore.QuotaCheckResult, error) {
+	checkResult, err := checkFunc(cctx, ctx, userID, requestedBytes, quotaCore.WithCreateReservation())
+	if err != nil {
+		ctx.Logger().Warn("Failed to check quota", zap.String("check_type", checkType), zap.Uint("user_id", userID), zap.Uint64("requested_bytes", requestedBytes), zap.Error(err))
+		return nil, fmt.Errorf("%s quota check failed: %w", checkType, err)
+	}
+	if checkResult != nil && !checkResult.Allowed {
+		currentUsage := checkResult.Details.CurrentUsage
+		quotaLimit := uint64(0)
+		if checkResult.Details.Limit != nil {
+			quotaLimit = *checkResult.Details.Limit
+		}
+		ctx.Logger().Warn("Quota exceeded", zap.String("check_type", checkType), zap.Uint("user_id", userID), zap.Uint64("requested_bytes", requestedBytes), zap.Uint64("current_usage", currentUsage), zap.Uint64("quota_limit", quotaLimit))
+		return checkResult, fmt.Errorf("%s quota exceeded: current usage %d bytes + requested %d bytes would exceed quota limit of %d bytes", checkType, currentUsage, requestedBytes, quotaLimit)
+	}
+	return checkResult, nil
+}
+
+// ReleaseReservations releases multiple quota reservations safely
+// This handles nil checks and releases all provided reservations
+func ReleaseReservations(reservations ...*quotaCore.QuotaCheckResult) {
+	for _, result := range reservations {
+		if result != nil {
+			result.ReleaseReservation()
+		}
+	}
+}
+
+// QuotaCheckResults holds the results of quota checks with reservations
+type QuotaCheckResults struct {
+	Upload  *quotaCore.QuotaCheckResult
+	Storage *quotaCore.QuotaCheckResult
+	Download *quotaCore.QuotaCheckResult
+}
+
+// ReleaseAll releases all reservations held in the QuotaCheckResults struct
+func (q *QuotaCheckResults) ReleaseAll() {
+	ReleaseReservations(q.Upload, q.Storage, q.Download)
+}
