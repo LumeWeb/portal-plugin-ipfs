@@ -12,6 +12,7 @@ import (
 	mock "github.com/stretchr/testify/mock"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
+	core0 "go.lumeweb.com/portal-plugin-quota/core"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
 	"gorm.io/gorm"
@@ -509,16 +510,16 @@ func (_c *MockUploadService_Logger_Call) RunAndReturn(run func() *core.Logger) *
 }
 
 // ProcessUpload provides a mock function for the type MockUploadService
-func (_mock *MockUploadService) ProcessUpload(ctx context.Context, cids []cid.Cid, userId uint) error {
-	ret := _mock.Called(ctx, cids, userId)
+func (_mock *MockUploadService) ProcessUpload(ctx context.Context, cids []cid.Cid, userId uint, reservations map[cid.Cid]*core0.QuotaCheckResult) error {
+	ret := _mock.Called(ctx, cids, userId, reservations)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ProcessUpload")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, []cid.Cid, uint) error); ok {
-		r0 = returnFunc(ctx, cids, userId)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, []cid.Cid, uint, map[cid.Cid]*core0.QuotaCheckResult) error); ok {
+		r0 = returnFunc(ctx, cids, userId, reservations)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -534,11 +535,12 @@ type MockUploadService_ProcessUpload_Call struct {
 //   - ctx context.Context
 //   - cids []cid.Cid
 //   - userId uint
-func (_e *MockUploadService_Expecter) ProcessUpload(ctx interface{}, cids interface{}, userId interface{}) *MockUploadService_ProcessUpload_Call {
-	return &MockUploadService_ProcessUpload_Call{Call: _e.mock.On("ProcessUpload", ctx, cids, userId)}
+//   - reservations map[cid.Cid]*core0.QuotaCheckResult
+func (_e *MockUploadService_Expecter) ProcessUpload(ctx interface{}, cids interface{}, userId interface{}, reservations interface{}) *MockUploadService_ProcessUpload_Call {
+	return &MockUploadService_ProcessUpload_Call{Call: _e.mock.On("ProcessUpload", ctx, cids, userId, reservations)}
 }
 
-func (_c *MockUploadService_ProcessUpload_Call) Run(run func(ctx context.Context, cids []cid.Cid, userId uint)) *MockUploadService_ProcessUpload_Call {
+func (_c *MockUploadService_ProcessUpload_Call) Run(run func(ctx context.Context, cids []cid.Cid, userId uint, reservations map[cid.Cid]*core0.QuotaCheckResult)) *MockUploadService_ProcessUpload_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -552,10 +554,15 @@ func (_c *MockUploadService_ProcessUpload_Call) Run(run func(ctx context.Context
 		if args[2] != nil {
 			arg2 = args[2].(uint)
 		}
+		var arg3 map[cid.Cid]*core0.QuotaCheckResult
+		if args[3] != nil {
+			arg3 = args[3].(map[cid.Cid]*core0.QuotaCheckResult)
+		}
 		run(
 			arg0,
 			arg1,
 			arg2,
+			arg3,
 		)
 	})
 	return _c
@@ -566,7 +573,7 @@ func (_c *MockUploadService_ProcessUpload_Call) Return(err error) *MockUploadSer
 	return _c
 }
 
-func (_c *MockUploadService_ProcessUpload_Call) RunAndReturn(run func(ctx context.Context, cids []cid.Cid, userId uint) error) *MockUploadService_ProcessUpload_Call {
+func (_c *MockUploadService_ProcessUpload_Call) RunAndReturn(run func(ctx context.Context, cids []cid.Cid, userId uint, reservations map[cid.Cid]*core0.QuotaCheckResult) error) *MockUploadService_ProcessUpload_Call {
 	_c.Call.Return(run)
 	return _c
 }

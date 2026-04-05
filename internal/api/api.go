@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 
 	"github.com/ipld/go-car/v2"
 	"github.com/labstack/echo/v4"
@@ -79,10 +78,19 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 							return nil, core.ErrUploadQuotaExceeded
 						}
 						requestedBytes := uint64(size)
+
+						// Check upload quota (sanity check without reservation)
 						if err := quota.ValidateUploadQuota(eventCtx, ctx, uploaderId, requestedBytes); err != nil {
 							api.Logger().Error("Failed to check upload quota", zap.Error(err))
 							return nil, err
 						}
+
+						// Check storage quota (sanity check without reservation)
+						if err := quota.ValidateStorageQuota(eventCtx, ctx, uploaderId, requestedBytes); err != nil {
+							api.Logger().Error("Failed to check storage quota", zap.Error(err))
+							return nil, err
+						}
+
 						return nil, nil
 					}, nil),
 					UploadProgressHandler:   service.TUSDefaultUploadProgressHandler(ctx),
@@ -99,36 +107,11 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 							return
 						}
 
-						var userID *uint
-						if hook.Upload.MetaData != nil {
-							if uploaderID, exists := hook.Upload.MetaData["uploader_id"]; exists {
-								if uid, err := strconv.ParseUint(uploaderID, 10, 64); err == nil {
-									userIDVal := uint(uid)
-									userID = &userIDVal
-								} else {
-									api.Logger().Warn("Failed to parse uploader_id from metadata", zap.String("uploader_id", uploaderID), zap.Error(err))
-								}
-							}
-						}
-
-						uploadID, err := strconv.ParseUint(hook.Upload.ID, 10, 64)
-						if err != nil {
-							api.Logger().Warn("Failed to parse upload ID", zap.String("upload_id", hook.Upload.ID), zap.Error(err))
-							return
-						}
-
-						echoCtx, ok := service.TusGetEchoContext(hook.Context)
-						var ip string
-						if ok && echoCtx != nil {
-							ip = echoCtx.RealIP()
-						}
-
 						size := hook.Upload.Size
 						if size < 0 {
 							api.Logger().Warn("Unexpected negative upload size in TUS completed hook", zap.Int64("size", size))
 							return
 						}
-						quota.EmitUploadCompleted(eventCtx, ctx, userID, uint(uploadID), uint64(size), ip, nil, true)
 					}, protocol.TUS_UPLOAD_WORKFLOW,
 						func(handlr core.TusHandler, hook handler.HookEvent, reader io.Reader) (core.StorageHash, error) {
 							return getCARUploadHash(reader, api.tus, ctx, sproto, hook.Upload.ID, api.Logger())

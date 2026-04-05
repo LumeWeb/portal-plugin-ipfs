@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/ipfs/go-cid"
+	quotaCore "go.lumeweb.com/portal-plugin-quota/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
@@ -27,7 +28,8 @@ type UploadService interface {
 	// ProcessUpload processes a list of CIDs and creates upload and core pin records for a user.
 	// It creates upload records and core pin records for ALL provided CIDs (both roots and children),
 	// but does NOT create any IPFS pin records.
-	ProcessUpload(ctx context.Context, cids []cid.Cid, userId uint) error
+	// The reservations parameter maps CIDs to quota reservation objects for upload quota tracking.
+	ProcessUpload(ctx context.Context, cids []cid.Cid, userId uint, reservations map[cid.Cid]*quotaCore.QuotaCheckResult) error
 
 	// CreateRootPin creates an IPFS pin record for a single root CID.
 	// This method should only be called for actual root CIDs, not child blocks.

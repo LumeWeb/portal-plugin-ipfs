@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -50,7 +51,10 @@ const (
 	libp2pProtocolPrefix = "/p2p/"
 )
 
-var cachedAnnouncementAddresses []multiaddr.Multiaddr
+var (
+	cachedAnnouncementAddresses []multiaddr.Multiaddr
+	cacheMutex                  sync.RWMutex
+)
 
 // DHTRouting combines the interfaces needed from a DHT routing implementation
 type DHTRouting interface {
@@ -452,6 +456,17 @@ func (n *Node) TriggerReprovider() {
 }
 
 func AnnouncementAddresses() ([]multiaddr.Multiaddr, error) {
+	cacheMutex.RLock()
+	if len(cachedAnnouncementAddresses) > 0 {
+		cached := cachedAnnouncementAddresses
+		cacheMutex.RUnlock()
+		return cached, nil
+	}
+	cacheMutex.RUnlock()
+
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
 	if len(cachedAnnouncementAddresses) > 0 {
 		return cachedAnnouncementAddresses, nil
 	}
