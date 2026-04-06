@@ -100,7 +100,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 	// Check download quota for the root block size
 	// Now we can make a non-virtual fetch for the root block
 	if req.UserID != nil && *req.UserID > 0 {
-		checkResult, err := quota.CheckWithReservation(ctx, h.Context(), "download", *req.UserID, dagResult.CIDSizes[c], quota.CheckDownloadQuota)
+		checkResult, err := quota.CheckWithReservation(ctx, h.Context(), quota.CheckTypeDownload, *req.UserID, dagResult.CIDSizes[c], quota.CheckDownloadQuota)
 		if err != nil {
 			return err
 		}
