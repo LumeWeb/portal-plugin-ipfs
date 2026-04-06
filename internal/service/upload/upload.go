@@ -101,7 +101,7 @@ func (s *UploadServiceDefault) HandleUploadWithMode(ctx context.Context, reader 
 				return UploadResult{}, fmt.Errorf("failed to reset reader for processing: %w", err)
 			}
 
-			processor, err := s.processorFactory.CreateProcessor(format, mode)
+			processor, err := s.processorFactory.CreateProcessor(format, mode, s.Context(), userId)
 			if err != nil {
 				return UploadResult{}, upload.NewProcessorError(format.String(), mode.String(), err)
 			}
