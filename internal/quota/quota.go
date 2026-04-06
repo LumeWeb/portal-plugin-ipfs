@@ -68,22 +68,22 @@ func CheckStorageQuota(cctx context.Context, ctx core.Context, userID uint, requ
 
 // EmitUploadCompleted emits an upload completed event for quota tracking
 func EmitUploadCompleted(cctx context.Context, ctx core.Context, userID *uint, uploadID uint, bytes uint64, ip string, reservationID *string, successful bool) {
-	core.FireAsync(ctx, event.EVENT_UPLOAD_COMPLETED, event.NewUploadCompletedEvent(cctx, uploadID, bytes, ip, userID, reservationID, successful))
+	core.Fire(ctx, event.EVENT_UPLOAD_COMPLETED, event.NewUploadCompletedEvent(cctx, uploadID, bytes, ip, userID, reservationID, successful))
 }
 
 // EmitDownloadCompleted emits a download completed event for quota tracking
 func EmitDownloadCompleted(cctx context.Context, ctx core.Context, userID *uint, uploadID uint, bytes uint64, ip string, reservationID *string, successful bool) {
-	core.FireAsync(ctx, event.EVENT_DOWNLOAD_COMPLETED, event.NewDownloadCompletedEvent(cctx, uploadID, bytes, ip, userID, reservationID, successful))
+	core.Fire(ctx, event.EVENT_DOWNLOAD_COMPLETED, event.NewDownloadCompletedEvent(cctx, uploadID, bytes, ip, userID, reservationID, successful))
 }
 
 // EmitStorageObjectPinned emits a storage object pinned event for quota tracking
 func EmitStorageObjectPinned(cctx context.Context, ctx core.Context, pin *models.Pin, ip string) {
-	core.FireAsync(ctx, event.EVENT_STORAGE_OBJECT_PINNED, event.NewStorageObjectPinnedEvent(cctx, pin, ip))
+	core.Fire(ctx, event.EVENT_STORAGE_OBJECT_PINNED, event.NewStorageObjectPinnedEvent(cctx, pin, ip))
 }
 
 // EmitStorageObjectUnpinned emits a storage object unpinned event for quota tracking
 func EmitStorageObjectUnpinned(cctx context.Context, ctx core.Context, pin *models.Pin, ip string) {
-	core.FireAsync(ctx, event.EVENT_STORAGE_OBJECT_UNPINNED, event.NewStorageObjectUnpinnedEvent(cctx, pin, ip))
+	core.Fire(ctx, event.EVENT_STORAGE_OBJECT_UNPINNED, event.NewStorageObjectUnpinnedEvent(cctx, pin, ip))
 }
 
 // ValidateUploadQuota checks upload quota and returns an error if exceeded
