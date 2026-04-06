@@ -230,33 +230,24 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 				return fmt.Errorf("failed to get upload size: %w", err)
 			}
 
-			// Store quota check results for reservation management
-			checkResults := &quota.QuotaCheckResults{}
-
-			// Check upload and storage quota with reservation before processing
+			// Sanity check quota without reservation before processing
 			if uploadSize > 0 {
-				// Check upload quota with reservation
-				checkResult, err := quota.CheckWithReservation(ctx, helper.Context(), "upload", *request.UserID, uploadSize, quota.CheckUploadQuota)
+				// Validate upload quota without reservation (sanity check only)
+				err = quota.ValidateUploadQuota(ctx, helper.Context(), *request.UserID, uploadSize)
 				if err != nil {
 					return err
 				}
-				checkResults.Upload = checkResult
 
-				// Check storage quota with reservation
-				checkResult, err = quota.CheckWithReservation(ctx, helper.Context(), "storage", *request.UserID, uploadSize, quota.CheckStorageQuota)
+				// Validate storage quota without reservation (sanity check only)
+				err = quota.ValidateStorageQuota(ctx, helper.Context(), *request.UserID, uploadSize)
 				if err != nil {
-					checkResults.ReleaseAll()
 					return err
 				}
-				checkResults.Storage = checkResult
 			}
 
 			// Get upload reader for processing
 			reader, err := tusHandler.UploadReader(ctx, tsReq.TUSUploadID, proto, 0)
 			if err != nil {
-				if uploadSize > 0 {
-					checkResults.ReleaseAll()
-				}
 				return fmt.Errorf("failed to get upload reader: %w", err)
 			}
 
@@ -275,21 +266,15 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 			// Detect format using IPFS plugin logic
 			uploadedFormat, err := upload.DetectFormat(reader)
 			if err != nil {
-				if uploadSize > 0 {
-					checkResults.ReleaseAll()
-				}
 				return fmt.Errorf("failed to detect upload format: %w", err)
 			}
 
-			// Create appropriate processor based on format
+		// Create appropriate processor based on format
 			var processor BlockProcessor
 			if uploadedFormat.IsUploadFormat() {
 				// CAR format
 				processor, err = NewCARBlockProcessor(reader)
 				if err != nil {
-					if uploadSize > 0 {
-						checkResults.ReleaseAll()
-					}
 					return fmt.Errorf("failed to create CAR processor: %w", err)
 				}
 			} else {
@@ -297,9 +282,6 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 				protoNode := p.(ProtoNode)
 				processor, err = createFileProcessorForTUS(reader, protoNode, helper.Logger())
 				if err != nil {
-					if uploadSize > 0 {
-						checkResults.ReleaseAll()
-					}
 					return fmt.Errorf("failed to create file processor: %w", err)
 				}
 			}
@@ -308,24 +290,23 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 			// Process the upload
 			allCids, rootCids, err := ProcessBlocks(helper.Context(), processor)
 			if err != nil {
-				if uploadSize > 0 {
-					checkResults.ReleaseAll()
-				}
 				return fmt.Errorf("failed to process upload: %w", err)
 			}
 
-			// Create reservations map for upload service
-			reservations := CreateReservationMap(allCids, checkResults.Upload)
+			// Create per-block reservations for each block
+			protoNode := p.(ProtoNode)
+			reservations, perBlockReservations, err := CreatePerBlockReservations(ctx, helper.Context(), protoNode, allCids, *request.UserID)
+			if err != nil {
+				return err
+			}
 
 			// Process all CIDs to create upload and core pin records
 			uploadSvc := core.GetService[pluginCore.UploadService](helper.Context(), pluginCore.UPLOAD_SERVICE)
 			if uploadSvc == nil {
 				helper.Logger().Error("Upload service not available")
 
-				// Release reservations on error
-				if uploadSize > 0 {
-					checkResults.ReleaseAll()
-				}
+				// Release all per-block reservations on error
+				ReleasePerBlockReservations(perBlockReservations)
 				return fmt.Errorf("upload service not available")
 			}
 
@@ -334,10 +315,8 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 
 			err = uploadSvc.ProcessUpload(ctx, allCids, *request.UserID, reservations)
 			if err != nil {
-				// Release reservations on error
-				if uploadSize > 0 {
-					checkResults.ReleaseAll()
-				}
+				// Release all per-block reservations on error
+				ReleasePerBlockReservations(perBlockReservations)
 				return fmt.Errorf("failed to process upload: %w", err)
 			}
 
