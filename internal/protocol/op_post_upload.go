@@ -42,9 +42,6 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.Execute")
 	defer span.End()
 
-	// Store quota check results for reservation management
-	checkResults := &quota.QuotaCheckResults{}
-
 	// Initialize progress tracker with manual mode for simple milestones
 	tracker, err := InitializeManualProgressTracker(h, req.ID, core.OpTypeUpload, 10)
 	if err != nil {
@@ -109,25 +106,21 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	if uploadFileSize > 0 {
 		requestedBytes := uint64(uploadFileSize)
 
-		// Check upload quota with reservation
-		checkResult, err := quota.CheckWithReservation(ctx, h.Context(), "upload", userID, requestedBytes, quota.CheckUploadQuota)
+		// Validate upload quota without reservation (sanity check only)
+		err = quota.ValidateUploadQuota(ctx, h.Context(), userID, requestedBytes)
 		if err != nil {
 			return err
 		}
-		checkResults.Upload = checkResult
 
-		// Check storage quota with reservation
-		checkResult, err = quota.CheckWithReservation(ctx, h.Context(), "storage", userID, requestedBytes, quota.CheckStorageQuota)
+		// Validate storage quota without reservation (sanity check only)
+		err = quota.ValidateStorageQuota(ctx, h.Context(), userID, requestedBytes)
 		if err != nil {
-			checkResults.ReleaseAll()
 			return err
 		}
-		checkResults.Storage = checkResult
 	}
 
 	uploadedFormat, err := upload.DetectFormat(uploadFile)
 	if err != nil {
-		checkResults.ReleaseAll()
 		return err
 	}
 
@@ -138,7 +131,6 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 
 	processor, err := h.createProcessor(uploadFile, uploadedFormat)
 	if err != nil {
-		checkResults.ReleaseAll()
 		return err
 	}
 	defer processor.Release()
@@ -150,23 +142,25 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 
 	allCids, rootCids, err := ProcessBlocks(h.Context(), processor)
 	if err != nil {
-		checkResults.ReleaseAll()
 		return fmt.Errorf("failed to process CIDs from upload: %w", err)
 	}
 
 	// Check if any root CIDs were returned
 	if len(rootCids) == 0 {
-		checkResults.ReleaseAll()
 		return fmt.Errorf("no root CIDs found during block processing")
 	}
 
-	// Create reservations map
-	reservations := CreateReservationMap(allCids, checkResults.Upload)
+	// Create per-block reservations for each block
+	proto := h.Protocol().(ProtoNode)
+	reservations, perBlockReservations, err := CreatePerBlockReservations(ctx, h.Context(), proto, allCids, userID)
+	if err != nil {
+		return err
+	}
 
 	err = h.processCIDs(ctx, allCids, userID, req.SourceIP, reservations)
 	if err != nil {
-		// Release reservations on error
-		quota.ReleaseReservations(checkResults.Upload, checkResults.Storage)
+		// Release all per-block reservations on error
+		ReleasePerBlockReservations(perBlockReservations)
 		return err
 	}
 
@@ -184,7 +178,8 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 
 	ipfsPin, err := h.createRootPin(ctx, rootCids[0], userID)
 	if err != nil {
-		quota.ReleaseReservations(checkResults.Upload, checkResults.Storage)
+		// Release all per-block reservations on error
+		ReleasePerBlockReservations(perBlockReservations)
 		return err
 	}
 
@@ -207,7 +202,8 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 
 	err = h.updateWorkflow(ctx, req.ID, rootCids, ipfsPin)
 	if err != nil {
-		quota.ReleaseReservations(checkResults.Upload, checkResults.Storage)
+		// Release all per-block reservations on error
+		ReleasePerBlockReservations(perBlockReservations)
 		return err
 	}
 
