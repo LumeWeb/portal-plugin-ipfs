@@ -11,6 +11,17 @@ import (
 	"go.lumeweb.com/portal/core"
 )
 
+// validateQuotas validates both upload and storage quotas for a file size
+func validateQuotas(ctx context.Context, portalCtx core.Context, userID uint, size uint64) error {
+	if err := quota.ValidateUploadQuota(ctx, portalCtx, userID, size); err != nil {
+		return fmt.Errorf("upload quota validation failed: %w", err)
+	}
+	if err := quota.ValidateStorageQuota(ctx, portalCtx, userID, size); err != nil {
+		return fmt.Errorf("storage quota validation failed: %w", err)
+	}
+	return nil
+}
+
 // FileProcessor implements UploadProcessor for individual files, wrapping them in CAR format
 type FileProcessor struct {
 	storage       core.StorageService
@@ -46,14 +57,8 @@ func (p *FileProcessor) Process(ctx context.Context, reader io.ReadSeekCloser) (
 	// Validate quotas using the CAR file size
 	carSize := uint64(car.Len())
 
-	// Check upload quota
-	if err := quota.ValidateUploadQuota(ctx, p.portalCtx, p.userID, carSize); err != nil {
-		return cid.Cid{}, "", fmt.Errorf("upload quota validation failed: %w", err)
-	}
-
-	// Check storage quota
-	if err := quota.ValidateStorageQuota(ctx, p.portalCtx, p.userID, carSize); err != nil {
-		return cid.Cid{}, "", fmt.Errorf("storage quota validation failed: %w", err)
+	if err := validateQuotas(ctx, p.portalCtx, p.userID, carSize); err != nil {
+		return cid.Cid{}, "", err
 	}
 
 	uploadID, err := p.storageHelper.StoreFile(ctx, NewUniversalReader(car), int64(car.Len()))
@@ -94,14 +99,8 @@ func (p *CARProcessor) Process(ctx context.Context, reader io.ReadSeekCloser) (c
 		return cid.Undef, "", err
 	}
 
-	// Check upload quota
-	if err := quota.ValidateUploadQuota(ctx, p.portalCtx, p.userID, uint64(size)); err != nil {
-		return cid.Undef, "", fmt.Errorf("upload quota validation failed: %w", err)
-	}
-
-	// Check storage quota
-	if err := quota.ValidateStorageQuota(ctx, p.portalCtx, p.userID, uint64(size)); err != nil {
-		return cid.Undef, "", fmt.Errorf("storage quota validation failed: %w", err)
+	if err := validateQuotas(ctx, p.portalCtx, p.userID, uint64(size)); err != nil {
+		return cid.Undef, "", err
 	}
 
 	roots, err := GetCarRoots(reader, false)
@@ -188,14 +187,8 @@ func (p *ArchiveProcessor) Process(ctx context.Context, reader io.ReadSeekCloser
 	// Validate quotas using the CAR file size
 	carSize := uint64(car.Len())
 
-	// Check upload quota
-	if err := quota.ValidateUploadQuota(ctx, p.portalCtx, p.userID, carSize); err != nil {
-		return cid.Cid{}, "", fmt.Errorf("upload quota validation failed: %w", err)
-	}
-
-	// Check storage quota
-	if err := quota.ValidateStorageQuota(ctx, p.portalCtx, p.userID, carSize); err != nil {
-		return cid.Cid{}, "", fmt.Errorf("storage quota validation failed: %w", err)
+	if err := validateQuotas(ctx, p.portalCtx, p.userID, carSize); err != nil {
+		return cid.Cid{}, "", err
 	}
 
 	uploadID, err := p.storageHelper.StoreFile(ctx, NewUniversalReader(car), int64(car.Len()))
