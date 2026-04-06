@@ -231,9 +231,22 @@ func CheckWithReservation(cctx context.Context, ctx core.Context, checkType stri
 		if checkResult.Details.Limit != nil {
 			quotaLimit = *checkResult.Details.Limit
 		}
+		
+		var quotaErr error
+		switch checkType {
+		case "upload":
+			quotaErr = fmt.Errorf("%w (current: %d bytes, requested: %d bytes, limit: %d bytes)", core.ErrUploadQuotaExceeded, currentUsage, requestedBytes, quotaLimit)
+		case "storage":
+			quotaErr = fmt.Errorf("%w (current: %d bytes, requested: %d bytes, limit: %d bytes)", core.ErrStorageQuotaExceeded, currentUsage, requestedBytes, quotaLimit)
+		case "download":
+			quotaErr = fmt.Errorf("%w (current: %d bytes, requested: %d bytes, limit: %d bytes)", core.ErrDownloadQuotaExceeded, currentUsage, requestedBytes, quotaLimit)
+		default:
+			quotaErr = fmt.Errorf("%s quota exceeded: current usage %d bytes + requested %d bytes would exceed quota limit of %d bytes", checkType, currentUsage, requestedBytes, quotaLimit)
+		}
+		
 		ctx.Logger().Warn("Quota exceeded", zap.String("check_type", checkType), zap.Uint("user_id", userID), zap.Uint64("requested_bytes", requestedBytes), zap.Uint64("current_usage", currentUsage), zap.Uint64("quota_limit", quotaLimit))
 		checkResult.ReleaseReservation()
-		return nil, fmt.Errorf("%s quota exceeded: current usage %d bytes + requested %d bytes would exceed quota limit of %d bytes", checkType, currentUsage, requestedBytes, quotaLimit)
+		return nil, quotaErr
 	}
 	return checkResult, nil
 }
