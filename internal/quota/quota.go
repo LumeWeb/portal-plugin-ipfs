@@ -4,12 +4,38 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ipfs/go-cid"
 	quotaCore "go.lumeweb.com/portal-plugin-quota/core"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/event"
 	"go.uber.org/zap"
 )
+
+// BlockReservations holds both upload and storage reservations for a block
+type BlockReservations struct {
+	UploadReservation  *quotaCore.QuotaCheckResult
+	StorageReservation *quotaCore.QuotaCheckResult
+}
+
+// ReleaseAll releases both upload and storage reservations
+func (br *BlockReservations) ReleaseAll() {
+	if br.UploadReservation != nil {
+		br.UploadReservation.ReleaseReservation()
+	}
+	if br.StorageReservation != nil {
+		br.StorageReservation.ReleaseReservation()
+	}
+}
+
+// ReleaseBlockReservationsMap releases all reservations in a BlockReservations map
+func ReleaseBlockReservationsMap(reservations map[cid.Cid]*BlockReservations) {
+	for _, blockRes := range reservations {
+		if blockRes != nil {
+			blockRes.ReleaseAll()
+		}
+	}
+}
 
 // WithQuotaService executes a function with quota service if available
 func WithQuotaService(cctx context.Context, ctx core.Context, fn func(quotaCore.QuotaService, context.Context) error) error {
@@ -77,8 +103,8 @@ func EmitDownloadCompleted(cctx context.Context, ctx core.Context, userID *uint,
 }
 
 // EmitStorageObjectPinned emits a storage object pinned event for quota tracking
-func EmitStorageObjectPinned(cctx context.Context, ctx core.Context, pin *models.Pin, ip string) {
-	core.Fire(ctx, event.EVENT_STORAGE_OBJECT_PINNED, event.NewStorageObjectPinnedEvent(cctx, pin, ip))
+func EmitStorageObjectPinned(cctx context.Context, ctx core.Context, pin *models.Pin, ip string, reservationID *string) {
+	core.Fire(ctx, event.EVENT_STORAGE_OBJECT_PINNED, event.NewStorageObjectPinnedEvent(cctx, pin, ip, reservationID))
 }
 
 // EmitStorageObjectUnpinned emits a storage object unpinned event for quota tracking

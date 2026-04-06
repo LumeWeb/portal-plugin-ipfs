@@ -14,7 +14,6 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
-	quotaCore "go.lumeweb.com/portal-plugin-quota/core"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.uber.org/zap"
@@ -122,7 +121,7 @@ func (s *UploadServiceDefault) HandleUploadWithMode(ctx context.Context, reader 
 	return result.CID, result.UploadID, err
 }
 
-func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid, userId uint, reservations map[cid.Cid]*quotaCore.QuotaCheckResult) error {
+func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid, userId uint, reservations map[cid.Cid]*quota.BlockReservations) error {
 	ctx, span := core.TraceMethod(ctx, "UploadServiceDefault.ProcessUpload")
 	defer span.End()
 
@@ -177,20 +176,29 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 					return fmt.Errorf("failed to create pin record for CID %s: %w", c.String(), err)
 				}
 
+				// Get reservation IDs for this CID
+				var uploadResID *string
+				var storageResID *string
+				if reservations != nil {
+					if blockRes, exists := reservations[c]; exists && blockRes != nil {
+						// Extract upload reservation ID
+						if blockRes.UploadReservation != nil && blockRes.UploadReservation.Reservation != nil {
+							uploadUUID := blockRes.UploadReservation.Reservation.UUID()
+							uploadResID = &uploadUUID
+						}
+						// Extract storage reservation ID
+						if blockRes.StorageReservation != nil && blockRes.StorageReservation.Reservation != nil {
+							storageUUID := blockRes.StorageReservation.Reservation.UUID()
+							storageResID = &storageUUID
+						}
+					}
+				}
+
 				// Emit storage object pinned event for quota tracking
 				if clientIP == "" {
 					s.Context().Logger().Warn("Client IP not set in context for quota tracking", zap.String("cid", c.String()))
 				}
-				quota.EmitStorageObjectPinned(core.DetachContext(ctx), s.Context(), createdPin, clientIP)
-
-				// Get reservation ID for this CID
-				var uploadResID *string
-				if reservations != nil {
-					if checkResult, exists := reservations[c]; exists && checkResult != nil && checkResult.Reservation != nil {
-						uuid := checkResult.Reservation.UUID()
-						uploadResID = &uuid
-					}
-				}
+				quota.EmitStorageObjectPinned(core.DetachContext(ctx), s.Context(), createdPin, clientIP, storageResID)
 
 				// Emit upload completion event for quota tracking
 				quota.EmitUploadCompleted(core.DetachContext(ctx), s.Context(), &userId, uploadMeta.ID, size, clientIP, uploadResID, true)
