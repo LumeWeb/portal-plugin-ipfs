@@ -15,7 +15,6 @@ import (
 	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
-	quotaCore "go.lumeweb.com/portal-plugin-quota/core"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.uber.org/zap"
@@ -152,7 +151,7 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 
 	// Create per-block reservations for each block
 	proto := h.Protocol().(ProtoNode)
-	reservations, perBlockReservations, err := CreatePerBlockReservations(ctx, h.Context(), proto, allCids, userID)
+	reservations, err := CreatePerBlockReservations(ctx, h.Context(), proto, allCids, userID)
 	if err != nil {
 		return err
 	}
@@ -160,7 +159,7 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	err = h.processCIDs(ctx, allCids, userID, req.SourceIP, reservations)
 	if err != nil {
 		// Release all per-block reservations on error
-		ReleasePerBlockReservations(perBlockReservations)
+		quota.ReleaseBlockReservationsMap(reservations)
 		return err
 	}
 
@@ -179,7 +178,7 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	ipfsPin, err := h.createRootPin(ctx, rootCids[0], userID)
 	if err != nil {
 		// Release all per-block reservations on error
-		ReleasePerBlockReservations(perBlockReservations)
+		quota.ReleaseBlockReservationsMap(reservations)
 		return err
 	}
 
@@ -203,7 +202,7 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	err = h.updateWorkflow(ctx, req.ID, rootCids, ipfsPin)
 	if err != nil {
 		// Release all per-block reservations on error
-		ReleasePerBlockReservations(perBlockReservations)
+		quota.ReleaseBlockReservationsMap(reservations)
 		return err
 	}
 
@@ -320,7 +319,7 @@ func (h *PostUploadOperationHandler) createFileProcessor(uploadFile io.ReadClose
 }
 
 // processCIDs processes all CIDs and creates upload records
-func (h *PostUploadOperationHandler) processCIDs(ctx context.Context, allCids []cid.Cid, userID uint, sourceIP string, reservations map[cid.Cid]*quotaCore.QuotaCheckResult) error {
+func (h *PostUploadOperationHandler) processCIDs(ctx context.Context, allCids []cid.Cid, userID uint, sourceIP string, reservations map[cid.Cid]*quota.BlockReservations) error {
 	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.processCIDs")
 	defer span.End()
 

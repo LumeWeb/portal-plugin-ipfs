@@ -295,7 +295,7 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 
 			// Create per-block reservations for each block
 			protoNode := p.(ProtoNode)
-			reservations, perBlockReservations, err := CreatePerBlockReservations(ctx, helper.Context(), protoNode, allCids, *request.UserID)
+			reservations, err := CreatePerBlockReservations(ctx, helper.Context(), protoNode, allCids, *request.UserID)
 			if err != nil {
 				return err
 			}
@@ -306,7 +306,7 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 				helper.Logger().Error("Upload service not available")
 
 				// Release all per-block reservations on error
-				ReleasePerBlockReservations(perBlockReservations)
+				quota.ReleaseBlockReservationsMap(reservations)
 				return fmt.Errorf("upload service not available")
 			}
 
@@ -316,7 +316,7 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 			err = uploadSvc.ProcessUpload(ctx, allCids, *request.UserID, reservations)
 			if err != nil {
 				// Release all per-block reservations on error
-				ReleasePerBlockReservations(perBlockReservations)
+				quota.ReleaseBlockReservationsMap(reservations)
 				return fmt.Errorf("failed to process upload: %w", err)
 			}
 
