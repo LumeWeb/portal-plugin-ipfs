@@ -9,6 +9,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
 	"github.com/mholt/archives"
+	"go.lumeweb.com/portal/core"
 )
 
 var cidUndefSlice = []cid.Cid{cid.Undef}
@@ -91,7 +92,7 @@ type UploadProcessor interface {
 // UploadProcessorFactory creates processors based on format and mode
 type UploadProcessorFactory interface {
 	// CreateProcessor returns a processor suitable for the specified format
-	CreateProcessor(format Format, mode ArchiveMode) (UploadProcessor, error)
+	CreateProcessor(format Format, mode ArchiveMode, portalCtx core.Context, userID uint) (UploadProcessor, error)
 }
 
 // UniversalReader wraps an io.Reader to make it seekable by buffering its content

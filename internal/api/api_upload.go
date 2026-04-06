@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -13,6 +14,30 @@ import (
 	uploadpkg "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 )
+
+// mapUploadError maps various error types to appropriate IPFS API errors
+// This handles core quota errors, upload-specific errors, and provides fallbacks
+func mapUploadError(err error) *IPFSError {
+	if err == nil {
+		return nil
+	}
+
+	// Check for core quota errors first using errors.Is for proper unwrapping
+	if errors.Is(err, core.ErrUploadQuotaExceeded) {
+		return NewError(ErrKeyUploadQuotaExceeded, err)
+	}
+	if errors.Is(err, core.ErrStorageQuotaExceeded) {
+		return NewError(ErrKeyStorageQuotaExceeded, err)
+	}
+
+	// Check for upload package errors
+	if uploadErr, ok := uploadpkg.AsUploadError(err); ok {
+		return NewError(pluginErrors.MapUploadErrorType(uploadErr.Type), uploadErr)
+	}
+
+	// Fallback to generic error for unexpected error types
+	return NewError(ErrKeyFileUploadFailed, err)
+}
 
 func (a *API) GetTusHandler() core.TusHandler {
 	return a.tus
@@ -47,16 +72,7 @@ func (a *API) handleUpload(c echo.Context) error {
 	_cid, uploadId, err := a.uploadService.HandleUploadWithMode(ctx.Request().Context(), upl.File, user, archiveMode)
 	if err != nil {
 		// Handle specific error types with appropriate HTTP status codes
-		var apiErr *IPFSError
-
-		// Check if it's an UploadError and extract the error type using the helper function
-		if uploadErr, ok := uploadpkg.AsUploadError(err); ok {
-			// Map upload error type to API error type using the helper function
-			apiErr = NewError(pluginErrors.MapUploadErrorType(uploadErr.Type), uploadErr)
-		} else {
-			// Fallback to generic error for unexpected error types
-			apiErr = NewError(ErrKeyFileUploadFailed, err)
-		}
+		apiErr := mapUploadError(err)
 
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
 		return nil

@@ -6,9 +6,21 @@ import (
 	"io"
 
 	"github.com/ipfs/go-cid"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
 	"go.lumeweb.com/portal/core"
 )
+
+// validateQuotas validates both upload and storage quotas for a file size
+func validateQuotas(ctx context.Context, portalCtx core.Context, userID uint, size uint64) error {
+	if err := quota.ValidateUploadQuota(ctx, portalCtx, userID, size); err != nil {
+		return fmt.Errorf("upload quota validation failed: %w", err)
+	}
+	if err := quota.ValidateStorageQuota(ctx, portalCtx, userID, size); err != nil {
+		return fmt.Errorf("storage quota validation failed: %w", err)
+	}
+	return nil
+}
 
 // FileProcessor implements UploadProcessor for individual files, wrapping them in CAR format
 type FileProcessor struct {
@@ -16,15 +28,19 @@ type FileProcessor struct {
 	ipfs          core.Protocol
 	carGenerator  CARGenerator
 	storageHelper *common.StorageHelper
+	portalCtx     core.Context
+	userID        uint
 }
 
 // NewFileProcessor creates a new file processor
-func NewFileProcessor(storage core.StorageService, ipfs core.Protocol, carGenerator CARGenerator) *FileProcessor {
+func NewFileProcessor(storage core.StorageService, ipfs core.Protocol, carGenerator CARGenerator, portalCtx core.Context, userID uint) *FileProcessor {
 	return &FileProcessor{
 		storage:       storage,
 		ipfs:          ipfs,
 		carGenerator:  carGenerator,
 		storageHelper: common.NewStorageHelper(storage, ipfs),
+		portalCtx:     portalCtx,
+		userID:        userID,
 	}
 }
 
@@ -35,6 +51,13 @@ func (p *FileProcessor) Process(ctx context.Context, reader io.ReadSeekCloser) (
 
 	car, c, err := p.carGenerator.FileToCAR(ctx, reader)
 	if err != nil {
+		return cid.Cid{}, "", err
+	}
+
+	// Validate quotas using the CAR file size
+	carSize := uint64(car.Len())
+
+	if err := validateQuotas(ctx, p.portalCtx, p.userID, carSize); err != nil {
 		return cid.Cid{}, "", err
 	}
 
@@ -51,14 +74,18 @@ type CARProcessor struct {
 	storage       core.StorageService
 	ipfs          core.Protocol
 	storageHelper *common.StorageHelper
+	portalCtx     core.Context
+	userID        uint
 }
 
 // NewCARProcessor creates a new CAR processor
-func NewCARProcessor(storage core.StorageService, ipfs core.Protocol) *CARProcessor {
+func NewCARProcessor(storage core.StorageService, ipfs core.Protocol, portalCtx core.Context, userID uint) *CARProcessor {
 	return &CARProcessor{
 		storage:       storage,
 		ipfs:          ipfs,
 		storageHelper: common.NewStorageHelper(storage, ipfs),
+		portalCtx:     portalCtx,
+		userID:        userID,
 	}
 }
 
@@ -69,6 +96,10 @@ func (p *CARProcessor) Process(ctx context.Context, reader io.ReadSeekCloser) (c
 
 	size, err := common.PrepareReader(reader)
 	if err != nil {
+		return cid.Undef, "", err
+	}
+
+	if err := validateQuotas(ctx, p.portalCtx, p.userID, uint64(size)); err != nil {
 		return cid.Undef, "", err
 	}
 
@@ -117,10 +148,12 @@ type ArchiveProcessor struct {
 	carGenerator  CARGenerator
 	storageHelper *common.StorageHelper
 	logger        *core.Logger
+	portalCtx     core.Context
+	userID        uint
 }
 
 // NewArchiveProcessor creates a new archive processor
-func NewArchiveProcessor(format Format, storage core.StorageService, ipfs core.Protocol, carGenerator CARGenerator, logger *core.Logger) *ArchiveProcessor {
+func NewArchiveProcessor(format Format, storage core.StorageService, ipfs core.Protocol, carGenerator CARGenerator, logger *core.Logger, portalCtx core.Context, userID uint) *ArchiveProcessor {
 	return &ArchiveProcessor{
 		format:        format,
 		storage:       storage,
@@ -128,6 +161,8 @@ func NewArchiveProcessor(format Format, storage core.StorageService, ipfs core.P
 		carGenerator:  carGenerator,
 		storageHelper: common.NewStorageHelper(storage, ipfs),
 		logger:        logger,
+		portalCtx:     portalCtx,
+		userID:        userID,
 	}
 }
 
@@ -146,6 +181,13 @@ func (p *ArchiveProcessor) Process(ctx context.Context, reader io.ReadSeekCloser
 
 	car, c, err := p.carGenerator.ArchiveToCAR(ctx, extractor)
 	if err != nil {
+		return cid.Cid{}, "", err
+	}
+
+	// Validate quotas using the CAR file size
+	carSize := uint64(car.Len())
+
+	if err := validateQuotas(ctx, p.portalCtx, p.userID, carSize); err != nil {
 		return cid.Cid{}, "", err
 	}
 
@@ -174,17 +216,17 @@ func NewUploadProcessorFactory(logger *core.Logger, storage core.StorageService,
 }
 
 // CreateProcessor returns the appropriate processor based on file format
-func (f *DefaultUploadProcessorFactory) CreateProcessor(format Format, mode ArchiveMode) (UploadProcessor, error) {
+func (f *DefaultUploadProcessorFactory) CreateProcessor(format Format, mode ArchiveMode, portalCtx core.Context, userID uint) (UploadProcessor, error) {
 	switch format {
 	case FormatCAR:
-		return NewCARProcessor(f.storage, f.ipfs), nil
+		return NewCARProcessor(f.storage, f.ipfs, portalCtx, userID), nil
 	default:
 		gen := NewCARGeneratorWithDefaults(f.logger)
 
 		if format.IsArchiveFormat() && mode == ArchiveConvert {
-			return NewArchiveProcessor(format, f.storage, f.ipfs, gen, f.logger), nil
+			return NewArchiveProcessor(format, f.storage, f.ipfs, gen, f.logger, portalCtx, userID), nil
 		}
 		// For non-archive formats, or ArchivePreserve, use FileProcessor which wraps files in CAR
-		return NewFileProcessor(f.storage, f.ipfs, gen), nil
+		return NewFileProcessor(f.storage, f.ipfs, gen, portalCtx, userID), nil
 	}
 }

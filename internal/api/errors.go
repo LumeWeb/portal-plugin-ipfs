@@ -12,7 +12,7 @@ import (
 
 // Error keys
 const (
-	Namespace = "ipfs-plugin-api"
+	Namespace = "ipfs"
 
 	// Re-export error type constants from internal/errors
 	ErrKeyUnsupportedFormat = errors.ErrKeyUnsupportedFormat
@@ -35,22 +35,22 @@ const (
 	ErrKeyStorageQuotaExceeded  core.ErrorType = "STORAGE_QUOTA_EXCEEDED"
 	ErrKeyDownloadQuotaExceeded core.ErrorType = "DOWNLOAD_QUOTA_EXCEEDED"
 	ErrKeyInvalidRequest        core.ErrorType = "INVALID_REQUEST"
-	ErrKeyInvalidIdentifier    core.ErrorType = "INVALID_IDENTIFIER"
+	ErrKeyInvalidIdentifier     core.ErrorType = "INVALID_IDENTIFIER"
 	ErrKeyPermissionDenied      core.ErrorType = "PERMISSION_DENIED"
 	ErrKeyDeleteFailed          core.ErrorType = "DELETE_FAILED"
 	ErrKeyUpdateFailed          core.ErrorType = "UPDATE_FAILED"
 
 	// DNS error types
-	ErrKeyInvalidRecordType      core.ErrorType = "INVALID_RECORD_TYPE"
-	ErrKeyRecordNotFound         core.ErrorType = "RECORD_NOT_FOUND"
-	ErrKeyZoneNotFound           core.ErrorType = "ZONE_NOT_FOUND"
-	ErrKeyInvalidDomainFormat    core.ErrorType = "INVALID_DOMAIN_FORMAT"
-	ErrKeyDuplicateRecord        core.ErrorType = "DUPLICATE_RECORD"
-	ErrKeyValidationFailed       core.ErrorType = "VALIDATION_FAILED"
+	ErrKeyInvalidRecordType   core.ErrorType = "INVALID_RECORD_TYPE"
+	ErrKeyRecordNotFound      core.ErrorType = "RECORD_NOT_FOUND"
+	ErrKeyZoneNotFound        core.ErrorType = "ZONE_NOT_FOUND"
+	ErrKeyInvalidDomainFormat core.ErrorType = "INVALID_DOMAIN_FORMAT"
+	ErrKeyDuplicateRecord     core.ErrorType = "DUPLICATE_RECORD"
+	ErrKeyValidationFailed    core.ErrorType = "VALIDATION_FAILED"
 
 	// Website validation error types
-	ErrKeyInvalidCID            core.ErrorType = "INVALID_CID"
-	ErrKeyInvalidTarget         core.ErrorType = "INVALID_TARGET"
+	ErrKeyInvalidCID    core.ErrorType = "INVALID_CID"
+	ErrKeyInvalidTarget core.ErrorType = "INVALID_TARGET"
 )
 
 var _ router.ResponseError = (*IPFSError)(nil)
