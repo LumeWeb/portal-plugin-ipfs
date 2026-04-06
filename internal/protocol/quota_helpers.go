@@ -92,7 +92,7 @@ func CreatePerBlockReservationsWithSizes(ctx context.Context, coreCtx core.Conte
 		}
 
 		// Create upload quota reservation for this specific block
-		uploadReservation, err := quota.CheckWithReservation(ctx, coreCtx, "upload", userID, blockSize, quota.CheckUploadQuota)
+		uploadReservation, err := quota.CheckWithReservation(ctx, coreCtx, quota.CheckTypeUpload, userID, blockSize, quota.CheckUploadQuota)
 		if err != nil {
 			// Release all previously created reservations
 			quota.ReleaseBlockReservationsMap(reservations)
@@ -100,7 +100,7 @@ func CreatePerBlockReservationsWithSizes(ctx context.Context, coreCtx core.Conte
 		}
 
 		// Create storage quota reservation for this specific block
-		storageReservation, err := quota.CheckWithReservation(ctx, coreCtx, "storage", userID, blockSize, quota.CheckStorageQuota)
+		storageReservation, err := quota.CheckWithReservation(ctx, coreCtx, quota.CheckTypeStorage, userID, blockSize, quota.CheckStorageQuota)
 		if err != nil {
 			// Release upload reservation before returning error
 			uploadReservation.ReleaseReservation()

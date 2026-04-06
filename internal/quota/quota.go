@@ -12,6 +12,20 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	CheckTypeUpload   = "upload"
+	CheckTypeStorage  = "storage"
+	CheckTypeDownload = "download"
+)
+
+const (
+	checkFailedTemplate         = "%s usage check failed: %w"
+	uploadUsageErrTemplate      = "%w (current: %d bytes, requested: %d bytes, maximum: %d bytes)"
+	storageUsageErrTemplate     = "%w (current: %d bytes, requested: %d bytes, maximum: %d bytes)"
+	downloadUsageErrTemplate    = "%w (current: %d bytes, requested: %d bytes, maximum: %d bytes)"
+	defaultUsageErrTemplate     = "%s usage over capacity: current %d bytes + requested %d bytes would exceed threshold of %d bytes"
+)
+
 // BlockReservations holds both upload and storage reservations for a block
 type BlockReservations struct {
 	UploadReservation  *quotaCore.QuotaCheckResult
@@ -223,17 +237,30 @@ func CheckWithReservation(cctx context.Context, ctx core.Context, checkType stri
 	checkResult, err := checkFunc(cctx, ctx, userID, requestedBytes, quotaCore.WithCreateReservation())
 	if err != nil {
 		ctx.Logger().Warn("Failed to check quota", zap.String("check_type", checkType), zap.Uint("user_id", userID), zap.Uint64("requested_bytes", requestedBytes), zap.Error(err))
-		return nil, fmt.Errorf("%s quota check failed: %w", checkType, err)
+		return nil, fmt.Errorf(checkFailedTemplate, checkType, err)
 	}
 	if checkResult != nil && !checkResult.Allowed {
 		currentUsage := checkResult.Details.CurrentUsage
-		quotaLimit := uint64(0)
+		usageLimit := uint64(0)
 		if checkResult.Details.Limit != nil {
-			quotaLimit = *checkResult.Details.Limit
+			usageLimit = *checkResult.Details.Limit
 		}
-		ctx.Logger().Warn("Quota exceeded", zap.String("check_type", checkType), zap.Uint("user_id", userID), zap.Uint64("requested_bytes", requestedBytes), zap.Uint64("current_usage", currentUsage), zap.Uint64("quota_limit", quotaLimit))
+		
+		var usageErr error
+		switch checkType {
+		case CheckTypeUpload:
+			usageErr = fmt.Errorf(uploadUsageErrTemplate, core.ErrUploadQuotaExceeded, currentUsage, requestedBytes, usageLimit)
+		case CheckTypeStorage:
+			usageErr = fmt.Errorf(storageUsageErrTemplate, core.ErrStorageQuotaExceeded, currentUsage, requestedBytes, usageLimit)
+		case CheckTypeDownload:
+			usageErr = fmt.Errorf(downloadUsageErrTemplate, core.ErrDownloadQuotaExceeded, currentUsage, requestedBytes, usageLimit)
+		default:
+			usageErr = fmt.Errorf(defaultUsageErrTemplate, checkType, currentUsage, requestedBytes, usageLimit)
+		}
+		
+		ctx.Logger().Warn("Quota exceeded", zap.String("check_type", checkType), zap.Uint("user_id", userID), zap.Uint64("requested_bytes", requestedBytes), zap.Uint64("current_usage", currentUsage), zap.Uint64("usage_limit", usageLimit))
 		checkResult.ReleaseReservation()
-		return nil, fmt.Errorf("%s quota exceeded: current usage %d bytes + requested %d bytes would exceed quota limit of %d bytes", checkType, currentUsage, requestedBytes, quotaLimit)
+		return nil, usageErr
 	}
 	return checkResult, nil
 }
