@@ -731,16 +731,16 @@ func ExtractNodeMetadata(clogger *core.Logger, block pluginCore.PinnedBlock) (*p
 
 	switch analyzedNode.UnixFSType {
 	case unixfs.TFile:
-		metadata.Type = 2
+		metadata.Type = pluginCore.UnixFSTypeFile.ToUint8()
 		logger.Debug("Processing UnixFS file", zap.Stringer("cid", block.Cid))
 	case unixfs.TDirectory:
-		metadata.Type = 1
+		metadata.Type = pluginCore.UnixFSTypeDirectory.ToUint8()
 		logger.Debug("Processing UnixFS directory", zap.Stringer("cid", block.Cid))
 	case unixfs.TSymlink:
-		metadata.Type = 4
+		metadata.Type = pluginCore.UnixFSTypeSymlink.ToUint8()
 		logger.Debug("Processing UnixFS symlink", zap.Stringer("cid", block.Cid))
 	case unixfs.THAMTShard:
-		metadata.Type = 5
+		metadata.Type = pluginCore.UnixFSTypeHAMTShard.ToUint8()
 		logger.Debug("Processing UnixFS HAMT shard", zap.Stringer("cid", block.Cid))
 	default:
 		logger.Debug("Unsupported UnixFS type", zap.Stringer("cid", block.Cid), zap.String("type", analyzedNode.UnixFSType.String()))
