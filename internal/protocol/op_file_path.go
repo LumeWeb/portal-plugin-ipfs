@@ -313,7 +313,7 @@ func (h *FilePathOperationHandler) createOrphanEntry(ctx context.Context, fileMa
 	if unixfsMeta != nil {
 		filePath.Size = unixfsMeta.BlockSize
 		filePath.Type = unixfsMeta.Type
-		filePath.IsDirectory = unixfsMeta.Type == 1 // Type 1 = directory
+		filePath.IsDirectory = unixfsMeta.Type == pluginCore.UnixFSTypeDirectory.ToUint8()
 		// Use name from metadata if available
 		if unixfsMeta.Name != "" {
 			filePath.Name = unixfsMeta.Name
@@ -428,7 +428,7 @@ func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fi
 		Name:        nodeName,
 		Type:        currentNodeMeta.Type,
 		Size:        int64(currentNodeMeta.BlockSize), // Start with just this block's size
-		IsDirectory: currentNodeMeta.Type == 1,        // Type 1 = directory
+		IsDirectory: currentNodeMeta.Type == pluginCore.UnixFSTypeDirectory.ToUint8(),
 		IsOrphan:    isOrphan,
 		ParentPath:  effectiveParentPath,
 		Depth:       depth,
@@ -460,7 +460,7 @@ func (h *FilePathOperationHandler) ComputePathsRecursive(ctx context.Context, fi
 		zap.Uint64("size", uint64(currentNodeMeta.BlockSize)))
 
 	// If this is a directory and has children, process them recursively
-	if currentNodeMeta.Type == 1 && len(currentNodeMeta.ChildCID) > 0 {
+	if currentNodeMeta.Type == pluginCore.UnixFSTypeDirectory.ToUint8() && len(currentNodeMeta.ChildCID) > 0 {
 		blockSvc := core.GetService[pluginCore.BlockService](h.Context(), pluginCore.BLOCK_SERVICE)
 
 		for _, childCID := range currentNodeMeta.ChildCID {

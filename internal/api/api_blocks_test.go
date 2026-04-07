@@ -39,8 +39,9 @@ func TestAPI_handleGetBlockMeta(t *testing.T) {
 
 		assert.NotNil(t, response)
 		assert.IsType(t, "", response.Name)
-		assert.IsType(t, uint8(0), response.Type)
-		assert.IsType(t, int64(0), response.BlockSize)
+		assert.IsType(t, dto.UnixFSType(0), response.Type)
+		assert.IsType(t, uint64(0), response.BlockSize)
+		assert.IsType(t, int64(0), response.UnixFSSize)
 		assert.IsType(t, []string{}, response.ChildCID)
 		assert.True(t, len(response.ChildCID) > 0, "ChildCID should not be empty")
 	}, TestOptions)
@@ -64,8 +65,9 @@ func TestAPI_handleGetBlockMetaBatch(t *testing.T) {
 			assert.NotEmpty(t, cidKey)
 			assert.NotNil(t, meta)
 			assert.IsType(t, "", meta.Name)
-			assert.IsType(t, uint8(0), meta.Type)
-			assert.IsType(t, int64(0), meta.BlockSize)
+			assert.IsType(t, dto.UnixFSType(0), meta.Type)
+			assert.IsType(t, uint64(0), meta.BlockSize)
+			assert.IsType(t, int64(0), meta.UnixFSSize)
 			assert.IsType(t, []string{}, meta.ChildCID)
 			assert.True(t, len(meta.ChildCID) > 0, "ChildCID should not be empty")
 		}
