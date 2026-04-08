@@ -44,7 +44,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tus/tusd/v2 v2.9.2
 	go.lumeweb.com/httputil v0.5.4
-	go.lumeweb.com/portal v0.4.2-0.20260406190835-710cea3770e5
+	go.lumeweb.com/portal v0.4.2-0.20260408000333-7be4cc50ab65
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20260312042836-d9dfa043a80d
@@ -98,7 +98,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.13 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.21 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21 // indirect
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.98.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.9 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.15 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.19 // indirect
