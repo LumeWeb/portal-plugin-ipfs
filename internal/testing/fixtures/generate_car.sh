@@ -12,9 +12,9 @@ OUTPUT_DIR="$SCRIPT_DIR/cars"
 # ============================================
 find_ipfs_content_fixtures() {
     local current_dir="$1"
-    const max_depth=10
-    const ipfs_content_module="go.lumeweb.com/ipfs-content"
-    const test_data_dir="internal/testing/fixtures"
+    local max_depth=10
+    local ipfs_content_module="go.lumeweb.com/ipfs-content"
+    local test_data_dir="internal/testing/fixtures"
 
     # Approach 1: Try go list first (fastest method)
     local mod_dir
@@ -79,7 +79,6 @@ find_ipfs_content_fixtures() {
 FIXTURES_DIR=$(find_ipfs_content_fixtures "$SCRIPT_DIR")
 
 if [ $? -ne 0 ]; then
-    echo "FATAL: Fixtures discovery failed" >&2
     exit 1
 fi
 

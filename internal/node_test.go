@@ -50,7 +50,7 @@ func loadInfoFromFile(t *testing.T, filename string) InfoFile {
 	t.Helper()
 	// Change .info to .info.json
 	jsonFile := strings.ReplaceAll(filename, ".info", ".info.json")
-	data, err := os.ReadFile(filepath.Join(testDataDir, jsonFile))
+	data, err := os.ReadFile(filepath.Join(finalDataDir, jsonFile))
 	require.NoError(t, err)
 
 	var info InfoFile
