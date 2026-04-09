@@ -13,10 +13,11 @@ import (
 	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
+	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.uber.org/zap"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
 )
 
 var _ pluginCore.UploadService = (*UploadServiceDefault)(nil)
@@ -35,7 +36,7 @@ type UploadServiceDefault struct {
 	storage    core.StorageService
 	ipfs       protocol.ProtoNode
 
-	processorFactory upload.UploadProcessorFactory
+	processorFactory pluginUpload.UploadProcessorFactory
 }
 
 func NewUploadService() (core.Service, []core.ContextBuilderOption, error) {
@@ -50,7 +51,7 @@ func NewUploadService() (core.Service, []core.ContextBuilderOption, error) {
 			_service.ipfs = protoInterface.(protocol.ProtoNode)
 
 			// Create processor factory
-			_service.processorFactory = upload.NewUploadProcessorFactory(ctx.Logger(), _service.storage, _service.ipfs)
+			_service.processorFactory = pluginUpload.NewUploadProcessorFactory(ctx.Logger(), _service.storage, _service.ipfs)
 
 			return nil
 		}),
@@ -65,19 +66,19 @@ func (s *UploadServiceDefault) HandleUpload(ctx context.Context, reader io.ReadS
 		HandleUploadDuration.WithLabelValues(),
 		HandleUploadTotal.WithLabelValues(LabelStatusError),
 		func() (UploadResult, error) {
-			cid, uploadID, err := s.HandleUploadWithMode(ctx, reader, userId, upload.ArchiveConvert)
+			cid, uploadID, err := s.HandleUploadWithMode(ctx, reader, userId, pluginUpload.ArchiveConvert)
 			return UploadResult{CID: cid, UploadID: uploadID}, err
 		},
 	)
 	return result.CID, result.UploadID, err
 }
 
-func (s *UploadServiceDefault) HandleUploadWithMode(ctx context.Context, reader io.ReadSeekCloser, userId uint, mode upload.ArchiveMode) (cid.Cid, string, error) {
+func (s *UploadServiceDefault) HandleUploadWithMode(ctx context.Context, reader io.ReadSeekCloser, userId uint, mode pluginUpload.ArchiveMode) (cid.Cid, string, error) {
 	ctx, span := core.TraceMethod(ctx, "UploadServiceDefault.HandleUploadWithMode")
 	defer span.End()
 
 	modeLabel := LabelModeConvert
-	if mode == upload.ArchivePreserve {
+	if mode == pluginUpload.ArchivePreserve {
 		modeLabel = LabelModePreserve
 	}
 
@@ -86,13 +87,13 @@ func (s *UploadServiceDefault) HandleUploadWithMode(ctx context.Context, reader 
 		HandleUploadWithModeTotal.WithLabelValues(LabelStatusError, modeLabel),
 		func() (UploadResult, error) {
 			// Detect file format
-			format, err := upload.DetectFormat(reader)
+			format, err := contentArchive.DetectFormat(reader)
 			if err != nil {
 				// Check if it's an unsupported format error
-				if upload.IsUploadErrorType(err, pluginErrors.UploadErrUnsupportedFormat) {
-					return UploadResult{}, upload.NewUnsupportedFormatError(err)
+				if pluginUpload.IsUploadErrorType(err, pluginErrors.UploadErrUnsupportedFormat) {
+					return UploadResult{}, pluginUpload.NewUnsupportedFormatError(err)
 				}
-				return UploadResult{}, upload.NewCorruptedFileError(err)
+				return UploadResult{}, pluginUpload.NewCorruptedFileError(err)
 			}
 
 			_, err = reader.Seek(0, io.SeekStart)
@@ -102,17 +103,17 @@ func (s *UploadServiceDefault) HandleUploadWithMode(ctx context.Context, reader 
 
 			processor, err := s.processorFactory.CreateProcessor(format, mode, s.Context(), userId)
 			if err != nil {
-				return UploadResult{}, upload.NewProcessorError(format.String(), mode.String(), err)
+				return UploadResult{}, pluginUpload.NewProcessorError(format.String(), mode.String(), err)
 			}
 
 			rootCID, uploadID, err := processor.Process(ctx, reader)
 			if err != nil {
 				// If it's already an UploadError, return it as-is using the helper function
-				if _, ok := upload.AsUploadError(err); ok {
+				if _, ok := pluginUpload.AsUploadError(err); ok {
 					return UploadResult{}, err
 				}
 				// Otherwise wrap it in a generic processing error
-				return UploadResult{}, upload.NewProcessingError(err)
+				return UploadResult{}, pluginUpload.NewProcessingError(err)
 			}
 
 			return UploadResult{CID: rootCID, UploadID: uploadID}, nil

@@ -22,9 +22,10 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
+	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
 	"go.lumeweb.com/portal/db/models"
 	"gorm.io/gorm"
 )
@@ -101,7 +102,7 @@ func mustMarshal(tb coreTesting.TB, v interface{}) []byte {
 }
 
 // setupTestUser creates a test user with a unique email based on format and mode
-func setupTestUser(t testing.TB, ctx coreTesting.TestContext, format upload.Format, mode upload.ArchiveMode) *models.User {
+func setupTestUser(t testing.TB, ctx coreTesting.TestContext, format contentArchive.Format, mode pluginUpload.ArchiveMode) *models.User {
 	userSvc := core.GetService[core.UserService](ctx, core.USER_SERVICE)
 	email := strings.ToLower(format.String()) + "_" + mode.String() + "@example.com"
 	testUser, err := userSvc.CreateAccount(ctx, email, "testpassword123", false)
@@ -117,8 +118,8 @@ func setupTestServices(ctx coreTesting.TestContext) (*coreTesting.WorkflowTest, 
 }
 
 // handleUploadWithMode handles the upload based on the specified mode
-func handleUploadWithMode(uploadService pluginCore.UploadService, ctx coreTesting.TestContext, reader *upload.UniversalReader, userID uint, mode upload.ArchiveMode) (cid.Cid, string, error) {
-	if mode == upload.ArchiveConvert {
+func handleUploadWithMode(uploadService pluginCore.UploadService, ctx coreTesting.TestContext, reader *pluginUpload.UniversalReader, userID uint, mode pluginUpload.ArchiveMode) (cid.Cid, string, error) {
+	if mode == pluginUpload.ArchiveConvert {
 		return uploadService.HandleUpload(ctx, reader, userID)
 	}
 	return uploadService.HandleUploadWithMode(ctx, reader, userID, mode)
@@ -140,7 +141,7 @@ func assertTUSWorkflowSuccess(wfTest *coreTesting.WorkflowTest, req *models.Requ
 
 // testArchiveUpload is a helper function that tests archive uploads for a given format and mode
 // The specific workflow function should be provided as a parameter, along with optional test options
-func testArchiveUpload(t *testing.T, format upload.Format, creator upload.ArchiveCreator, mode upload.ArchiveMode, workflowFunc func(*testing.T, coreTesting.TestContext, *upload.UniversalReader, upload.Format, upload.ArchiveMode), testOptions ...coreTesting.TestContextBuilderOption) {
+func testArchiveUpload(t *testing.T, format contentArchive.Format, creator pluginUpload.ArchiveCreator, mode pluginUpload.ArchiveMode, workflowFunc func(*testing.T, coreTesting.TestContext, *pluginUpload.UniversalReader, contentArchive.Format, pluginUpload.ArchiveMode), testOptions ...coreTesting.TestContextBuilderOption) {
 	// Use provided options if available, otherwise use defaults
 	var finalOptions []coreTesting.TestContextBuilderOption
 	if len(testOptions) > 0 {
@@ -151,10 +152,10 @@ func testArchiveUpload(t *testing.T, format upload.Format, creator upload.Archiv
 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange - Create test archive
-		testFiles := upload.GetDefaultTestFiles()
+		testFiles := pluginUpload.GetDefaultTestFiles()
 
 		// Add panic recovery for archive creation if required tools are not available
-		if format == upload.Format7Z || format == upload.FormatRAR {
+		if format == contentArchive.Format7Z || format == contentArchive.FormatRAR {
 			defer func() {
 				if r := recover(); r != nil {
 					if msg, ok := r.(string); ok && (strings.Contains(msg, "command not found") || strings.Contains(msg, "not found - install")) {
@@ -170,7 +171,7 @@ func testArchiveUpload(t *testing.T, format upload.Format, creator upload.Archiv
 
 		// Create a reader from the archive data using UniversalReader
 		archiveReader := bytes.NewReader(archiveData)
-		universalReader := upload.NewUniversalReader(archiveReader)
+		universalReader := pluginUpload.NewUniversalReader(archiveReader)
 
 		// Run the upload workflow test using the provided workflow function
 		workflowFunc(t, ctx, universalReader, format, mode)
@@ -235,7 +236,7 @@ func setupTUSUpload(t *testing.T, ctx coreTesting.TestContext, uploadFile *os.Fi
 	return proto.(core.StorageProtocol), tusUpload.RequestID
 }
 
-func testUploadWorkflow(t *testing.T, ctx coreTesting.TestContext, universalReader *upload.UniversalReader, format upload.Format, mode upload.ArchiveMode, operationName string, assertionFunc func(*coreTesting.WorkflowTest, *models.Request), workflowDataBuilder func(string) interface{}) {
+func testUploadWorkflow(t *testing.T, ctx coreTesting.TestContext, universalReader *pluginUpload.UniversalReader, format contentArchive.Format, mode pluginUpload.ArchiveMode, operationName string, assertionFunc func(*coreTesting.WorkflowTest, *models.Request), workflowDataBuilder func(string) interface{}) {
 	// Arrange - Setup test user and services
 	testUser := setupTestUser(t, ctx, format, mode)
 	wfTest, uploadService := setupTestServices(ctx)
@@ -274,7 +275,7 @@ func testUploadWorkflow(t *testing.T, ctx coreTesting.TestContext, universalRead
 
 // getCARRootsFromFile gets CAR roots from a file (helper for TUS)
 func getCARRootsFromFile(t *testing.T, file *os.File) cid.Cid {
-	roots, err := upload.GetCarRoots(file, false)
+	roots, err := pluginUpload.GetCarRoots(file, false)
 	require.NoError(t, err)
 	if len(roots) == 0 {
 		t.Fatal("No CAR roots found")
@@ -284,14 +285,14 @@ func getCARRootsFromFile(t *testing.T, file *os.File) cid.Cid {
 
 // executeTUSWorkflowHelper is a helper function that executes TUS upload workflow
 // It handles the common workflow execution pattern for both archives and plain files
-func executeTUSWorkflowHelper(t *testing.T, ctx coreTesting.TestContext, tempFile *os.File, format upload.Format, requestID uint) {
+func executeTUSWorkflowHelper(t *testing.T, ctx coreTesting.TestContext, tempFile *os.File, format contentArchive.Format, requestID uint) {
 	wfTest := coreTesting.NewWorkflowTest(ctx)
 
 	wf := wfTest.NewOperationWorkflow(core.TUSUploadOperationName(internal.ProtocolName))
 
 	// Build workflow options - for CAR files we have the hash, for others we don't
 	var workflowOptions []core.WorkflowOption
-	if format == upload.FormatCAR {
+	if format == contentArchive.FormatCAR {
 		// For CAR files, we can pre-compute the hash
 		workflowOptions = append(workflowOptions, core.WithWorkflowStorageHash(internal.NewIPFSHash(getCARRootsFromFile(t, tempFile))))
 	}
@@ -339,7 +340,7 @@ func runTUSFileUploadInternal(t *testing.T, ctx coreTesting.TestContext, fileCon
 	_, requestID := setupTUSUpload(t, ctx, tempFile, nil)
 
 	// Execute workflow using the helper
-	executeTUSWorkflowHelper(t, ctx, tempFile, upload.FormatFile, requestID)
+	executeTUSWorkflowHelper(t, ctx, tempFile, contentArchive.FormatFile, requestID)
 }
 
 // testTUSFileUpload tests plain file uploads (FormatFile) through the TUS upload workflow
@@ -351,7 +352,7 @@ func testTUSFileUpload(t *testing.T, fileContent string, filename string) {
 
 // runTUSArchiveUploadInternal is the internal logic for TUS archive uploads
 // This function should be called from within a RunTestCaseWithDB context
-func runTUSArchiveUploadInternal(t *testing.T, ctx coreTesting.TestContext, format upload.Format, archiveData []byte) {
+func runTUSArchiveUploadInternal(t *testing.T, ctx coreTesting.TestContext, format contentArchive.Format, archiveData []byte) {
 	// Create a temporary file from the archive data for TUS processing
 	tempFile, err := os.CreateTemp("", "tus-test-archive-*.tmp")
 	require.NoError(t, err)
@@ -369,9 +370,9 @@ func runTUSArchiveUploadInternal(t *testing.T, ctx coreTesting.TestContext, form
 
 	// Use appropriate setup based on format
 	var requestID uint
-	if format == upload.FormatCAR {
+	if format == contentArchive.FormatCAR {
 		// For CAR files, we can pre-compute the hash
-		roots, err := upload.GetCarRoots(tempFile, false)
+		roots, err := pluginUpload.GetCarRoots(tempFile, false)
 		require.NoError(t, err)
 		_, requestID = setupTUSUpload(t, ctx, tempFile, internal.NewIPFSHash(roots[0]))
 	} else {
@@ -385,14 +386,14 @@ func runTUSArchiveUploadInternal(t *testing.T, ctx coreTesting.TestContext, form
 
 // testTUSArchiveUpload is a TUS-specific wrapper for testArchiveUpload
 // It handles TUS-specific upload logic while using the generic archive upload pattern
-func testTUSArchiveUpload(t *testing.T, format upload.Format, creator upload.ArchiveCreator, mode upload.ArchiveMode, testOptions ...coreTesting.TestContextBuilderOption) {
+func testTUSArchiveUpload(t *testing.T, format contentArchive.Format, creator pluginUpload.ArchiveCreator, mode pluginUpload.ArchiveMode, testOptions ...coreTesting.TestContextBuilderOption) {
 	// Since TUS doesn't support archive preserve mode yet, only test convert mode
-	if mode != upload.ArchiveConvert {
+	if mode != pluginUpload.ArchiveConvert {
 		t.Skip("TUS doesn't support archive preserve mode yet")
 	}
 
 	// Create a TUS-specific workflow function that handles the TUS upload logic
-	tusWorkflowFunc := func(t *testing.T, ctx coreTesting.TestContext, universalReader *upload.UniversalReader, _ upload.Format, _ upload.ArchiveMode) {
+	tusWorkflowFunc := func(t *testing.T, ctx coreTesting.TestContext, universalReader *pluginUpload.UniversalReader, _ contentArchive.Format, _ pluginUpload.ArchiveMode) {
 		// For TUS, we need to convert the UniversalReader back to a file for TUS processing
 		// Read the data from UniversalReader
 		archiveData, err := io.ReadAll(universalReader)

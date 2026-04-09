@@ -18,14 +18,14 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
+	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 
 	// Import required packages for UnixFS generation
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/boxo/ipld/merkledag"
-	"go.uber.org/zap/zaptest"
+	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 )
 
 // TestSecondNodeInfo holds information about test data representing a second IPFS node
@@ -48,15 +48,13 @@ func setupTestSecondNode(t *testing.T) *TestSecondNodeInfo {
 	dserv := merkledag.NewDAGService(bserv)
 
 	// Use UnixFSNodeGenerator to create a multi-block UnixFS file
-	logger := &core.Logger{Logger: zaptest.NewLogger(t)}
-	nodeGenerator := upload.NewUnixFSNodeGeneratorWithOptions(
-		upload.WithUnixFSNodeGeneratorDAGService(dserv),
-		upload.WithUnixFSNodeGeneratorBlockstore(bstore),
-		upload.WithUnixFSNodeGeneratorLogger(logger),
+	nodeGenerator := contentUnixFS.NewUnixFSNodeGenerator(
+		contentUnixFS.WithUnixFSNodeDAGService(dserv),
+		contentUnixFS.WithUnixFSNodeBlockstore(bstore),
 	)
 
 	// Create the UnixFS node
-	seekableFile := upload.NewUniversalReader(bytes.NewReader([]byte(fileContent)))
+	seekableFile := pluginUpload.NewUniversalReader(bytes.NewReader([]byte(fileContent)))
 	rootNode, err := nodeGenerator.CreateNode(context.Background(), seekableFile)
 	require.NoError(t, err, "Failed to create UnixFS node")
 

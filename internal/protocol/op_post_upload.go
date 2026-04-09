@@ -14,9 +14,11 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
+	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
+	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 	"go.uber.org/zap"
 )
 
@@ -118,7 +120,7 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		}
 	}
 
-	uploadedFormat, err := upload.DetectFormat(uploadFile)
+	uploadedFormat, err := contentArchive.DetectFormat(uploadFile)
 	if err != nil {
 		return err
 	}
@@ -240,7 +242,7 @@ func (h *PostUploadOperationHandler) getUpload(ctx context.Context, uploadID str
 }
 
 // createProcessor creates the appropriate block processor based on format
-func (h *PostUploadOperationHandler) createProcessor(uploadFile io.ReadCloser, format upload.Format) (BlockProcessor, error) {
+func (h *PostUploadOperationHandler) createProcessor(uploadFile io.ReadCloser, format contentArchive.Format) (BlockProcessor, error) {
 	if format.IsUploadFormat() {
 		return NewCARBlockProcessor(uploadFile)
 	}
@@ -275,7 +277,7 @@ func (h *PostUploadOperationHandler) createProcessor(uploadFile io.ReadCloser, f
 }
 
 // createArchiveProcessor creates a processor for archive formats
-func (h *PostUploadOperationHandler) createArchiveProcessor(uploadFile io.ReadCloser, format upload.Format, sbs StreamingBlockstore, dagService format.DAGService, logger *core.Logger, doneTracker DoneTracker) (BlockProcessor, error) {
+func (h *PostUploadOperationHandler) createArchiveProcessor(uploadFile io.ReadCloser, format contentArchive.Format, sbs StreamingBlockstore, dagService format.DAGService, logger *core.Logger, doneTracker DoneTracker) (BlockProcessor, error) {
 	seekableUpload, ok := uploadFile.(archives.ReaderAtSeeker)
 	if !ok {
 		return nil, fmt.Errorf("archive upload must be seekable for format detection and processing")
@@ -286,18 +288,17 @@ func (h *PostUploadOperationHandler) createArchiveProcessor(uploadFile io.ReadCl
 		return nil, fmt.Errorf("failed to seek to start of archive: %w", err)
 	}
 
-	extractor, err := upload.NewArchiveExtractor(seekableUpload, format)
+	extractor, err := contentArchive.NewArchiveExtractor(seekableUpload, format)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create archive extractor: %w", err)
 	}
 
-	nodeGenerator := upload.NewUnixFSNodeGeneratorWithOptions(
-		upload.WithUnixFSNodeGeneratorDAGService(dagService),
-		upload.WithUnixFSNodeGeneratorBlockstore(sbs),
-		upload.WithUnixFSNodeGeneratorLogger(logger),
+	nodeGenerator := contentUnixFS.NewUnixFSNodeGenerator(
+		contentUnixFS.WithUnixFSNodeDAGService(dagService),
+		contentUnixFS.WithUnixFSNodeBlockstore(sbs),
 	)
 
-	streamProcessor := upload.NewStreamingProcessor(
+	streamProcessor := pluginUpload.NewStreamingProcessor(
 		nodeGenerator,
 		dagService,
 		sbs,
@@ -309,13 +310,12 @@ func (h *PostUploadOperationHandler) createArchiveProcessor(uploadFile io.ReadCl
 
 // createFileProcessor creates a processor for single file formats
 func (h *PostUploadOperationHandler) createFileProcessor(uploadFile io.ReadCloser, sbs StreamingBlockstore, dagService format.DAGService, logger *core.Logger, doneTracker DoneTracker) (BlockProcessor, error) {
-	nodeGenerator := upload.NewUnixFSNodeGeneratorWithOptions(
-		upload.WithUnixFSNodeGeneratorDAGService(dagService),
-		upload.WithUnixFSNodeGeneratorBlockstore(sbs),
-		upload.WithUnixFSNodeGeneratorLogger(logger),
+	nodeGenerator := contentUnixFS.NewUnixFSNodeGenerator(
+		contentUnixFS.WithUnixFSNodeDAGService(dagService),
+		contentUnixFS.WithUnixFSNodeBlockstore(sbs),
 	)
 
-	return NewFileBlockProcessorWithDefaults(h.Context(), sbs, upload.NewUniversalReader(uploadFile), dagService, nodeGenerator, logger, doneTracker)
+	return NewFileBlockProcessorWithDefaults(h.Context(), sbs, pluginUpload.NewUniversalReader(uploadFile), dagService, nodeGenerator, logger, doneTracker)
 }
 
 // processCIDs processes all CIDs and creates upload records

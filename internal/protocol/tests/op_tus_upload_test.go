@@ -5,61 +5,62 @@ import (
 
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
+	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
 )
 
 func TestTUSUploadOperationHandler_Execute_Integration(t *testing.T) {
 	// Test CAR file upload using TUS-specific logic
 	t.Run("CAR file upload", func(t *testing.T) {
-		testTUSArchiveUpload(t, upload.FormatCAR, upload.CreateCARArchive, upload.ArchiveConvert, GetStandardTestOptions()...)
+		testTUSArchiveUpload(t, contentArchive.FormatCAR, pluginUpload.CreateCARArchive, pluginUpload.ArchiveConvert, GetStandardTestOptions()...)
 	})
 
 	// Define test cases for all archive formats with convert mode only (TUS doesn't support preserve mode yet)
 	archiveFormats := []struct {
 		name    string
-		format  upload.Format
-		creator upload.ArchiveCreator
+		format  contentArchive.Format
+		creator pluginUpload.ArchiveCreator
 	}{
 		{
 			name:    "ZIP",
-			format:  upload.FormatZIP,
-			creator: upload.CreateZIPArchive,
+			format:  contentArchive.FormatZIP,
+			creator: pluginUpload.CreateZIPArchive,
 		},
 		{
 			name:    "TAR",
-			format:  upload.FormatTAR,
-			creator: upload.CreateTARArchive,
+			format:  contentArchive.FormatTAR,
+			creator: pluginUpload.CreateTARArchive,
 		},
 		{
 			name:    "TAR.GZ",
-			format:  upload.FormatTAR_GZ,
-			creator: upload.CreateTARGZArchive,
+			format:  contentArchive.FormatTAR_GZ,
+			creator: pluginUpload.CreateTARGZArchive,
 		},
 		{
 			name:    "TAR.BZ2",
-			format:  upload.FormatTAR_BZ2,
-			creator: upload.CreateTARBZ2Archive,
+			format:  contentArchive.FormatTAR_BZ2,
+			creator: pluginUpload.CreateTARBZ2Archive,
 		},
 	}
 
 	for _, af := range archiveFormats {
 		t.Run(af.name+" archive upload (convert mode)", func(t *testing.T) {
-			testTUSArchiveUpload(t, af.format, af.creator, upload.ArchiveConvert, GetStandardTestOptions()...)
+			testTUSArchiveUpload(t, af.format, af.creator, pluginUpload.ArchiveConvert, GetStandardTestOptions()...)
 		})
 	}
 
 	// Test 7Z format separately since it requires external tools
 	t.Run("7Z archive upload (convert mode)", func(t *testing.T) {
-		testTUSArchiveUpload(t, upload.Format7Z, upload.Create7ZArchive, upload.ArchiveConvert, GetStandardTestOptions()...)
+		testTUSArchiveUpload(t, contentArchive.Format7Z, pluginUpload.Create7ZArchive, pluginUpload.ArchiveConvert, GetStandardTestOptions()...)
 	})
 
 	// Test RAR format separately since it requires external tools
 	t.Run("RAR archive upload (convert mode)", func(t *testing.T) {
-		testTUSArchiveUpload(t, upload.FormatRAR, upload.CreateRARArchive, upload.ArchiveConvert, GetStandardTestOptions()...)
+		testTUSArchiveUpload(t, contentArchive.FormatRAR, pluginUpload.CreateRARArchive, pluginUpload.ArchiveConvert, GetStandardTestOptions()...)
 	})
 
 	// Test plain file uploads via TUS

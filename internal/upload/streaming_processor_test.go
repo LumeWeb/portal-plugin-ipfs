@@ -13,17 +13,16 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/mholt/archives"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
 )
 
 var (
 	registerZipExtractorOnce sync.Once
 )
-
 // setupStreamProcessorTest creates a streaming processor with default in-memory implementations
 func setupStreamProcessorTest(t *testing.T) (*StreamingProcessor, context.Context, coreTesting.TestContext) {
 	ctx, err := coreTesting.NewTestContext(t)
@@ -38,7 +37,7 @@ func setupStreamProcessorTest(t *testing.T) (*StreamingProcessor, context.Contex
 }
 
 // createStreamProcessorTestArchive creates a real archive extractor from test files
-func createStreamProcessorTestArchive(t *testing.T, ctx core.Context, files map[string]*fstest.MapFile) ArchiveExtractor {
+func createStreamProcessorTestArchive(t *testing.T, ctx core.Context, files map[string]*fstest.MapFile) contentArchive.ArchiveExtractor {
 	// Convert fstest.MapFile to TestFile format
 	testFiles := make([]TestFile, 0)
 	for path, file := range files {
@@ -54,19 +53,16 @@ func createStreamProcessorTestArchive(t *testing.T, ctx core.Context, files map[
 	// Create a real ZIP archive
 	archiveData := CreateZIPArchive(t, ctx, testFiles)
 
-	// Create a real archive extractor
+	// Register extractor once
 	registerZipExtractorOnce.Do(func() {
-		RegisterZipExtractor()
+		contentArchive.RegisterZipExtractor()
 	})
-	extractor, err := CreateExtractor(createSeekableReader(archiveData))
+	
+	// Create archive extractor
+	extractor, err := contentArchive.CreateExtractor(bytes.NewReader(archiveData))
 	require.NoError(t, err)
 
 	return extractor
-}
-
-// createSeekableReader creates a seekable reader from byte data that implements archives.ReaderAtSeeker
-func createSeekableReader(data []byte) archives.ReaderAtSeeker {
-	return bytes.NewReader(data)
 }
 
 func TestNewStreamingProcessor(t *testing.T) {
@@ -203,13 +199,13 @@ func TestProcessArchive_DirectoryStructures(t *testing.T) {
 func TestProcessArchive_ErrorCases(t *testing.T) {
 	tests := []struct {
 		name          string
-		setupTest     func(t *testing.T, ctx core.Context) (ArchiveExtractor, context.Context)
+		setupTest     func(t *testing.T, ctx core.Context) (contentArchive.ArchiveExtractor, context.Context)
 		expectedError string
 		expectError   bool
 	}{
 		{
 			name: "empty archive",
-			setupTest: func(t *testing.T, testCtx core.Context) (ArchiveExtractor, context.Context) {
+			setupTest: func(t *testing.T, testCtx core.Context) (contentArchive.ArchiveExtractor, context.Context) {
 				_, ctx, _ := setupStreamProcessorTest(t)
 				emptyFiles := map[string]*fstest.MapFile{}
 				extractor := createStreamProcessorTestArchive(t, testCtx, emptyFiles)
@@ -220,7 +216,7 @@ func TestProcessArchive_ErrorCases(t *testing.T) {
 		},
 		{
 			name: "context cancellation",
-			setupTest: func(t *testing.T, testCtx core.Context) (ArchiveExtractor, context.Context) {
+			setupTest: func(t *testing.T, testCtx core.Context) (contentArchive.ArchiveExtractor, context.Context) {
 				_, _, _ = setupStreamProcessorTest(t)
 
 				ctx, cancel := context.WithCancel(context.Background())

@@ -8,9 +8,10 @@ import (
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
+	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
 )
 
 // StreamingBlockstore defines the interface for streaming archive datastores
@@ -37,14 +38,14 @@ type ArchiveBlockProcessor struct {
 	blockstore StreamingBlockstore
 
 	// Archive extraction components
-	extractor upload.ArchiveExtractor
+	extractor contentArchive.ArchiveExtractor
 
 	// Streaming processor for UnixFS node generation
-	streamProcessor upload.StreamingArchiveProcessor
+	streamProcessor pluginUpload.StreamingArchiveProcessor
 }
 
 // NewArchiveBlockProcessor creates a new ArchiveBlockProcessor with dependency injection
-func NewArchiveBlockProcessor(ctx context.Context, blockstore StreamingBlockstore, extractor upload.ArchiveExtractor, streamProcessor upload.StreamingArchiveProcessor, logger *core.Logger, doneTracker DoneTracker) (*ArchiveBlockProcessor, error) {
+func NewArchiveBlockProcessor(ctx context.Context, blockstore StreamingBlockstore, extractor contentArchive.ArchiveExtractor, streamProcessor pluginUpload.StreamingArchiveProcessor, logger *core.Logger, doneTracker DoneTracker) (*ArchiveBlockProcessor, error) {
 	if blockstore == nil {
 		return nil, fmt.Errorf("blockstore is required")
 	}

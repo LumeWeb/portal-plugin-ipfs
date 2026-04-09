@@ -20,5 +20,5 @@ func IsCBORNode(node legacy.UniversalNode) bool {
 // DagCborNodeConverter converts a go-ipld-prime node + block combination to a CBORNode
 // that satisfies both current and legacy ipld formats for DAG-CBOR.
 func DagCborNodeConverter(b blocks.Block, node ipld.Node) (legacy.UniversalNode, error) {
-	return &CBORNode{legacy.LegacyNode{b, node}}, nil
+	return &CBORNode{legacy.LegacyNode{Block: b, Node: node}}, nil
 }

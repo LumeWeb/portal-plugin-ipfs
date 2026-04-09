@@ -7,84 +7,85 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
+	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
 )
 
 func TestPostUploadOperationHandler_Execute_Integration(t *testing.T) {
 	// Define test cases for CAR files
 	t.Run("CAR file upload", func(t *testing.T) {
-		testArchiveUpload(t, upload.FormatCAR, upload.CreateCARArchive, upload.ArchiveConvert, testPostUploadWorkflow)
+		testArchiveUpload(t, contentArchive.FormatCAR, pluginUpload.CreateCARArchive, pluginUpload.ArchiveConvert, testPostUploadWorkflow)
 	})
 
 	// Define test cases for all archive formats with convert mode
 	archiveFormats := []struct {
 		name    string
-		format  upload.Format
-		creator upload.ArchiveCreator
+		format  contentArchive.Format
+		creator pluginUpload.ArchiveCreator
 	}{
 		{
 			name:    "ZIP",
-			format:  upload.FormatZIP,
-			creator: upload.CreateZIPArchive,
+			format:  contentArchive.FormatZIP,
+			creator: pluginUpload.CreateZIPArchive,
 		},
 		{
 			name:    "TAR",
-			format:  upload.FormatTAR,
-			creator: upload.CreateTARArchive,
+			format:  contentArchive.FormatTAR,
+			creator: pluginUpload.CreateTARArchive,
 		},
 		{
 			name:    "TAR.GZ",
-			format:  upload.FormatTAR_GZ,
-			creator: upload.CreateTARGZArchive,
+			format:  contentArchive.FormatTAR_GZ,
+			creator: pluginUpload.CreateTARGZArchive,
 		},
 		{
 			name:    "TAR.BZ2",
-			format:  upload.FormatTAR_BZ2,
-			creator: upload.CreateTARBZ2Archive,
+			format:  contentArchive.FormatTAR_BZ2,
+			creator: pluginUpload.CreateTARBZ2Archive,
 		},
 	}
 
 	for _, af := range archiveFormats {
 		t.Run(af.name+" archive upload (convert mode)", func(t *testing.T) {
 			t.Parallel()
-			testArchiveUpload(t, af.format, af.creator, upload.ArchiveConvert, testPostUploadWorkflow)
+			testArchiveUpload(t, af.format, af.creator, pluginUpload.ArchiveConvert, testPostUploadWorkflow)
 		})
 	}
 
 	// Test 7Z format separately since it requires external tools
 	t.Run("7Z archive upload (convert mode)", func(t *testing.T) {
 		t.Parallel()
-		testArchiveUpload(t, upload.Format7Z, upload.Create7ZArchive, upload.ArchiveConvert, testPostUploadWorkflow)
+		testArchiveUpload(t, contentArchive.Format7Z, pluginUpload.Create7ZArchive, pluginUpload.ArchiveConvert, testPostUploadWorkflow)
 	})
 
 	// Test RAR format separately since it requires external tools
 	t.Run("RAR archive upload (convert mode)", func(t *testing.T) {
 		t.Parallel()
-		testArchiveUpload(t, upload.FormatRAR, upload.CreateRARArchive, upload.ArchiveConvert, testPostUploadWorkflow)
+		testArchiveUpload(t, contentArchive.FormatRAR, pluginUpload.CreateRARArchive, pluginUpload.ArchiveConvert, testPostUploadWorkflow)
 	})
 
 	// Test all archive formats with preserve mode
 	for _, af := range archiveFormats {
 		t.Run(af.name+" archive upload (preserve mode)", func(t *testing.T) {
 			t.Parallel()
-			testArchiveUpload(t, af.format, af.creator, upload.ArchivePreserve, testPostUploadWorkflow)
+			testArchiveUpload(t, af.format, af.creator, pluginUpload.ArchivePreserve, testPostUploadWorkflow)
 		})
 	}
 
 	// Test 7Z format separately since it requires external tools
 	t.Run("7Z archive upload (preserve mode)", func(t *testing.T) {
 		t.Parallel()
-		testArchiveUpload(t, upload.Format7Z, upload.Create7ZArchive, upload.ArchivePreserve, testPostUploadWorkflow)
+		testArchiveUpload(t, contentArchive.Format7Z, pluginUpload.Create7ZArchive, pluginUpload.ArchivePreserve, testPostUploadWorkflow)
 	})
 
 	// Test RAR format separately since it requires external tools
 	t.Run("RAR archive upload (preserve mode)", func(t *testing.T) {
 		t.Parallel()
-		testArchiveUpload(t, upload.FormatRAR, upload.CreateRARArchive, upload.ArchivePreserve, testPostUploadWorkflow)
+		testArchiveUpload(t, contentArchive.FormatRAR, pluginUpload.CreateRARArchive, pluginUpload.ArchivePreserve, testPostUploadWorkflow)
 	})
 
 	// Test plain file uploads (FormatFile)
@@ -104,7 +105,7 @@ func TestPostUploadOperationHandler_Execute_Integration(t *testing.T) {
 }
 
 // testPostUploadWorkflow is a helper function that runs the complete upload workflow test for POST uploads
-func testPostUploadWorkflow(t *testing.T, ctx coreTesting.TestContext, universalReader *upload.UniversalReader, format upload.Format, mode upload.ArchiveMode) {
+func testPostUploadWorkflow(t *testing.T, ctx coreTesting.TestContext, universalReader *pluginUpload.UniversalReader, format contentArchive.Format, mode pluginUpload.ArchiveMode) {
 	// Use the generic testUploadWorkflow function with POST-specific parameters
 	testUploadWorkflow(
 		t,
@@ -128,10 +129,10 @@ func testFileUpload(t *testing.T, fileContent string, filename string) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Create a reader from the plain file content
 		fileReader := bytes.NewReader([]byte(fileContent))
-		universalReader := upload.NewUniversalReader(fileReader)
+		universalReader := pluginUpload.NewUniversalReader(fileReader)
 
 		// Run the upload workflow test
-		testPostUploadWorkflow(t, ctx, universalReader, upload.FormatFile, upload.ArchiveConvert)
+		testPostUploadWorkflow(t, ctx, universalReader, contentArchive.FormatFile, pluginUpload.ArchiveConvert)
 	}, GetStandardTestOptions()...)
 }
 
@@ -140,10 +141,10 @@ func TestPostUploadOperation_PinStatus(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		fileContent := "Test content for pin status verification"
 		fileReader := bytes.NewReader([]byte(fileContent))
-		universalReader := upload.NewUniversalReader(fileReader)
+		universalReader := pluginUpload.NewUniversalReader(fileReader)
 
 		// Run the upload workflow
-		testPostUploadWorkflow(t, ctx, universalReader, upload.FormatFile, upload.ArchiveConvert)
+		testPostUploadWorkflow(t, ctx, universalReader, contentArchive.FormatFile, pluginUpload.ArchiveConvert)
 
 		// Retrieve the pin service
 		pinSvc := core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)

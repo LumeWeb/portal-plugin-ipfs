@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
 	"go.lumeweb.com/portal/core"
 )
@@ -24,12 +25,12 @@ type ArchiveCreator func(t *testing.T, ctx core.Context, files []TestFile) []byt
 // ArchiveTestHelper provides common test utilities for all archive formats
 type ArchiveTestHelper struct {
 	t      *testing.T
-	format Format
+	format contentArchive.Format
 	ctx    core.Context
 }
 
 // NewArchiveTestHelper creates a new test helper for the specified format
-func NewArchiveTestHelper(t *testing.T, format Format) *ArchiveTestHelper {
+func NewArchiveTestHelper(t *testing.T, format contentArchive.Format) *ArchiveTestHelper {
 	return &ArchiveTestHelper{
 		t:      t,
 		format: format,
@@ -322,7 +323,7 @@ func (h *ArchiveTestHelper) TestLargeFileContent(creator ArchiveCreator) {
 	}
 
 	// Find and verify the large file
-	var foundFile *ArchiveFileEntry
+	var foundFile *contentArchive.ArchiveFileEntry
 	for _, file := range extractedFiles {
 		if file.Name() == largeFile.Name {
 			foundFile = &file
@@ -345,7 +346,7 @@ func (h *ArchiveTestHelper) TestFormatDetection(creator ArchiveCreator) {
 	archiveData := creator(h.t, h.ctx, files)
 
 	reader := bytes.NewReader(archiveData)
-	format, err := DetectFormat(reader)
+	format, err := contentArchive.DetectFormat(reader)
 	if err != nil {
 		h.t.Errorf("Failed to detect %s format: %v", h.format.String(), err)
 	}
@@ -356,14 +357,14 @@ func (h *ArchiveTestHelper) TestFormatDetection(creator ArchiveCreator) {
 }
 
 // createExtractor creates an extractor for the given archive data
-func (h *ArchiveTestHelper) createExtractor(archiveData []byte) (ArchiveExtractor, error) {
+func (h *ArchiveTestHelper) createExtractor(archiveData []byte) (contentArchive.ArchiveExtractor, error) {
 	reader := bytes.NewReader(archiveData)
-	return CreateExtractor(reader)
+	return contentArchive.CreateExtractor(reader)
 }
 
 // extractAllFiles extracts all files from an archive and returns them with any errors
-func (h *ArchiveTestHelper) extractAllFiles(extractor ArchiveExtractor) ([]ArchiveFileEntry, []error) {
-	var files []ArchiveFileEntry
+func (h *ArchiveTestHelper) extractAllFiles(extractor contentArchive.ArchiveExtractor) ([]contentArchive.ArchiveFileEntry, []error) {
+	var files []contentArchive.ArchiveFileEntry
 	var errors []error
 
 	// Use the filesystem API instead of Extract
@@ -385,7 +386,7 @@ func (h *ArchiveTestHelper) extractAllFiles(extractor ArchiveExtractor) ([]Archi
 			return nil
 		}
 
-		if err := ValidateArchivePath(path); err != nil {
+		if err := contentArchive.ValidateArchivePath(path); err != nil {
 			h.t.Logf("Path validation failed for '%s': %v", path, err) // Debug: Log failure
 			errors = append(errors, fmt.Errorf("invalid path %s: %w", path, err))
 			return nil // Continue processing other files
@@ -411,7 +412,7 @@ func (h *ArchiveTestHelper) extractAllFiles(extractor ArchiveExtractor) ([]Archi
 			contentReader = io.NopCloser(bytes.NewReader(nil))
 		}
 
-		entry := NewArchiveFileEntry(
+		entry := contentArchive.NewArchiveFileEntry(
 			path,
 			info.Size(),
 			d.IsDir(),
@@ -432,7 +433,7 @@ func (h *ArchiveTestHelper) extractAllFiles(extractor ArchiveExtractor) ([]Archi
 }
 
 // verifyFileContent verifies that extracted files match expected files
-func (h *ArchiveTestHelper) verifyFileContent(extractedFiles []ArchiveFileEntry, expectedFiles []TestFile) {
+func (h *ArchiveTestHelper) verifyFileContent(extractedFiles []contentArchive.ArchiveFileEntry, expectedFiles []TestFile) {
 	for _, expectedFile := range expectedFiles {
 		if expectedFile.IsDir {
 			// For directories, just check existence (normalize by trimming trailing slash)
@@ -449,7 +450,7 @@ func (h *ArchiveTestHelper) verifyFileContent(extractedFiles []ArchiveFileEntry,
 			}
 		} else {
 			// For files, check existence and size
-			var foundFile *ArchiveFileEntry
+			var foundFile *contentArchive.ArchiveFileEntry
 			for _, extractedFile := range extractedFiles {
 				if extractedFile.Name() == expectedFile.Name && !extractedFile.IsDir() {
 					foundFile = &extractedFile
@@ -474,7 +475,7 @@ func (h *ArchiveTestHelper) verifyFileContent(extractedFiles []ArchiveFileEntry,
 // CreateZIPArchive creates a ZIP archive from the given files
 func CreateZIPArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 	creator := NewTestArchiveCreator(t, ctx)
-	buf, err := creator.CreateArchiveFromTestFiles(context.Background(), FormatZIP, files)
+	buf, err := creator.CreateArchiveFromTestFiles(context.Background(), contentArchive.FormatZIP, files)
 	if err != nil {
 		t.Fatalf("failed to create ZIP archive: %v", err)
 	}
@@ -609,7 +610,7 @@ func CreateRARArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 // CreateTARArchive creates a TAR archive from the given files
 func CreateTARArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 	creator := NewTestArchiveCreator(t, ctx)
-	buf, err := creator.CreateArchiveFromTestFiles(context.Background(), FormatTAR, files)
+	buf, err := creator.CreateArchiveFromTestFiles(context.Background(), contentArchive.FormatTAR, files)
 	if err != nil {
 		t.Fatalf("failed to create TAR archive: %v", err)
 	}
@@ -619,7 +620,7 @@ func CreateTARArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 // CreateTARGZArchive creates a TAR.GZ archive from the given files
 func CreateTARGZArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 	creator := NewTestArchiveCreator(t, ctx)
-	buf, err := creator.CreateArchiveFromTestFiles(context.Background(), FormatTAR_GZ, files)
+	buf, err := creator.CreateArchiveFromTestFiles(context.Background(), contentArchive.FormatTAR_GZ, files)
 	if err != nil {
 		t.Fatalf("failed to create TAR.GZ archive: %v", err)
 	}
@@ -629,7 +630,7 @@ func CreateTARGZArchive(t *testing.T, ctx core.Context, files []TestFile) []byte
 // CreateTARBZ2Archive creates a TAR.BZ2 archive from the given files
 func CreateTARBZ2Archive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 	creator := NewTestArchiveCreator(t, ctx)
-	buf, err := creator.CreateArchiveFromTestFiles(context.Background(), FormatTAR_BZ2, files)
+	buf, err := creator.CreateArchiveFromTestFiles(context.Background(), contentArchive.FormatTAR_BZ2, files)
 	if err != nil {
 		t.Fatalf("failed to create TAR.BZ2 archive: %v", err)
 	}
@@ -642,13 +643,13 @@ func CreateCARArchive(t *testing.T, ctx core.Context, files []TestFile) []byte {
 	creator := NewTestArchiveCreator(t, ctx)
 
 	// Create a ZIP archive first as an intermediate format
-	zipBuf, err := creator.CreateArchiveFromTestFiles(context.Background(), FormatZIP, files)
+	zipBuf, err := creator.CreateArchiveFromTestFiles(context.Background(), contentArchive.FormatZIP, files)
 	if err != nil {
 		t.Fatalf("failed to create ZIP archive: %v", err)
 	}
 
 	// Create an extractor from the ZIP data
-	extractor, err := CreateExtractor(bytes.NewReader(zipBuf.Bytes()))
+	extractor, err := contentArchive.CreateExtractor(bytes.NewReader(zipBuf.Bytes()))
 	if err != nil {
 		t.Fatalf("failed to create archive extractor: %v", err)
 	}

@@ -12,6 +12,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
+	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 )
 
 // FileBlockProcessor implements BlockProcessor for individual files
@@ -24,7 +25,7 @@ type FileBlockProcessor struct {
 
 	// IPFS processing components (injected via constructor)
 	dagService    format.DAGService
-	nodeGenerator upload.UnixFSNodeGenerator
+	nodeGenerator contentUnixFS.UnixFSNodeGenerator
 
 	// File management
 	fileReader io.ReadSeekCloser
@@ -32,12 +33,12 @@ type FileBlockProcessor struct {
 }
 
 // NewFileBlockProcessor creates a new FileBlockProcessor with the given dependencies
-func NewFileBlockProcessor(ctx context.Context, blockstore StreamingBlockstore, fileReader io.ReadSeekCloser, dagService format.DAGService, nodeGenerator upload.UnixFSNodeGenerator, logger *core.Logger) (*FileBlockProcessor, error) {
+func NewFileBlockProcessor(ctx context.Context, blockstore StreamingBlockstore, fileReader io.ReadSeekCloser, dagService format.DAGService, nodeGenerator contentUnixFS.UnixFSNodeGenerator, logger *core.Logger) (*FileBlockProcessor, error) {
 	return NewFileBlockProcessorWithDefaults(ctx, blockstore, fileReader, dagService, nodeGenerator, logger, NewDoneTracker())
 }
 
 // NewFileBlockProcessorWithPath creates a new FileBlockProcessor with file path metadata
-func NewFileBlockProcessorWithPath(ctx context.Context, blockstore StreamingBlockstore, fileReader io.ReadSeekCloser, filePath string, dagService format.DAGService, nodeGenerator upload.UnixFSNodeGenerator, logger *core.Logger) (*FileBlockProcessor, error) {
+func NewFileBlockProcessorWithPath(ctx context.Context, blockstore StreamingBlockstore, fileReader io.ReadSeekCloser, filePath string, dagService format.DAGService, nodeGenerator contentUnixFS.UnixFSNodeGenerator, logger *core.Logger) (*FileBlockProcessor, error) {
 	if logger != nil {
 		logger.Debug("Creating FileBlockProcessor with file path", zap.String("filePath", filePath))
 	}
@@ -57,7 +58,7 @@ func NewFileBlockProcessorWithPath(ctx context.Context, blockstore StreamingBloc
 }
 
 // NewFileBlockProcessorWithDefaults creates a new FileBlockProcessor with the given dependencies and shared DoneTracker
-func NewFileBlockProcessorWithDefaults(ctx context.Context, blockstore StreamingBlockstore, fileReader io.ReadSeekCloser, dagService format.DAGService, nodeGenerator upload.UnixFSNodeGenerator, logger *core.Logger, doneTracker DoneTracker) (*FileBlockProcessor, error) {
+func NewFileBlockProcessorWithDefaults(ctx context.Context, blockstore StreamingBlockstore, fileReader io.ReadSeekCloser, dagService format.DAGService, nodeGenerator contentUnixFS.UnixFSNodeGenerator, logger *core.Logger, doneTracker DoneTracker) (*FileBlockProcessor, error) {
 	if logger != nil {
 		logger.Debug("Creating FileBlockProcessor with default settings")
 	}
