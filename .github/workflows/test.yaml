@@ -41,6 +41,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Download go modules
+        run: go mod download
+
       - name: Fix go mod cache permissions
         run: chmod -R 777 $(go list -mod=mod -m -f '{{.Dir}}' go.lumeweb.com/ipfs-content)/internal/testing/fixtures
 
