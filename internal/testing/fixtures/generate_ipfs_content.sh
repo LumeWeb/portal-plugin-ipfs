@@ -4,20 +4,22 @@
 # This script discovers ipfs-content location and runs its go generation
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # ============================================
 # Helper function to find ipfs-content fixtures
 # Tries all approaches like a Go version would
 # ============================================
 find_ipfs_content_fixtures() {
-    local current_dir="$1"
+    local project_root="$1"
     local max_depth=10
     local ipfs_content_module="go.lumeweb.com/ipfs-content"
     local test_data_dir="internal/testing/fixtures"
 
-    # Approach 1: Try go list first (fastest method)
+    # Approach 1: Try go list from project root first (fastest method)
+    # Use -mod=mod to bypass vendor and get actual module path
     local mod_dir
-    mod_dir=$(go list -m -f '{{.Dir}}' go.lumeweb.com/ipfs-content 2>/dev/null)
+    mod_dir=$(cd "$project_root" && go list -mod=mod -m -f '{{.Dir}}' "$ipfs_content_module" 2>/dev/null)
     if [ -n "$mod_dir" ]; then
         local fixtures_dir="$mod_dir/$test_data_dir"
         if [ -f "$fixtures_dir/lib.sh" ]; then
@@ -27,7 +29,7 @@ find_ipfs_content_fixtures() {
     fi
 
     # Approach 2: Fall back to vendor directory scanning (like Node.js)
-    local check_dir="$current_dir"
+    local check_dir="$project_root"
     local depth=0
 
     while [ "$depth" -lt "$max_depth" ]; do
@@ -75,7 +77,7 @@ find_ipfs_content_fixtures() {
 }
 
 # Find ipfs-content fixtures directory
-FIXTURES_DIR=$(find_ipfs_content_fixtures "$SCRIPT_DIR")
+FIXTURES_DIR=$(find_ipfs_content_fixtures "$PROJECT_ROOT")
 
 if [ $? -ne 0 ]; then
     exit 1
