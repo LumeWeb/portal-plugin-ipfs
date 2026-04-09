@@ -18,6 +18,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 )
 
 // createTestFileProcessor creates a FileBlockProcessor for testing with real components
@@ -47,10 +48,9 @@ func createTestFileProcessorWithOptionalPath(t *testing.T, fileContent, filePath
 	)
 
 	// Create node generator with the connected components
-	nodeGenerator := upload.NewUnixFSNodeGeneratorWithOptions(
-		upload.WithUnixFSNodeGeneratorDAGService(dagService),
-		upload.WithUnixFSNodeGeneratorBlockstore(bs),
-		upload.WithUnixFSNodeGeneratorLogger(ctx.Logger()),
+	nodeGenerator := contentUnixFS.NewUnixFSNodeGenerator(
+		contentUnixFS.WithUnixFSNodeDAGService(dagService),
+		contentUnixFS.WithUnixFSNodeBlockstore(bs),
 	)
 
 	var processor *protocol.FileBlockProcessor
@@ -302,10 +302,9 @@ func TestFileBlockProcessor_Integration_ContextCancellation(t *testing.T) {
 
 	// Create default in-memory components
 	dagService, bstore := upload.DefaultInMemoryComponents()
-	nodeGenerator := upload.NewUnixFSNodeGeneratorWithOptions(
-		upload.WithUnixFSNodeGeneratorDAGService(dagService),
-		upload.WithUnixFSNodeGeneratorBlockstore(bstore),
-		upload.WithUnixFSNodeGeneratorLogger(testCtx.Logger()),
+	nodeGenerator := contentUnixFS.NewUnixFSNodeGenerator(
+		contentUnixFS.WithUnixFSNodeDAGService(dagService),
+		contentUnixFS.WithUnixFSNodeBlockstore(bstore),
 	)
 
 	processor, err := protocol.NewFileBlockProcessorWithDefaults(cancelCtx, bs, seekableFile, dagService, nodeGenerator, testCtx.Logger(), doneTracker)

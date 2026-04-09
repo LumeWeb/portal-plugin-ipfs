@@ -20,12 +20,14 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
+	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 )
 
 // CARGenerator defines the interface for CAR generation operations
 type CARGenerator interface {
 	// ArchiveToCAR converts an archive extractor to a CAR file buffer and root CID
-	ArchiveToCAR(ctx context.Context, extractor ArchiveExtractor) (*bytes.Buffer, cid.Cid, error)
+	ArchiveToCAR(ctx context.Context, extractor contentArchive.ArchiveExtractor) (*bytes.Buffer, cid.Cid, error)
 
 	// FileToCAR converts a single file reader to a CAR file buffer and root CID
 	FileToCAR(ctx context.Context, reader io.ReadCloser) (*bytes.Buffer, cid.Cid, error)
@@ -34,7 +36,7 @@ type CARGenerator interface {
 // CARGeneratorOptions holds configuration options for CARGenerator
 type CARGeneratorOptions struct {
 	// NodeGenerator is the UnixFS node generator to use
-	NodeGenerator UnixFSNodeGenerator
+	NodeGenerator contentUnixFS.UnixFSNodeGenerator
 	// Blockstore is the blockstore to use (optional, will be extracted from NodeGenerator if not provided)
 	Blockstore blockstore.Blockstore
 	// DAGService is the DAG service to use (optional, will be extracted from NodeGenerator if not provided)
@@ -45,7 +47,7 @@ type CARGeneratorOptions struct {
 type CARGeneratorOption func(*CARGeneratorOptions)
 
 // WithCARGeneratorNodeGenerator sets the UnixFS node generator for the CAR generator
-func WithCARGeneratorNodeGenerator(nodeGenerator UnixFSNodeGenerator) CARGeneratorOption {
+func WithCARGeneratorNodeGenerator(nodeGenerator contentUnixFS.UnixFSNodeGenerator) CARGeneratorOption {
 	return func(opts *CARGeneratorOptions) {
 		opts.NodeGenerator = nodeGenerator
 	}
@@ -70,11 +72,11 @@ type IPFSCARGenerator struct {
 	blockstore    blockstore.Blockstore
 	dagService    format.DAGService
 	logger        *core.Logger
-	nodeGenerator UnixFSNodeGenerator
+	nodeGenerator contentUnixFS.UnixFSNodeGenerator
 }
 
 // NewCARGenerator creates a new CARGenerator instance with required nodeGenerator DI
-func NewCARGenerator(logger *core.Logger, nodeGenerator UnixFSNodeGenerator) CARGenerator {
+func NewCARGenerator(logger *core.Logger, nodeGenerator contentUnixFS.UnixFSNodeGenerator) CARGenerator {
 	// Validate required components
 	validator := common.NewComponentValidator()
 	if err := validator.ValidateRequiredComponents(nil, nil, logger); err != nil {
@@ -89,8 +91,13 @@ func NewCARGenerator(logger *core.Logger, nodeGenerator UnixFSNodeGenerator) CAR
 
 // NewCARGeneratorWithDefaults creates a new CARGenerator instance using default in-memory implementations
 func NewCARGeneratorWithDefaults(logger *core.Logger) CARGenerator {
-	// Create default node generator with in-memory components
-	nodeGenerator := NewUnixFSNodeGeneratorWithDefaults(logger)
+	// Create default in-memory implementations
+	dagService, blockstore := DefaultInMemoryComponents()
+
+	nodeGenerator := contentUnixFS.NewUnixFSNodeGenerator(
+		contentUnixFS.WithUnixFSNodeDAGService(dagService),
+		contentUnixFS.WithUnixFSNodeBlockstore(blockstore),
+	)
 
 	return NewCARGeneratorWithOptions(
 		logger,
@@ -252,7 +259,7 @@ func (gen *IPFSCARGenerator) pruneEmptyDirectories(ctx context.Context, director
 }
 
 // collectArchiveEntries extracts archive entries and builds a directory structure
-func (gen *IPFSCARGenerator) collectArchiveEntries(ctx context.Context, extractor ArchiveExtractor) (unixfsio.Directory, map[string]unixfsio.Directory, []format.Node, error) {
+func (gen *IPFSCARGenerator) collectArchiveEntries(ctx context.Context, extractor contentArchive.ArchiveExtractor) (unixfsio.Directory, map[string]unixfsio.Directory, []format.Node, error) {
 	ctx, span := core.TraceMethod(ctx, "IPFSCARGenerator.collectArchiveEntries")
 	defer span.End()
 
@@ -502,7 +509,7 @@ func (gen *IPFSCARGenerator) processFile(ctx context.Context, fileNode format.No
 }
 
 // ArchiveToCAR implements CARGenerator.ArchiveToCAR
-func (gen *IPFSCARGenerator) ArchiveToCAR(ctx context.Context, extractor ArchiveExtractor) (*bytes.Buffer, cid.Cid, error) {
+func (gen *IPFSCARGenerator) ArchiveToCAR(ctx context.Context, extractor contentArchive.ArchiveExtractor) (*bytes.Buffer, cid.Cid, error) {
 	ctx, span := core.TraceMethod(ctx, "IPFSCARGenerator.ArchiveToCAR")
 	defer span.End()
 
@@ -582,7 +589,7 @@ func (gen *IPFSCARGenerator) FileToCAR(ctx context.Context, reader io.ReadCloser
 
 // ArchiveExtractorToCAR converts an ArchiveExtractor to a CAR file buffer and root CID.
 // This is a backward compatibility wrapper that uses the new interface-based implementation.
-func ArchiveExtractorToCAR(ctx context.Context, logger *core.Logger, extractor ArchiveExtractor) (*bytes.Buffer, cid.Cid, error) {
+func ArchiveExtractorToCAR(ctx context.Context, logger *core.Logger, extractor contentArchive.ArchiveExtractor) (*bytes.Buffer, cid.Cid, error) {
 	ctx, span := core.TraceMethod(ctx, "ArchiveExtractorToCAR")
 	defer span.End()
 

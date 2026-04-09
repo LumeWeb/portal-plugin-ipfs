@@ -9,6 +9,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
 	"go.lumeweb.com/portal/core"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
 )
 
 // validateQuotas validates both upload and storage quotas for a file size
@@ -142,7 +143,7 @@ func validateCARRoots(roots []cid.Cid) error {
 
 // ArchiveProcessor implements UploadProcessor for archive formats (ZIP, TAR, etc.)
 type ArchiveProcessor struct {
-	format        Format
+	format        contentArchive.Format
 	storage       core.StorageService
 	ipfs          core.Protocol
 	carGenerator  CARGenerator
@@ -153,7 +154,7 @@ type ArchiveProcessor struct {
 }
 
 // NewArchiveProcessor creates a new archive processor
-func NewArchiveProcessor(format Format, storage core.StorageService, ipfs core.Protocol, carGenerator CARGenerator, logger *core.Logger, portalCtx core.Context, userID uint) *ArchiveProcessor {
+func NewArchiveProcessor(format contentArchive.Format, storage core.StorageService, ipfs core.Protocol, carGenerator CARGenerator, logger *core.Logger, portalCtx core.Context, userID uint) *ArchiveProcessor {
 	return &ArchiveProcessor{
 		format:        format,
 		storage:       storage,
@@ -174,7 +175,7 @@ func (p *ArchiveProcessor) Process(ctx context.Context, reader io.ReadSeekCloser
 	uReader := NewUniversalReader(reader)
 	defer common.SafeCloseFile(p.logger, uReader)
 
-	extractor, err := CreateExtractor(uReader)
+	extractor, err := contentArchive.CreateExtractor(uReader)
 	if err != nil {
 		return cid.Cid{}, "", err
 	}
@@ -216,9 +217,9 @@ func NewUploadProcessorFactory(logger *core.Logger, storage core.StorageService,
 }
 
 // CreateProcessor returns the appropriate processor based on file format
-func (f *DefaultUploadProcessorFactory) CreateProcessor(format Format, mode ArchiveMode, portalCtx core.Context, userID uint) (UploadProcessor, error) {
+func (f *DefaultUploadProcessorFactory) CreateProcessor(format contentArchive.Format, mode ArchiveMode, portalCtx core.Context, userID uint) (UploadProcessor, error) {
 	switch format {
-	case FormatCAR:
+	case contentArchive.FormatCAR:
 		return NewCARProcessor(f.storage, f.ipfs, portalCtx, userID), nil
 	default:
 		gen := NewCARGeneratorWithDefaults(f.logger)

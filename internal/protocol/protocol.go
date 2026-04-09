@@ -24,12 +24,14 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store/downloader"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
+	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/db/models/data_models"
 	"go.lumeweb.com/portal/service"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
+	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -251,7 +253,7 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 				return fmt.Errorf("failed to get upload reader: %w", err)
 			}
 
-			reader = upload.NewUniversalReader(reader)
+			reader = pluginUpload.NewUniversalReader(reader)
 
 			defer func(reader io.ReadCloser) {
 				if reader == nil {
@@ -264,7 +266,7 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 			}(reader)
 
 			// Detect format using IPFS plugin logic
-			uploadedFormat, err := upload.DetectFormat(reader)
+			uploadedFormat, err := contentArchive.DetectFormat(reader)
 			if err != nil {
 				return fmt.Errorf("failed to detect upload format: %w", err)
 			}
@@ -534,12 +536,11 @@ func createFileProcessorForTUS(uploadFile io.ReadCloser, proto ProtoNode, logger
 	bs := NewStreamingBlockstoreWithDefaults(logger, bstore, doneTracker, DEFAULT_BLOCK_QUEUE_SIZE)
 
 	// Create UnixFS node generator
-	nodeGenerator := upload.NewUnixFSNodeGeneratorWithOptions(
-		upload.WithUnixFSNodeGeneratorDAGService(dagService),
-		upload.WithUnixFSNodeGeneratorBlockstore(bs),
-		upload.WithUnixFSNodeGeneratorLogger(logger),
+	nodeGenerator := contentUnixFS.NewUnixFSNodeGenerator(
+		contentUnixFS.WithUnixFSNodeDAGService(dagService),
+		contentUnixFS.WithUnixFSNodeBlockstore(bs),
 	)
 
 	// Create file block processor (not archive processor)
-	return NewFileBlockProcessorWithDefaults(proto.Context(), bs, upload.NewUniversalReader(uploadFile), dagService, nodeGenerator, logger, doneTracker)
+	return NewFileBlockProcessorWithDefaults(proto.Context(), bs, pluginUpload.NewUniversalReader(uploadFile), dagService, nodeGenerator, logger, doneTracker)
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/ipfs/go-ipld-format"
 	mock "github.com/stretchr/testify/mock"
+	"go.lumeweb.com/ipfs-content/archive"
 )
 
 // NewMockStreamingArchiveProcessor creates a new instance of MockStreamingArchiveProcessor. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -191,7 +192,7 @@ func (_c *MockStreamingArchiveProcessor_GetRootNode_Call) RunAndReturn(run func(
 }
 
 // ProcessArchive provides a mock function for the type MockStreamingArchiveProcessor
-func (_mock *MockStreamingArchiveProcessor) ProcessArchive(ctx context.Context, extractor ArchiveExtractor) error {
+func (_mock *MockStreamingArchiveProcessor) ProcessArchive(ctx context.Context, extractor archive.ArchiveExtractor) error {
 	ret := _mock.Called(ctx, extractor)
 
 	if len(ret) == 0 {
@@ -199,7 +200,7 @@ func (_mock *MockStreamingArchiveProcessor) ProcessArchive(ctx context.Context, 
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, ArchiveExtractor) error); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, archive.ArchiveExtractor) error); ok {
 		r0 = returnFunc(ctx, extractor)
 	} else {
 		r0 = ret.Error(0)
@@ -214,20 +215,20 @@ type MockStreamingArchiveProcessor_ProcessArchive_Call struct {
 
 // ProcessArchive is a helper method to define mock.On call
 //   - ctx context.Context
-//   - extractor ArchiveExtractor
+//   - extractor archive.ArchiveExtractor
 func (_e *MockStreamingArchiveProcessor_Expecter) ProcessArchive(ctx interface{}, extractor interface{}) *MockStreamingArchiveProcessor_ProcessArchive_Call {
 	return &MockStreamingArchiveProcessor_ProcessArchive_Call{Call: _e.mock.On("ProcessArchive", ctx, extractor)}
 }
 
-func (_c *MockStreamingArchiveProcessor_ProcessArchive_Call) Run(run func(ctx context.Context, extractor ArchiveExtractor)) *MockStreamingArchiveProcessor_ProcessArchive_Call {
+func (_c *MockStreamingArchiveProcessor_ProcessArchive_Call) Run(run func(ctx context.Context, extractor archive.ArchiveExtractor)) *MockStreamingArchiveProcessor_ProcessArchive_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
 			arg0 = args[0].(context.Context)
 		}
-		var arg1 ArchiveExtractor
+		var arg1 archive.ArchiveExtractor
 		if args[1] != nil {
-			arg1 = args[1].(ArchiveExtractor)
+			arg1 = args[1].(archive.ArchiveExtractor)
 		}
 		run(
 			arg0,
@@ -242,7 +243,7 @@ func (_c *MockStreamingArchiveProcessor_ProcessArchive_Call) Return(err error) *
 	return _c
 }
 
-func (_c *MockStreamingArchiveProcessor_ProcessArchive_Call) RunAndReturn(run func(ctx context.Context, extractor ArchiveExtractor) error) *MockStreamingArchiveProcessor_ProcessArchive_Call {
+func (_c *MockStreamingArchiveProcessor_ProcessArchive_Call) RunAndReturn(run func(ctx context.Context, extractor archive.ArchiveExtractor) error) *MockStreamingArchiveProcessor_ProcessArchive_Call {
 	_c.Call.Return(run)
 	return _c
 }

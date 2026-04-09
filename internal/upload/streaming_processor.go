@@ -15,6 +15,8 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
+	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 )
 
 // ErrRootNodeNotAvailable is returned when GetRootNode is called before ProcessArchive
@@ -38,7 +40,7 @@ type FileInfo struct {
 // StreamingArchiveProcessor defines the interface for streaming archive processing
 type StreamingArchiveProcessor interface {
 	// ProcessArchive processes an entire archive using streaming approach
-	ProcessArchive(ctx context.Context, extractor ArchiveExtractor) error
+	ProcessArchive(ctx context.Context, extractor contentArchive.ArchiveExtractor) error
 
 	// GetRootNode returns the root node of the processed archive
 	GetRootNode(ctx context.Context) (format.Node, error)
@@ -52,7 +54,7 @@ type StreamingArchiveProcessor interface {
 
 // StreamingProcessor implements StreamingArchiveProcessor with streaming capabilities
 type StreamingProcessor struct {
-	nodeGenerator     UnixFSNodeGenerator
+	nodeGenerator     contentUnixFS.UnixFSNodeGenerator
 	dagService        format.DAGService
 	blockstore        blockstore.Blockstore
 	logger            *core.Logger
@@ -74,7 +76,7 @@ type directoryMetadata struct {
 
 // StreamingProcessorOptions holds configuration options for StreamingProcessor
 type StreamingProcessorOptions struct {
-	NodeGenerator UnixFSNodeGenerator
+	NodeGenerator contentUnixFS.UnixFSNodeGenerator
 	DAGService    format.DAGService
 	Blockstore    blockstore.Blockstore
 	Logger        *core.Logger
@@ -85,7 +87,7 @@ type StreamingProcessorOptions struct {
 type StreamingProcessorOption func(*StreamingProcessorOptions)
 
 // WithStreamingProcessorNodeGenerator sets the UnixFS node generator for the streaming processor
-func WithStreamingProcessorNodeGenerator(nodeGenerator UnixFSNodeGenerator) StreamingProcessorOption {
+func WithStreamingProcessorNodeGenerator(nodeGenerator contentUnixFS.UnixFSNodeGenerator) StreamingProcessorOption {
 	return func(opts *StreamingProcessorOptions) {
 		opts.NodeGenerator = nodeGenerator
 	}
@@ -121,7 +123,7 @@ func WithStreamingProcessorMaxLinks(maxLinks int) StreamingProcessorOption {
 
 // NewStreamingProcessor creates a new streaming processor instance with required dependencies and default options
 func NewStreamingProcessor(
-	nodeGenerator UnixFSNodeGenerator,
+	nodeGenerator contentUnixFS.UnixFSNodeGenerator,
 	dagService format.DAGService,
 	blockstore blockstore.Blockstore,
 	logger *core.Logger,
@@ -150,10 +152,9 @@ func NewStreamingProcessorWithDefaults(logger *core.Logger) *StreamingProcessor 
 	dagService, bstore := DefaultInMemoryComponents()
 
 	// Create node generator with the default DAG service and blockstore
-	nodeGenerator := NewUnixFSNodeGeneratorWithOptions(
-		WithUnixFSNodeGeneratorDAGService(dagService),
-		WithUnixFSNodeGeneratorBlockstore(bstore),
-		WithUnixFSNodeGeneratorLogger(logger),
+	nodeGenerator := contentUnixFS.NewUnixFSNodeGenerator(
+		contentUnixFS.WithUnixFSNodeDAGService(dagService),
+		contentUnixFS.WithUnixFSNodeBlockstore(bstore),
 	)
 
 	// Create streaming processor with default components
@@ -198,7 +199,7 @@ func NewStreamingProcessorWithOptions(options ...StreamingProcessorOption) *Stre
 }
 
 // ProcessArchive implements StreamingArchiveProcessor.ProcessArchive
-func (sp *StreamingProcessor) ProcessArchive(ctx context.Context, extractor ArchiveExtractor) error {
+func (sp *StreamingProcessor) ProcessArchive(ctx context.Context, extractor contentArchive.ArchiveExtractor) error {
 	ctx, span := core.TraceMethod(ctx, "StreamingProcessor.ProcessArchive")
 	defer span.End()
 

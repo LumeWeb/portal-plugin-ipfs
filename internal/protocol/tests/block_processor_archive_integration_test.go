@@ -21,6 +21,8 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
+	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 )
 
 // simulateImageContent creates a simple PNG image using the standard library
@@ -95,11 +97,11 @@ func createTestArchiveProcessor(t *testing.T, archiveData []byte) (*protocol.Arc
 	require.NoError(t, err)
 
 	// Register extractors
-	upload.RegisterTarExtractor()
-	upload.RegisterZipExtractor()
+	contentArchive.RegisterTarExtractor()
+	contentArchive.RegisterZipExtractor()
 
 	// Create extractor for the archive
-	extractor, err := upload.CreateExtractor(bytes.NewReader(archiveData))
+	extractor, err := contentArchive.CreateExtractor(bytes.NewReader(archiveData))
 	require.NoError(t, err)
 
 	// Create done tracker for tracking completion
@@ -120,10 +122,9 @@ func createTestArchiveProcessor(t *testing.T, archiveData []byte) (*protocol.Arc
 	)
 
 	// Create UnixFS node generator manually (using archive DAG service for streaming processor)
-	nodeGenerator := upload.NewUnixFSNodeGeneratorWithOptions(
-		upload.WithUnixFSNodeGeneratorDAGService(archiveDagService),
-		upload.WithUnixFSNodeGeneratorBlockstore(archiveBlockstore),
-		upload.WithUnixFSNodeGeneratorLogger(ctx.Logger()),
+	nodeGenerator := contentUnixFS.NewUnixFSNodeGenerator(
+		contentUnixFS.WithUnixFSNodeDAGService(archiveDagService),
+		contentUnixFS.WithUnixFSNodeBlockstore(archiveBlockstore),
 	)
 
 	// Create streaming processor with the manual components (using archive DAG service)
@@ -467,10 +468,10 @@ func TestArchiveBlockProcessor_Integration_ContextCancellation(t *testing.T) {
 	archiveData := upload.CreateTARArchive(t, ctx, testFiles)
 
 	// Register extractors
-	upload.RegisterTarExtractor()
+	contentArchive.RegisterTarExtractor()
 
 	// Create components
-	extractor, err := upload.CreateExtractor(bytes.NewReader(archiveData))
+	extractor, err := contentArchive.CreateExtractor(bytes.NewReader(archiveData))
 	require.NoError(t, err)
 
 	streamProcessor := upload.NewStreamingProcessorWithDefaults(ctx.Logger())

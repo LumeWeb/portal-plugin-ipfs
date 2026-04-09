@@ -393,7 +393,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		bitswap.MaxOutstandingBytesPerPeer(1 << 20),
 	}
 
-	bs = &blockstore.ValidatingBlockstore{bs}
+	bs = &blockstore.ValidatingBlockstore{Blockstore: bs}
 
 	// Create tracer to track peer-to-peer block requests for probabilistic attribution
 	bitswapTracer := NewBitswapTracer(peerTracker, node)
