@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/fixtures"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 )
@@ -114,8 +115,8 @@ func TestCARBlockProcessor_DoneTracker_Functionality(t *testing.T) {
 func TestCARBlockProcessor_RealCARFile(t *testing.T) {
 	// Test with a real CAR file if available from fixtures
 	// This test can be skipped if the file doesn't exist
-	carFilePath := "../testing/fixtures/cars/empty.car"
-	carData, err := readTestFixture(carFilePath)
+	carFilePath := filepath.Join(fixtures.FixturesDir, "cars/empty.car")
+	carData, err := os.ReadFile(carFilePath)
 	if err != nil {
 		t.Skipf("Skipping test - test fixture %s not available: %v", carFilePath, err)
 		return
@@ -135,8 +136,8 @@ func TestCARBlockProcessor_RealCARFile(t *testing.T) {
 
 func TestCARBlockProcessor_RealCARFile_WithBlocks(t *testing.T) {
 	// Test with a real CAR file containing blocks
-	carFilePath := "../testing/fixtures/cars/docx.car"
-	carData, err := readTestFixture(carFilePath)
+	carFilePath := filepath.Join(fixtures.FixturesDir, "cars/docx.car")
+	carData, err := os.ReadFile(carFilePath)
 	if err != nil {
 		t.Skipf("Skipping test - test fixture %s not available: %v", carFilePath, err)
 		return
@@ -173,17 +174,7 @@ func createTestCAR(t *testing.T, content string) *bytes.Buffer {
 	return buf
 }
 
-// readTestFixture reads a test fixture file
-func readTestFixture(path string) ([]byte, error) {
-	// Try to read from the current working directory first
-	if data, err := os.ReadFile(path); err == nil {
-		return data, nil
-	}
 
-	// Try to read from relative path to this test file
-	relPath := "./testing/fixtures/" + filepath.Base(path)
-	return os.ReadFile(relPath)
-}
 
 // Test helper function to verify CAR processor implements BlockProcessor interface
 func TestCARBlockProcessor_BlockProcessorInterface(t *testing.T) {

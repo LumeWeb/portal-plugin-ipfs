@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
-	"runtime"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,6 +21,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/fixtures"
 	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
@@ -30,14 +30,9 @@ import (
 	"gorm.io/gorm"
 )
 
-var (
-	_, currentFile, _, _ = runtime.Caller(0)
-	carFileName          = "../../testing/fixtures/cars/bbb.car"
-)
-
-// createCARArchive creates a CAR archive by reading the fixture CAR file
+// createCARArchive creates a CAR archive by reading the fixture CAR file from ipfs-content
 func createCARArchive() []byte {
-	carData, err := os.ReadFile(path.Join(path.Dir(currentFile), carFileName))
+	carData, err := os.ReadFile(filepath.Join(fixtures.FixturesDir, "cars/bbb.car"))
 	if err != nil {
 		panic("Failed to read CAR fixture file: " + err.Error())
 	}

@@ -3,13 +3,13 @@ package tests
 import (
 	"io"
 	"os"
-	"path"
-	"runtime"
+	"path/filepath"
 	"testing"
 
 	"github.com/ipld/go-car/v2"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/fixtures"
 	"go.lumeweb.com/portal/core"
 
 	"github.com/stretchr/testify/require"
@@ -28,21 +28,21 @@ func TestProcessCarIntegration(t *testing.T) {
 	}{
 		{
 			name:         "Valid CAR file - Big Buck Bunny",
-			carFileName:  "../../testing/fixtures/cars/bbb.car",
+			carFileName:  "cars/bbb.car",
 			expectedSize: 515027709,
 			rootCIDs:     []string{"QmbvEbKtzaZEtyXMvD5HDnQRpcYkg4hAj9xqNLsi7arTq3"},
 			expectError:  false,
 		},
 		{
 			name:         "Valid CAR file - DOCX",
-			carFileName:  "../../testing/fixtures/cars/docx.car",
+			carFileName:  "cars/docx.car",
 			expectedSize: 34976,
 			rootCIDs:     []string{"QmNdr9DzL38nQyASPbvSuzkTeX7FSjojyW6EMbs81sC4iv"},
 			expectError:  false,
 		},
 		{
 			name:         "Valid CAR file - File Tree",
-			carFileName:  "../../testing/fixtures/cars/filetree.car",
+			carFileName:  "cars/filetree.car",
 			expectedSize: 70200,
 			rootCIDs:     []string{"QmP68x398CKjjKSYHaqJr9iJdksM6TRTckhtcfw6HANt2F"},
 			expectError:  false,
@@ -50,28 +50,26 @@ func TestProcessCarIntegration(t *testing.T) {
 		},
 		{
 			name:         "Valid CAR file - HAMT Tree",
-			carFileName:  "../../testing/fixtures/cars/hamttree.car",
+			carFileName:  "cars/hamttree.car",
 			expectedSize: 70252,
 			rootCIDs:     []string{"bafybeiafoftayzdd4qsi6keef373dinlrzyibxdqnct64ymvjusovgw2yq"},
 			expectError:  false,
 		},
 		{
 			name:         "Invalid CAR file",
-			carFileName:  "../../testing/fixtures/cars/invalid.car",
+			carFileName:  "cars/invalid.car",
 			expectedSize: 37,
 			rootCIDs:     []string{},
 			expectError:  true,
 		},
 		{
 			name:         "Empty CAR file",
-			carFileName:  "../../testing/fixtures/cars/empty.car",
+			carFileName:  "cars/empty.car",
 			expectedSize: 75,
 			rootCIDs:     []string{},
 			expectError:  true,
 		},
 	}
-
-	_, file, _, _ := runtime.Caller(0)
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -80,8 +78,8 @@ func TestProcessCarIntegration(t *testing.T) {
 					err := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol).GetNode().Close()
 					require.NoError(t, err)
 				}
-				// Open the CAR file directly
-				carFile, err := os.Open(path.Join(path.Dir(file), tc.carFileName))
+				// Open the CAR file directly from ipfs-content fixtures
+				carFile, err := os.Open(filepath.Join(fixtures.FixturesDir, tc.carFileName))
 				require.NoError(t, err)
 				defer func(carFile *os.File) {
 					err := carFile.Close()
