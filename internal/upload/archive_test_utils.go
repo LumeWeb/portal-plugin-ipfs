@@ -131,6 +131,7 @@ func (u *TestArchiveCreator) createFileListFromTestFiles(files []TestFile) []arc
 	fileList := make([]archives.FileInfo, 0, len(files))
 
 	for _, file := range files {
+		file := file // Create new variable to avoid closure capture issue
 		var content []byte
 		if !file.IsDir {
 			content = []byte(file.Content)

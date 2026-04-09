@@ -13,6 +13,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
+	pluginErrors "go.lumeweb.com/portal-plugin-ipfs/internal/errors"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
@@ -122,7 +123,10 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 
 	uploadedFormat, err := contentArchive.DetectFormat(uploadFile)
 	if err != nil {
-		return err
+		if pluginUpload.IsUploadErrorType(err, pluginErrors.UploadErrUnsupportedFormat) {
+			return pluginUpload.NewUnsupportedFormatError(err)
+		}
+		return pluginUpload.NewCorruptedFileError(err)
 	}
 
 	// Set progress - creating processor

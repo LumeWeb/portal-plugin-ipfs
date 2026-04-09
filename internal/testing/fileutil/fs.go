@@ -83,6 +83,9 @@ func (f *TestMemFile) Seek(offset int64, whence int) (int64, error) {
 	default:
 		return 0, fmt.Errorf("invalid whence")
 	}
+	if newPos < 0 {
+		return 0, fmt.Errorf("negative position")
+	}
 	f.pos = newPos
 	return newPos, nil
 }
