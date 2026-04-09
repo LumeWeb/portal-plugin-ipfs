@@ -16,7 +16,7 @@ var (
 func init() {
 	// Use centralized fixture discovery from ipfs-content
 	var err error
-	FixturesDir, err = contentfixtures.GetDataDir()
+	FixturesDir, err = contentfixtures.FindFixturesDir()
 	if err != nil {
 		panic(fmt.Sprintf("Failed to find ipfs-content fixtures: %v", err))
 	}
