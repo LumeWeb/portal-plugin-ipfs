@@ -2,9 +2,10 @@
 // This file contains go:generate directives to rebuild test fixtures.
 //
 // Run: go generate ./internal/testing/fixtures
+//
+// This generates fixtures in two steps:
+// 1. Run ipfs-content's go generate to generate shared fixtures
+// 2. Generate portal-plugin-ipfs specific fixtures (empty.car, invalid.car)
 package fixtures
 
-//go:generate ./generate_car.sh
-//go:generate ./generate_block.sh
-//go:generate go run ./invalid_car_generator.go
-//go:generate go run ./empty_car_generator.go
+//go:generate bash ./generate_ipfs_content.sh
