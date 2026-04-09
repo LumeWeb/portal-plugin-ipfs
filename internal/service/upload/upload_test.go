@@ -5,8 +5,7 @@ import (
 	"context"
 	"io"
 	"os"
-	"path"
-	"runtime"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -21,15 +20,11 @@ import (
 
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/fixtures"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.lumeweb.com/portal/service"
-)
-
-var (
-	_, currentFile, _, _ = runtime.Caller(0)
-	carFileName          = "../../testing/fixtures/cars/filetree.car"
 )
 
 func TestMain(m *testing.M) {
@@ -56,7 +51,7 @@ func TestUploadService_HandleUpload(t *testing.T) {
 
 		mockStorageService := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
 
-		testReader, err := os.Open(path.Join(path.Dir(currentFile), carFileName))
+		testReader, err := os.Open(filepath.Join(fixtures.FixturesDir, "cars/filetree.car"))
 		require.NoError(tb, err)
 
 		userId := uint(123)

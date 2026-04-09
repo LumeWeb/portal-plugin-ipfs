@@ -3,11 +3,10 @@ package internal_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/ipfs/boxo/ipld/unixfs/pb"
 	"os"
-	"path"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -17,22 +16,22 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
+
+	// Centralized fixture discovery from ipfs-content
+	contentfixtures "go.lumeweb.com/ipfs-content/testing/fixtures"
 )
 
 var (
 	finalDataDir = ""
 )
 
-const testDataDir = "testing/fixtures/data"
-
 func init() {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		// Fallback to relative path if runtime.Caller fails
-		finalDataDir = testDataDir
-	} else {
-		finalDataDir = path.Join(path.Dir(file), testDataDir)
+	// Use centralized fixture discovery from ipfs-content
+	dataDir, err := contentfixtures.GetDataDir()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to find ipfs-content fixtures: %v", err))
 	}
+	finalDataDir = dataDir
 }
 
 type InfoFile struct {
@@ -51,7 +50,7 @@ func loadInfoFromFile(t *testing.T, filename string) InfoFile {
 	t.Helper()
 	// Change .info to .info.json
 	jsonFile := strings.ReplaceAll(filename, ".info", ".info.json")
-	data, err := os.ReadFile(filepath.Join(testDataDir, jsonFile))
+	data, err := os.ReadFile(filepath.Join(finalDataDir, jsonFile))
 	require.NoError(t, err)
 
 	var info InfoFile
