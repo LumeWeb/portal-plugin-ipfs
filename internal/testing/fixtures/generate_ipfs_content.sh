@@ -83,11 +83,11 @@ fi
 
 echo "✓ Found ipfs-content fixtures at: $FIXTURES_DIR"
 
-# Run go generate in ipfs-content fixtures in a subshell
+# Run generation commands manually in ipfs-content (avoid go generate in dependency modules)
 echo ""
-echo "Running go generate in ipfs-content..."
-(cd "$FIXTURES_DIR" && go generate .) || {
-    echo "Error: go generate failed in ipfs-content" >&2
+echo "Running ipfs-content fixture generation..."
+(cd "$FIXTURES_DIR" && bash ./generate_car.sh && bash ./generate_block.sh && go run ./invalid_car_generator.go && go run ./empty_car_generator.go) || {
+    echo "Error: fixture generation failed in ipfs-content" >&2
     exit 1
 }
 
