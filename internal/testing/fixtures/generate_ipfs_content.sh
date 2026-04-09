@@ -54,14 +54,15 @@ find_ipfs_content_fixtures() {
     done
 
     # Approach 3: Try relative path (assuming sibling repos)
-    local rel_path="$current_dir/../../$ipfs_content_module/$test_data_dir"
+    local rel_path="$project_root/../../$ipfs_content_module/$test_data_dir"
     if [ -f "$rel_path/lib.sh" ]; then
         echo "$rel_path"
         return 0
     fi
 
     # Approach 4: Last resort - try from current working directory
-    local vendor_cwd="$(pwd)/vendor/$ipfs_content_module/$test_data_dir"
+    local vendor_cwd
+    vendor_cwd="$(pwd)/vendor/$ipfs_content_module/$test_data_dir"
     if [ -f "$vendor_cwd/lib.sh" ]; then
         echo "$vendor_cwd"
         return 0
@@ -77,9 +78,7 @@ find_ipfs_content_fixtures() {
 }
 
 # Find ipfs-content fixtures directory
-FIXTURES_DIR=$(find_ipfs_content_fixtures "$PROJECT_ROOT")
-
-if [ $? -ne 0 ]; then
+if ! FIXTURES_DIR=$(find_ipfs_content_fixtures "$PROJECT_ROOT"); then
     exit 1
 fi
 
