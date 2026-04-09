@@ -1,28 +1,103 @@
 #!/bin/bash
 
+# Generate CAR fixtures for portal-plugin-ipfs
+# Uses ipfs-content's infrastructure, outputs to portal-plugin-ipfs's cars directory
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+OUTPUT_DIR="$SCRIPT_DIR/cars"
+
 # ============================================
-# Test Fixtures Generation Script
+# Helper function to find ipfs-content fixtures
+# Tries all approaches like a Go version would
 # ============================================
+find_ipfs_content_fixtures() {
+    local current_dir="$1"
+    const max_depth=10
+    const ipfs_content_module="go.lumeweb.com/ipfs-content"
+    const test_data_dir="internal/testing/fixtures"
 
-# Handle debug flags properly
-while [[ "$1" == -* ]]; do
-  case "$1" in
-    -x|-v) shift ;; # Skip debug flags
-    *) break ;;
-  esac
-done
+    # Approach 1: Try go list first (fastest method)
+    local mod_dir
+    mod_dir=$(go list -m -f '{{.Dir}}' go.lumeweb.com/ipfs-content 2>/dev/null)
+    if [ -n "$mod_dir" ]; then
+        local fixtures_dir="$mod_dir/$test_data_dir"
+        if [ -f "$fixtures_dir/lib.sh" ]; then
+            echo "$fixtures_dir"
+            return 0
+        fi
+    fi
 
-# Source library functions
-SCRIPT_DIR=$(dirname "$0")
-source "$SCRIPT_DIR/lib.sh" || exit 1
+    # Approach 2: Fall back to vendor directory scanning (like Node.js)
+    local check_dir="$current_dir"
+    local depth=0
 
-# --- Setup ---
-DEFAULT_OUTPUT_DIR="$SCRIPT_DIR/cars"
+    while [ "$depth" -lt "$max_depth" ]; do
+        # Check for vendor directory at current level
+        local vendor_dir="$check_dir/vendor/$ipfs_content_module/$test_data_dir"
+        if [ -f "$vendor_dir/lib.sh" ]; then
+            echo "$vendor_dir"
+            return 0
+        fi
+
+        # Move up one directory
+        local parent_dir
+        parent_dir=$(dirname "$check_dir")
+
+        # Check if we've reached the root
+        if [ "$parent_dir" = "$check_dir" ] || [ "$parent_dir" = "/" ]; then
+            break
+        fi
+
+        check_dir="$parent_dir"
+        depth=$((depth + 1))
+    done
+
+    # Approach 3: Try relative path (assuming sibling repos)
+    local rel_path="$current_dir/../../$ipfs_content_module/$test_data_dir"
+    if [ -f "$rel_path/lib.sh" ]; then
+        echo "$rel_path"
+        return 0
+    fi
+
+    # Approach 4: Last resort - try from current working directory
+    local vendor_cwd="$(pwd)/vendor/$ipfs_content_module/$test_data_dir"
+    if [ -f "$vendor_cwd/lib.sh" ]; then
+        echo "$vendor_cwd"
+        return 0
+    fi
+
+    # Not found
+    echo "Error: Could not find ipfs-content fixtures using any approach:" >&2
+    echo "  1. go list -m (failed)" >&2
+    echo "  2. Vendor scanning (failed)" >&2
+    echo "  3. Relative paths (failed)" >&2
+    echo "  4. Current directory vendor (failed)" >&2
+    return 1
+}
+
+# Find ipfs-content fixtures directory
+FIXTURES_DIR=$(find_ipfs_content_fixtures "$SCRIPT_DIR")
+
+if [ $? -ne 0 ]; then
+    echo "FATAL: Fixtures discovery failed" >&2
+    exit 1
+fi
+
+LIB_SH="$FIXTURES_DIR/lib.sh"
+
+echo "✓ Found ipfs-content fixtures at: $FIXTURES_DIR"
+
+# Source ipfs-content's lib.sh
+source "$LIB_SH" || {
+    echo "Error: Failed to source $LIB_SH" >&2
+    exit 1
+}
+
+# Setup
 DEFAULT_TEMP_DIR="$SCRIPT_DIR/tmp"
-OUTPUT_DIR="${1:-$DEFAULT_OUTPUT_DIR}"
 mkdir -p "$DEFAULT_TEMP_DIR"
-TEMP_DIR=$(mktemp -d "$DEFAULT_TEMP_DIR/ipfs-test-data.XXXXXX")
-echo "Generating test data in: $TEMP_DIR"
+TEMP_DIR=$(mktemp -d "$DEFAULT_TEMP_DIR/ipfs-test-car.XXXXXX")
+echo "Generating CAR fixtures in: $TEMP_DIR"
 mkdir -p -- "${OUTPUT_DIR}"
 
 # Initialize cleanup flag
@@ -33,28 +108,8 @@ trap cleanup EXIT
 check_dependencies || exit 1
 check_ipfs_running || exit 1
 
-# ============================================
-# Fixtures Generation
-# ============================================
-
+# Generate CAR fixtures (ipfs-content style)
 echo -e "\n=== Generating CAR Fixtures ==="
-
-# Download BBB video if needed
-echo "=== Downloading BBB Video ==="
-download_bbb_video "$SCRIPT_DIR" || exit 1
-echo ""
-
-# Generate bbb.car from Big Buck Bunny video
-echo "=== Big Buck Bunny CAR ==="
-if [ -e "$SCRIPT_DIR/bbb_sunflower_1080p_60fps_stereo_abl.mp4" ]; then
-  generate_car_from_file \
-    "$SCRIPT_DIR/bbb_sunflower_1080p_60fps_stereo_abl.mp4" \
-    "$OUTPUT_DIR/bbb.car" \
-    "Big Buck Bunny"
-  echo ""
-else
-  echo "Warning: BBB video file not found, skipping" >&2
-fi
 
 # Generate docx.car from sia.docx
 echo "=== DOCX CAR ==="
@@ -62,18 +117,15 @@ if [ -e "$SCRIPT_DIR/sia.docx" ]; then
   generate_car_from_file \
     "$SCRIPT_DIR/sia.docx" \
     "$OUTPUT_DIR/docx.car" \
-    "SIA DOCX"
+    "DOCX"
   echo ""
-else
-  echo "Warning: sia.docx not found, skipping" >&2
 fi
 
-# Generate filetree.car from a structured directory
+# Generate filetree.car
 echo "=== File Tree CAR ==="
 FILETREE_DIR="$TEMP_DIR/filetree_test"
 mkdir -p "$FILETREE_DIR"
 
-# Create deterministic nested structure
 for i in $(seq 1 20); do
   DIR="$FILETREE_DIR/dir_$(printf "%02d" $i)"
   mkdir -p "$DIR"
@@ -91,22 +143,11 @@ echo "=== HAMT Tree CAR ==="
 HAMT_DIR="$TEMP_DIR/hamt_test"
 mkdir -p "$HAMT_DIR"
 
-# Create files for HAMT tree
 for i in $(seq 1 1200); do
   DETERMINISTIC=1 create_file "$HAMT_DIR/file_$(printf "%04d" $i).txt" 512 txt
 done
 
-# Save current settings and enable HAMT
-OLD_THRESHOLD=$(ipfs config Import.UnixFSHAMTDirectorySizeThreshold 2>/dev/null || echo "")
-OLD_CID_VERSION=$(ipfs config Import.CidVersion 2>/dev/null || echo "")
-ipfs config Import.UnixFSHAMTDirectorySizeThreshold 0 >/dev/null 2>&1
-ipfs config Import.CidVersion 1 >/dev/null 2>&1
-
 generate_directory_car "$HAMT_DIR" "$OUTPUT_DIR/hamttree.car" "HAMT Tree" 1
-
-# Restore settings
-[ -n "$OLD_THRESHOLD" ] && ipfs config Import.UnixFSHAMTDirectorySizeThreshold "$OLD_THRESHOLD" >/dev/null 2>&1
-[ -n "$OLD_CID_VERSION" ] && ipfs config Import.CidVersion "$OLD_CID_VERSION" >/dev/null 2>&1
 echo ""
 
 echo -e "\n=== Test data generation complete. ==="
