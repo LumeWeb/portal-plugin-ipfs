@@ -1,6 +1,7 @@
 package upload
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
 	"go.lumeweb.com/portal/core"
 	contentArchive "go.lumeweb.com/ipfs-content/archive"
+	"go.uber.org/zap"
 )
 
 // validateQuotas validates both upload and storage quotas for a file size
@@ -55,14 +57,25 @@ func (p *FileProcessor) Process(ctx context.Context, reader io.ReadSeekCloser) (
 		return cid.Cid{}, "", err
 	}
 
-	// Validate quotas using the CAR file size
-	carSize := uint64(car.Len())
+	// Get CAR file size for storage purposes
+	carFileSize := uint64(car.Len())
 
-	if err := validateQuotas(ctx, p.portalCtx, p.userID, carSize); err != nil {
+	// Get actual DAG block size using ipfs-content ReadCAR API
+	// This gives us the raw block data size, not the CAR file size (which includes headers)
+	// We need to create a seekable reader from the buffer (bytes.Buffer is not seekable)
+	carSeeker := bytes.NewReader(car.Bytes())
+	dagSize, err := common.GetCARBlockDAGSizeWithDefaultLimit(ctx, carSeeker, p.portalCtx.Logger())
+	if err != nil {
 		return cid.Cid{}, "", err
 	}
 
-	uploadID, err := p.storageHelper.StoreFile(ctx, NewUniversalReader(car), int64(car.Len()))
+	// Validate quotas using actual DAG block size, not CAR file size
+	if err := validateQuotas(ctx, p.portalCtx, p.userID, dagSize); err != nil {
+		return cid.Cid{}, "", err
+	}
+
+	// Store the file using the CAR file size (for actual storage bytes)
+	uploadID, err := p.storageHelper.StoreFile(ctx, NewUniversalReader(car), int64(carFileSize))
 	if err != nil {
 		return cid.Undef, "", err
 	}
@@ -95,12 +108,21 @@ func (p *CARProcessor) Process(ctx context.Context, reader io.ReadSeekCloser) (c
 	ctx, span := core.TraceMethod(ctx, "CARProcessor.Process")
 	defer span.End()
 
-	size, err := common.PrepareReader(reader)
+	// Get CAR file size for storage purposes
+	fileSize, err := common.PrepareReader(reader)
 	if err != nil {
 		return cid.Undef, "", err
 	}
 
-	if err := validateQuotas(ctx, p.portalCtx, p.userID, uint64(size)); err != nil {
+	// Get actual DAG block size using ipfs-content ReadCAR API
+	// This gives us the raw block data size, not the CAR file size (which includes headers)
+	dagSize, err := common.GetCARBlockDAGSizeWithDefaultLimit(ctx, reader, p.portalCtx.Logger())
+	if err != nil {
+		return cid.Undef, "", err
+	}
+
+	// Validate quotas using actual DAG block size, not CAR file size
+	if err := validateQuotas(ctx, p.portalCtx, p.userID, dagSize); err != nil {
 		return cid.Undef, "", err
 	}
 
@@ -119,7 +141,7 @@ func (p *CARProcessor) Process(ctx context.Context, reader io.ReadSeekCloser) (c
 		return cid.Undef, "", err
 	}
 
-	uploadID, err := p.storageHelper.StoreFile(ctx, reader, size)
+	uploadID, err := p.storageHelper.StoreFile(ctx, reader, fileSize)
 	if err != nil {
 		return cid.Undef, "", err
 	}
@@ -175,24 +197,71 @@ func (p *ArchiveProcessor) Process(ctx context.Context, reader io.ReadSeekCloser
 	uReader := NewUniversalReader(reader)
 	defer common.SafeCloseFile(p.logger, uReader)
 
+	// Get raw data size from archive before conversion
+	// This prevents quota bypass by highly compressed archives
+	_, err := uReader.Seek(0, io.SeekStart)
+	if err != nil {
+		return cid.Cid{}, "", fmt.Errorf("failed to seek reader: %w", err)
+	}
+
 	extractor, err := contentArchive.CreateExtractor(uReader)
 	if err != nil {
+		return cid.Cid{}, "", fmt.Errorf("failed to create extractor: %w", err)
+	}
+
+	// Get DAG block size for quota validation
+	dagSize, err := common.GetArchiveDAGSize(ctx, extractor, p.portalCtx.Logger())
+	if err != nil {
+		return cid.Cid{}, "", fmt.Errorf("failed to get archive DAG size: %w", err)
+	}
+
+	if err := extractor.Close(); err != nil {
+		p.logger.Warn("Failed to close initial extractor", zap.Error(err))
+	}
+
+	// Validate quotas using DAG block size
+	// This accurately reflects IPFS storage costs including UnixFS chunking overhead
+	if err := validateQuotas(ctx, p.portalCtx, p.userID, dagSize); err != nil {
 		return cid.Cid{}, "", err
 	}
+
+	// Reset reader for actual extraction
+	_, err = uReader.Seek(0, io.SeekStart)
+	if err != nil {
+		return cid.Cid{}, "", fmt.Errorf("failed to reset reader: %w", err)
+	}
+
+	// Re-create extractor for processing
+	extractor, err = contentArchive.CreateExtractor(uReader)
+	if err != nil {
+		return cid.Cid{}, "", fmt.Errorf("failed to recreate extractor: %w", err)
+	}
+
+	defer func() {
+		if err := extractor.Close(); err != nil {
+			p.logger.Warn("Failed to close extractor", zap.Error(err))
+		}
+	}()
 
 	car, c, err := p.carGenerator.ArchiveToCAR(ctx, extractor)
 	if err != nil {
 		return cid.Cid{}, "", err
 	}
 
-	// Validate quotas using the CAR file size
-	carSize := uint64(car.Len())
+	// Get CAR file size for storage purposes
+	carFileSize := uint64(car.Len())
 
-	if err := validateQuotas(ctx, p.portalCtx, p.userID, carSize); err != nil {
+	// Get actual DAG block size using ipfs-content ReadCAR API
+	// This gives us the raw block data size, not the CAR file size (which includes headers)
+	// We need to create a seekable reader from the buffer (bytes.Buffer is not seekable)
+	carSeeker := bytes.NewReader(car.Bytes())
+	_, err = common.GetCARBlockDAGSizeWithDefaultLimit(ctx, carSeeker, p.logger)
+	if err != nil {
 		return cid.Cid{}, "", err
 	}
 
-	uploadID, err := p.storageHelper.StoreFile(ctx, NewUniversalReader(car), int64(car.Len()))
+	// Store the file using the CAR file size (for actual storage bytes)
+	uploadID, err := p.storageHelper.StoreFile(ctx, NewUniversalReader(car), int64(carFileSize))
 	if err != nil {
 		return cid.Undef, "", err
 	}

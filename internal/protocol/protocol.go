@@ -14,23 +14,18 @@ import (
 	ds "github.com/ipfs/go-datastore"
 	levelds "github.com/ipfs/go-ds-leveldb"
 	ipfsLog "github.com/ipfs/go-log/v2"
-	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
+	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store/downloader"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
-	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
-	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/db/models/data_models"
 	"go.lumeweb.com/portal/service"
-	contentArchive "go.lumeweb.com/ipfs-content/archive"
 	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -206,169 +201,13 @@ func NewProtocolOperations(p core.Protocol) []core.Operation {
 		NewConfirmOperation(p.Context()),
 		NewPostUploadOperation(p.Context()),
 		NewFilePathOperation(p.Context()),
-		service.NewTUSOperationHandler(p.Context(), p, func(ctx context.Context, helper core.OperationHelper, request *models.Request, tsReq *models.TUSRequest) error {
-			ctx, span := core.TraceMethod(ctx, "IPFS.NewTUSOperationHandler")
-			defer span.End()
-
-			// Validate user ID
-			if request.UserID == nil || *request.UserID == 0 {
-				return fmt.Errorf("user ID is required")
-			}
-
-			// Get TUS handler to retrieve upload size
-			apiName := p.Name()
-			api := core.GetAPI(apiName)
-			if _, ok := api.(core.APITusHandler); !ok {
-				return fmt.Errorf("API %T does not implement core.APITusHandler", api)
-			}
-			tusProto := api.(core.APITusHandler)
-			tusHandler := tusProto.GetTusHandler()
-
-			proto := p.(core.StorageProtocol)
-
-			// Get upload size for quota check
-			uploadSize, err := tusHandler.UploadSize(ctx, proto, tsReq.TUSUploadID)
-			if err != nil {
-				return fmt.Errorf("failed to get upload size: %w", err)
-			}
-
-			// Sanity check quota without reservation before processing
-			if uploadSize > 0 {
-				// Validate upload quota without reservation (sanity check only)
-				err = quota.ValidateUploadQuota(ctx, helper.Context(), *request.UserID, uploadSize)
-				if err != nil {
-					return err
-				}
-
-				// Validate storage quota without reservation (sanity check only)
-				err = quota.ValidateStorageQuota(ctx, helper.Context(), *request.UserID, uploadSize)
-				if err != nil {
-					return err
-				}
-			}
-
-			// Get upload reader for processing
-			reader, err := tusHandler.UploadReader(ctx, tsReq.TUSUploadID, proto, 0)
-			if err != nil {
-				return fmt.Errorf("failed to get upload reader: %w", err)
-			}
-
-			reader = pluginUpload.NewUniversalReader(reader)
-
-			defer func(reader io.ReadCloser) {
-				if reader == nil {
-					return
-				}
-				err = reader.Close()
-				if err != nil {
-					helper.Logger().Error("Failed to close upload reader", zap.Error(err))
-				}
-			}(reader)
-
-			// Detect format using IPFS plugin logic
-			uploadedFormat, err := contentArchive.DetectFormat(reader)
-			if err != nil {
-				return fmt.Errorf("failed to detect upload format: %w", err)
-			}
-
-		// Create appropriate processor based on format
-			var processor BlockProcessor
-			if uploadedFormat.IsUploadFormat() {
-				// CAR format
-				processor, err = NewCARBlockProcessor(reader)
-				if err != nil {
-					return fmt.Errorf("failed to create CAR processor: %w", err)
-				}
-			} else {
-				// Single file format (archives treated as files, not extracted)
-				protoNode := p.(ProtoNode)
-				processor, err = createFileProcessorForTUS(reader, protoNode, helper.Logger())
-				if err != nil {
-					return fmt.Errorf("failed to create file processor: %w", err)
-				}
-			}
-			defer processor.Release()
-
-			// Process the upload
-			allCids, rootCids, err := ProcessBlocks(helper.Context(), processor)
-			if err != nil {
-				return fmt.Errorf("failed to process upload: %w", err)
-			}
-
-			// Create per-block reservations for each block
-			protoNode := p.(ProtoNode)
-			reservations, err := CreatePerBlockReservations(ctx, helper.Context(), protoNode, allCids, *request.UserID)
-			if err != nil {
-				return err
-			}
-
-			// Process all CIDs to create upload and core pin records
-			uploadSvc := core.GetService[pluginCore.UploadService](helper.Context(), pluginCore.UPLOAD_SERVICE)
-			if uploadSvc == nil {
-				helper.Logger().Error("Upload service not available")
-
-				// Release all per-block reservations on error
-				quota.ReleaseBlockReservationsMap(reservations)
-				return fmt.Errorf("upload service not available")
-			}
-
-			// Set client IP in context for quota tracking
-			ctx = pc.ClientIPOption(ctx, request.SourceIP)
-
-			err = uploadSvc.ProcessUpload(ctx, allCids, *request.UserID, reservations)
-			if err != nil {
-				// Release all per-block reservations on error
-				quota.ReleaseBlockReservationsMap(reservations)
-				return fmt.Errorf("failed to process upload: %w", err)
-			}
-
-			// Fix any UnixFS metadata gaps before proceeding
-			_store := p.(ProtoNode).GetMetadataStore()
-			if _store != nil {
-				err = _store.ProcessMissingUnixFSNames(ctx, allCids)
-				if err != nil {
-					helper.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
-				}
-			}
-
-			// Create IPFS pin record for the root CID
-			ipfsPin, err := uploadSvc.CreateRootPin(ctx, rootCids[0], lo.FromPtrOr(request.UserID, 0))
-			if err != nil {
-				return fmt.Errorf("failed to create root pin: %w", err)
-			}
-
-			// Update pin status to pinned
-			pinSvc := core.GetService[pluginCore.IPFSPinService](helper.Context(), pluginCore.PIN_SERVICE)
-			if pinSvc == nil {
-				return fmt.Errorf("pin service not available: cannot update pin status")
-			}
-			err = pinSvc.UpdatePinStatus(ctx, ipfsPin.RequestID, pluginDb.PinningStatusPinned, nil)
-			if err != nil {
-				helper.Logger().Error("Failed to update pin status to pinned", zap.Error(err))
-				// Don't fail the whole operation for this
-			}
-
-			// Prepare workflow data for publish operation and file path step using only root CIDs
-			workflowData := &PinWorkflowData{
-				PinRequestID: ipfsPin.RequestID.ToUUID(),
-				Cids:         lo.Map(rootCids, func(item cid.Cid, index int) string { return item.String() }),
-			}
-
-			err = helper.UpdateWorkflowDataStruct(request.ID, workflowData)
-			if err != nil {
-				return fmt.Errorf("failed to update workflow data: %w", err)
-			}
-
-			// Validate DAG completion and update workflow data with related CIDs
-			err = ValidateDAGCompletionAndUpdateWorkflow(ctx, helper, request.ID, ipfsPin, workflowData)
-			if err != nil {
-				helper.Logger().Error("Failed to validate DAG completion and update workflow", zap.Error(err))
-				// Don't fail the whole operation for DAG validation failure
-			}
-
-			return nil
-		}),
+		NewTUSOperationHandler(p),
 	}
+}
+
+// NewTUSOperationHandler creates the TUS upload operation handler
+func NewTUSOperationHandler(p core.Protocol) core.Operation {
+	return service.NewTUSOperationHandler(p.Context(), p, handleTUSUpload(p))
 }
 
 func (p Protocol) Operations() []core.Operation {

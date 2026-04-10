@@ -98,16 +98,9 @@ func NewStreamingBlockstoreWithBuffer(logger *core.Logger, passthrough blockstor
 func NewStreamingBlockstoreWithDefaults(logger *core.Logger, passthrough blockstore.Blockstore, doneTracker DoneTracker, queueSize int) *DefaultStreamingBlockstore {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Ensure minimum queue size to prevent blocking
-	if queueSize < 10 {
-		queueSize = 10
-	}
-
-	// Use a buffer proportional to worker pool size for better throughput
+	// Ensure minimum queue/buffer size of 10 for performance
+	queueSize = max(queueSize, 10)
 	bufferSize := queueSize
-	if bufferSize < 10 {
-		bufferSize = 10
-	}
 
 	abs := &DefaultStreamingBlockstore{
 		passthrough:     passthrough,

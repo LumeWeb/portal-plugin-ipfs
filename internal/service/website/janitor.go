@@ -11,8 +11,8 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"go.lumeweb.com/ipfs-content/paths"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
@@ -325,7 +325,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	}
 
 	// Extract CID from path using lenient matcher that handles both /ipfs/{cid} and plain CID strings
-	cidStr := internal.ExtractCIDFromPathLenient(targetPath)
+	cidStr := paths.ExtractCIDFromPathLenient(targetPath)
 	cidValid, err := j.validateCIDTarget(ctx, cidStr)
 	if err != nil {
 		j.logger.Warn("Failed to validate resolved CID",

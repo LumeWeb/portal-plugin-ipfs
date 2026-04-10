@@ -6,17 +6,17 @@ import (
 	"strings"
 
 	"github.com/multiformats/go-multiaddr"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	"go.lumeweb.com/ipfs-content/paths"
 )
 
 // IPFSPath creates a properly formatted IPFS path from a CID string
 func IPFSPath(cid string) string {
-	return internal.IPFSPathPrefix + trimPath(cid)
+	return paths.IPFSPathPrefix + trimPath(cid)
 }
 
 // IPNSPath creates a properly formatted IPNS path from a peer ID string
 func IPNSPath(peerID string) string {
-	return internal.IPNSPathPrefix + trimPath(peerID)
+	return paths.IPNSPathPrefix + trimPath(peerID)
 }
 
 // trimPath defensively trims leading and trailing slashes from path components

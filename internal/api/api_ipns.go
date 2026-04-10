@@ -12,10 +12,10 @@ import (
 	"go.lumeweb.com/httputil"
 	"go.lumeweb.com/portal/core"
 	mcontext "go.lumeweb.com/portal-middleware/context"
+	"go.lumeweb.com/ipfs-content/paths"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.uber.org/zap"
 	"go.lumeweb.com/queryutil"
 	queryutilHttp "go.lumeweb.com/queryutil/http"
@@ -316,7 +316,7 @@ func (a *API) resolveIPNS(c echo.Context) error {
 	}
 
 	// Normalize CID if the resolved value contains one
-	normalizedValue := internal.TryNormalizeCIDFromPath(valuePath)
+	normalizedValue := paths.TryNormalizeCIDFromPath(valuePath)
 
 	sequence, err := record.Sequence()
 	if err != nil {
@@ -409,7 +409,7 @@ func (a *API) republishIPNS(c echo.Context) error {
 		}
 
 		// Extract CID from the path
-		cidStr, err := internal.ExtractCIDFromPathStrict(valuePath)
+		cidStr, err := paths.ExtractCIDFromPathStrict(valuePath)
 		if err != nil {
 			apiErr := NewError(ErrKeyInvalidRequest, err)
 			return ctx.Error(apiErr, apiErr.HttpStatus())
@@ -450,7 +450,7 @@ func (a *API) republishIPNS(c echo.Context) error {
 			}
 
 			// Extract CID from the path
-			cidStr, err := internal.ExtractCIDFromPathStrict(valuePath)
+			cidStr, err := paths.ExtractCIDFromPathStrict(valuePath)
 			if err != nil {
 				a.Logger().Warn("Invalid IPNS record path format, skipping", zap.Error(err), zap.String("peer_id", peerID))
 				continue

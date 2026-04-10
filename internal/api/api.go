@@ -19,7 +19,6 @@ import (
 	pluginMw "go.lumeweb.com/portal-plugin-ipfs/internal/api/middleware"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	uploadpkg "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal-router"
 	"go.lumeweb.com/portal/config"
@@ -72,25 +71,6 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 					Protocol: proto,
 					BasePath: TUS_HTTP_ROUTE,
 					CreatedUploadHandler: service.TUSDefaultUploadCreatedHandler(ctx, func(hook handler.HookEvent, uploaderId uint) (core.StorageHash, error) {
-						size := hook.Upload.Size
-						if size < 0 {
-							api.Logger().Warn("Unexpected negative upload size in TUS hook", zap.Int64("size", size))
-							return nil, core.ErrUploadQuotaExceeded
-						}
-						requestedBytes := uint64(size)
-
-						// Check upload quota (sanity check without reservation)
-						if err := quota.ValidateUploadQuota(eventCtx, ctx, uploaderId, requestedBytes); err != nil {
-							api.Logger().Error("Failed to check upload quota", zap.Error(err))
-							return nil, err
-						}
-
-						// Check storage quota (sanity check without reservation)
-						if err := quota.ValidateStorageQuota(eventCtx, ctx, uploaderId, requestedBytes); err != nil {
-							api.Logger().Error("Failed to check storage quota", zap.Error(err))
-							return nil, err
-						}
-
 						return nil, nil
 					}, nil),
 					UploadProgressHandler:   service.TUSDefaultUploadProgressHandler(ctx),
