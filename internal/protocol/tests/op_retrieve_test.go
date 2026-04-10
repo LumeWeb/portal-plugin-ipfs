@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ipfs/boxo/blockservice"
@@ -63,6 +64,7 @@ func setupTestSecondNode(t *testing.T) *TestSecondNodeInfo {
 	// Collect all blocks from the DAG
 	ctx := context.Background()
 	var collectedBlocks []blocks.Block
+	var mu sync.Mutex
 
 	opts := &dag.WalkDAGOptions{
 		NormalizeCID: false,
@@ -76,7 +78,9 @@ func setupTestSecondNode(t *testing.T) *TestSecondNodeInfo {
 		if err != nil {
 			return err
 		}
+		mu.Lock()
 		collectedBlocks = append(collectedBlocks, block)
+		mu.Unlock()
 		return nil
 	}, opts)
 	require.NoError(t, err, "Failed to walk DAG")

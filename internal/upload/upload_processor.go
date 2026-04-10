@@ -212,6 +212,7 @@ func (p *ArchiveProcessor) Process(ctx context.Context, reader io.ReadSeekCloser
 	// Get DAG block size for quota validation
 	dagSize, err := common.GetArchiveDAGSize(ctx, extractor, p.portalCtx.Logger())
 	if err != nil {
+		extractor.Close()
 		return cid.Cid{}, "", fmt.Errorf("failed to get archive DAG size: %w", err)
 	}
 

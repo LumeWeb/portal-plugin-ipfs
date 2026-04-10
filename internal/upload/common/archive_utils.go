@@ -141,6 +141,11 @@ func GetUploadDataSize(ctx context.Context, reader io.ReadSeeker, format archive
 			return 0, fmt.Errorf("failed to get archive DAG size: %w", err)
 		}
 
+		// Reset reader to beginning for subsequent operations
+		if _, err := reader.Seek(0, io.SeekStart); err != nil {
+			return 0, fmt.Errorf("failed to reset archive reader position: %w", err)
+		}
+
 		return dagSize, nil
 	}
 }
