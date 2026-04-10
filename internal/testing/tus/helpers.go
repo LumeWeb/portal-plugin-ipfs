@@ -29,9 +29,9 @@ func assertTUSWorkflowSuccess(wfTest *coreTesting.WorkflowTest, req *models.Requ
 	wfTest.AssertOperationStatusProgress(req, 100)
 }
 
-// SetupTUSUpload creates a TUS upload with optional hash and returns protocol and request ID
+// SetupTUSUpload creates a TUS upload with optional hash and returns protocol, request ID, and user ID
 // hash can be nil for files where hash is not yet known (e.g., non-CAR files)
-func SetupTUSUpload(tb coreTesting.TB, ctx coreTesting.TestContext, uploadFile *os.File, hash core.StorageHash) (core.StorageProtocol, uint) {
+func SetupTUSUpload(tb coreTesting.TB, ctx coreTesting.TestContext, uploadFile *os.File, hash core.StorageHash) (core.StorageProtocol, uint, uint) {
 	tb.Helper()
 	tusService := core.GetService[core.TUSService](ctx, core.TUS_SERVICE)
 	storageSvc := core.GetService[core.StorageService](ctx, core.STORAGE_SERVICE)
@@ -85,7 +85,7 @@ func SetupTUSUpload(tb coreTesting.TB, ctx coreTesting.TestContext, uploadFile *
 	)
 	require.NoError(tb, err)
 
-	return proto.(core.StorageProtocol), tusUpload.RequestID
+	return proto.(core.StorageProtocol), tusUpload.RequestID, testUser.ID
 }
 
 // AssertTUSWorkflowSuccess is exported version for test packages

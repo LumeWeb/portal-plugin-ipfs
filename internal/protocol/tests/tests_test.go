@@ -169,9 +169,9 @@ func testArchiveUpload(t *testing.T, format contentArchive.Format, creator plugi
 	}, finalOptions...)
 }
 
-// setupTUSUpload creates a TUS upload with optional hash and returns protocol and request ID
+// setupTUSUpload creates a TUS upload with optional hash and returns protocol, request ID, and user ID
 // hash can be nil for files where hash is not yet known (e.g., non-CAR files)
-func setupTUSUpload(tb coreTesting.TB, ctx coreTesting.TestContext, uploadFile *os.File, hash core.StorageHash) (core.StorageProtocol, uint) {
+func setupTUSUpload(tb coreTesting.TB, ctx coreTesting.TestContext, uploadFile *os.File, hash core.StorageHash) (core.StorageProtocol, uint, uint) {
 	return pluginTusUtils.SetupTUSUpload(tb, ctx, uploadFile, hash)
 }
 
@@ -224,7 +224,7 @@ func getCARRootsFromFile(t *testing.T, file *os.File) cid.Cid {
 
 // executeTUSWorkflowHelper is a helper function that executes TUS upload workflow
 // It handles the common workflow execution pattern for both archives and plain files
-func executeTUSWorkflowHelper(t *testing.T, ctx coreTesting.TestContext, tempFile *os.File, format contentArchive.Format, requestID uint) {
+func executeTUSWorkflowHelper(t *testing.T, ctx coreTesting.TestContext, tempFile *os.File, format contentArchive.Format, requestID uint, userID uint) {
 	wfTest := coreTesting.NewWorkflowTest(ctx)
 
 	wf := wfTest.NewOperationWorkflow(core.TUSUploadOperationName(internal.ProtocolName))
@@ -236,7 +236,7 @@ func executeTUSWorkflowHelper(t *testing.T, ctx coreTesting.TestContext, tempFil
 		workflowOptions = append(workflowOptions, core.WithWorkflowStorageHash(internal.NewIPFSHash(getCARRootsFromFile(t, tempFile))))
 	}
 	workflowOptions = append(workflowOptions,
-		core.WithWorkflowUserID(1), // User created in setupTUSUpload
+		core.WithWorkflowUserID(userID), // User created in setupTUSUpload
 		core.WithWorkflowSourceIP("127.0.0.1"),
 	)
 
@@ -276,10 +276,10 @@ func runTUSFileUploadInternal(t *testing.T, ctx coreTesting.TestContext, fileCon
 	require.NoError(t, err)
 
 	// For plain files, hash is not known yet (will be computed during upload)
-	_, requestID := setupTUSUpload(t, ctx, tempFile, nil)
+	_, requestID, userID := setupTUSUpload(t, ctx, tempFile, nil)
 
 	// Execute workflow using the helper
-	executeTUSWorkflowHelper(t, ctx, tempFile, contentArchive.FormatFile, requestID)
+	executeTUSWorkflowHelper(t, ctx, tempFile, contentArchive.FormatFile, requestID, userID)
 }
 
 // testTUSFileUpload tests plain file uploads (FormatFile) through the TUS upload workflow
@@ -309,18 +309,19 @@ func runTUSArchiveUploadInternal(t *testing.T, ctx coreTesting.TestContext, form
 
 	// Use appropriate setup based on format
 	var requestID uint
+	var userID uint
 	if format == contentArchive.FormatCAR {
 		// For CAR files, we can pre-compute the hash
 		roots, err := pluginUpload.GetCarRoots(tempFile, false)
 		require.NoError(t, err)
-		_, requestID = setupTUSUpload(t, ctx, tempFile, internal.NewIPFSHash(roots[0]))
+		_, requestID, userID = setupTUSUpload(t, ctx, tempFile, internal.NewIPFSHash(roots[0]))
 	} else {
 		// For non-CAR files, hash is not known yet
-		_, requestID = setupTUSUpload(t, ctx, tempFile, nil)
+		_, requestID, userID = setupTUSUpload(t, ctx, tempFile, nil)
 	}
 
 	// Execute workflow using the helper
-	executeTUSWorkflowHelper(t, ctx, tempFile, format, requestID)
+	executeTUSWorkflowHelper(t, ctx, tempFile, format, requestID, userID)
 }
 
 // testTUSArchiveUpload is a TUS-specific wrapper for testArchiveUpload

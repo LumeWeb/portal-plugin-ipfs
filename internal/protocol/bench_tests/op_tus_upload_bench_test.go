@@ -73,13 +73,13 @@ func benchmarkLargeUpload(tb coreTesting.TB, ctx coreTesting.TestContext, size i
 	testFile := createLargeTestFile(tb, size)
 	defer testFile.Close()
 
-	_, requestID := tusTestUtils.SetupTUSUpload(tb, ctx, testFile, nil)
+	_, requestID, userID := tusTestUtils.SetupTUSUpload(tb, ctx, testFile, nil)
 
 	wfTest := coreTesting.NewWorkflowTest(ctx)
 	wf := wfTest.NewOperationWorkflow(core.TUSUploadOperationName(internal.ProtocolName))
 
 	workflowOptions := []core.WorkflowOption{
-		core.WithWorkflowUserID(1),
+		core.WithWorkflowUserID(userID),
 		core.WithWorkflowSourceIP("127.0.0.1"),
 	}
 
@@ -113,7 +113,7 @@ func benchmarkLargeUpload(tb coreTesting.TB, ctx coreTesting.TestContext, size i
 		pins, _, _ := pinSvc.ListPins(ctx, nil, sort, queryutil.DefaultPagination)
 
 		for _, pin := range pins {
-			if pin.UserID == 1 && pin.Status == db.PinningStatusPinned {
+			if pin.UserID == userID && pin.Status == db.PinningStatusPinned {
 				pinDuration := time.Since(startTime)
 				throughputMBps := float64(size) / (1024 * 1024) / uploadDuration.Seconds()
 				tb.Logf("Pin wait: %v, Throughput: %.2f MB/s", pinDuration, throughputMBps)
