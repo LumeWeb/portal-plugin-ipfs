@@ -17,7 +17,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	tusTestUtils "go.lumeweb.com/portal-plugin-ipfs/internal/testing/tus"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.lumeweb.com/queryutil"
@@ -147,7 +147,7 @@ func BenchmarkTUSUpload(b *testing.B) {
 			for b.Loop() {
 				coreTesting.RunTestCaseWithDB(b, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 					benchmarkLargeUpload(tb, ctx, tc.size)
-				}, util.GetStandardTestOptions()...)
+				}, testopts.GetStandardTestOptions()...)
 			}
 		})
 	}
@@ -185,7 +185,7 @@ func BenchmarkTUSUpload_Profile(b *testing.B) {
 			for b.Loop() {
 				coreTesting.RunTestCaseWithDB(b, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 					benchmarkLargeUpload(tb, ctx, tc.size)
-				}, util.GetStandardTestOptions()...)
+				}, testopts.GetStandardTestOptions()...)
 			}
 		})
 	}

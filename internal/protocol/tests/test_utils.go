@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"time"
 
-	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 )
 
 func GetStandardTestOptions() []coreTesting.TestContextBuilderOption {
-	return util.GetStandardTestOptions()
+	return testopts.GetStandardTestOptions()
 }
 
 // HTTPTestClient wraps an HTTP client with helper methods for testing

@@ -1,4 +1,4 @@
-package util
+package testopts
 
 import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/plugin"
