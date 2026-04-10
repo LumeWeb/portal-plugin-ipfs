@@ -87,7 +87,7 @@ jobs:
       - name: Run Benchmarks
         run: |
           mkdir -p benchmark-results
-          TUS_BENCH_ENABLE_PROFILING=true TUS_BENCH_PROFILES_DIR=benchmark-results go test -bench=. -benchmem -run=^$ ./internal/protocol/bench_tests/
+          TUS_BENCH_ENABLE_PROFILING=true TUS_BENCH_PIN_TIMEOUT=0 TUS_BENCH_PROFILES_DIR=benchmark-results go test -bench=. -benchmem -run=^$ ./internal/protocol/bench_tests/
 
       - name: Upload Benchmark Results
         uses: actions/upload-artifact@v4

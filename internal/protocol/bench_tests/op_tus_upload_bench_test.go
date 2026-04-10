@@ -101,14 +101,19 @@ func benchmarkLargeUpload(tb coreTesting.TB, ctx coreTesting.TestContext, size i
 	}
 
 	startTime := time.Now()
-	maxPinTimeout := 30 * time.Minute
+	var maxPinTimeout time.Duration
+	disableTimeout := false
 	if timeoutStr := os.Getenv("TUS_BENCH_PIN_TIMEOUT"); timeoutStr != "" {
-		if duration, err := time.ParseDuration(timeoutStr); err == nil {
+		if timeoutStr == "0" {
+			disableTimeout = true
+		} else if duration, err := time.ParseDuration(timeoutStr); err == nil {
 			maxPinTimeout = duration
 		}
+	} else {
+		maxPinTimeout = 30 * time.Minute
 	}
 
-	for time.Since(startTime) < maxPinTimeout {
+	for disableTimeout || time.Since(startTime) < maxPinTimeout {
 		sort := []filter.Sort{{Field: "created_at", Order: filter.OrderDesc}}
 		pins, _, _ := pinSvc.ListPins(ctx, nil, sort, queryutil.DefaultPagination)
 
