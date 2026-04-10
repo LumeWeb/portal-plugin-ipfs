@@ -18,6 +18,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/dag"
 	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
@@ -62,20 +63,26 @@ func setupTestSecondNode(t *testing.T) *TestSecondNodeInfo {
 
 	// Collect all blocks from the DAG
 	ctx := context.Background()
-	sess := merkledag.NewSession(ctx, dserv)
 	var collectedBlocks []blocks.Block
 	var mu sync.Mutex
 
-	err = merkledag.Walk(ctx, merkledag.GetLinksWithDAG(sess), rootCID, func(c cid.Cid) bool {
-		node, err := dserv.Get(ctx, c)
-		require.NoError(t, err, "Failed to get node for CID")
+	opts := &dag.WalkDAGOptions{
+		NormalizeCID: false,
+		Concurrent:   true,
+		IgnoreErrors: false,
+		Logger:       nil,
+	}
 
-		block := node.(blocks.Block)
+	err = dag.WalkDAG(ctx, dserv, rootCID, func(_ context.Context, c cid.Cid, node *merkledag.ProtoNode) error {
+		block, err := blocks.NewBlockWithCid(node.RawData(), c)
+		if err != nil {
+			return err
+		}
 		mu.Lock()
 		collectedBlocks = append(collectedBlocks, block)
 		mu.Unlock()
-		return true
-	}, merkledag.Concurrent())
+		return nil
+	}, opts)
 	require.NoError(t, err, "Failed to walk DAG")
 
 	return &TestSecondNodeInfo{

@@ -7,12 +7,11 @@ import (
 
 	"github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/go-cid"
-	"github.com/labstack/gommon/log"
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/dag"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
@@ -282,35 +281,26 @@ func collectDAGCids(ctx core.Context, ipfs *Protocol, c cid.Cid) (*DAGCollectRes
 	getCtx = pc.SkipQuotaCheckOption(getCtx, true)
 	getCtx, cancel := context.WithTimeout(getCtx, ctx.Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig).BlockStore.Timeout)
 
-	sess := merkledag.NewSession(getCtx, ipfs.GetNode().DagService())
-	seen := make(map[string]bool)
 	var cids []cid.Cid
 	cidSizes := make(map[cid.Cid]uint64)
 	var totalSize uint64
 
-	err := merkledag.Walk(getCtx, merkledag.GetLinksWithDAG(sess), c, func(c cid.Cid) bool {
-		c = encoding.NormalizeCid(c)
-		key := c.String()
-		if seen[key] {
-			return false
-		}
-		node, err := sess.Get(getCtx, c)
-		if err != nil {
-			log.Error("failed to get node", zap.Error(err))
-			return false
-		}
-		
+	opts := &dag.WalkDAGOptions{
+		NormalizeCID: true,
+		Concurrent:   true,
+		IgnoreErrors: true,
+		Logger:       ipfs.Logger(),
+	}
+
+	err := dag.WalkDAG(getCtx, ipfs.GetNode().DagService(), c, func(_ context.Context, c cid.Cid, node *merkledag.ProtoNode) error {
 		// Get block size from the node
 		blockSize := uint64(len(node.RawData()))
 		cidSizes[c] = blockSize
 		totalSize += blockSize
 		
-		if !seen[key] {
-			cids = append(cids, c)
-		}
-		seen[key] = true
-		return true
-	}, merkledag.Concurrent(), merkledag.IgnoreErrors())
+		cids = append(cids, c)
+		return nil
+	}, opts)
 
 	cancel()
 

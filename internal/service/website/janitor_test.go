@@ -10,6 +10,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.lumeweb.com/ipfs-content/paths"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
@@ -138,7 +139,7 @@ func TestWebsiteJanitorJob_Origin(t *testing.T) {
 func TestWebsiteJanitorJob_ValidateIPNSTarget_FullPath(t *testing.T) {
 	// This test verifies that IPNS path prefixes are extracted correctly.
 	// When an IPNS record returns a path like "/ipfs/bafy...", the janitor should
-	// use internal.ExtractCIDFromPathLenient() to extract the CID.
+	// use paths.ExtractCIDFromPathLenient() to extract the CID.
 
 	tests := []struct {
 		name         string
@@ -165,7 +166,7 @@ func TestWebsiteJanitorJob_ValidateIPNSTarget_FullPath(t *testing.T) {
 			
 			// Act - use the same helper as the production code
 			// The helper extracts CID from the path by examining segments
-			cidStr := internal.ExtractCIDFromPathLenient(targetPath)
+			cidStr := paths.ExtractCIDFromPathLenient(targetPath)
 
 			// Assert - verify the CID was extracted correctly
 			assert.Equal(t, tt.cid, cidStr,

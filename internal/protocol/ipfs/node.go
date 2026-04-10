@@ -20,6 +20,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/dag"
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/hkdf"
@@ -219,37 +220,27 @@ func (n *Node) Pin(ctx context.Context, root cid.Cid, recursive bool) error {
 		return nil
 	}
 
-	sess := merkledag.NewSession(ctx, n.dagService)
-	seen := make(map[string]bool)
-	err := merkledag.Walk(ctx, merkledag.GetLinksWithDAG(sess), root, func(c cid.Cid) bool {
-		var key string
-		switch c.Version() {
-		case 0:
-			key = cid.NewCidV1(c.Type(), c.Hash()).String()
-		case 1:
-			key = c.String()
-		}
-		if seen[key] {
-			return false
-		}
+	opts := &dag.WalkDAGOptions{
+		NormalizeCID: true,
+		Concurrent:   true,
+		IgnoreErrors: true,
+		Logger:       n.log,
+	}
+
+	err := dag.WalkDAG(ctx, n.dagService, root, func(nodeCtx context.Context, c cid.Cid, node *merkledag.ProtoNode) error {
 		log := log.With(zap.Stringer("childCID", c))
 		log.Debug("pinning child")
 		// TODO: queue and handle these correctly
-		ctx, cancel := context.WithTimeout(ctx, time.Minute)
+		nodeCtx, cancel := context.WithTimeout(nodeCtx, time.Minute)
 		defer cancel()
 
-		node, err := sess.Get(ctx, c)
-		if err != nil {
-			log.Error("failed to get node", zap.Error(err))
-			return false
-		} else if err := n.blockService.AddBlock(ctx, node); err != nil {
+		if err := n.blockService.AddBlock(nodeCtx, node); err != nil {
 			log.Error("failed to add block", zap.Error(err))
-			return false
+			return err
 		}
-		seen[key] = true
 		log.Debug("pinned block")
-		return true
-	}, merkledag.Concurrent(), merkledag.IgnoreErrors())
+		return nil
+	}, opts)
 	if err != nil {
 		return fmt.Errorf("failed to walk DAG: %w", err)
 	}

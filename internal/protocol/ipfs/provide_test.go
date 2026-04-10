@@ -24,10 +24,23 @@ func newTestReprovider(t *testing.T) (*Reprovider, *mocks.MockProvider, *mocks.M
 	return NewReprovider(mockProvider, mockStore, logger), mockProvider, mockStore
 }
 
+// runReproviderAndWait runs the reprovider in a goroutine and waits for it to complete
+func runReproviderAndWait(ctx context.Context, cancel context.CancelFunc, reprovider *Reprovider, interval, timeout time.Duration, batchSize int, waitDuration time.Duration) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reprovider.Run(ctx, interval, timeout, batchSize)
+	}()
+
+	time.Sleep(waitDuration)
+	cancel()
+	wg.Wait()
+}
+
 func TestReprovider_Run(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	
 	interval := 1 * time.Second
 	timeout := 500 * time.Millisecond
 	batchSize := 10
@@ -50,36 +63,34 @@ func TestReprovider_Run(t *testing.T) {
 	// Mock store SetLastAnnouncement - expect multiple calls
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2).Maybe()
 
-	go reprovider.Run(ctx, interval, timeout, batchSize)
-
-	// Wait for the reprovider to run once
-	time.Sleep(2 * interval)
+	runReproviderAndWait(ctx, cancel, reprovider, interval, timeout, batchSize, 2*interval)
 }
 
 func TestReprovider_Run_ProviderNotReady(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	
 	interval := 1 * time.Second
 	timeout := 500 * time.Millisecond
 	batchSize := 10
 
-	reprovider, mockProvider, _ := newTestReprovider(t)
+	reprovider, mockProvider, mockStore := newTestReprovider(t)
 
 	// Mock provider not ready initially, then ready
 	mockProvider.EXPECT().Ready().Return(false).Once()
 	mockProvider.EXPECT().Ready().Return(true)
 
-	go reprovider.Run(ctx, interval, timeout, batchSize)
+	// Mock store calls that happen after provider becomes ready
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return([]core.PinnedCID{}, nil).Maybe()
+	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	// Wait for the reprovider to run once
-	time.Sleep(2 * interval)
+	// Wait longer to account for the 30-second sleep in the Run function
+	runReproviderAndWait(ctx, cancel, reprovider, interval, timeout, batchSize, 2*interval+30*time.Second)
 }
 
 func TestReprovider_Run_ProvideCIDsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	
 	interval := 1 * time.Second
 	timeout := 500 * time.Millisecond
 	batchSize := 10
@@ -92,16 +103,12 @@ func TestReprovider_Run_ProvideCIDsError(t *testing.T) {
 	// Mock store returning error
 	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(nil, errors.New("test error")).Once()
 
-	go reprovider.Run(ctx, interval, timeout, batchSize)
-
-	// Wait for the reprovider to run once
-	time.Sleep(2 * interval)
+	runReproviderAndWait(ctx, cancel, reprovider, interval, timeout, batchSize, 2*interval)
 }
 
 func TestReprovider_Run_ProvideManyError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	
 	interval := 1 * time.Second
 	timeout := 500 * time.Millisecond
 	batchSize := 10
@@ -121,16 +128,12 @@ func TestReprovider_Run_ProvideManyError(t *testing.T) {
 	// Mock provider ProvideMany returning error
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
 
-	go reprovider.Run(ctx, interval, timeout, batchSize)
-
-	// Wait for the reprovider to run once
-	time.Sleep(2 * interval)
+	runReproviderAndWait(ctx, cancel, reprovider, interval, timeout, batchSize, 2*interval)
 }
 
 func TestReprovider_Run_SetLastAnnouncementError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	
 	interval := 1 * time.Second
 	timeout := 500 * time.Millisecond
 	batchSize := 10
@@ -153,15 +156,11 @@ func TestReprovider_Run_SetLastAnnouncementError(t *testing.T) {
 	// Mock store SetLastAnnouncement returning error
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
 
-	go reprovider.Run(ctx, interval, timeout, batchSize)
-
-	// Wait for the reprovider to run once
-	time.Sleep(2 * interval)
+	runReproviderAndWait(ctx, cancel, reprovider, interval, timeout, batchSize, 2*interval)
 }
 
 func TestReprovider_Trigger(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	mockProvider := mocks.NewMockProvider(t)
 	mockStore := mocks.NewMockReprovideStore(t)
@@ -196,6 +195,10 @@ func TestReprovider_Trigger(t *testing.T) {
 
 	// Wait for the reprovider to run once
 	time.Sleep(2 * interval)
+	
+	// Clean up the goroutine
+	cancel()
+	time.Sleep(100 * time.Millisecond)
 }
 
 func TestNewReprovider(t *testing.T) {

@@ -11,8 +11,8 @@ import (
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/samber/lo"
+	"go.lumeweb.com/ipfs-content/dagnode"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
@@ -714,7 +714,7 @@ func ExtractNodeMetadata(clogger *core.Logger, block pluginCore.PinnedBlock) (*p
 	logger := clogger.Named("unixfs-extraction")
 
 	logger.Debug("Starting UnixFS node analysis", zap.Stringer("cid", block.Cid))
-	analyzedNode, err := internal.AnalyzeNode(context.Background(), block.Node)
+	analyzedNode, err := dagnode.AnalyzeNode(context.Background(), block.Node)
 	if err != nil {
 		logger.Debug("Failed to analyze node", zap.Stringer("cid", block.Cid), zap.Error(err))
 		return nil, err

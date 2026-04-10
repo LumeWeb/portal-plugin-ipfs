@@ -12,6 +12,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
 	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	pluginErrors "go.lumeweb.com/portal-plugin-ipfs/internal/errors"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
@@ -60,37 +61,10 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		h.Logger().Warn("Failed to update progress", zap.Error(err))
 	}
 
-	// Get upload file to read size for quota sanity check
-	sizeCheckFile, err := h.getUpload(ctx, workflow.UploadID)
-	if err != nil {
-		return err
-	}
-	defer sizeCheckFile.Close()
-
-	// Determine file size efficiently
-	var uploadFileSize int64
-	if seeker, ok := sizeCheckFile.(io.Seeker); ok {
-		uploadFileSize, err = seeker.Seek(0, io.SeekEnd)
-		if err != nil {
-			return fmt.Errorf("failed to seek to end of upload file: %w", err)
-		}
-		_, err = seeker.Seek(0, io.SeekStart)
-		if err != nil {
-			return fmt.Errorf("failed to seek to start of upload file: %w", err)
-		}
-	} else {
-		// Fallback to reading all data only if seek not supported
-		fileData, err := io.ReadAll(sizeCheckFile)
-		if err != nil {
-			return fmt.Errorf("failed to read upload file for size calculation: %w", err)
-		}
-		uploadFileSize = int64(len(fileData))
-	}
-
-	// Get fresh upload file handle for actual processing
+	// Get upload file for processing and quota validation
 	uploadFile, err := h.getUpload(ctx, workflow.UploadID)
 	if err != nil {
-		return fmt.Errorf("failed to get fresh upload file handle: %w", err)
+		return err
 	}
 	defer func(upload io.ReadCloser) {
 		err := upload.Close()
@@ -105,20 +79,36 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		return fmt.Errorf("user ID is required")
 	}
 
-	if uploadFileSize > 0 {
-		requestedBytes := uint64(uploadFileSize)
+	// Get actual DAG block size from CAR file using ipfs-content ReadCAR API
+	// This gives us the raw block data size, which is accurate for all upload types:
+	// - CAR files: actual DAG block size (not CAR file size with headers)
+	// - ArchivePreserve: size of archive wrapped in CAR
+	// - ArchiveConvert: size of extracted files in CAR
+	// - Single files: size of file wrapped in CAR
+	seekableUpload, ok := uploadFile.(io.ReadSeeker)
+	if !ok {
+		return fmt.Errorf("upload file must be seekable for CAR processing")
+	}
 
-		// Validate upload quota without reservation (sanity check only)
-		err = quota.ValidateUploadQuota(ctx, h.Context(), userID, requestedBytes)
-		if err != nil {
-			return err
-		}
+	dagSize, err := common.GetCARBlockDAGSizeWithDefaultLimit(ctx, seekableUpload, h.Logger())
+	if err != nil {
+		return fmt.Errorf("failed to get CAR DAG block size for quota validation: %w", err)
+	}
 
-		// Validate storage quota without reservation (sanity check only)
-		err = quota.ValidateStorageQuota(ctx, h.Context(), userID, requestedBytes)
-		if err != nil {
-			return err
-		}
+	// Reset reader position to start for subsequent processing
+	_, err = seekableUpload.Seek(0, io.SeekStart)
+	if err != nil {
+		return fmt.Errorf("failed to reset CAR reader position: %w", err)
+	}
+
+	// Validate upload quota using actual DAG block size
+	if err := quota.ValidateUploadQuota(ctx, h.Context(), userID, dagSize); err != nil {
+		return err
+	}
+
+	// Validate storage quota using actual DAG block size
+	if err := quota.ValidateStorageQuota(ctx, h.Context(), userID, dagSize); err != nil {
+		return err
 	}
 
 	uploadedFormat, err := contentArchive.DetectFormat(uploadFile)

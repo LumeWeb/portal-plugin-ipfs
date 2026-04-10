@@ -26,7 +26,6 @@ require (
 	github.com/ipld/go-ipld-prime v0.22.0
 	github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260402105321-5c66635c83a0
 	github.com/labstack/echo/v4 v4.15.1
-	github.com/labstack/gommon v0.4.2
 	github.com/libp2p/go-libp2p v0.48.0
 	github.com/libp2p/go-libp2p-kad-dht v0.39.0
 	github.com/mholt/archives v0.1.5
@@ -40,7 +39,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tus/tusd/v2 v2.9.2
 	go.lumeweb.com/httputil v0.5.4
-	go.lumeweb.com/ipfs-content v0.1.12
+	go.lumeweb.com/ipfs-content v0.1.15
 	go.lumeweb.com/portal v0.4.2-0.20260408000333-7be4cc50ab65
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47
@@ -66,6 +65,7 @@ require (
 	github.com/huandu/go-tls v1.0.1 // indirect
 	github.com/knadh/koanf/providers/confmap v1.0.0 // indirect
 	github.com/knadh/koanf/v2 v2.3.4 // indirect
+	github.com/labstack/gommon v0.4.2 // indirect
 	github.com/multiformats/go-varint v0.1.0 // indirect
 	github.com/pion/transport/v4 v4.0.1 // indirect
 	github.com/woodsbury/decimal128 v1.4.0 // indirect
