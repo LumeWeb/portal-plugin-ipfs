@@ -204,16 +204,16 @@ func (g *GetBlockMetaBatchRequest) ToModel() (*GetBlockMetaBatchParsedRequest, e
 type BlockMetaResponse struct {
 	Name       string   `json:"name"`
 	Type       UnixFSType `json:"type"`
-	BlockSize  uint64   `json:"block_size"` // Actual size of this block (from IPFSBlock.Size)
-	UnixFSSize int64    `json:"unixfs_size"` // Cumulative size including children (from UnixFSNode.BlockSize)
+	BlockSize  uint64   `json:"block_size"` // Raw encoded block size (includes protobuf framing overhead)
+	UnixFSSize int64    `json:"unixfs_size"` // Logical UnixFS file size (local size, original file size before chunking)
 	ChildCID   []string `json:"child_cid"`
 }
 
 func (b *BlockMetaResponse) FromModel(model *pluginDb.UnixFSNode) error {
 	b.Name = model.Name
 	b.Type = UnixFSType(model.Type) // Convert uint8 to UnixFSType enum
-	b.BlockSize = model.Block.Size  // Actual block size from IPFSBlock table
-	b.UnixFSSize = model.BlockSize  // Cumulative UnixFS size including children
+	b.BlockSize = model.Block.Size  // Raw encoded block size
+	b.UnixFSSize = model.BlockSize  // Logical UnixFS file size
 	b.ChildCID = lo.Map(model.ChildCID, func(c cid.Cid, _ int) string {
 		return encoding.ToV1(c).String()
 	})
@@ -229,8 +229,8 @@ func (g *GetBlockMetaBatchResponse) FromModel(model map[string]*pluginDb.UnixFSN
 		(*g)[_cid] = &BlockMetaResponse{
 			Name:       node.Name,
 			Type:       UnixFSType(node.Type), // Convert uint8 to UnixFSType enum
-			BlockSize:  node.Block.Size,      // Actual block size from IPFSBlock table
-			UnixFSSize: node.BlockSize,        // Cumulative UnixFS size including children
+			BlockSize:  node.Block.Size,      // Raw encoded block size
+			UnixFSSize: node.BlockSize,        // Logical UnixFS file size
 			ChildCID: lo.Map(node.ChildCID, func(c cid.Cid, _ int) string {
 				return encoding.ToV1(c).String()
 			}),

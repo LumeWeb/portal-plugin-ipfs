@@ -748,18 +748,10 @@ func ExtractNodeMetadata(clogger *core.Logger, block pluginCore.PinnedBlock) (*p
 	}
 
 	if analyzedNode.UnixFSType == unixfs.TFile {
-		if analyzedNode.ChunkSizes != nil && len(analyzedNode.ChunkSizes) > 0 {
-			logger.Debug("Processing file block sizes", zap.Stringer("cid", block.Cid), zap.Int("block_count", len(analyzedNode.ChunkSizes)))
-			var totalSize int64
-			for _, size := range analyzedNode.ChunkSizes {
-				totalSize += int64(size)
-			}
-			metadata.BlockSize = totalSize
-			logger.Debug("File block size calculated", zap.Stringer("cid", block.Cid), zap.Int64("total_size", totalSize))
-		} else {
-			metadata.BlockSize = int64(analyzedNode.BlockSize)
-			logger.Debug("File block size set from raw data", zap.Stringer("cid", block.Cid), zap.Int64("block_size", metadata.BlockSize))
-		}
+		// Use FileSize as the logical UnixFS file size (local size)
+		// This is the original file size before chunking, not the encoded block size
+		metadata.BlockSize = int64(analyzedNode.FileSize)
+		logger.Debug("File block size set from UnixFS FileSize", zap.Stringer("cid", block.Cid), zap.Int64("file_size", metadata.BlockSize))
 	}
 
 	logger.Debug("Processing child CIDs", zap.Stringer("cid", block.Cid), zap.Int("child_count", len(block.Links)))
