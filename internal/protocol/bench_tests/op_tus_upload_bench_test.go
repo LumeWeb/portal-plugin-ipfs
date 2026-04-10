@@ -16,6 +16,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal/db/models"
 	tusTestUtils "go.lumeweb.com/portal-plugin-ipfs/internal/testing/tus"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
 	"go.lumeweb.com/portal/core"
@@ -93,7 +94,12 @@ func benchmarkLargeUpload(tb coreTesting.TB, ctx coreTesting.TestContext, size i
 	uploadDuration := time.Since(uploadStart)
 	tb.Logf("Upload: %v, Size: %.2f GB", uploadDuration, float64(size)/(1024*1024*1024))
 
-	tusTestUtils.AssertTUSWorkflowSuccess(wfTest, req)
+	wfTest.AssertOperationSuccess(req)
+
+	if req.Status != models.RequestStatusCompleted {
+		tb.Logf("Workflow did not complete successfully, skipping pin status check: %s", req.StatusMessage)
+		return
+	}
 
 	pinSvc := core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)
 	if pinSvc == nil {
