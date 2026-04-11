@@ -154,6 +154,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		err = h.UpdateWorkflowDataStruct(req.ID, &workflowData)
 		if err != nil {
 			h.Logger().Error("Failed to update workflow data", zap.Error(err))
+			quota.ReleaseBlockReservationsMap(reservations)
 			cleanupDownloadReservation(checkResults.Download)
 			return err
 		}
