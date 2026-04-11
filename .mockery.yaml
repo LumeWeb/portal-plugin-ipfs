@@ -43,7 +43,6 @@ packages:
       pkgname: "{{.SrcPackageName}}"
       dir: "{{.InterfaceDir}}"
     interfaces:
-      ArchiveExtractor: {}
       StreamingArchiveProcessor: {}
   go.lumeweb.com/portal-plugin-ipfs/internal/service/dns:
     interfaces:

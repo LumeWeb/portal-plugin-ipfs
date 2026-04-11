@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sync"
 
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/boxo/datastore/dshelp"
@@ -47,6 +48,8 @@ type ProtoNode interface {
 	GetNode() ipfs.IPFSNode
 	GetIPNSNode() pluginCore.IPNSNodeAccess
 	GetMetadataStore() pluginCore.MetadataStore
+	GetNodeFactory() *ipfs.NodeFactory
+	RestartNode() error
 }
 
 // Ensure Protocol implements IPNSBoxoServices
@@ -58,6 +61,8 @@ type Protocol struct {
 	metadataStore *store.MetadataStoreDefault
 	pin           core.PinService
 	coordinator   core.WorkflowCoordinator
+	nodeFactory   *ipfs.NodeFactory
+	nodeMutex     sync.RWMutex
 }
 
 // GetIPNSNode returns the IPNS node access interface for IPNS operations
@@ -227,7 +232,49 @@ func (p Protocol) Hash(_ io.Reader, _ uint64) (core.StorageHash, error) {
 }
 
 func (p Protocol) GetNode() ipfs.IPFSNode {
+	p.nodeMutex.RLock()
+	defer p.nodeMutex.RUnlock()
 	return p.node
+}
+
+// RestartNode creates a new IPFS node instance using the factory
+// This is useful for picking up new bootstrap peers or other configuration changes
+func (p *Protocol) RestartNode() error {
+	if p.nodeFactory == nil {
+		return errors.New("node factory not initialized")
+	}
+
+	p.nodeMutex.Lock()
+	defer p.nodeMutex.Unlock()
+
+	// Store reference to old node and clear it first to prevent race conditions
+	// where concurrent calls could try to close the same node multiple times
+	oldNode := p.node
+	p.node = nil
+
+	// Close the old node
+	if oldNode != nil {
+		if err := oldNode.Close(); err != nil {
+			p.Context().Logger().Error("failed to close old node", zap.Error(err))
+			// Continue anyway - we can't rollback a close, but we must try to create a new node
+			// The system will be in an error state if node creation fails
+		}
+	}
+
+	// Create a new node using the factory
+	newNode, err := p.nodeFactory.CreateNode()
+	if err != nil {
+		p.Context().Logger().Error("failed to create new node after closing old node", zap.Error(err))
+		// Leave p.node as nil - the system is in an error state
+		// Caller can retry or handle the error appropriately
+		return fmt.Errorf("failed to create new node: %w", err)
+	}
+
+	// Update the node reference only after successful creation
+	p.node = newNode
+
+	p.Context().Logger().Info("IPFS node restarted successfully")
+	return nil
 }
 
 func (p Protocol) GetPeerTracker() *ipfs.BlockRequestTracker {
@@ -238,6 +285,10 @@ func (p Protocol) GetPeerTracker() *ipfs.BlockRequestTracker {
 
 func (p Protocol) GetMetadataStore() pluginCore.MetadataStore {
 	return p.metadataStore
+}
+
+func (p Protocol) GetNodeFactory() *ipfs.NodeFactory {
+	return p.nodeFactory
 }
 
 func (p Protocol) Name() string {
@@ -297,7 +348,11 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 				zap.String("log_level", cfg.LogLevel),
 				zap.String("mapped_level", level.String()))
 
-			proto.node, err = ipfs.NewNode(ctx, cfg, ms, _ds, virtualBS, peerTracker)
+			// Create node factory for managing node lifecycle and bootstrap peers
+			proto.nodeFactory = ipfs.NewNodeFactory(ctx, cfg, ms, _ds, virtualBS, peerTracker)
+
+			// Create initial node instance
+			proto.node, err = proto.nodeFactory.CreateNode()
 			if err != nil {
 				return fmt.Errorf("failed to create ipfs node: %w", err)
 			}
