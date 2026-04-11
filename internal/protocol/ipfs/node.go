@@ -103,6 +103,69 @@ func (n *NopExchange) NotifyNewBlocks(ctx context.Context, blocks ...blocks.Bloc
 	return nil
 }
 
+// NodeFactory manages the creation and recreation of IPFS nodes
+// It stores shared components that persist across node restarts
+type NodeFactory struct {
+	ctx             core.Context
+	cfg             *config.ProtocolConfig
+	reprovideStore  pluginCore.ReprovideStore
+	datastore       datastore.Batching
+	blockstore      blockstore.Blockstore
+	peerTracker     *BlockRequestTracker
+	bootstrapPeers  []peer.AddrInfo
+	bootstrapMutex  sync.RWMutex
+}
+
+// NewNodeFactory creates a new node factory with the given shared components
+func NewNodeFactory(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.ReprovideStore, ds datastore.Batching, bs blockstore.Blockstore, peerTracker *BlockRequestTracker) *NodeFactory {
+	factory := &NodeFactory{
+		ctx:            ctx,
+		cfg:            cfg,
+		reprovideStore: rs,
+		datastore:      ds,
+		blockstore:     bs,
+		peerTracker:    peerTracker,
+		bootstrapPeers: make([]peer.AddrInfo, 0),
+		bootstrapMutex: sync.RWMutex{},
+	}
+
+	// Add initial bootstrap peers from config
+	for _, bp := range cfg.BootstrapPeers {
+		factory.AddBootstrapPeer(lo.FromPtr(bp.ToAddrInfo()))
+	}
+
+	return factory
+}
+
+// AddBootstrapPeer adds a bootstrap peer to the factory
+func (f *NodeFactory) AddBootstrapPeer(addr peer.AddrInfo) {
+	f.bootstrapMutex.Lock()
+	defer f.bootstrapMutex.Unlock()
+	f.bootstrapPeers = append(f.bootstrapPeers, addr)
+}
+
+// ClearBootstrapPeers removes all bootstrap peers from the factory
+func (f *NodeFactory) ClearBootstrapPeers() {
+	f.bootstrapMutex.Lock()
+	defer f.bootstrapMutex.Unlock()
+	f.bootstrapPeers = make([]peer.AddrInfo, 0)
+}
+
+// GetBootstrapPeers returns a copy of the bootstrap peers
+func (f *NodeFactory) GetBootstrapPeers() []peer.AddrInfo {
+	f.bootstrapMutex.RLock()
+	defer f.bootstrapMutex.RUnlock()
+	
+	peers := make([]peer.AddrInfo, len(f.bootstrapPeers))
+	copy(peers, f.bootstrapPeers)
+	return peers
+}
+
+// CreateNode creates a new IPFS node instance using the factory's configuration
+func (f *NodeFactory) CreateNode() (*Node, error) {
+	return NewNode(f.ctx, f.cfg, f.reprovideStore, f.datastore, f.blockstore, f.peerTracker, f)
+}
+
 // A Node is a minimal IPFS node
 type Node struct {
 	log              *core.Logger
@@ -249,7 +312,7 @@ func (n *Node) Pin(ctx context.Context, root cid.Cid, recursive bool) error {
 }
 
 // NewNode creates a new IPFS node
-func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.ReprovideStore, ds datastore.Batching, bs blockstore.Blockstore, peerTracker *BlockRequestTracker) (*Node, error) {
+func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.ReprovideStore, ds datastore.Batching, bs blockstore.Blockstore, peerTracker *BlockRequestTracker, factory *NodeFactory) (*Node, error) {
 	hasher := hkdf.New(sha256.New, ctx.Config().Config().Core.Identity.PrivateKey(), ctx.Config().Config().Core.NodeID.Bytes(), []byte(internal.ProtocolName))
 	derivedSeed := make([]byte, 32)
 
@@ -312,21 +375,27 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	if err != nil {
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
-	var routingImpl DHTRouting
 
+	var routingImpl DHTRouting
 	var dhtProvider pluginCore.Provider
 	var hasProvider bool
 
 	// Detect if we should use LAN DHT mode
 	// Use LAN DHT when all bootstrap peers are local (for e2e testing without public swarm)
-	useLANMode := allPeersLocal(cfg)
+	useLANMode := allPeersLocal(factory.GetBootstrapPeers())
 
-	// Build common DHT options
+	// Create node with minimal fields
+	ipfsNode := &Node{
+		host: node,
+		log:  ctx.Logger(),
+	}
+
+	// Build common DHT options using factory's GetBootstrapPeers()
 	dhtOpts := []dht.Option{
 		dht.Mode(dht.ModeServer),
-		dht.BootstrapPeers(lo.Map(cfg.BootstrapPeers, func(p config.IPFSPeer, _ int) peer.AddrInfo {
-			return lo.FromPtr(p.ToAddrInfo())
-		})...),
+		dht.BootstrapPeersFunc(func() []peer.AddrInfo {
+			return factory.GetBootstrapPeers()
+		}),
 		dht.Datastore(ds),
 	}
 
@@ -370,12 +439,13 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	}
 
 	// Log configured bootstrap servers for debugging
-	bootstrapPeers := lo.Map(cfg.BootstrapPeers, func(p config.IPFSPeer, _ int) string {
-		return p.ToAddrInfo().String()
+	bootstrapPeers := factory.GetBootstrapPeers()
+	bootstrapPeerStrings := lo.Map(bootstrapPeers, func(p peer.AddrInfo, _ int) string {
+		return p.String()
 	})
 	ctx.Logger().Debug("IPFS node configured with bootstrap servers",
-		zap.Strings("bootstrap_peers", bootstrapPeers),
-		zap.Int("count", len(bootstrapPeers)),
+		zap.Strings("bootstrap_peers", bootstrapPeerStrings),
+		zap.Int("count", len(bootstrapPeerStrings)),
 		zap.String("dht_mode", cfg.DHTMode))
 
 	bitswapOpts := []bitswap.Option{
@@ -428,19 +498,18 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	// Create boxo IPNS publisher
 	boxoPublisher := namesys.NewIPNSPublisher(routingImpl, ds)
 
-	return &Node{
-		log:              ctx.Logger(),
-		routing:          routingImpl,
-		host:             node,
-		bitswap:          _bitswap,
-		blockService:     blockServ,
-		dagService:       dagService,
-		reprovider:       rp,
-		reproviderCancel: reproviderCancel,
-		datastore:        ds,
-		keystore:         safeKeystore,
-		publisher:        boxoPublisher,
-	}, nil
+	// Update the IPFS node with remaining fields
+	ipfsNode.routing = routingImpl
+	ipfsNode.bitswap = _bitswap
+	ipfsNode.blockService = blockServ
+	ipfsNode.dagService = dagService
+	ipfsNode.reprovider = rp
+	ipfsNode.reproviderCancel = reproviderCancel
+	ipfsNode.datastore = ds
+	ipfsNode.keystore = safeKeystore
+	ipfsNode.publisher = boxoPublisher
+
+	return ipfsNode, nil
 }
 func (n *Node) TriggerReprovider() {
 	n.reprovider.Trigger()
@@ -521,18 +590,16 @@ func (n *Node) GetPrivateKey() crypto.PrivKey {
 	return n.host.Peerstore().PrivKey(n.host.ID())
 }
 
-// allPeersLocal checks if all configured bootstrap peers are local/private addresses
+// allPeersLocal checks if all bootstrap peers are local/private addresses
 // Returns true if the node should use LAN DHT mode instead of WAN DHT
-func allPeersLocal(cfg *config.ProtocolConfig) bool {
-	if len(cfg.BootstrapPeers) == 0 {
+func allPeersLocal(peers []peer.AddrInfo) bool {
+	if len(peers) == 0 {
 		// No bootstrap peers configured, default to WAN mode
 		return false
 	}
 
 	// Check each bootstrap peer
-	for _, bp := range cfg.BootstrapPeers {
-		peerInfo := bp.ToAddrInfo()
-
+	for _, peerInfo := range peers {
 		// Check if any address is public
 		for _, addr := range peerInfo.Addrs {
 			// Treat DNS addresses as public (non-local) since they typically resolve to public IPs

@@ -47,6 +47,8 @@ type ProtoNode interface {
 	GetNode() ipfs.IPFSNode
 	GetIPNSNode() pluginCore.IPNSNodeAccess
 	GetMetadataStore() pluginCore.MetadataStore
+	GetNodeFactory() *ipfs.NodeFactory
+	RestartNode() error
 }
 
 // Ensure Protocol implements IPNSBoxoServices
@@ -58,6 +60,7 @@ type Protocol struct {
 	metadataStore *store.MetadataStoreDefault
 	pin           core.PinService
 	coordinator   core.WorkflowCoordinator
+	nodeFactory   *ipfs.NodeFactory
 }
 
 // GetIPNSNode returns the IPNS node access interface for IPNS operations
@@ -230,6 +233,33 @@ func (p Protocol) GetNode() ipfs.IPFSNode {
 	return p.node
 }
 
+// RestartNode creates a new IPFS node instance using the factory
+// This is useful for picking up new bootstrap peers or other configuration changes
+func (p *Protocol) RestartNode() error {
+	if p.nodeFactory == nil {
+		return errors.New("node factory not initialized")
+	}
+
+	// Close the old node
+	if p.node != nil {
+		if err := p.node.Close(); err != nil {
+			p.Context().Logger().Error("failed to close old node", zap.Error(err))
+		}
+	}
+
+	// Create a new node using the factory
+	newNode, err := p.nodeFactory.CreateNode()
+	if err != nil {
+		return fmt.Errorf("failed to create new node: %w", err)
+	}
+
+	// Update the node reference
+	p.node = newNode
+
+	p.Context().Logger().Info("IPFS node restarted successfully")
+	return nil
+}
+
 func (p Protocol) GetPeerTracker() *ipfs.BlockRequestTracker {
 	// For now, return nil - tracker is managed differently
 	// Can be used to access tracker for testing/inspection
@@ -238,6 +268,10 @@ func (p Protocol) GetPeerTracker() *ipfs.BlockRequestTracker {
 
 func (p Protocol) GetMetadataStore() pluginCore.MetadataStore {
 	return p.metadataStore
+}
+
+func (p Protocol) GetNodeFactory() *ipfs.NodeFactory {
+	return p.nodeFactory
 }
 
 func (p Protocol) Name() string {
@@ -297,7 +331,11 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 				zap.String("log_level", cfg.LogLevel),
 				zap.String("mapped_level", level.String()))
 
-			proto.node, err = ipfs.NewNode(ctx, cfg, ms, _ds, virtualBS, peerTracker)
+			// Create node factory for managing node lifecycle and bootstrap peers
+			proto.nodeFactory = ipfs.NewNodeFactory(ctx, cfg, ms, _ds, virtualBS, peerTracker)
+
+			// Create initial node instance
+			proto.node, err = proto.nodeFactory.CreateNode()
 			if err != nil {
 				return fmt.Errorf("failed to create ipfs node: %w", err)
 			}

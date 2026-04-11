@@ -459,6 +459,52 @@ func (_c *MockProtoNode_GetNode_Call) RunAndReturn(run func() ipfs.IPFSNode) *Mo
 	return _c
 }
 
+// GetNodeFactory provides a mock function for the type MockProtoNode
+func (_mock *MockProtoNode) GetNodeFactory() *ipfs.NodeFactory {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetNodeFactory")
+	}
+
+	var r0 *ipfs.NodeFactory
+	if returnFunc, ok := ret.Get(0).(func() *ipfs.NodeFactory); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*ipfs.NodeFactory)
+		}
+	}
+	return r0
+}
+
+// MockProtoNode_GetNodeFactory_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetNodeFactory'
+type MockProtoNode_GetNodeFactory_Call struct {
+	*mock.Call
+}
+
+// GetNodeFactory is a helper method to define mock.On call
+func (_e *MockProtoNode_Expecter) GetNodeFactory() *MockProtoNode_GetNodeFactory_Call {
+	return &MockProtoNode_GetNodeFactory_Call{Call: _e.mock.On("GetNodeFactory")}
+}
+
+func (_c *MockProtoNode_GetNodeFactory_Call) Run(run func()) *MockProtoNode_GetNodeFactory_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockProtoNode_GetNodeFactory_Call) Return(nodeFactory *ipfs.NodeFactory) *MockProtoNode_GetNodeFactory_Call {
+	_c.Call.Return(nodeFactory)
+	return _c
+}
+
+func (_c *MockProtoNode_GetNodeFactory_Call) RunAndReturn(run func() *ipfs.NodeFactory) *MockProtoNode_GetNodeFactory_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Hash provides a mock function for the type MockProtoNode
 func (_mock *MockProtoNode) Hash(r io.Reader, size uint64) (core.StorageHash, error) {
 	ret := _mock.Called(r, size)
@@ -703,6 +749,50 @@ func (_c *MockProtoNode_Operations_Call) Return(operations []core.Operation) *Mo
 }
 
 func (_c *MockProtoNode_Operations_Call) RunAndReturn(run func() []core.Operation) *MockProtoNode_Operations_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// RestartNode provides a mock function for the type MockProtoNode
+func (_mock *MockProtoNode) RestartNode() error {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for RestartNode")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func() error); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockProtoNode_RestartNode_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RestartNode'
+type MockProtoNode_RestartNode_Call struct {
+	*mock.Call
+}
+
+// RestartNode is a helper method to define mock.On call
+func (_e *MockProtoNode_Expecter) RestartNode() *MockProtoNode_RestartNode_Call {
+	return &MockProtoNode_RestartNode_Call{Call: _e.mock.On("RestartNode")}
+}
+
+func (_c *MockProtoNode_RestartNode_Call) Run(run func()) *MockProtoNode_RestartNode_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockProtoNode_RestartNode_Call) Return(err error) *MockProtoNode_RestartNode_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockProtoNode_RestartNode_Call) RunAndReturn(run func() error) *MockProtoNode_RestartNode_Call {
 	_c.Call.Return(run)
 	return _c
 }

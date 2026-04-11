@@ -55,16 +55,19 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 	}
 
 	protoCfg := h.Context().Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig)
-	proto := h.Protocol().(*Protocol)
+	proto := h.Protocol().(ProtoNode)
+	metadataStore := proto.GetMetadataStore()
 
 	// Store quota check results for reservation management
 	checkResults := &quota.QuotaCheckResults{}
+	reservations := make(map[cid.Cid]*quota.BlockReservations)
 
-	// Collect DAG CIDs and sizes BEFORE any non-virtual fetching
-	// This ensures we have all metadata before downloading content
-	dagResult, err := collectDAGCids(h.Context(), proto, c)
+	// ==== VIRTUAL DISCOVERY PHASE ====
+	// Collect DAG CIDs and sizes virtually (no storage, no quota checking)
+	// This provides metadata for quota calculations before committing
+	dagResult, err := collectDAGCids(h.Context(), proto, c, true)
 	if err != nil {
-		return fmt.Errorf("failed to collect DAG CIDs: %w", err)
+		return fmt.Errorf("failed to collect DAG CIDs virtually: %w", err)
 	}
 
 	h.setProgressOrWarn(tracker, 30)
@@ -74,30 +77,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		return !item.Equals(c)
 	})
 
-	// Fix any UnixFS metadata gaps before proceeding with child block processing
-	metadataStore := proto.GetMetadataStore()
-	if metadataStore != nil {
-		err = metadataStore.ProcessMissingUnixFSNames(ctx, dagResult.Cids)
-		if err != nil {
-			h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
-		}
-	}
-
-	// Include both parent and child CIDs in the workflow data
-	allCids := append([]cid.Cid{c}, childCids...)
-	workflowData.Cids = lo.Map(allCids, func(item cid.Cid, index int) string {
-		return item.String()
-	})
-
-	err = h.UpdateWorkflowDataStruct(req.ID, &workflowData)
-	if err != nil {
-		return err
-	}
-
-	h.setProgressOrWarn(tracker, 50)
-
 	// Check download quota for the root block size
-	// Now we can make a non-virtual fetch for the root block
 	if req.UserID != nil && *req.UserID > 0 {
 		checkResult, err := quota.CheckWithReservation(ctx, h.Context(), quota.CheckTypeDownload, *req.UserID, dagResult.CIDSizes[c], quota.CheckDownloadQuota)
 		if err != nil {
@@ -107,8 +87,6 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 	}
 
 	if len(childCids) > 0 {
-		h.setProgressOrWarn(tracker, 70)
-
 		// Validate user ID before processing
 		if err := h.validateUserID(req.UserID, checkResults.Download); err != nil {
 			return err
@@ -129,7 +107,6 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 
 		// Create per-block reservations for upload and storage quota using cached sizes
 		// This ensures each block has its own reservation for accurate tracking
-		// Build efficient lookup set and filter sizes in O(n+m) time
 		childCidSet := lo.SliceToMap(childCids, func(c cid.Cid) (cid.Cid, struct{}) {
 			return c, struct{}{}
 		})
@@ -137,23 +114,68 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 			return size > 0 && lo.HasKey(childCidSet, c)
 		})
 
-		reservations, err := CreatePerBlockReservationsWithSizes(ctx, h.Context(), *req.UserID, childSizes)
+		reservations, err = CreatePerBlockReservationsWithSizes(ctx, h.Context(), *req.UserID, childSizes)
 		if err != nil {
+			cleanupDownloadReservation(checkResults.Download)
+			return err
+		}
+	}
+
+	h.setProgressOrWarn(tracker, 50)
+
+	// ==== ACTUAL COLLECTION PHASE (ONLY IF RESERVATIONS PASS) ====
+	if len(childCids) > 0 {
+		// Collect and store the actual blocks now that reservations are secured
+		// This performs the real fetch and storage to blockstore
+		// The DAG service automatically stores blocks when not in virtual mode
+		dagResult, err = collectDAGCids(h.Context(), proto, c, false)
+		if err != nil {
+			h.Logger().Error("Failed to collect and store DAG CIDs", zap.Error(err))
+			cleanupDownloadReservation(checkResults.Download)
+			return fmt.Errorf("failed to collect and store DAG CIDs: %w", err)
+		}
+
+		h.setProgressOrWarn(tracker, 70)
+
+		// UnixFS name processing (NOW AFTER blocks are in blockstore)
+		if metadataStore != nil {
+			err = metadataStore.ProcessMissingUnixFSNames(ctx, dagResult.Cids)
+			if err != nil {
+				h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
+			}
+		}
+
+		// Include both parent and child CIDs in the workflow data
+		allCids := append([]cid.Cid{c}, childCids...)
+		workflowData.Cids = lo.Map(allCids, func(item cid.Cid, index int) string {
+			return item.String()
+		})
+
+		err = h.UpdateWorkflowDataStruct(req.ID, &workflowData)
+		if err != nil {
+			h.Logger().Error("Failed to update workflow data", zap.Error(err))
+			cleanupDownloadReservation(checkResults.Download)
 			return err
 		}
 
+		h.setProgressOrWarn(tracker, 90)
+	}
+
+	// ==== UPLOAD PROCESSING ====
+	if len(childCids) > 0 && reservations != nil {
 		uploadSvc := core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE)
 		if uploadSvc == nil {
 			h.Logger().Error("Upload service not available")
 			quota.ReleaseBlockReservationsMap(reservations)
-			cleanupReservations(checkResults.Download)
+			cleanupDownloadReservation(checkResults.Download)
 			return fmt.Errorf("upload service not available")
 		}
 
 		// Set client IP in context for quota tracking
 		ctx = pc.ClientIPOption(ctx, req.SourceIP)
 
-		// Fetch and prepare all child blocks and metadata before processing
+		// Fetch and prepare all child blocks metadata before processing
+		// Blocks are already in blockstore from actual collection phase
 		var validChildCids []cid.Cid
 		getCtx, cancel := context.WithTimeout(ctx, protoCfg.BlockStore.Timeout)
 
@@ -176,7 +198,7 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		if err != nil {
 			h.Logger().Error("Failed to batch process child blocks", zap.Error(err))
 			quota.ReleaseBlockReservationsMap(reservations)
-			cleanupReservations(checkResults.Download)
+			cleanupDownloadReservation(checkResults.Download)
 			return err
 		}
 	}
@@ -272,14 +294,26 @@ type DAGCollectResult struct {
 	CIDSizes      map[cid.Cid]uint64  // Size of each individual block
 }
 
-// collectDAGCids walks the DAG virtually to collect all CIDs and their sizes
-// This function performs a virtual read (no quota checking) to gather information
-// about all blocks in the DAG without downloading content
-func collectDAGCids(ctx core.Context, ipfs *Protocol, c cid.Cid) (*DAGCollectResult, error) {
-	getCtx := pc.VirtualReadOption(ctx, true)
+// collectDAGCids walks the DAG to collect all CIDs and their sizes
+// If virtualOnly is true, performs a virtual read (no quota checking, no storage)
+// If virtualOnly is false, fetches and stores blocks automatically via DAG service
+func collectDAGCids(
+	ctx core.Context,
+	ipfs ProtoNode,
+	c cid.Cid,
+	virtualOnly bool,
+) (*DAGCollectResult, error) {
+	// Set virtual mode based on parameter
+	var getCtx context.Context
+	getCtx = ctx
+	if virtualOnly {
+		getCtx = pc.VirtualReadOption(ctx, true)
+	}
+	
 	// Skip quota check for internal retrieve operations
 	getCtx = pc.SkipQuotaCheckOption(getCtx, true)
-	getCtx, cancel := context.WithTimeout(getCtx, ctx.Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig).BlockStore.Timeout)
+	var cancel context.CancelFunc
+	getCtx, cancel = context.WithTimeout(getCtx, ctx.Config().GetProtocol(internal.ProtocolName).(*pluginConfig.ProtocolConfig).BlockStore.Timeout)
 
 	var cids []cid.Cid
 	cidSizes := make(map[cid.Cid]uint64)
@@ -292,13 +326,14 @@ func collectDAGCids(ctx core.Context, ipfs *Protocol, c cid.Cid) (*DAGCollectRes
 		Logger:       ipfs.Logger(),
 	}
 
-	err := dag.WalkDAG(getCtx, ipfs.GetNode().DagService(), c, func(_ context.Context, c cid.Cid, node *merkledag.ProtoNode) error {
+	err := dag.WalkDAG(getCtx, ipfs.GetNode().DagService(), c, func(_ context.Context, cid cid.Cid, node *merkledag.ProtoNode) error {
 		// Get block size from the node
 		blockSize := uint64(len(node.RawData()))
-		cidSizes[c] = blockSize
+		cidSizes[cid] = blockSize
 		totalSize += blockSize
 		
-		cids = append(cids, c)
+		cids = append(cids, cid)
+		
 		return nil
 	}, opts)
 
