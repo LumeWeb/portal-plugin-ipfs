@@ -1202,6 +1202,8 @@ go.lumeweb.com/ipfs-content v0.1.15 h1:elKkyKmfiw80xKWahyniHkcHb6idMQPxTaaCDYs0e
 go.lumeweb.com/ipfs-content v0.1.15/go.mod h1:Sdg/4FWAJgeqpV6LPOIDOF2K+RbhBOPqpPKk3gpwobo=
 go.lumeweb.com/portal v0.4.2-0.20260410022336-1368faf8c408 h1:L5F3pSgj83U+2RcDJeprrX/Z+VQuvhMycD7gz/5S780=
 go.lumeweb.com/portal v0.4.2-0.20260410022336-1368faf8c408/go.mod h1:oNjQuS8zJgNeFpvaO8fW6oOUBla7VEwwnLE7U7imBY0=
+go.lumeweb.com/portal v0.4.2-0.20260414012045-b8233d3a3491 h1:bzul+ePZnetEZhx6cmcCem/JCCMuOLQAG7KzO3H457M=
+go.lumeweb.com/portal v0.4.2-0.20260414012045-b8233d3a3491/go.mod h1:240ee/Hlfam4Mfa1aWCXMBwrt8kwGpRh26onKuvUzR4=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47 h1:72BfSDglrZppP8b7mn0Gxyt3a6MNHsPCc6QJjJjFh8Q=
