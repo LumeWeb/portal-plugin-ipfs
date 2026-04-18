@@ -2,7 +2,7 @@ package dto
 
 import (
 	"github.com/Oudwins/zog"
-	"github.com/Oudwins/zog/internals"
+	"github.com/Oudwins/zog/pkgs/internals"
 	"github.com/ipfs/go-cid"
 	"github.com/samber/lo"
 	"go.lumeweb.com/httputil"
@@ -202,11 +202,11 @@ func (g *GetBlockMetaBatchRequest) ToModel() (*GetBlockMetaBatchParsedRequest, e
 }
 
 type BlockMetaResponse struct {
-	Name       string   `json:"name"`
+	Name       string     `json:"name"`
 	Type       UnixFSType `json:"type"`
-	BlockSize  uint64   `json:"block_size"` // Raw encoded block size (includes protobuf framing overhead)
-	UnixFSSize int64    `json:"unixfs_size"` // Logical UnixFS file size (local size, original file size before chunking)
-	ChildCID   []string `json:"child_cid"`
+	BlockSize  uint64     `json:"block_size"`  // Raw encoded block size (includes protobuf framing overhead)
+	UnixFSSize int64      `json:"unixfs_size"` // Logical UnixFS file size (local size, original file size before chunking)
+	ChildCID   []string   `json:"child_cid"`
 }
 
 func (b *BlockMetaResponse) FromModel(model *pluginDb.UnixFSNode) error {
@@ -229,7 +229,7 @@ func (g *GetBlockMetaBatchResponse) FromModel(model map[string]*pluginDb.UnixFSN
 		(*g)[_cid] = &BlockMetaResponse{
 			Name:       node.Name,
 			Type:       UnixFSType(node.Type), // Convert uint8 to UnixFSType enum
-			BlockSize:  node.Block.Size,      // Raw encoded block size
+			BlockSize:  node.Block.Size,       // Raw encoded block size
 			UnixFSSize: node.BlockSize,        // Logical UnixFS file size
 			ChildCID: lo.Map(node.ChildCID, func(c cid.Cid, _ int) string {
 				return encoding.ToV1(c).String()
