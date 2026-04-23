@@ -632,6 +632,8 @@ github.com/ipld/go-codec-dagpb v1.7.0 h1:hpuvQjCSVSLnTnHXn+QAMR0mLmb1gA6wl10LExo
 github.com/ipld/go-codec-dagpb v1.7.0/go.mod h1:rD3Zg+zub9ZnxcLwfol/OTQRVjaLzXypgy4UqHQvilM=
 github.com/ipld/go-ipld-prime v0.22.0 h1:YJhDhjEOvOYaqshd3b4atIWUoRg/rKrgmwCyUHwlbuY=
 github.com/ipld/go-ipld-prime v0.22.0/go.mod h1:ol7vKxOOVgEh0iAPuiDalM+0gScXVMA5ZZa4DVrTnEA=
+github.com/ipld/go-ipld-prime v0.23.0 h1:csqdPZH60BsTC+AZrv7fpa27v+09I/oTqyHYYYE27eE=
+github.com/ipld/go-ipld-prime v0.23.0/go.mod h1:46YCFSFNFBJHPjB0pfMuv7Ly7df2eChpkpyPo5SE0bA=
 github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260402105321-5c66635c83a0 h1:IMVFIzfWCfvpF3vwXhdJvZu4QUwofHqtE9T00dGVEts=
 github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260402105321-5c66635c83a0/go.mod h1:U/S94Kydw2gqJWTt0XjhJfC8VW2b8fFcYnz7JT4B5FA=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
