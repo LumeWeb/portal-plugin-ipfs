@@ -40,7 +40,7 @@ require (
 	github.com/tus/tusd/v2 v2.9.2
 	go.lumeweb.com/httputil v0.5.4
 	go.lumeweb.com/ipfs-content v0.1.15
-	go.lumeweb.com/portal v0.4.2-0.20260423180419-06c846ad0415
+	go.lumeweb.com/portal v0.4.2-0.20260424173323-6c839a88d36b
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20260418132608-572560c6efd0
@@ -196,7 +196,7 @@ require (
 	github.com/klauspost/compress v1.18.4 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
-	github.com/klauspost/reedsolomon v1.13.2 // indirect
+	github.com/klauspost/reedsolomon v1.13.3 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/knadh/koanf/parsers/json v1.0.0 // indirect
 	github.com/knadh/koanf/parsers/yaml v1.1.0 // indirect
@@ -236,7 +236,7 @@ require (
 	github.com/minio/sha256-simd v1.0.1 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
-	github.com/montanaflynn/stats v0.7.1 // indirect
+	github.com/montanaflynn/stats v0.9.0 // indirect
 	github.com/mr-tron/base58 v1.3.0 // indirect
 	github.com/mrjones/oauth v0.0.0-20190623134757-126b35219450 // indirect
 	github.com/multiformats/go-base32 v0.1.0 // indirect
@@ -339,11 +339,11 @@ require (
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	go.shabbyrobe.org/gocovmerge v0.0.0-20230507111327-fa4f82cfbf4d // indirect
-	go.sia.tech/core v0.19.1-0.20251215141429-887336e35dd9 // indirect
-	go.sia.tech/coreutils v0.21.1 // indirect
+	go.sia.tech/core v0.20.0 // indirect
+	go.sia.tech/coreutils v0.21.3-0.20260421140827-cfc04c84419e // indirect
 	go.sia.tech/jape v0.14.1 // indirect
-	go.sia.tech/mux v1.4.0 // indirect
-	go.sia.tech/renterd/v2 v2.9.0 // indirect
+	go.sia.tech/mux v1.5.0 // indirect
+	go.sia.tech/renterd/v2 v2.9.1 // indirect
 	go.uber.org/dig v1.19.0 // indirect
 	go.uber.org/fx v1.24.0 // indirect
 	go.uber.org/mock v0.6.0 // indirect
@@ -361,7 +361,7 @@ require (
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260409153401-be6f6cb8b1fa // indirect
 	golang.org/x/text v0.36.0 // indirect
-	golang.org/x/time v0.14.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.44.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect
