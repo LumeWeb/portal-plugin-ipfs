@@ -40,7 +40,7 @@ require (
 	github.com/tus/tusd/v2 v2.9.2
 	go.lumeweb.com/httputil v0.5.4
 	go.lumeweb.com/ipfs-content v0.1.15
-	go.lumeweb.com/portal v0.4.2-0.20260424180826-2106e17ab05f
+	go.lumeweb.com/portal v0.4.2-0.20260425033248-982da7df3af0
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20260418132608-572560c6efd0
@@ -81,13 +81,13 @@ require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/AfterShip/email-verifier v1.4.1 // indirect
 	github.com/ClickHouse/ch-go v0.71.0 // indirect
-	github.com/ClickHouse/clickhouse-go/v2 v2.43.0 // indirect
+	github.com/ClickHouse/clickhouse-go/v2 v2.45.0 // indirect
 	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
 	github.com/STARRY-S/zip v0.2.3 // indirect
 	github.com/adjust/rmq/v5 v5.2.0 // indirect
 	github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b // indirect
 	github.com/alicebob/miniredis/v2 v2.37.0 // indirect
-	github.com/andybalholm/brotli v1.2.0 // indirect
+	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.41.6 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.9 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.32.16 // indirect
@@ -193,7 +193,7 @@ require (
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/julienschmidt/httprouter v1.3.0 // indirect
 	github.com/kenshaw/snaker v0.4.3 // indirect
-	github.com/klauspost/compress v1.18.4 // indirect
+	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/klauspost/reedsolomon v1.13.3 // indirect
@@ -224,10 +224,10 @@ require (
 	github.com/markbates/goth v1.82.0 // indirect
 	github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-isatty v0.0.21 // indirect
 	github.com/mattn/go-sqlite3 v1.14.42 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
-	github.com/microsoft/go-mssqldb v1.9.6 // indirect
+	github.com/microsoft/go-mssqldb v1.9.8 // indirect
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/mikelolasagasti/xz v1.0.1 // indirect
 	github.com/mikioh/tcpinfo v0.0.0-20190314235526-30a79bb1804b // indirect
@@ -252,7 +252,7 @@ require (
 	github.com/oasdiff/yaml v0.0.0-20250309154309-f31be36b4037 // indirect
 	github.com/oasdiff/yaml3 v0.0.0-20250309153720-d2182401db90 // indirect
 	github.com/onsi/gomega v1.36.3 // indirect
-	github.com/paulmach/orb v0.12.0 // indirect
+	github.com/paulmach/orb v0.13.0 // indirect
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/petar/GoLLRB v0.0.0-20210522233825-ae3b015fd3e9 // indirect
@@ -277,7 +277,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/polydawn/refmt v0.89.1-0.20231129105047-37766d95467a // indirect
 	github.com/pquerna/otp v1.5.0 // indirect
-	github.com/pressly/goose/v3 v3.27.0 // indirect
+	github.com/pressly/goose/v3 v3.27.1 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
@@ -366,7 +366,7 @@ require (
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260414002931-afd174a4e478 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260420184626-e10c466a9529 // indirect
 	google.golang.org/grpc v1.80.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
@@ -380,8 +380,8 @@ require (
 	gorm.io/plugin/prometheus v0.1.0 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 	lukechampine.com/frand v1.5.1 // indirect
-	modernc.org/libc v1.68.0 // indirect
+	modernc.org/libc v1.72.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.46.1 // indirect
+	modernc.org/sqlite v1.49.1 // indirect
 )
