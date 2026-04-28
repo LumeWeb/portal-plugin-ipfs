@@ -47,7 +47,7 @@ require (
 	go.lumeweb.com/portal-plugin-quota v0.0.0-20260427221727-edf2c041a1a0
 	go.lumeweb.com/portal-router v0.6.13
 	go.lumeweb.com/queryutil v0.3.16
-	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260428093445-d85b286217e6
+	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260428184849-d2f5bbdfec6c
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.50.0
 	gopkg.in/yaml.v3 v3.0.1
