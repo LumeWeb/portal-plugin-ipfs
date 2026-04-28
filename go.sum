@@ -1100,6 +1100,8 @@ github.com/quic-go/webtransport-go v0.10.1-0.20260312060737-05fe5253a73c h1:qnIL
 github.com/quic-go/webtransport-go v0.10.1-0.20260312060737-05fe5253a73c/go.mod h1:ocpwcCqYQbWRGNaCYlToTUVgjsbh0yEjLAyXl8yAIdA=
 github.com/redis/go-redis/v9 v9.18.0 h1:pMkxYPkEbMPwRdenAzUNyFNrDgHx9U+DrBabWNfSRQs=
 github.com/redis/go-redis/v9 v9.18.0/go.mod h1:k3ufPphLU5YXwNTUcCRXGxUoF1fqxnhFQmscfkCoDA0=
+github.com/redis/go-redis/v9 v9.19.0 h1:XPVaaPSnG6RhYf7p+rmSa9zZfeVAnWsH5h3lxthOm/k=
+github.com/redis/go-redis/v9 v9.19.0/go.mod h1:v/M13XI1PVCDcm01VtPFOADfZtHf8YW3baQf57KlIkA=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/rivo/uniseg v0.4.4 h1:8TfxU8dW6PdqD27gjM8MVNuicgxIjxpm4K7x4jp8sis=
@@ -1320,6 +1322,8 @@ go.lumeweb.com/portal v0.4.2-0.20260425195212-93c16ec184b9 h1:eHJKvJrBBYaXRl6Jl8
 go.lumeweb.com/portal v0.4.2-0.20260425195212-93c16ec184b9/go.mod h1:RnhnQEvvXfHEAk1zf5GEop0AvOLt/aWzVIcKq2gjopE=
 go.lumeweb.com/portal v0.4.2-0.20260428072204-c27ef27e1e8f h1:6w07FFuwgJNFVj66UrbaMgr5vyPadwRpJgUI7BUZ2PU=
 go.lumeweb.com/portal v0.4.2-0.20260428072204-c27ef27e1e8f/go.mod h1:w56df/yEwB428Etg3aRfj8BNGx2a5Vf1bOs8oeCyjnU=
+go.lumeweb.com/portal v0.4.2-0.20260428184738-7e2069e74707 h1:+A0XvcPD07BI9WdlZyZCnr7lsFGACIO8/Et8J5Qz6Fk=
+go.lumeweb.com/portal v0.4.2-0.20260428184738-7e2069e74707/go.mod h1:pzmRaTs+X2paeXhmy0Ty6to9D1g9EF+RgFwlfOvlux4=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47 h1:72BfSDglrZppP8b7mn0Gxyt3a6MNHsPCc6QJjJjFh8Q=
