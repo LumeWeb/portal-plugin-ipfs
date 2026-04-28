@@ -1330,6 +1330,8 @@ go.lumeweb.com/portal-plugin-quota v0.0.0-20260425145501-e8ac34eb5cdf h1:U6HRNiX
 go.lumeweb.com/portal-plugin-quota v0.0.0-20260425145501-e8ac34eb5cdf/go.mod h1:xLdwzzGFihkElXf+q962g7CxYnjMY6ONwJSQTXk+kYA=
 go.lumeweb.com/portal-plugin-quota v0.0.0-20260425220337-a342aa31f1f8 h1:uAeHgJoPwQ03eohHOjBrM0dfnEgMidos3r8+IZlzGJ4=
 go.lumeweb.com/portal-plugin-quota v0.0.0-20260425220337-a342aa31f1f8/go.mod h1:xLdwzzGFihkElXf+q962g7CxYnjMY6ONwJSQTXk+kYA=
+go.lumeweb.com/portal-plugin-quota v0.0.0-20260427221727-edf2c041a1a0 h1:aJ0ra7HCPDKpSLERESCSuHsc7PGD8DMDXWM6MJt9Ei0=
+go.lumeweb.com/portal-plugin-quota v0.0.0-20260427221727-edf2c041a1a0/go.mod h1:pSRfIuQFMEb0KllxR3F5nVRuBwqqXFoCElTFXxZPak0=
 go.lumeweb.com/portal-router v0.6.13 h1:WqBNN4naPuERAwLqjCwxpAhpvzBxom8w8KqdP+EoTvw=
 go.lumeweb.com/portal-router v0.6.13/go.mod h1:4tb+XYa0GYiFVraMoossGgMBTN9z4U54v8SL+EOBvbs=
 go.lumeweb.com/queryutil v0.3.16 h1:4ShUZdaov+jBRWTkABaa8j1QnDSUv1AtVDJd6IbPO3Y=
