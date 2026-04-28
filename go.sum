@@ -1314,6 +1314,8 @@ go.lumeweb.com/portal v0.4.2-0.20260425033248-982da7df3af0 h1:sEhf7Kxk6fAwjlZouc
 go.lumeweb.com/portal v0.4.2-0.20260425033248-982da7df3af0/go.mod h1:2WouCvtVCZV6X+LkwZp9xVFc/moiVgwBF9xgfpdIAkc=
 go.lumeweb.com/portal v0.4.2-0.20260425195212-93c16ec184b9 h1:eHJKvJrBBYaXRl6Jl8ZmAqIzEM+5rKuVfL6e23bOIkI=
 go.lumeweb.com/portal v0.4.2-0.20260425195212-93c16ec184b9/go.mod h1:RnhnQEvvXfHEAk1zf5GEop0AvOLt/aWzVIcKq2gjopE=
+go.lumeweb.com/portal v0.4.2-0.20260428072204-c27ef27e1e8f h1:6w07FFuwgJNFVj66UrbaMgr5vyPadwRpJgUI7BUZ2PU=
+go.lumeweb.com/portal v0.4.2-0.20260428072204-c27ef27e1e8f/go.mod h1:w56df/yEwB428Etg3aRfj8BNGx2a5Vf1bOs8oeCyjnU=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47 h1:72BfSDglrZppP8b7mn0Gxyt3a6MNHsPCc6QJjJjFh8Q=
@@ -1442,6 +1444,8 @@ go.uber.org/multierr v1.11.0/go.mod h1:20+QtiLqy0Nd6FdQB9TLXag12DsQkrbs3htMFfDN8
 go.uber.org/zap v1.17.0/go.mod h1:MXVU+bhUf/A7Xi2HNOnopQOrmycQ5Ih87HtOu4q5SSo=
 go.uber.org/zap v1.27.1 h1:08RqriUEv8+ArZRYSTXy1LeBScaMpVSTBhCeaZYfMYc=
 go.uber.org/zap v1.27.1/go.mod h1:GB2qFLM7cTU87MWRP2mPIjqfIDnGu+VIO4V/SdhGo2E=
+go.uber.org/zap v1.28.0 h1:IZzaP1Fv73/T/pBMLk4VutPl36uNC+OSUh3JLG3FIjo=
+go.uber.org/zap v1.28.0/go.mod h1:rDLpOi171uODNm/mxFcuYWxDsqWSAVkFdX4XojSKg/Q=
 go.uber.org/zap/exp v0.3.0 h1:6JYzdifzYkGmTdRR59oYH+Ng7k49H9qVpWwNSsGJj3U=
 go.uber.org/zap/exp v0.3.0/go.mod h1:5I384qq7XGxYyByIhHm6jg5CHkGY0nsTfbDLgDDlgJQ=
 go.yaml.in/yaml/v2 v2.4.4 h1:tuyd0P+2Ont/d6e2rl3be67goVK4R6deVxCUX5vyPaQ=
