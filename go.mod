@@ -40,12 +40,12 @@ require (
 	github.com/tus/tusd/v2 v2.9.2
 	go.lumeweb.com/httputil v0.5.4
 	go.lumeweb.com/ipfs-content v0.1.15
-	go.lumeweb.com/portal v0.4.2-0.20260429002523-546482e869c1
+	go.lumeweb.com/portal v0.4.2-0.20260429054337-6aa5271d6b00
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20260418132608-572560c6efd0
 	go.lumeweb.com/portal-plugin-quota v0.0.0-20260428221307-98ebac6a28fb
-	go.lumeweb.com/portal-router v0.6.14
+	go.lumeweb.com/portal-router v0.6.15
 	go.lumeweb.com/queryutil v0.3.16
 	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260429072820-96405f7a1072
 	go.uber.org/zap v1.28.0
