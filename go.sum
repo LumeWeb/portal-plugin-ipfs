@@ -848,6 +848,8 @@ github.com/mattn/go-sqlite3 v1.14.41 h1:8p7Pwz5NHkEbWSqc/ygU4CBGubhFFkpgP9KwcdkA
 github.com/mattn/go-sqlite3 v1.14.41/go.mod h1:pjEuOr8IwzLJP2MfGeTb0A35jauH+C2kbHKBr7yXKVQ=
 github.com/mattn/go-sqlite3 v1.14.42 h1:MigqEP4ZmHw3aIdIT7T+9TLa90Z6smwcthx+Azv4Cgo=
 github.com/mattn/go-sqlite3 v1.14.42/go.mod h1:pjEuOr8IwzLJP2MfGeTb0A35jauH+C2kbHKBr7yXKVQ=
+github.com/mattn/go-sqlite3 v1.14.44 h1:3VSe+xafpbzsLbdr2AWlAZk9yRHiBhTBakioXaCKTF8=
+github.com/mattn/go-sqlite3 v1.14.44/go.mod h1:pjEuOr8IwzLJP2MfGeTb0A35jauH+C2kbHKBr7yXKVQ=
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
 github.com/matttproud/golang_protobuf_extensions v1.0.4/go.mod h1:BSXmuO+STAnVfrANrmjBb36TMTDstsz7MSK+HVaYKv4=
 github.com/mfridman/interpolate v0.0.2 h1:pnuTK7MQIxxFz1Gr+rjSIx9u7qVjf5VOoM/u6BbAxPY=
@@ -1336,6 +1338,8 @@ go.lumeweb.com/portal v0.4.2-0.20260429002523-546482e869c1 h1:6yFjT7BGUZIauvy0Sg
 go.lumeweb.com/portal v0.4.2-0.20260429002523-546482e869c1/go.mod h1:7omrdIONT7ck06Gj6PgmXPEndZXLzuyackw8/3co7Ko=
 go.lumeweb.com/portal v0.4.2-0.20260429054337-6aa5271d6b00 h1:H/PN3Gb7UgNJpQuiFO+Yi29AbDc+XEGMIHJdDz9OFLQ=
 go.lumeweb.com/portal v0.4.2-0.20260429054337-6aa5271d6b00/go.mod h1:965YJf9EfkHpOz88+3vQgMyg0dtHgjjWIWJ2aXFnWLU=
+go.lumeweb.com/portal v0.4.2-0.20260429143530-6fb85cc8c8ec h1:fP4dR2eQ5hNxMKE1JHTo0IDLehgZHNKNDE0eg5zNfsg=
+go.lumeweb.com/portal v0.4.2-0.20260429143530-6fb85cc8c8ec/go.mod h1:Div/uugjDP1XUIVlL6ojIb3rWVPUAwW+cRCjHvhpUdM=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47 h1:72BfSDglrZppP8b7mn0Gxyt3a6MNHsPCc6QJjJjFh8Q=
