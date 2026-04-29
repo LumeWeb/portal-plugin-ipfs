@@ -1384,6 +1384,8 @@ go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260429023254-9c1b34582831 h1:w
 go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260429023254-9c1b34582831/go.mod h1:ZikXTSOxS/Cks5JeX0EOaZ4yvwh+hcHcqPzIzQuJNKQ=
 go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260429031605-eeb87a06c076 h1:Xc3IJN/OD1y6iqbsjHcZh/h8oHAFoow7wlyg4KyKjB8=
 go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260429031605-eeb87a06c076/go.mod h1:ZikXTSOxS/Cks5JeX0EOaZ4yvwh+hcHcqPzIzQuJNKQ=
+go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260429072820-96405f7a1072 h1:GAKn8Edee5/aREOEmzfscenlI1G0NrHioiZxtumNOiE=
+go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260429072820-96405f7a1072/go.mod h1:ZikXTSOxS/Cks5JeX0EOaZ4yvwh+hcHcqPzIzQuJNKQ=
 go.mongodb.org/mongo-driver v1.11.4/go.mod h1:PTSz5yu21bkT/wXpkS7WR5f0ddqw5quethTUn9WM+2g=
 go.opencensus.io v0.21.0/go.mod h1:mSImk1erAIZhrmZN+AvHh14ztQfjbGwt4TtuofqLduU=
 go.opencensus.io v0.22.0/go.mod h1:+kGneAE2xo2IficOXnaByMWTGM9T73dGwxeWcUqIpI8=
