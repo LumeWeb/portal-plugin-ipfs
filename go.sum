@@ -1348,6 +1348,8 @@ go.lumeweb.com/gswagger v0.20.10 h1:B2GYZZPeqR4kh9x/hI6VgInTpz0pX6RKJcAYGGF3OVo=
 go.lumeweb.com/gswagger v0.20.10/go.mod h1:ihCqZdOheP96os/K3QlVv4LT7oS+fEc0f+TAyJd7CaA=
 go.lumeweb.com/gswagger v0.20.11 h1:GvcntUiNRWzGCMckSIcm99ApEJfzSMVUyl7sz+ZIx/k=
 go.lumeweb.com/gswagger v0.20.11/go.mod h1:qz+9/8qstYy7WJ48VZJW/0FonlExw/Igv7vWGgp5uoU=
+go.lumeweb.com/gswagger v0.20.12 h1:FNSrDAeMQVAGIogzJ4SQX+X8U/FMeWQ80yxdyfsM2/M=
+go.lumeweb.com/gswagger v0.20.12/go.mod h1:qz+9/8qstYy7WJ48VZJW/0FonlExw/Igv7vWGgp5uoU=
 go.lumeweb.com/httputil v0.5.4 h1:RQpwAaCgeqSLXwbDXaH3HwiiqUgZP0NLxl4GDZqLD0o=
 go.lumeweb.com/httputil v0.5.4/go.mod h1:ZFu9oig/XKT30LBskWrU6iyMnq5zdi3rkyplWKzA6lw=
 go.lumeweb.com/ipfs-content v0.1.15 h1:elKkyKmfiw80xKWahyniHkcHb6idMQPxTaaCDYs0edk=
@@ -1424,6 +1426,8 @@ go.lumeweb.com/portal-router v0.6.14 h1:aeTMngHkaxfRwlJy2icH6d4hMxXNGeIdyaAq4a6l
 go.lumeweb.com/portal-router v0.6.14/go.mod h1:lupvi1L4sJ4HLtwW7/bfOOqUBPcwm6ks9CwDZSZsnuU=
 go.lumeweb.com/portal-router v0.6.15 h1:i0k5NGrXNaUhqKl6+3v1mrxMJL6xHq+2vatt6/H+1Bs=
 go.lumeweb.com/portal-router v0.6.15/go.mod h1:lupvi1L4sJ4HLtwW7/bfOOqUBPcwm6ks9CwDZSZsnuU=
+go.lumeweb.com/portal-router v0.6.16 h1:/2HZfXCpVfTTWNBmVfrCCLtYVm6vpXUD5aAKjPPQQig=
+go.lumeweb.com/portal-router v0.6.16/go.mod h1:hl51sHDKcgw8yxJ6RraYBOI1Vnufq33FhKwfKiqCkVg=
 go.lumeweb.com/queryutil v0.3.16 h1:4ShUZdaov+jBRWTkABaa8j1QnDSUv1AtVDJd6IbPO3Y=
 go.lumeweb.com/queryutil v0.3.16/go.mod h1:nLkIuXzugX8Ln24wsAbfTafvNmaTHLJhIUKWC1693G4=
 go.lumeweb.com/web/go/portal-dashboard v0.0.0-20260123053442-479cd558a2fc h1:75sjqoO6sy15ONcUO9P+gRsu3CyYA+fbfoER3YLPBTk=

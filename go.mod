@@ -45,7 +45,7 @@ require (
 	go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20260418132608-572560c6efd0
 	go.lumeweb.com/portal-plugin-quota v0.0.0-20260428221307-98ebac6a28fb
-	go.lumeweb.com/portal-router v0.6.15
+	go.lumeweb.com/portal-router v0.6.16
 	go.lumeweb.com/queryutil v0.3.16
 	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260503221037-9c49ba9e0137
 	go.uber.org/zap v1.28.0
@@ -318,7 +318,7 @@ require (
 	go.etcd.io/etcd/client/v3 v3.6.11 // indirect
 	go.lumeweb.com/configmanager v0.3.28 // indirect
 	go.lumeweb.com/event/v2 v2.1.0 // indirect
-	go.lumeweb.com/gswagger v0.20.11 // indirect
+	go.lumeweb.com/gswagger v0.20.12 // indirect
 	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20260123053442-479cd558a2fc // indirect
 	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20260123053442-479cd558a2fc // indirect
 	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20260123053442-479cd558a2fc // indirect
