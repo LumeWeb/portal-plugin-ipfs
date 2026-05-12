@@ -405,6 +405,8 @@ github.com/go-co-op/gocron/v2 v2.21.0 h1:e1nt9AEFglarRH9/9y9q0V5sblwxlknpHPjttEa
 github.com/go-co-op/gocron/v2 v2.21.0/go.mod h1:5lEiCKk1oVJV39Zg7/YG10OnaVrDAV5GGR6O0663k6U=
 github.com/go-co-op/gocron/v2 v2.21.1 h1:QYOK6iOQVCut+jDcs4zRdWRTBHRxRCEeeFi1TnAmgbU=
 github.com/go-co-op/gocron/v2 v2.21.1/go.mod h1:5lEiCKk1oVJV39Zg7/YG10OnaVrDAV5GGR6O0663k6U=
+github.com/go-co-op/gocron/v2 v2.21.2 h1:bD8/YwkojYHgXFr3iEulL148KBdTbKVxUZzFKpXcdbY=
+github.com/go-co-op/gocron/v2 v2.21.2/go.mod h1:5lEiCKk1oVJV39Zg7/YG10OnaVrDAV5GGR6O0663k6U=
 github.com/go-faster/city v1.0.1 h1:4WAxSZ3V2Ws4QRDrscLEDcibJY8uf41H6AhXDrNDcGw=
 github.com/go-faster/city v1.0.1/go.mod h1:jKcUJId49qdW3L1qKHH/3wPeUstCVpVSXTM6vO3VcTw=
 github.com/go-faster/errors v0.7.1 h1:MkJTnDoEdi9pDabt1dpWf7AA8/BaSYZqibYyhZ20AYg=
@@ -1416,6 +1418,8 @@ go.lumeweb.com/portal v0.4.2-0.20260509024515-4dd10c3de19d h1:9ee7qeYopOi5fgPVSB
 go.lumeweb.com/portal v0.4.2-0.20260509024515-4dd10c3de19d/go.mod h1:BrSsKKTTzIIE9l6CM50NWWUUKN96MbujBhCRItajcaY=
 go.lumeweb.com/portal v0.4.2-0.20260510231455-b774abb75450 h1:XqFFFmxWknChwNLi/66JiasdhqJyIhdanXcMz7Xjrfk=
 go.lumeweb.com/portal v0.4.2-0.20260510231455-b774abb75450/go.mod h1:yIze+wpQL/0UbaXeWXGWUSdcy4qOx4NZwFl8wMoFV60=
+go.lumeweb.com/portal v0.4.2-0.20260512193021-a306f39db308 h1:ww/DXxlnb5K+EgZtg9vrk5CrGeBPpMNkCXGCrTBO2sk=
+go.lumeweb.com/portal v0.4.2-0.20260512193021-a306f39db308/go.mod h1:KWmMkPhKOGpGZqpINmH2NSkeXkQaOipkI3HNXxqYYos=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47 h1:72BfSDglrZppP8b7mn0Gxyt3a6MNHsPCc6QJjJjFh8Q=
