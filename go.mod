@@ -40,7 +40,7 @@ require (
 	github.com/tus/tusd/v2 v2.9.2
 	go.lumeweb.com/httputil v0.5.4
 	go.lumeweb.com/ipfs-content v0.1.15
-	go.lumeweb.com/portal v0.4.2-0.20260512225205-895c4d78d397
+	go.lumeweb.com/portal v0.4.2-0.20260513012357-fdfa2b7b34f9
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20260418132608-572560c6efd0
@@ -282,7 +282,7 @@ require (
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.59.0 // indirect
+	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/quic-go/webtransport-go v0.10.1-0.20260312060737-05fe5253a73c // indirect
 	github.com/redis/go-redis/v9 v9.19.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -311,7 +311,7 @@ require (
 	github.com/whyrusleeping/go-keyspace v0.0.0-20160322163242-5b898ac5add1 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
-	github.com/wneessen/go-mail v0.7.2 // indirect
+	github.com/wneessen/go-mail v0.7.3 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.etcd.io/etcd/api/v3 v3.6.11 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.6.11 // indirect
@@ -340,7 +340,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	go.shabbyrobe.org/gocovmerge v0.0.0-20230507111327-fa4f82cfbf4d // indirect
 	go.sia.tech/core v0.21.0 // indirect
-	go.sia.tech/coreutils v0.21.3 // indirect
+	go.sia.tech/coreutils v0.22.0 // indirect
 	go.sia.tech/jape v0.14.1 // indirect
 	go.sia.tech/mux v1.5.0 // indirect
 	go.sia.tech/renterd/v2 v2.9.1 // indirect
