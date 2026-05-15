@@ -34,6 +34,10 @@ type (
 		// MaxConcurrent is the maximum number of concurrent block fetches.
 		MaxConcurrentFetches  int `config:"max_concurrent_fetches"`
 		MaxConcurrentRequests int `config:"max_concurrent_requests"`
+		// ProcessingWorkers is the number of concurrent workers for block processing during uploads.
+		// 0 = auto (uses MaxConcurrentRequests). Block processing is I/O-bound (S3 upload + DB write),
+		// so the limit is downstream I/O parallelism, not CPU count.
+		ProcessingWorkers int `config:"processing_workers"`
 		// CacheSize is the maximum number of blocks to cache in memory.
 		CacheSize int           `config:"cache_size"`
 		Timeout   time.Duration `config:"timeout"`
@@ -51,6 +55,7 @@ func (b BlockStore) Defaults() map[string]any {
 	return map[string]any{
 		"MaxConcurrentFetches":  10,
 		"MaxConcurrentRequests": 50,
+		"ProcessingWorkers":     0,
 		"CacheSize":             65536,
 		"Timeout":               120 * time.Second,
 	}

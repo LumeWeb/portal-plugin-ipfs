@@ -1,16 +1,10 @@
-name: Test
+name: Benchmark
 
 on:
-  push:
-    branches:
-      - develop
-  pull_request:
-    branches:
-      - develop
   workflow_dispatch:
 
 jobs:
-  test:
+  benchmark:
     runs-on: blacksmith-4vcpu-ubuntu-2404
 
     steps:
@@ -41,14 +35,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Download go modules
-        run: go mod download
+      - name: Run Benchmarks
+        run: |
+          mkdir -p benchmark-results
+          TUS_BENCH_ENABLE_PROFILING=true TUS_BENCH_PIN_TIMEOUT=0 TUS_BENCH_PROFILES_DIR=benchmark-results go test -bench=. -benchmem -run=^$ ./internal/protocol/bench_tests/
 
-      - name: Fix go mod cache permissions
-        run: chmod -R 777 $(go list -mod=mod -m -f '{{.Dir}}' go.lumeweb.com/ipfs-content)/internal/testing/fixtures
-
-      - name: Generate
-        run: go generate ./...
-
-      - name: Test
-        run: go test $(go list ./... | grep -v bench_tests)
+      - name: Upload Benchmark Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark-results/
+          retention-days: 30

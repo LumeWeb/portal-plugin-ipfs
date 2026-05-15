@@ -96,7 +96,10 @@ type UploadProcessorFactory interface {
 	CreateProcessor(format contentArchive.Format, mode ArchiveMode, portalCtx core.Context, userID uint) (UploadProcessor, error)
 }
 
-// UniversalReader wraps an io.Reader to make it seekable by buffering its content
+// UniversalReader wraps an io.Reader to make it seekable by buffering its content.
+// If the underlying reader already implements io.ReadSeekCloser, it is used directly
+// without buffering — this avoids copying the entire file into memory for readers
+// that are already seekable (e.g., TUSUploadReader, *os.File).
 type UniversalReader struct {
 	reader io.Reader
 	buf    *bytes.Reader
@@ -107,21 +110,66 @@ type UniversalReader struct {
 var _ archives.ReaderAtSeeker = (*UniversalReader)(nil)
 var _ io.ReaderFrom = (*UniversalReader)(nil)
 
-// NewUniversalReader creates a new universalReader instance
+// NewUniversalReader creates a new UniversalReader instance.
+// If the reader already implements io.ReadSeekCloser, it is wrapped directly
+// without buffering. Otherwise, the content is buffered on first access.
 func NewUniversalReader(reader io.Reader) *UniversalReader {
 	return &UniversalReader{reader: reader}
 }
 
-// ensureBuffer ensures that all data from the original reader is loaded into the buffer
-func (s *UniversalReader) ensureBuffer() error {
-	if s.buf == nil {
-		var data bytes.Buffer
-		if _, err := io.Copy(&data, s.reader); err != nil {
-			return err
-		}
-		s.buf = bytes.NewReader(data.Bytes())
+// NewSeekableReader returns an io.ReadSeekCloser from the given reader.
+// If the reader already implements io.ReadSeekCloser, it is returned directly.
+// Otherwise, it is wrapped in a UniversalReader for seekability.
+// Use this when you need a seekable reader but want to avoid unnecessary buffering.
+func NewSeekableReader(reader io.Reader) io.ReadSeekCloser {
+	if rsc, ok := reader.(io.ReadSeekCloser); ok {
+		return rsc
 	}
+	return NewUniversalReader(reader)
+}
+
+// ensureBuffer ensures that all data from the original reader is loaded into the buffer.
+// If the underlying reader is already seekable, it is used directly without buffering.
+func (s *UniversalReader) ensureBuffer() error {
+	if s.buf != nil {
+		return nil
+	}
+
+	// If the underlying reader is already a ReadSeekCloser, wrap it directly
+	// without buffering the entire content into memory.
+	if rsc, ok := s.reader.(io.ReadSeekCloser); ok {
+		s.buf = bytes.NewReader(nil) // sentinel: non-nil means initialized
+		s.reader = rsc
+		return nil
+	}
+
+	// For non-seekable readers, buffer the entire content.
+	// Pre-allocate if we can determine the size via seeking.
+	size := -1
+	if seeker, ok := s.reader.(io.Seeker); ok {
+		end, err := seeker.Seek(0, io.SeekEnd)
+		if err == nil {
+			size = int(end)
+			_, _ = seeker.Seek(0, io.SeekStart)
+		}
+	}
+
+	var data bytes.Buffer
+	if size > 0 {
+		data.Grow(size)
+	}
+	if _, err := io.Copy(&data, s.reader); err != nil {
+		return err
+	}
+	s.buf = bytes.NewReader(data.Bytes())
 	return nil
+}
+
+// isPassthrough returns true if the underlying reader is seekable and we're
+// delegating reads/seeks to it directly instead of using the buffer.
+func (s *UniversalReader) isPassthrough() bool {
+	_, ok := s.reader.(io.ReadSeekCloser)
+	return ok && s.buf != nil
 }
 
 // Read implements io.Reader
@@ -132,6 +180,12 @@ func (s *UniversalReader) Read(p []byte) (n int, err error) {
 
 	if err = s.ensureBuffer(); err != nil {
 		return 0, err
+	}
+
+	// Passthrough to the underlying seekable reader
+	if s.isPassthrough() {
+		rsc := s.reader.(io.ReadSeekCloser)
+		return rsc.Read(p)
 	}
 
 	n, err = s.buf.ReadAt(p, s.pos)
@@ -147,6 +201,12 @@ func (s *UniversalReader) Seek(offset int64, whence int) (int64, error) {
 
 	if err := s.ensureBuffer(); err != nil {
 		return 0, err
+	}
+
+	// Passthrough to the underlying seekable reader
+	if s.isPassthrough() {
+		rsc := s.reader.(io.ReadSeekCloser)
+		return rsc.Seek(offset, whence)
 	}
 
 	var newPos int64
@@ -179,6 +239,15 @@ func (s *UniversalReader) ReadAt(p []byte, off int64) (n int, err error) {
 		return 0, err
 	}
 
+	// Passthrough: seek to offset, then read
+	if s.isPassthrough() {
+		rsc := s.reader.(io.ReadSeekCloser)
+		if _, err := rsc.Seek(off, io.SeekStart); err != nil {
+			return 0, err
+		}
+		return rsc.Read(p)
+	}
+
 	return s.buf.ReadAt(p, off)
 }
 
@@ -205,6 +274,11 @@ func (s *UniversalReader) ReadFrom(r io.Reader) (int64, error) {
 
 	if err := s.ensureBuffer(); err != nil {
 		return 0, err
+	}
+
+	// Passthrough readers don't support appending
+	if s.isPassthrough() {
+		return 0, fmt.Errorf("ReadFrom not supported for passthrough readers")
 	}
 
 	// Read all data from the new reader

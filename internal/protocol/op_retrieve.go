@@ -135,6 +135,17 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 			return fmt.Errorf("failed to collect and store DAG CIDs: %w", err)
 		}
 
+		// Flush buffered metadata to the database before any DB lookups.
+		// collectDAGCids stores blocks via BlockStore.Put → batcher.Add,
+		// but the batcher only auto-flushes at batch-size boundaries.
+		// Without an explicit flush, subsequent ProcessMissingUnixFSNames
+		// and quota lookups will fail with "record not found".
+		if flusher := proto.GetBlockstoreFlusher(); flusher != nil {
+			if err := flusher.Flush(ctx); err != nil {
+				h.Logger().Error("Failed to flush block metadata", zap.Error(err))
+			}
+		}
+
 		h.setProgressOrWarn(tracker, 70)
 
 		// UnixFS name processing (NOW AFTER blocks are in blockstore)

@@ -39,6 +39,63 @@ func (_m *MockMetadataStore) EXPECT() *MockMetadataStore_Expecter {
 	return &MockMetadataStore_Expecter{mock: &_m.Mock}
 }
 
+// BatchPin provides a mock function for the type MockMetadataStore
+func (_mock *MockMetadataStore) BatchPin(ctx context.Context, pinnedBlocks []core.PinnedBlock) error {
+	ret := _mock.Called(ctx, pinnedBlocks)
+
+	if len(ret) == 0 {
+		panic("no return value specified for BatchPin")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, []core.PinnedBlock) error); ok {
+		r0 = returnFunc(ctx, pinnedBlocks)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockMetadataStore_BatchPin_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'BatchPin'
+type MockMetadataStore_BatchPin_Call struct {
+	*mock.Call
+}
+
+// BatchPin is a helper method to define mock.On call
+//   - ctx context.Context
+//   - pinnedBlocks []core.PinnedBlock
+func (_e *MockMetadataStore_Expecter) BatchPin(ctx interface{}, pinnedBlocks interface{}) *MockMetadataStore_BatchPin_Call {
+	return &MockMetadataStore_BatchPin_Call{Call: _e.mock.On("BatchPin", ctx, pinnedBlocks)}
+}
+
+func (_c *MockMetadataStore_BatchPin_Call) Run(run func(ctx context.Context, pinnedBlocks []core.PinnedBlock)) *MockMetadataStore_BatchPin_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 []core.PinnedBlock
+		if args[1] != nil {
+			arg1 = args[1].([]core.PinnedBlock)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockMetadataStore_BatchPin_Call) Return(err error) *MockMetadataStore_BatchPin_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockMetadataStore_BatchPin_Call) RunAndReturn(run func(ctx context.Context, pinnedBlocks []core.PinnedBlock) error) *MockMetadataStore_BatchPin_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // BlockChildren provides a mock function for the type MockMetadataStore
 func (_mock *MockMetadataStore) BlockChildren(ctx context.Context, c cid.Cid, max *int) ([]cid.Cid, error) {
 	ret := _mock.Called(ctx, c, max)

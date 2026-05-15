@@ -24,7 +24,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const DEFAULT_BLOCK_QUEUE_SIZE = 10
+const DEFAULT_BLOCK_QUEUE_SIZE = 128
 
 // PostUploadOperationHandler handles post-upload processing
 type PostUploadOperationHandler struct {
@@ -135,7 +135,7 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		h.Logger().Warn("Failed to update progress", zap.Error(err))
 	}
 
-	allCids, rootCids, err := ProcessBlocks(h.Context(), processor)
+	allCids, rootCids, err := ProcessBlocks(h.Context(), processor, h.Protocol().(ProtoNode).GetBlockstoreFlusher())
 	if err != nil {
 		return fmt.Errorf("failed to process CIDs from upload: %w", err)
 	}

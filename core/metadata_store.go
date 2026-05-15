@@ -15,6 +15,9 @@ type MetadataStore interface {
 	BlockChildren(ctx context.Context, c cid.Cid, max *int) (siblings []cid.Cid, err error)
 
 	Pin(ctx context.Context, pinnedBlock PinnedBlock) error
+	// BatchPin pins multiple blocks in a single database transaction,
+	// reducing per-block transaction overhead for bulk uploads.
+	BatchPin(ctx context.Context, pinnedBlocks []PinnedBlock) error
 	Unpin(ctx context.Context, c cid.Cid) error
 	Pinned(ctx context.Context, offset, limit int) (roots []cid.Cid, err error)
 	Size(ctx context.Context, c cid.Cid) (uint64, error)

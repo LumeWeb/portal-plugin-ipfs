@@ -49,6 +49,7 @@ type ProtoNode interface {
 	GetIPNSNode() pluginCore.IPNSNodeAccess
 	GetMetadataStore() pluginCore.MetadataStore
 	GetNodeFactory() *ipfs.NodeFactory
+	GetBlockstoreFlusher() store.Flusher
 	RestartNode() error
 }
 
@@ -62,12 +63,18 @@ type Protocol struct {
 	pin           core.PinService
 	coordinator   core.WorkflowCoordinator
 	nodeFactory   *ipfs.NodeFactory
+	virtualBS     *store.VirtualBlockStore
 	nodeMutex     sync.RWMutex
 }
 
 // GetIPNSNode returns the IPNS node access interface for IPNS operations
 func (p *Protocol) GetIPNSNode() pluginCore.IPNSNodeAccess {
 	return p.node
+}
+
+// GetBlockstoreFlusher returns the blockstore flusher for flushing buffered metadata.
+func (p *Protocol) GetBlockstoreFlusher() store.Flusher {
+	return p.virtualBS
 }
 
 type pinHandler struct {
@@ -332,10 +339,11 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 			cacheBsOpts := blockstore.DefaultCacheOpts()
 			cacheBsOpts.HasTwoQueueCacheSize = cfg.BlockStore.CacheSize
 
-			virtualBS, err := store.NewVirtualBlockStore(ctx, directBS, cacheBsOpts)
+			virtualBS, err := store.NewVirtualBlockStore(ctx, directBS, cacheBsOpts, directBS)
 			if err != nil {
 				return fmt.Errorf("failed to create virtual blockstore: %w", err)
 			}
+			proto.virtualBS = virtualBS
 
 			_ds, dsErr = levelds.NewDatastore(filepath.Join(ctx.Config().ConfigDir(), internal.ProtocolName, "p2p"), nil)
 			if dsErr != nil {
@@ -436,5 +444,7 @@ func createFileProcessorForTUS(uploadFile io.ReadCloser, proto ProtoNode, logger
 	)
 
 	// Create file block processor (not archive processor)
-	return NewFileBlockProcessorWithDefaults(proto.Context(), bs, pluginUpload.NewUniversalReader(uploadFile), dagService, nodeGenerator, logger, doneTracker)
+	// The upload reader from TUS is already seekable (TUSUploadReader implements io.ReadSeekCloser),
+	// so use NewSeekableReader which detects that and avoids buffering the entire file.
+	return NewFileBlockProcessorWithDefaults(proto.Context(), bs, pluginUpload.NewSeekableReader(uploadFile), dagService, nodeGenerator, logger, doneTracker)
 }
