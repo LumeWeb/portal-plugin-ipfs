@@ -211,10 +211,13 @@ func ProcessBlocks(ctx core.Context, processor BlockProcessor, flusher store.Flu
 	// Wait for all queued work to complete
 	bp.wp.StopWait()
 
-	// Flush any remaining buffered metadata to the database
+	// Flush any remaining buffered metadata to the database.
+	// Detach from bp.ctx so the flush succeeds even if it was canceled
+	// by a block processing failure — the metadata for already-processed
+	// blocks must be persisted regardless, or their S3 uploads become orphans.
 	if flusher != nil {
-		if err := flusher.Flush(bp.ctx); err != nil && !isContextCanceled(err) {
-			return nil, nil, fmt.Errorf("failed to flush metadata: %w", err)
+		if err := flusher.Flush(core.DetachContext(bp.ctx)); err != nil {
+			bp.logger.Error("Failed to flush metadata", zap.Error(err))
 		}
 	}
 
