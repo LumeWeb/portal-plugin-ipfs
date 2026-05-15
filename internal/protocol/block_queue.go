@@ -217,7 +217,7 @@ func ProcessBlocks(ctx core.Context, processor BlockProcessor, flusher store.Flu
 	// blocks must be persisted regardless, or their S3 uploads become orphans.
 	if flusher != nil {
 		if err := flusher.Flush(core.DetachContext(bp.ctx)); err != nil {
-			bp.logger.Error("Failed to flush metadata", zap.Error(err))
+			return nil, nil, fmt.Errorf("failed to flush metadata: %w", err)
 		}
 	}
 
