@@ -3,25 +3,23 @@ package tests
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
 	dssync "github.com/ipfs/go-datastore/sync"
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/stretchr/testify/require"
-	"github.com/tus/tusd/v2/pkg/handler"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/fixtures"
+	pluginTusUtils "go.lumeweb.com/portal-plugin-ipfs/internal/testing/tus"
 	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
@@ -129,9 +127,7 @@ func assertWorkflowSuccess(wfTest *coreTesting.WorkflowTest, req *models.Request
 
 // assertTUSWorkflowSuccess performs TUS-specific workflow assertions with expected message
 func assertTUSWorkflowSuccess(wfTest *coreTesting.WorkflowTest, req *models.Request) {
-	wfTest.AssertOperationSuccess(req)
-	wfTest.AssertOperationStatusMessageContains(req, "Successfully completed")
-	wfTest.AssertOperationStatusProgress(req, 100)
+	pluginTusUtils.AssertTUSWorkflowSuccess(wfTest, req)
 }
 
 // testArchiveUpload is a helper function that tests archive uploads for a given format and mode
@@ -173,62 +169,10 @@ func testArchiveUpload(t *testing.T, format contentArchive.Format, creator plugi
 	}, finalOptions...)
 }
 
-// setupTUSUpload creates a TUS upload with optional hash and returns protocol and request ID
+// setupTUSUpload creates a TUS upload with optional hash and returns protocol, request ID, and user ID
 // hash can be nil for files where hash is not yet known (e.g., non-CAR files)
-func setupTUSUpload(t *testing.T, ctx coreTesting.TestContext, uploadFile *os.File, hash core.StorageHash) (core.StorageProtocol, uint) {
-	tusService := core.GetService[core.TUSService](ctx, core.TUS_SERVICE)
-	storageSvc := core.GetService[core.StorageService](ctx, core.STORAGE_SERVICE)
-	proto := core.GetProtocol(internal.ProtocolName)
-
-	// TUS Upload Setup
-	objectId := uuid.New().String()
-	uploadId := uuid.New().String()
-	fullId := fmt.Sprintf("%s+%s", objectId, uploadId)
-
-	// Create TUS upload - this is TUS-specific logic
-	testUser, err := core.GetService[core.UserService](ctx, core.USER_SERVICE).CreateAccount(ctx, "test@example.com", "testpassword123", false)
-	require.NoError(t, err)
-
-	tusUpload, err := tusService.CreateUpload(
-		ctx,
-		hash,
-		fullId,
-		testUser.ID,
-		"127.0.0.1",
-		proto.(core.StorageProtocol),
-	)
-	require.NoError(t, err)
-
-	err = tusService.UploadProcessing(ctx, proto.(core.StorageProtocol), tusUpload.TUSUploadID)
-	require.NoError(t, err)
-
-	// Get file stats for S3 upload
-	fileSize, err := uploadFile.Stat()
-	require.NoError(t, err)
-
-	// S3 Upload - TUS-specific logic
-	fileInfo := handler.FileInfo{ID: objectId, Size: fileSize.Size()}
-	infoData := io.NopCloser(bytes.NewReader(mustMarshal(t, fileInfo)))
-	err = storageSvc.S3MultipartUpload(
-		ctx,
-		infoData,
-		ctx.Config().Config().Core.Storage.S3.BufferBucket,
-		storageSvc.GetTemporaryUploadPath(proto.(core.StorageProtocol), fmt.Sprintf("%s.info", objectId)),
-		uint64(len(mustMarshal(t, fileInfo))),
-	)
-	require.NoError(t, err)
-
-	// Upload file to S3
-	err = storageSvc.S3MultipartUpload(
-		ctx,
-		uploadFile,
-		ctx.Config().Config().Core.Storage.S3.BufferBucket,
-		storageSvc.GetTemporaryUploadPath(proto.(core.StorageProtocol), objectId),
-		uint64(fileSize.Size()),
-	)
-	require.NoError(t, err)
-
-	return proto.(core.StorageProtocol), tusUpload.RequestID
+func setupTUSUpload(tb coreTesting.TB, ctx coreTesting.TestContext, uploadFile *os.File, hash core.StorageHash) (core.StorageProtocol, uint, uint) {
+	return pluginTusUtils.SetupTUSUpload(tb, ctx, uploadFile, hash)
 }
 
 func testUploadWorkflow(t *testing.T, ctx coreTesting.TestContext, universalReader *pluginUpload.UniversalReader, format contentArchive.Format, mode pluginUpload.ArchiveMode, operationName string, assertionFunc func(*coreTesting.WorkflowTest, *models.Request), workflowDataBuilder func(string) interface{}) {
@@ -280,7 +224,7 @@ func getCARRootsFromFile(t *testing.T, file *os.File) cid.Cid {
 
 // executeTUSWorkflowHelper is a helper function that executes TUS upload workflow
 // It handles the common workflow execution pattern for both archives and plain files
-func executeTUSWorkflowHelper(t *testing.T, ctx coreTesting.TestContext, tempFile *os.File, format contentArchive.Format, requestID uint) {
+func executeTUSWorkflowHelper(t *testing.T, ctx coreTesting.TestContext, tempFile *os.File, format contentArchive.Format, requestID uint, userID uint) {
 	wfTest := coreTesting.NewWorkflowTest(ctx)
 
 	wf := wfTest.NewOperationWorkflow(core.TUSUploadOperationName(internal.ProtocolName))
@@ -292,7 +236,7 @@ func executeTUSWorkflowHelper(t *testing.T, ctx coreTesting.TestContext, tempFil
 		workflowOptions = append(workflowOptions, core.WithWorkflowStorageHash(internal.NewIPFSHash(getCARRootsFromFile(t, tempFile))))
 	}
 	workflowOptions = append(workflowOptions,
-		core.WithWorkflowUserID(1), // User created in setupTUSUpload
+		core.WithWorkflowUserID(userID), // User created in setupTUSUpload
 		core.WithWorkflowSourceIP("127.0.0.1"),
 	)
 
@@ -332,10 +276,10 @@ func runTUSFileUploadInternal(t *testing.T, ctx coreTesting.TestContext, fileCon
 	require.NoError(t, err)
 
 	// For plain files, hash is not known yet (will be computed during upload)
-	_, requestID := setupTUSUpload(t, ctx, tempFile, nil)
+	_, requestID, userID := setupTUSUpload(t, ctx, tempFile, nil)
 
 	// Execute workflow using the helper
-	executeTUSWorkflowHelper(t, ctx, tempFile, contentArchive.FormatFile, requestID)
+	executeTUSWorkflowHelper(t, ctx, tempFile, contentArchive.FormatFile, requestID, userID)
 }
 
 // testTUSFileUpload tests plain file uploads (FormatFile) through the TUS upload workflow
@@ -365,18 +309,19 @@ func runTUSArchiveUploadInternal(t *testing.T, ctx coreTesting.TestContext, form
 
 	// Use appropriate setup based on format
 	var requestID uint
+	var userID uint
 	if format == contentArchive.FormatCAR {
 		// For CAR files, we can pre-compute the hash
 		roots, err := pluginUpload.GetCarRoots(tempFile, false)
 		require.NoError(t, err)
-		_, requestID = setupTUSUpload(t, ctx, tempFile, internal.NewIPFSHash(roots[0]))
+		_, requestID, userID = setupTUSUpload(t, ctx, tempFile, internal.NewIPFSHash(roots[0]))
 	} else {
 		// For non-CAR files, hash is not known yet
-		_, requestID = setupTUSUpload(t, ctx, tempFile, nil)
+		_, requestID, userID = setupTUSUpload(t, ctx, tempFile, nil)
 	}
 
 	// Execute workflow using the helper
-	executeTUSWorkflowHelper(t, ctx, tempFile, format, requestID)
+	executeTUSWorkflowHelper(t, ctx, tempFile, format, requestID, userID)
 }
 
 // testTUSArchiveUpload is a TUS-specific wrapper for testArchiveUpload
