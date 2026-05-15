@@ -35,6 +35,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install test dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Run Benchmarks
         run: |
           mkdir -p benchmark-results
