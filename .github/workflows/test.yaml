@@ -11,47 +11,12 @@ on:
 
 jobs:
   test:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Get latest Kubo version
-        id: kubo
-        run: echo "version=$(gh release list --repo ipfs/kubo --limit 1 | awk '{print $1}')" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download Kubo
-        run: wget https://github.com/ipfs/kubo/releases/download/${{ steps.kubo.outputs.version }}/kubo_${{ steps.kubo.outputs.version }}_linux-amd64.tar.gz
-
-      - name: Extract and install Kubo
-        run: |
-          tar -xzf kubo_${{ steps.kubo.outputs.version }}_linux-amd64.tar.gz
-          sudo cp kubo/ipfs /usr/local/bin/
-          rm -rf kubo kubo_${{ steps.kubo.outputs.version }}_linux-amd64.tar.gz
-          ipfs init
-
-      - name: Add /usr/local/bin to PATH
-        run: echo "/usr/local/bin" >> $GITHUB_PATH
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Download go modules
-        run: go mod download
-
-      - name: Install test dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Fix go mod cache permissions
-        run: chmod -R 777 $(go list -mod=mod -m -f '{{.Dir}}' go.lumeweb.com/ipfs-content)/internal/testing/fixtures
-
-      - name: Generate
-        run: go generate ./...
-
-      - name: Test
-        run: go test $(go list ./... | grep -v bench_tests)
+    uses: LumeWeb/workflows/.github/workflows/build-plugin.yml@develop
+    secrets: inherit
+    with:
+      setup_script: |
+        KUBO_VERSION=$(wget -qO- https://api.github.com/repos/ipfs/kubo/releases/latest | jq -r '.tag_name')
+        wget -q https://github.com/ipfs/kubo/releases/download/${KUBO_VERSION}/kubo_${KUBO_VERSION}_linux-amd64.tar.gz
+        tar -xzf kubo_${KUBO_VERSION}_linux-amd64.tar.gz
+        cp kubo/ipfs /usr/local/bin/
+        ipfs init
