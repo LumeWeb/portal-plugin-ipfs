@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/avast/retry-go/v4"
 	"github.com/gammazero/workerpool"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -122,7 +123,7 @@ func (bp *BlockQueue) queueBlock(block blocks.Block) error {
 	return nil
 }
 
-// processBlock processes a single block.
+// processBlock processes a single block with retries.
 // No bloom filter — CAR files contain unique blocks, so dedup checks
 // are pure overhead and false positives can cause silent data loss
 // (skipping a block that hasn't actually been stored).
@@ -130,19 +131,24 @@ func (bp *BlockQueue) processBlock(ctx context.Context, job *blockJob) error {
 	ctx, span := core.TraceMethod(ctx, "BlockQueue.processBlock")
 	defer span.End()
 
-	var err error
-	for i := range maxRetries {
-		err = bp.processBlockInternal(ctx, job)
-		if err == nil {
-			return nil
-		}
-		bp.logger.Warn("Retrying block processing",
-			zap.Error(err),
-			zap.Int("attempt", i+1),
-			zap.String("CID", job.Block.Cid().String()))
-		time.Sleep(time.Second) // Backoff delay between retries
-	}
-	return err
+	return retry.Do(
+		func() error {
+			return bp.processBlockInternal(ctx, job)
+		},
+		retry.Context(ctx),
+		retry.Attempts(maxRetries),
+		retry.Delay(time.Second),
+		retry.DelayType(retry.FixedDelay),
+		retry.RetryIf(func(err error) bool {
+			return !isContextCanceled(err)
+		}),
+		retry.OnRetry(func(n uint, err error) {
+			bp.logger.Warn("Retrying block processing",
+				zap.Error(err),
+				zap.Uint("attempt", n+1),
+				zap.String("CID", job.Block.Cid().String()))
+		}),
+	)
 }
 
 func (bp *BlockQueue) processBlockInternal(ctx context.Context, job *blockJob) error {
