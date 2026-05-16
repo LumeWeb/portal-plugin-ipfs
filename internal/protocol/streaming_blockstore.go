@@ -3,13 +3,11 @@ package protocol
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bits-and-blooms/bloom/v3"
-	"github.com/gammazero/workerpool"
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -35,7 +33,7 @@ type BlockEntry struct {
 }
 
 // DefaultStreamingBlockstore implements a blockstore that acts as a pipeline coordinator
-// It streams blocks through a worker pool with bounded queue and supports passthrough blockstore
+// It streams blocks through a buffered channel and supports passthrough blockstore
 type DefaultStreamingBlockstore struct {
 	// DoneTracker for tracking completed CIDs
 	DoneTracker
@@ -46,10 +44,7 @@ type DefaultStreamingBlockstore struct {
 	// Logger for error reporting
 	logger *core.Logger
 
-	// Worker pool for block processing with bounded queue
-	workerPool *workerpool.WorkerPool
-
-	// Channel for delivering blocks to consumers (replaces old blockChan)
+	// Channel for delivering blocks to consumers
 	blockDelivery chan *BlockEntry
 
 	// Once to protect channel closing
@@ -105,7 +100,6 @@ func NewStreamingBlockstoreWithDefaults(logger *core.Logger, passthrough blockst
 	abs := &DefaultStreamingBlockstore{
 		passthrough:     passthrough,
 		logger:          logger,
-		workerPool:      workerpool.New(queueSize),          // Bounded queue
 		blockDelivery:   make(chan *BlockEntry, bufferSize), // Buffer sized for throughput
 		pendingBlocks:   make(map[string]*BlockEntry),
 		seenFilter:      bloom.NewWithEstimates(bloomFilterEstimateItemsBlockstore, bloomFilterFalsePositiveRateBlockstore),
@@ -216,63 +210,20 @@ func (s *DefaultStreamingBlockstore) putBlock(ctx context.Context, block blocks.
 	s.seenFilter.Add([]byte(blockKeyStr))
 	s.seenFilterMutex.Unlock()
 
-	// Submit to worker pool
-	s.workerPool.Submit(func() {
-		// Check if context is cancelled or processing is done
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-ctx.Done():
-			return
-		default:
+	// Deliver block directly to the buffered channel.
+	// The channel buffer provides backpressure — if the consumer is slow,
+	// the Put caller blocks naturally. No worker pool or retry loop needed.
+	select {
+	case s.blockDelivery <- entry:
+		if s.logger != nil {
+			s.logger.Debug("Block delivered to queue",
+				zap.String("cid", block.Cid().String()))
 		}
-
-		// Check if processing is done or channel is closed before attempting to send
-		if s.isProcessingDone() || s.isClosed() {
-			return
-		}
-
-		// Try to deliver block to consumer with retry logic for full channel
-		// Use exponential backoff for better resource efficiency under sustained high load
-		backoff := 1 * time.Millisecond
-		const maxBackoff = 100 * time.Millisecond
-
-		for {
-			// Check if processing is done or channel is closed before attempting to send
-			if s.isProcessingDone() || s.isClosed() {
-				return
-			}
-
-			select {
-			case s.blockDelivery <- entry:
-				if s.logger != nil {
-					s.logger.Debug("Block delivered to queue",
-						zap.String("cid", block.Cid().String()))
-				}
-				// Successfully sent, exit the retry loop
-				return
-			case <-s.ctx.Done():
-				return
-			case <-ctx.Done():
-				return
-			case <-time.After(backoff):
-				// Timeout on blocked send, check if we should continue
-				if s.isProcessingDone() || s.isClosed() {
-					return
-				}
-				// Exponential backoff with jitter
-				if backoff < maxBackoff {
-					backoff *= 2
-				}
-				// Add small random jitter to avoid thundering herd
-				jitter := time.Duration(rand.Int63n(int64(backoff) / 4))
-				backoff += jitter
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
-			}
-		}
-	})
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	if s.logger != nil {
 		s.logger.Debug("Block queued for processing",
@@ -527,11 +478,6 @@ func (s *DefaultStreamingBlockstore) Close() error {
 		s.setClosed()
 		s.cancel()
 
-		// Stop worker pool
-		if s.workerPool != nil {
-			s.workerPool.Stop()
-		}
-
 		// Close the delivery channel
 		s.closeDeliveryChannel()
 
@@ -592,11 +538,6 @@ func (s *DefaultStreamingBlockstore) closeDeliveryChannel() {
 func (s *DefaultStreamingBlockstore) ProcessingDone() {
 	if s.isProcessingDone() {
 		return // Already done
-	}
-
-	// Stop accepting new submissions by stopping the worker pool
-	if s.workerPool != nil {
-		s.workerPool.StopWait() // Wait for current submissions to complete
 	}
 
 	s.setProcessingDone()

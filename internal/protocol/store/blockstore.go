@@ -37,7 +37,8 @@ type (
 		upload      core.UploadService
 		tracker     *ipfs.BlockRequestTracker
 
-		proto       core.StorageProtocol
+		proto   core.StorageProtocol
+		batcher *metadataBatcher
 	}
 )
 
@@ -263,8 +264,8 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 		meta.Links = append(meta.Links, link.Cid)
 	}
 
-	if err = bs.metadata.Pin(ctx, meta); err != nil {
-		log.Debug("failed to pin block", zap.Error(err))
+	if err = bs.batcher.Add(ctx, meta); err != nil {
+		log.Debug("failed to queue block metadata", zap.Error(err))
 		return fmt.Errorf("failed to pin block %q: %w", b.Cid(), err)
 	}
 
@@ -344,6 +345,13 @@ func (bs *BlockStore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, error) {
 	return ch, nil
 }
 
+// Flush forces a flush of any accumulated block metadata to the database.
+// This must be called after all blocks have been submitted via Put to ensure
+// the final partial batch is written.
+func (bs *BlockStore) Flush(ctx context.Context) error {
+	return bs.batcher.Flush(ctx)
+}
+
 // NewBlockStore creates a new blockstore backed by a renterd node
 func NewBlockStore(ctx core.Context, downloader pluginCore.BlockDownloader, metadata pluginCore.MetadataStore, tracker *ipfs.BlockRequestTracker) (*BlockStore, error) {
 	proto, ok := core.GetProtocol(internal.ProtocolName).(core.StorageProtocol)
@@ -370,6 +378,7 @@ func NewBlockStore(ctx core.Context, downloader pluginCore.BlockDownloader, meta
 		upload:     uploadSvc,
 		tracker:    tracker,
 		proto:      proto,
+		batcher:    newMetadataBatcher(metadata, ctx.Logger(), defaultBatchSize),
 	}, nil
 }
 

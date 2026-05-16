@@ -135,8 +135,11 @@ func getUploadReader(ctx context.Context, tusHandler core.TusHandler, proto core
 		return nil, nil, fmt.Errorf("failed to get upload reader: %w", err)
 	}
 
-	universalReader := pluginUpload.NewUniversalReader(reader)
-	return reader, universalReader, nil
+	// The TUS upload reader already implements io.ReadSeekCloser (via TUSUploadReader),
+	// so wrapping it in UniversalReader would buffer the entire file into memory.
+	// Use NewSeekableReader which detects seekable readers and passes them through.
+	seekableReader := pluginUpload.NewSeekableReader(reader)
+	return reader, seekableReader, nil
 }
 
 // detectUploadFormat detects the format of an upload using the reader
@@ -193,7 +196,7 @@ func createUploadProcessor(format contentArchive.Format, reader io.ReadCloser, p
 
 // processUploadAndCreateReservations processes the upload and creates block reservations
 func processUploadAndCreateReservations(ctx context.Context, helper core.OperationHelper, processor BlockProcessor, proto ProtoNode, userID uint) ([]cid.Cid, []cid.Cid, map[cid.Cid]*quota.BlockReservations, error) {
-	allCids, rootCids, err := ProcessBlocks(helper.Context(), processor)
+	allCids, rootCids, err := ProcessBlocks(helper.Context(), processor, proto.GetBlockstoreFlusher())
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to process upload: %w", err)
 	}

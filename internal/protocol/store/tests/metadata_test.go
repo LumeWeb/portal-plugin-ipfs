@@ -611,3 +611,211 @@ func TestMetadataStore_Unpin_WithLinkedBlocks(t *testing.T) {
 		assert.True(tb, errors.Is(err, gorm.ErrRecordNotFound))
 	}, ipfsTestConfig)
 }
+
+// TestMetadataStore_BatchPin_SharedChildBlock tests that two different parent
+// blocks linking to the same child CID result in a single ipfs_blocks row for
+// the child and two IPFSLinkedBlock entries (one per parent).
+func TestMetadataStore_BatchPin_SharedChildBlock(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		metadataStore := store.NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protocol.ProtoNode))
+
+		childData := "shared child"
+		childCid := generateCid(t, childData)
+
+		parent1Data := "parent 1"
+		parent1Cid := generateCid(t, parent1Data)
+		parent1 := createPinnedBlock(tb, ctx, parent1Data)
+		parent1.Links = []cid.Cid{childCid}
+
+		parent2Data := "parent 2"
+		parent2Cid := generateCid(t, parent2Data)
+		parent2 := createPinnedBlock(tb, ctx, parent2Data)
+		parent2.Links = []cid.Cid{childCid}
+
+		// Batch pin both parents — they share the same child
+		err := metadataStore.BatchPin(context.Background(), []pluginCore.PinnedBlock{parent1, parent2})
+		require.NoError(tb, err)
+
+		// Pin the child so it's Ready=true (BlockChildren only returns ready children)
+		childPinned := createPinnedBlock(tb, ctx, childData)
+		err = metadataStore.Pin(context.Background(), childPinned)
+		require.NoError(tb, err)
+
+		// Verify: only one ipfs_blocks row for the child
+		var childBlocks []pluginDb.IPFSBlock
+		err = ctx.DB().Where("cid = ?", childCid.Bytes()).Find(&childBlocks).Error
+		require.NoError(tb, err)
+		assert.Len(tb, childBlocks, 1, "shared child should have exactly one ipfs_blocks row")
+
+		// Verify: both parents can retrieve the child via BlockChildren
+		children1, err := metadataStore.BlockChildren(context.Background(), parent1Cid, nil)
+		require.NoError(tb, err)
+		assert.ElementsMatch(tb, []cid.Cid{childCid}, children1)
+
+		children2, err := metadataStore.BlockChildren(context.Background(), parent2Cid, nil)
+		require.NoError(tb, err)
+		assert.ElementsMatch(tb, []cid.Cid{childCid}, children2)
+
+		// Verify: two IPFSLinkedBlock rows (one per parent)
+		var linkedBlocks []pluginDb.IPFSLinkedBlock
+		err = ctx.DB().Find(&linkedBlocks).Error
+		require.NoError(tb, err)
+		assert.Len(tb, linkedBlocks, 2, "should have two linked block entries (one per parent)")
+	}, ipfsTestConfig)
+}
+
+// TestMetadataStore_BatchPin_ChildPromotedToParent tests that a block first
+// seen as a child (created with Ready=false) is correctly promoted to
+// Ready=true when later pinned as a parent.
+func TestMetadataStore_BatchPin_ChildPromotedToParent(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		metadataStore := store.NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protocol.ProtoNode))
+
+		childData := "future parent"
+		childCid := generateCid(t, childData)
+
+		// Pin a parent that links to the child — child is created as placeholder (Ready=false)
+		parentData := "parent data"
+		parent := createPinnedBlock(tb, ctx, parentData)
+		parent.Links = []cid.Cid{childCid}
+		err := metadataStore.Pin(context.Background(), parent)
+		require.NoError(tb, err)
+
+		// Verify: child exists but is not ready
+		var childBlock pluginDb.IPFSBlock
+		err = ctx.DB().Where("cid = ?", childCid.Bytes()).First(&childBlock).Error
+		require.NoError(tb, err)
+		assert.False(tb, childBlock.Ready, "child should be a placeholder (Ready=false)")
+
+		// Now pin the child as a parent — should be promoted to Ready=true
+		childPinned := createPinnedBlock(tb, ctx, childData)
+		err = metadataStore.Pin(context.Background(), childPinned)
+		require.NoError(tb, err)
+
+		// Verify: child is now ready
+		err = ctx.DB().Where("cid = ?", childCid.Bytes()).First(&childBlock).Error
+		require.NoError(tb, err)
+		assert.True(tb, childBlock.Ready, "child should be promoted to Ready=true")
+	}, ipfsTestConfig)
+}
+
+// TestMetadataStore_BatchPin_DuplicateChildInBatch tests that when two blocks
+// in the same batch share a child CID, the child is only inserted once.
+func TestMetadataStore_BatchPin_DuplicateChildInBatch(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		metadataStore := store.NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protocol.ProtoNode))
+
+		childData := "shared child"
+		childCid := generateCid(t, childData)
+
+		parent1Data := "parent 1"
+		parent1 := createPinnedBlock(tb, ctx, parent1Data)
+		parent1.Links = []cid.Cid{childCid}
+
+		parent2Data := "parent 2"
+		parent2 := createPinnedBlock(tb, ctx, parent2Data)
+		parent2.Links = []cid.Cid{childCid}
+
+		// Batch pin — both reference the same child
+		err := metadataStore.BatchPin(context.Background(), []pluginCore.PinnedBlock{parent1, parent2})
+		require.NoError(tb, err)
+
+		// Verify: exactly one ipfs_blocks row for the child
+		var childBlocks []pluginDb.IPFSBlock
+		err = ctx.DB().Where("cid = ?", childCid.Bytes()).Find(&childBlocks).Error
+		require.NoError(tb, err)
+		assert.Len(tb, childBlocks, 1, "duplicate child in batch should result in single row")
+	}, ipfsTestConfig)
+}
+
+// TestMetadataStore_BatchPin_ExistingChildFromAnotherUpload tests that when a
+// child block already exists (Ready=true from a previous Pin), BatchPin's bulk
+// INSERT ON CONFLICT DO NOTHING preserves the existing row and doesn't downgrade
+// Ready to false.
+func TestMetadataStore_BatchPin_ExistingChildFromAnotherUpload(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		metadataStore := store.NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protocol.ProtoNode))
+
+		childData := "already pinned child"
+		childCid := generateCid(t, childData)
+
+		// First: pin the child as a parent (Ready=true)
+		childBlock := createPinnedBlock(tb, ctx, childData)
+		err := metadataStore.Pin(context.Background(), childBlock)
+		require.NoError(tb, err)
+
+		// Verify: child is ready
+		var existingChild pluginDb.IPFSBlock
+		err = ctx.DB().Where("cid = ?", childCid.Bytes()).First(&existingChild).Error
+		require.NoError(tb, err)
+		assert.True(tb, existingChild.Ready, "child should be Ready=true after being pinned")
+
+		// Now: pin a different parent that links to this already-pinned child
+		parentData := "new parent"
+		parent := createPinnedBlock(tb, ctx, parentData)
+		parent.Links = []cid.Cid{childCid}
+		err = metadataStore.Pin(context.Background(), parent)
+		require.NoError(tb, err)
+
+		// Verify: child is still Ready=true (not downgraded to false)
+		err = ctx.DB().Where("cid = ?", childCid.Bytes()).First(&existingChild).Error
+		require.NoError(tb, err)
+		assert.True(tb, existingChild.Ready, "existing child should remain Ready=true")
+
+		// Verify: parent can see the child
+		parentCid := generateCid(t, parentData)
+		children, err := metadataStore.BlockChildren(context.Background(), parentCid, nil)
+		require.NoError(tb, err)
+		assert.ElementsMatch(tb, []cid.Cid{childCid}, children)
+	}, ipfsTestConfig)
+}
+
+// TestMetadataStore_BatchPin_OrphanAdoption tests that when a child block has
+// an IPFSLinkedBlock with parent_id IS NULL, pinning a parent that links to it
+// updates the parent_id (orphan adoption).
+func TestMetadataStore_BatchPin_OrphanAdoption(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		metadataStore := store.NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protocol.ProtoNode))
+
+		childData := "orphan child"
+		childCid := generateCid(t, childData)
+
+		// Manually create an orphan linked block (parent_id IS NULL)
+		childBlock := createPinnedBlock(tb, ctx, childData)
+		err := metadataStore.Pin(context.Background(), childBlock)
+		require.NoError(tb, err)
+
+		var childDb pluginDb.IPFSBlock
+		err = ctx.DB().Where("cid = ?", childCid.Bytes()).First(&childDb).Error
+		require.NoError(tb, err)
+
+		// Use raw SQL to create a truly NULL parent_id (GORM's zero uint = 0, not NULL)
+		err = ctx.DB().Exec(
+			"INSERT INTO ipfs_linked_blocks (child_id, link_index, created_at, updated_at) VALUES (?, 0, datetime('now'), datetime('now'))",
+			childDb.ID,
+		).Error
+		require.NoError(tb, err)
+
+		// Verify: orphan exists with NULL parent
+		var link pluginDb.IPFSLinkedBlock
+		err = ctx.DB().Where("child_id = ? AND parent_id IS NULL", childDb.ID).First(&link).Error
+		require.NoError(tb, err)
+
+		// Now pin a parent that links to this child — should adopt the orphan
+		parentData := "adopting parent"
+		parent := createPinnedBlock(tb, ctx, parentData)
+		parent.Links = []cid.Cid{childCid}
+		err = metadataStore.Pin(context.Background(), parent)
+		require.NoError(tb, err)
+
+		// Verify: orphan is now adopted (parent_id is set)
+		var parentDb pluginDb.IPFSBlock
+		parentCid := generateCid(t, parentData)
+		err = ctx.DB().Where("cid = ?", parentCid.Bytes()).First(&parentDb).Error
+		require.NoError(tb, err)
+
+		var adoptedLink pluginDb.IPFSLinkedBlock
+		err = ctx.DB().Where("child_id = ? AND parent_id = ?", childDb.ID, parentDb.ID).First(&adoptedLink).Error
+		require.NoError(tb, err, "orphan should be adopted by the new parent")
+	}, ipfsTestConfig)
+}

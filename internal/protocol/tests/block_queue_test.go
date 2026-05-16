@@ -105,7 +105,7 @@ func TestProcessCarIntegration(t *testing.T) {
 				require.NoError(t, err)
 
 				// Call the ProcessBlocks function
-				processedCIDs, _, err := protocol.ProcessBlocks(ctx, processor)
+				processedCIDs, _, err := protocol.ProcessBlocks(ctx, processor, proto.GetBlockstoreFlusher())
 
 				// Assert the error
 				if tc.expectError {

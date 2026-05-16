@@ -31,6 +31,7 @@ packages:
       dir: ./internal/protocol/mock_tests
     interfaces:
       ProtoNode: {}
+      BlockProcessor: {}
   go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs:
     interfaces:
       IPFSNode: {}

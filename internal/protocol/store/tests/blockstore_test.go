@@ -358,10 +358,14 @@ func TestBlockStore_Put(t *testing.T) {
 		mockStorage.EXPECT().UploadObject(mock.Anything, mock.Anything).Return(nil, nil).Once()
 
 		// Mock the metadata's Pin method
-		mockMetadata.EXPECT().Pin(mock.Anything, mock.Anything).Return(nil).Once()
+		mockMetadata.EXPECT().BatchPin(mock.Anything, mock.Anything).Return(nil).Once()
 
 		// Act
 		err = bs.Put(context.Background(), testBlock)
+		require.NoError(tb, err)
+
+		// Flush to ensure the batched metadata is written
+		err = bs.Flush(context.Background())
 
 		// Assert
 		require.NoError(tb, err)
@@ -390,7 +394,7 @@ func TestBlockStore_Put_UploadError(t *testing.T) {
 		// Act
 		err = bs.Put(context.Background(), testBlock)
 
-		// Assert
+		// Assert — upload error is returned immediately from Put
 		require.Error(tb, err)
 		assert.Contains(t, err.Error(), expectedError.Error())
 	}, ipfsTestConfig)
@@ -415,11 +419,14 @@ func TestBlockStore_Put_PinError(t *testing.T) {
 		// Mock the storage's UploadObject method
 		mockStorage.EXPECT().UploadObject(mock.Anything, mock.Anything).Return(nil, nil).Once()
 
-		// Mock the metadata's Pin method to return an error
-		mockMetadata.EXPECT().Pin(mock.Anything, mock.Anything).Return(expectedError).Once()
+		// Mock the metadata's BatchPin method to return an error
+		mockMetadata.EXPECT().BatchPin(mock.Anything, mock.Anything).Return(expectedError).Once()
 
-		// Act
+		// Act — Put succeeds (metadata is buffered), Flush surfaces the error
 		err = bs.Put(context.Background(), testBlock)
+		require.NoError(tb, err)
+
+		err = bs.Flush(context.Background())
 
 		// Assert
 		require.Error(tb, err)
@@ -504,13 +511,15 @@ func TestBlockStore_PutMany(t *testing.T) {
 		// Mock the storage's UploadObject method for each block
 		mockStorage.EXPECT().UploadObject(mock.Anything, mock.Anything).Return(nil, nil).Times(2)
 
-		// Mock the metadata's Pin method for each block
-		mockMetadata.EXPECT().Pin(mock.Anything, mock.Anything).Return(nil).Times(2)
+		// Mock the metadata's BatchPin method — both blocks flushed in one batch
+		mockMetadata.EXPECT().BatchPin(mock.Anything, mock.Anything).Return(nil).Once()
 
 		// Act
 		err = bs.PutMany(context.Background(), _blocks)
+		require.NoError(tb, err)
 
-		// Assert
+		// Flush to ensure the batched metadata is written
+		err = bs.Flush(context.Background())
 		require.NoError(tb, err)
 	}, ipfsTestConfig)
 }
@@ -731,8 +740,12 @@ func TestBlockStore_VirtualReadDisabled(t *testing.T) {
 
 		// Test Put
 		mockStorage.EXPECT().UploadObject(mock.Anything, mock.Anything).Return(nil, nil).Once()
-		mockMetadata.EXPECT().Pin(mock.Anything, mock.Anything).Return(nil).Once()
+		mockMetadata.EXPECT().BatchPin(mock.Anything, mock.Anything).Return(nil).Once()
 		err = bs.Put(normalCtx, testBlock)
+		require.NoError(tb, err)
+
+		// Flush to ensure the batched metadata is written
+		err = bs.Flush(normalCtx)
 		require.NoError(tb, err)
 
 		// Test DeleteBlock

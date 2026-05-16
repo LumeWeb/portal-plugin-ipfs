@@ -41,133 +41,226 @@ type ProtoNode interface {
 	GetNode() ipfs.IPFSNode
 }
 
+// preparedBlock holds a PinnedBlock with its pre-extracted UnixFS metadata.
+// Extracting metadata outside the transaction reduces tx hold time — the
+// protobuf parse is pure CPU work that doesn't need the DB lock.
+type preparedBlock struct {
+	block      pluginCore.PinnedBlock
+	unixfsNode *pluginDb.UnixFSNode // nil if not a UnixFS node
+}
+
 // Pin adds a block to the store.
 func (s *MetadataStoreDefault) Pin(ctx context.Context, b pluginCore.PinnedBlock) error {
 	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.Pin")
 	defer span.End()
 
 	b.Cid = encoding.NormalizeCid(b.Cid)
-	s.logger.Debug("pinning block", zap.Stringer("cid", b.Cid))
-
-	// Deduplicate links while preserving order
 	b.Links = lo.Uniq(lo.Map(b.Links, func(link cid.Cid, _ int) cid.Cid {
 		return encoding.NormalizeCid(link)
 	}))
 
-	return db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
-		// Insert or update the parent block
-		parentBlock := pluginDb.IPFSBlock{
-			CID:              b.Cid.Bytes(),
-			Size:             b.Size,
-			LastAnnouncement: nil,
-			Ready:            true,
-		}
+	// Pre-extract UnixFS metadata outside the transaction
+	pb := preparedBlock{block: b}
+	if node, err := ExtractNodeMetadata(s.logger, b); err == nil {
+		pb.unixfsNode = node
+	}
 
-		if err := db.RetryableTransaction(ctx, tx, func(tx *gorm.DB) *gorm.DB {
-			return tx.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "cid"}},
-				DoUpdates: clause.AssignmentColumns([]string{"updated_at", "size", "ready"}),
-			}).Create(&parentBlock)
-		}); err != nil {
-			_ = tx.AddError(fmt.Errorf("failed to insert/update block: %w", err))
+	return db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		// Ensure child block rows exist before looking them up.
+		// In BatchPin this is done once for the whole batch; here we
+		// do it per-block since Pin is the single-block path.
+		if err := ensureChildBlocks(tx, pb); err != nil {
+			_ = tx.AddError(err)
+			return tx
+		}
+		if err := s.pinPreparedBlockInTx(tx, pb); err != nil {
+			_ = tx.AddError(err)
+			return tx
+		}
+		return tx
+	})
+}
+
+// BatchPin pins multiple blocks in a single database transaction,
+// reducing per-block transaction overhead for bulk uploads.
+func (s *MetadataStoreDefault) BatchPin(ctx context.Context, pinnedBlocks []pluginCore.PinnedBlock) error {
+	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.BatchPin")
+	defer span.End()
+
+	s.logger.Debug("batch pinning blocks", zap.Int("count", len(pinnedBlocks)))
+
+	// Normalize CIDs and pre-extract UnixFS metadata outside the transaction.
+	// This keeps the CPU-bound protobuf parsing out of the DB lock scope.
+	prepared := make([]preparedBlock, len(pinnedBlocks))
+	for i := range pinnedBlocks {
+		pinnedBlocks[i].Cid = encoding.NormalizeCid(pinnedBlocks[i].Cid)
+		pinnedBlocks[i].Links = lo.Uniq(lo.Map(pinnedBlocks[i].Links, func(link cid.Cid, _ int) cid.Cid {
+			return encoding.NormalizeCid(link)
+		}))
+
+		prepared[i] = preparedBlock{block: pinnedBlocks[i]}
+		if node, err := ExtractNodeMetadata(s.logger, pinnedBlocks[i]); err == nil {
+			prepared[i].unixfsNode = node
+		}
+	}
+
+	// Collect all unique child CIDs across the batch for bulk operations.
+	childCIDSet := make(map[string]cid.Cid)
+	for _, pb := range prepared {
+		for _, link := range pb.block.Links {
+			childCIDSet[string(link.Bytes())] = link
+		}
+	}
+
+	return db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		// Bulk ensure child block rows exist (placeholder with Ready=false).
+		// ON CONFLICT DO NOTHING preserves existing rows — whether Ready=true
+		// (already pinned by this or another upload) or Ready=false (placeholder
+		// from a previous batch). This is equivalent to the per-link FirstOrCreate
+		// but avoids N SELECT+INSERT round-trips.
+		if err := ensureChildBlocksFromSet(tx, childCIDSet); err != nil {
+			_ = tx.AddError(err)
 			return tx
 		}
 
-		// Process UnixFS metadata if applicable
-		s.logger.Debug("Extracting UnixFS metadata", zap.Stringer("cid", b.Cid))
-		unixfsNode, err := ExtractNodeMetadata(s.logger, b)
-		if err == nil {
-			s.logger.Debug("UnixFS metadata extracted successfully", zap.Stringer("cid", b.Cid), zap.Any("metadata", unixfsNode))
-			unixfsNode.BlockID = parentBlock.ID
-
-			// Attempt to resolve the name immediately
-			var existingNode pluginDb.UnixFSNode
-			if err := tx.Where("block_id = ?", parentBlock.ID).First(&existingNode).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-				_ = tx.AddError(fmt.Errorf("failed to check for existing UnixFS node: %w", err))
-				return tx
-			}
-
-			if existingNode.Name == "" {
-				s.logger.Debug("Attempting to resolve name from parent", zap.Stringer("cid", b.Cid))
-				name, err := s.resolveNameFromParentWithBlock(ctx, b.Cid, &parentBlock, tx)
-				if err == nil {
-					unixfsNode.Name = name
-					s.logger.Debug("Resolved name on the fly", zap.String("name", name), zap.Stringer("cid", b.Cid))
-				} else {
-					s.logger.Warn("Failed to resolve name on the fly", zap.Error(err), zap.Stringer("cid", b.Cid))
-				}
-			} else {
-				unixfsNode.Name = existingNode.Name // Preserve existing name
-				s.logger.Debug("Using existing name", zap.String("name", unixfsNode.Name), zap.Stringer("cid", b.Cid))
-			}
-
-			if err = db.RetryableTransaction(ctx, tx, func(tx *gorm.DB) *gorm.DB {
-				return tx.Clauses(clause.OnConflict{
-					Columns: []clause.Column{{Name: "block_id"}},
-					DoUpdates: clause.Assignments(map[string]interface{}{
-						"name":       unixfsNode.Name,
-						"type":       unixfsNode.Type,
-						"block_size": unixfsNode.BlockSize,
-						"child_cid":  unixfsNode.ChildCID,
-						"updated_at": time.Now(),
-					}),
-				}).Create(unixfsNode)
-			}); err != nil {
-				_ = tx.AddError(fmt.Errorf("failed to insert/update UnixFS node: %w", err))
-				return tx
-			}
-		} else {
-			s.logger.Debug("Block is not a UnixFS node", zap.Stringer("cid", b.Cid), zap.Error(err))
-		}
-
-		// Process links
-		s.logger.Debug("Processing links", zap.Stringer("cid", b.Cid), zap.Int("link_count", len(b.Links)))
-		for i, link := range b.Links {
-			link = encoding.NormalizeCid(link)
-			var childBlock pluginDb.IPFSBlock
-			if err = db.RetryableTransaction(ctx, tx, func(tx *gorm.DB) *gorm.DB {
-				return tx.Where(&pluginDb.IPFSBlock{
-					CID: link.Bytes(),
-				}).FirstOrCreate(&childBlock, pluginDb.IPFSBlock{
-					CID:   link.Bytes(),
-					Ready: false, // Children start as not ready
-				})
-			}); err != nil {
-				_ = tx.AddError(fmt.Errorf("failed to find or create child block: %w", err))
-				return tx
-			}
-
-			// Create link relationship
-			linkedBlock := pluginDb.IPFSLinkedBlock{
-				ParentID:  parentBlock.ID,
-				ChildID:   childBlock.ID,
-				LinkIndex: i,
-			}
-
-			if err = db.RetryableTransaction(ctx, tx, func(tx *gorm.DB) *gorm.DB {
-				return tx.Clauses(clause.OnConflict{
-					Columns:   []clause.Column{{Name: "parent_id"}, {Name: "child_id"}, {Name: "link_index"}},
-					DoNothing: true,
-				}).Create(&linkedBlock)
-			}); err != nil {
-				_ = tx.AddError(fmt.Errorf("failed to insert linked block: %w", err))
-				return tx
-			}
-
-			// Update any existing linked blocks with the correct parent ID
-			if err = db.RetryableTransaction(ctx, tx, func(tx *gorm.DB) *gorm.DB {
-				return tx.Model(&pluginDb.IPFSLinkedBlock{}).
-					Where("child_id = ? AND parent_id IS NULL", childBlock.ID).
-					Update("parent_id", parentBlock.ID)
-			}); err != nil {
-				_ = tx.AddError(fmt.Errorf("failed to update linked block: %w", err))
+		for _, pb := range prepared {
+			if err := s.pinPreparedBlockInTx(tx, pb); err != nil {
+				_ = tx.AddError(err)
 				return tx
 			}
 		}
-
-		s.logger.Debug("Block pinning completed", zap.Stringer("cid", b.Cid))
+		s.logger.Debug("batch pin completed", zap.Int("count", len(pinnedBlocks)))
 		return tx
 	})
+}
+
+// pinPreparedBlockInTx pins a single block within an existing transaction.
+// UnixFS metadata must be pre-extracted (via preparedBlock) before calling this.
+// No nested RetryableTransaction calls — the caller's transaction provides
+// the retry boundary. Name resolution is deferred to ProcessMissingUnixFSNames().
+func (s *MetadataStoreDefault) pinPreparedBlockInTx(tx *gorm.DB, pb preparedBlock) error {
+	b := pb.block
+
+	// Insert or update the parent block
+	parentBlock := pluginDb.IPFSBlock{
+		CID:              b.Cid.Bytes(),
+		Size:             b.Size,
+		LastAnnouncement: nil,
+		Ready:            true,
+	}
+
+	result := tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "cid"}},
+		DoUpdates: clause.AssignmentColumns([]string{"updated_at", "size", "ready"}),
+	}).Create(&parentBlock)
+	if result.Error != nil {
+		return fmt.Errorf("failed to insert/update block: %w", result.Error)
+	}
+
+	// Write pre-extracted UnixFS metadata if applicable
+	if pb.unixfsNode != nil {
+		pb.unixfsNode.BlockID = parentBlock.ID
+
+		// Name resolution is deferred to ProcessMissingUnixFSNames(),
+		// which runs after all blocks are processed. Resolving names
+		// during Pin() would require an S3 read + DAG decode of the
+		// parent block per child — expensive in the hot path and
+		// unnecessary since the post-upload pass already handles it.
+
+		result := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "block_id"}},
+			DoUpdates: clause.Assignments(map[string]any{
+				"name":       pb.unixfsNode.Name,
+				"type":       pb.unixfsNode.Type,
+				"block_size": pb.unixfsNode.BlockSize,
+				"child_cid":  pb.unixfsNode.ChildCID,
+				"updated_at": time.Now(),
+			}),
+		}).Create(pb.unixfsNode)
+		if result.Error != nil {
+			return fmt.Errorf("failed to insert/update UnixFS node: %w", result.Error)
+		}
+	}
+
+	// Process links — child blocks are already ensured by BatchPin's bulk INSERT.
+	// We still need to look up their IDs for the linked_block rows.
+	for i, link := range b.Links {
+		var childBlock pluginDb.IPFSBlock
+		result := tx.Where(&pluginDb.IPFSBlock{
+			CID: link.Bytes(),
+		}).First(&childBlock)
+		if result.Error != nil {
+			return fmt.Errorf("failed to find child block: %w", result.Error)
+		}
+
+		linkedBlock := pluginDb.IPFSLinkedBlock{
+			ParentID:  parentBlock.ID,
+			ChildID:   childBlock.ID,
+			LinkIndex: i,
+		}
+
+		result = tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "parent_id"}, {Name: "child_id"}, {Name: "link_index"}},
+			DoNothing: true,
+		}).Create(&linkedBlock)
+		if result.Error != nil {
+			return fmt.Errorf("failed to insert linked block: %w", result.Error)
+		}
+
+		// Adopt orphaned linked blocks: if the INSERT was a no-op (RowsAffected == 0),
+		// the link already exists with this parent. But if there's also an orphan row
+		// (parent_id IS NULL) for this child, adopt it. Skip this if we just created
+		// the link — the new row already has the correct parent_id.
+		if result.RowsAffected == 0 {
+			result = tx.Model(&pluginDb.IPFSLinkedBlock{}).
+				Where("child_id = ? AND parent_id IS NULL", childBlock.ID).
+				Update("parent_id", parentBlock.ID)
+			if result.Error != nil {
+				return fmt.Errorf("failed to update linked block: %w", result.Error)
+			}
+		}
+	}
+
+	return nil
+}
+
+// ensureChildBlocks ensures child block rows exist for a single preparedBlock.
+// Used by Pin (single-block path). BatchPin uses ensureChildBlocksFromSet instead.
+func ensureChildBlocks(tx *gorm.DB, pb preparedBlock) error {
+	if len(pb.block.Links) == 0 {
+		return nil
+	}
+	childCIDSet := make(map[string]cid.Cid, len(pb.block.Links))
+	for _, link := range pb.block.Links {
+		childCIDSet[string(link.Bytes())] = link
+	}
+	return ensureChildBlocksFromSet(tx, childCIDSet)
+}
+
+// ensureChildBlocksFromSet bulk-inserts placeholder rows for child blocks that
+// don't yet exist. ON CONFLICT DO NOTHING preserves existing rows — whether
+// Ready=true (already pinned by this or another upload) or Ready=false
+// (placeholder from a previous batch). This replaces the per-link
+// FirstOrCreate with a single bulk INSERT, avoiding N SELECT+INSERT round-trips.
+func ensureChildBlocksFromSet(tx *gorm.DB, childCIDSet map[string]cid.Cid) error {
+	if len(childCIDSet) == 0 {
+		return nil
+	}
+	childBlocks := make([]pluginDb.IPFSBlock, 0, len(childCIDSet))
+	for _, c := range childCIDSet {
+		childBlocks = append(childBlocks, pluginDb.IPFSBlock{
+			CID:   c.Bytes(),
+			Ready: false,
+		})
+	}
+	result := tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "cid"}},
+		DoNothing: true,
+	}).Create(&childBlocks)
+	if result.Error != nil {
+		return fmt.Errorf("failed to ensure child blocks: %w", result.Error)
+	}
+	return nil
 }
 
 func (s *MetadataStoreDefault) resolveNameFromParentWithBlock(ctx context.Context, childCid cid.Cid, childBlock *pluginDb.IPFSBlock, tx *gorm.DB) (string, error) {
@@ -273,17 +366,6 @@ func (s *MetadataStoreDefault) resolveNameFromParentWithBlock(ctx context.Contex
 	return "", fmt.Errorf("name not found in parent links")
 }
 
-func (s *MetadataStoreDefault) resolveNameFromParent(ctx context.Context, childCid cid.Cid, tx *gorm.DB) (string, error) {
-	// First find the child block ID
-	childCid = encoding.NormalizeCid(childCid)
-	var childBlock pluginDb.IPFSBlock
-	if err := tx.Where("cid = ?", childCid.Bytes()).First(&childBlock).Error; err != nil {
-		return "", fmt.Errorf("failed to find child block: %w", err)
-	}
-
-	return s.resolveNameFromParentWithBlock(ctx, childCid, &childBlock, tx)
-}
-
 func (s *MetadataStoreDefault) Unpin(ctx context.Context, c cid.Cid) error {
 	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.Unpin")
 	defer span.End()
@@ -340,11 +422,9 @@ func (s *MetadataStoreDefault) BlockExists(ctx context.Context, c cid.Cid) error
 		return tx.Where(&block).First(&block)
 	}); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// If the block doesn't exist, return format.ErrNotFound
 			return format.ErrNotFound{Cid: c}
-		} else if err != nil {
-			return fmt.Errorf("failed to check block existence: %w", err)
 		}
+		return fmt.Errorf("failed to check block existence: %w", err)
 	}
 
 	// If the block is not ready, return format.ErrNotFound
@@ -368,7 +448,7 @@ func (s *MetadataStoreDefault) BlockChildren(ctx context.Context, c cid.Cid, max
           AND b.ready = 1
         ORDER BY lb.link_index ASC
     `
-	args := []interface{}{c.Bytes()}
+	args := []any{c.Bytes()}
 
 	if max != nil {
 		query += "LIMIT ?"

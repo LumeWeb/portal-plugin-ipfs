@@ -18,14 +18,21 @@ type MockDatastore interface {
 	datastore.Datastore
 }
 
+// Flusher is implemented by blockstores that buffer writes and need
+// an explicit flush to persist remaining data.
+type Flusher interface {
+	Flush(ctx context.Context) error
+}
+
 // VirtualBlockStore is a wrapper around a CachedBlockstore that can bypass the cache
 type VirtualBlockStore struct {
-	cachedBS blockstore.Blockstore
+	cachedBS  blockstore.Blockstore
 	directBS blockstore.Blockstore
+	flusher  Flusher
 }
 
 // NewVirtualBlockStore creates a new VirtualBlockStore
-func NewVirtualBlockStore(ctx core.Context, directBS blockstore.Blockstore, cacheOpts blockstore.CacheOpts) (*VirtualBlockStore, error) {
+func NewVirtualBlockStore(ctx core.Context, directBS blockstore.Blockstore, cacheOpts blockstore.CacheOpts, flusher Flusher) (*VirtualBlockStore, error) {
 	cachedBS, err := blockstore.CachedBlockstore(ctx, directBS, cacheOpts)
 	if err != nil {
 		return nil, err
@@ -34,7 +41,16 @@ func NewVirtualBlockStore(ctx core.Context, directBS blockstore.Blockstore, cach
 	return &VirtualBlockStore{
 		cachedBS: cachedBS,
 		directBS: directBS,
+		flusher:  flusher,
 	}, nil
+}
+
+// Flush flushes any buffered block metadata to the database.
+func (v *VirtualBlockStore) Flush(ctx context.Context) error {
+	if v.flusher != nil {
+		return v.flusher.Flush(ctx)
+	}
+	return nil
 }
 
 // DeleteBlock removes a given block from the blockstore

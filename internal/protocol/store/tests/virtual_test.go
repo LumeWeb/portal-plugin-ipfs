@@ -38,7 +38,7 @@ func setupVirtualTest(tb coreTesting.TB, ctx coreTesting.TestContext, c cid.Cid,
 		return keysChan, nil
 	}).Maybe()
 
-	virtualBS, err := store.NewVirtualBlockStore(ctx, mockDirectBS, blockstore.DefaultCacheOpts())
+	virtualBS, err := store.NewVirtualBlockStore(ctx, mockDirectBS, blockstore.DefaultCacheOpts(), nil)
 	require.NoError(tb, err)
 
 	tb.Cleanup(func() {

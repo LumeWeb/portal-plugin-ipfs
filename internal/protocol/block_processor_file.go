@@ -195,8 +195,9 @@ func (fp *FileBlockProcessor) processFile(ctx context.Context) error {
 	logger.Debug("Processing file for IPFS storage",
 		zap.String("filePath", fp.filePath))
 
-	// Ensure the file is seekable
-	seekableFile := upload.NewUniversalReader(fp.fileReader)
+	// Ensure the file is seekable — use NewSeekableReader which passes through
+	// already-seekable readers (like TUSUploadReader) without buffering.
+	seekableFile := upload.NewSeekableReader(fp.fileReader)
 
 	// Create the UnixFS node from the file using injected dependencies
 	node, err := fp.nodeGenerator.CreateNode(ctx, seekableFile)

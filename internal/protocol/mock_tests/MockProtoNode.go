@@ -10,6 +10,7 @@ import (
 	mock "github.com/stretchr/testify/mock"
 	core0 "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/store"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
 	"gorm.io/gorm"
@@ -271,6 +272,52 @@ func (_c *MockProtoNode_EncodeFileName_Call) Return(s string) *MockProtoNode_Enc
 }
 
 func (_c *MockProtoNode_EncodeFileName_Call) RunAndReturn(run func(storageHash core.StorageHash) string) *MockProtoNode_EncodeFileName_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetBlockstoreFlusher provides a mock function for the type MockProtoNode
+func (_mock *MockProtoNode) GetBlockstoreFlusher() store.Flusher {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetBlockstoreFlusher")
+	}
+
+	var r0 store.Flusher
+	if returnFunc, ok := ret.Get(0).(func() store.Flusher); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(store.Flusher)
+		}
+	}
+	return r0
+}
+
+// MockProtoNode_GetBlockstoreFlusher_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetBlockstoreFlusher'
+type MockProtoNode_GetBlockstoreFlusher_Call struct {
+	*mock.Call
+}
+
+// GetBlockstoreFlusher is a helper method to define mock.On call
+func (_e *MockProtoNode_Expecter) GetBlockstoreFlusher() *MockProtoNode_GetBlockstoreFlusher_Call {
+	return &MockProtoNode_GetBlockstoreFlusher_Call{Call: _e.mock.On("GetBlockstoreFlusher")}
+}
+
+func (_c *MockProtoNode_GetBlockstoreFlusher_Call) Run(run func()) *MockProtoNode_GetBlockstoreFlusher_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockProtoNode_GetBlockstoreFlusher_Call) Return(flusher store.Flusher) *MockProtoNode_GetBlockstoreFlusher_Call {
+	_c.Call.Return(flusher)
+	return _c
+}
+
+func (_c *MockProtoNode_GetBlockstoreFlusher_Call) RunAndReturn(run func() store.Flusher) *MockProtoNode_GetBlockstoreFlusher_Call {
 	_c.Call.Return(run)
 	return _c
 }

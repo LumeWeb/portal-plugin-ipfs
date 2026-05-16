@@ -1,0 +1,51 @@
+name: Benchmark
+
+on:
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Get latest Kubo version
+        id: kubo
+        run: echo "version=$(gh release list --repo ipfs/kubo --limit 1 | awk '{print $1}')" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download Kubo
+        run: wget https://github.com/ipfs/kubo/releases/download/${{ steps.kubo.outputs.version }}/kubo_${{ steps.kubo.outputs.version }}_linux-amd64.tar.gz
+
+      - name: Extract and install Kubo
+        run: |
+          tar -xzf kubo_${{ steps.kubo.outputs.version }}_linux-amd64.tar.gz
+          sudo cp kubo/ipfs /usr/local/bin/
+          rm -rf kubo kubo_${{ steps.kubo.outputs.version }}_linux-amd64.tar.gz
+          ipfs init
+
+      - name: Add /usr/local/bin to PATH
+        run: echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install test dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Run Benchmarks
+        run: |
+          mkdir -p benchmark-results
+          TUS_BENCH_ENABLE_PROFILING=true TUS_BENCH_PIN_TIMEOUT=0 TUS_BENCH_PROFILES_DIR=benchmark-results go test -bench=. -benchmem -run=^$ ./internal/protocol/bench_tests/
+
+      - name: Upload Benchmark Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark-results/
+          retention-days: 30
