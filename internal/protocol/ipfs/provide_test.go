@@ -50,18 +50,13 @@ func TestReprovider_Run(t *testing.T) {
 	// Mock provider ready
 	mockProvider.EXPECT().Ready().Return(true)
 
-	// Mock store returning CIDs - expect multiple calls since reprovider runs in a loop
 	testCIDs := []core.PinnedCID{
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
 	}
-	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Times(2).Maybe()
-
-	// Mock provider ProvideMany - expect multiple calls
-	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(nil).Times(2).Maybe()
-
-	// Mock store SetLastAnnouncement - expect multiple calls
-	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Times(2).Maybe()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Maybe()
+	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	runReproviderAndWait(ctx, cancel, reprovider, interval, timeout, batchSize, 2*interval)
 }
