@@ -134,7 +134,7 @@ func init() {
 		ErrKeyCorruptedFile:         {Key: ErrKeyCorruptedFile, Message: "Corrupted or invalid file format"},
 		ErrKeyEmptyZIP:              {Key: ErrKeyEmptyZIP, Message: "Empty ZIP file cannot be converted"},
 		ErrKeyPasswordProtected:     {Key: ErrKeyPasswordProtected, Message: "Password-protected ZIP files are not supported"},
-		ErrKeyFileUploadFailed:      {Key: ErrKeyFileUploadFailed, Message: "Failed to process upload: %s"},
+		ErrKeyFileUploadFailed:      {Key: ErrKeyFileUploadFailed, Message: "Failed to process upload."},
 		ErrKeyInvalidRecordType:     {Key: ErrKeyInvalidRecordType, Message: "Invalid DNS record type"},
 		ErrKeyRecordNotFound:        {Key: ErrKeyRecordNotFound, Message: "DNS record not found"},
 		ErrKeyZoneNotFound:          {Key: ErrKeyZoneNotFound, Message: "DNS zone not found"},
