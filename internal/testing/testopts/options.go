@@ -12,8 +12,8 @@ func NewMockPluginBuilder() *coreTesting.MockPluginBuilder {
 	return NewBaseMockPluginBuilder().
 		WithMockServiceFactory(pluginCore.WEBSITE_SERVICE, mocks.NewMockWebsiteService).
 		WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService).
-		WithServiceConfig(pluginCore.WEBSITE_SERVICE, config.WebsiteConfig{}).
-		WithServiceConfig(pluginCore.DNS_SERVICE, config.DnsConfig{})
+		WithServiceConfig(pluginCore.WEBSITE_SERVICE, &config.WebsiteConfig{}).
+		WithServiceConfig(pluginCore.DNS_SERVICE, &config.DnsConfig{})
 }
 
 func NewBaseMockPluginBuilder() *coreTesting.MockPluginBuilder {
