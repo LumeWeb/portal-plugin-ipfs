@@ -7,12 +7,18 @@ import (
 	"net/http"
 	"time"
 
-	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/plugin"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	serviceTesting "go.lumeweb.com/portal/service/testing"
 )
 
 func GetStandardTestOptions() []coreTesting.TestContextBuilderOption {
-	return testopts.GetStandardTestOptions()
+	return []coreTesting.TestContextBuilderOption{
+		serviceTesting.PresetE2E(),
+		coreTesting.WithConfig("core.mail.host", "localhost"),
+		coreTesting.WithConfig("core.mail.port", 25),
+		coreTesting.WithPlugins(plugin.GetPluginInfoWithTemplates(nil)),
+	}
 }
 
 // HTTPTestClient wraps an HTTP client with helper methods for testing
