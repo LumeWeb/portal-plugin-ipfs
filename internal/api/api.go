@@ -45,6 +45,7 @@ type API struct {
 	ipnsKeyService     pluginCore.IPNSKeyService
 	websiteService     pluginCore.WebsiteService
 	dnsService         pluginCore.DNSService
+	dnsConfig          *pluginConfig.DnsConfig
 	tus                core.TusHandler
 	ipfs               protocol.ProtoNode
 }
@@ -62,6 +63,13 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 			api.ipnsKeyService = core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 			api.websiteService = core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 			api.dnsService = core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+			if api.dnsService != nil {
+				if cfg, err := api.dnsService.GetConfig(); err == nil {
+					if dnsCfg, ok := cfg.(*pluginConfig.DnsConfig); ok {
+						api.dnsConfig = dnsCfg
+					}
+				}
+			}
 			proto := core.GetProtocol(internal.ProtocolName)
 			sproto := proto.(core.StorageProtocol)
 			event.OnBootStartupFuncsCompleted(ctx, func(ctx core.Context, eventCtx context.Context) error {
@@ -634,6 +642,25 @@ See also:.*`),
 
 	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), websiteRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register website routes: %w", err)
+	}
+
+	websiteConfigRoutes := router.DefineRoutes(
+		router.NewRoute(http.MethodGet, "/websites/config", a.getWebsiteConfig,
+			router.WithSwagger(
+				router.WithSummary("Get website hosting configuration"),
+				router.WithDescription(`Returns website hosting configuration including the gateway domain.
+
+Clients use this endpoint to discover the gateway domain they should point their custom domain's DNS records to when hosting a website. This is required when dns_hosting_enabled is false and the user manages their own DNS.
+
+See also:.*`),
+				router.WithTags("Websites"),
+				router.WithSuccessResponse(http.StatusOK, "Website configuration", router.WithJSONContent(dto.WebsiteConfigResponse{})),
+			),
+		),
+	)
+
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), websiteConfigRoutes, router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register website config routes: %w", err)
 	}
 
 	// DNS routes for zone and record management

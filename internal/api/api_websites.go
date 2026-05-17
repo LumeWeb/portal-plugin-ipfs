@@ -26,6 +26,21 @@ import (
 // Applications should use this constant to ensure consistency across the codebase
 const DefaultWebsiteEnabled = true
 
+func (a *API) gatewayDomain() string {
+	if a.dnsConfig != nil {
+		return a.dnsConfig.GatewayDomain
+	}
+	return ""
+}
+
+func (a *API) getWebsiteConfig(c echo.Context) error {
+	ctx := httputil.Context(c)
+	cfg := &dto.WebsiteConfig{
+		GatewayDomain: a.gatewayDomain(),
+	}
+	return httputil.EncodeResponse(ctx, cfg, &dto.WebsiteConfigResponse{})
+}
+
 // handleWebsiteValidationError is a DRY helper for handling website validation errors with proper context
 func (a *API) handleWebsiteValidationError(err error, c echo.Context) (error, bool) {
 	if err == nil {
@@ -96,6 +111,7 @@ func (a *API) createWebsite(c echo.Context) error {
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
+	resp.GatewayDomain = a.gatewayDomain()
 
 	ctx.Response().Before(func() {
 		ctx.Response().Status = http.StatusCreated
@@ -149,6 +165,7 @@ func (a *API) listWebsites(c echo.Context) error {
 			apiErr := NewError(ErrKeyFileProcessingFailed, err)
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
+		responses[i].GatewayDomain = a.gatewayDomain()
 	}
 
 	// Convert to WebsiteItem for list response
@@ -188,6 +205,7 @@ func (a *API) getWebsite(c echo.Context) error {
 	if isBroken || website.DeletedAt.Valid {
 		var resp dto.WebsiteResponse
 		if err := resp.FromModel(website); err == nil {
+			resp.GatewayDomain = a.gatewayDomain()
 			ctx.Response().Before(func() {
 				ctx.Response().Status = http.StatusGone
 			})
@@ -195,7 +213,9 @@ func (a *API) getWebsite(c echo.Context) error {
 		}
 	}
 
-	return httputil.EncodeResponse(ctx, website, &dto.WebsiteResponse{})
+	resp := &dto.WebsiteResponse{}
+	resp.GatewayDomain = a.gatewayDomain()
+	return httputil.EncodeResponse(ctx, website, resp)
 }
 
 func (a *API) updateWebsite(c echo.Context) error {
@@ -242,6 +262,7 @@ func (a *API) updateWebsite(c echo.Context) error {
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
+	resp.GatewayDomain = a.gatewayDomain()
 
 	return httputil.EncodeResponse(ctx, website, &resp)
 }
@@ -339,7 +360,9 @@ func (a *API) getSSLStatus(c echo.Context) error {
 		return ctx.Error(apiErr, http.StatusNotFound)
 	}
 
-	return httputil.EncodeResponse(ctx, website, &dto.WebsiteResponse{})
+	resp := &dto.WebsiteResponse{}
+	resp.GatewayDomain = a.gatewayDomain()
+	return httputil.EncodeResponse(ctx, website, resp)
 }
 
 func (a *API) updateSSLStatus(c echo.Context) error {
@@ -378,5 +401,7 @@ func (a *API) updateSSLStatus(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	return httputil.EncodeResponse(ctx, website, &dto.WebsiteResponse{})
+	resp := &dto.WebsiteResponse{}
+	resp.GatewayDomain = a.gatewayDomain()
+	return httputil.EncodeResponse(ctx, website, resp)
 }
