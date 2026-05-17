@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/avast/retry-go/v4"
+	"github.com/avast/retry-go/v5"
 	"github.com/gammazero/workerpool"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -131,10 +131,7 @@ func (bp *BlockQueue) processBlock(ctx context.Context, job *blockJob) error {
 	ctx, span := core.TraceMethod(ctx, "BlockQueue.processBlock")
 	defer span.End()
 
-	return retry.Do(
-		func() error {
-			return bp.processBlockInternal(ctx, job)
-		},
+	return retry.New(
 		retry.Context(ctx),
 		retry.Attempts(maxRetries),
 		retry.Delay(time.Second),
@@ -148,7 +145,9 @@ func (bp *BlockQueue) processBlock(ctx context.Context, job *blockJob) error {
 				zap.Uint("attempt", n+1),
 				zap.String("CID", job.Block.Cid().String()))
 		}),
-	)
+	).Do(func() error {
+		return bp.processBlockInternal(ctx, job)
+	})
 }
 
 func (bp *BlockQueue) processBlockInternal(ctx context.Context, job *blockJob) error {
