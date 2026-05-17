@@ -267,6 +267,7 @@ type WebsiteResponse struct {
 	LastCheckedAt       *time.Time     `json:"last_checked_at,omitempty"`
 	DNSZoneID           *uint          `json:"dns_zone_id,omitempty"`
 	Enabled             bool           `json:"dns_hosting_enabled"`
+	GatewayDomain       string         `json:"gateway_domain,omitempty"`
 	Created             time.Time      `json:"created"`
 	Updated             time.Time      `json:"updated"`
 	Expired             bool            `json:"expired"` // Whether validation token has expired
@@ -359,6 +360,23 @@ func (f WebsiteFilter) Schema() *zog.StructSchema {
 
 func (f WebsiteFilter) ToModel() (WebsiteFilter, error) {
 	return f, nil
+}
+
+// WebsiteConfig holds website-related configuration
+type WebsiteConfig struct {
+	GatewayDomain string
+}
+
+// WebsiteConfigResponse returns website-related configuration for client use
+type WebsiteConfigResponse struct {
+	GatewayDomain string `json:"gateway_domain,omitempty"`
+}
+
+var _ httputil.DTOResponse[*WebsiteConfig] = (*WebsiteConfigResponse)(nil)
+
+func (r *WebsiteConfigResponse) FromModel(cfg *WebsiteConfig) error {
+	r.GatewayDomain = cfg.GatewayDomain
+	return nil
 }
 
 // SSLStatusUpdateRequest represents a request to update SSL certificate status from Caddy webhook
