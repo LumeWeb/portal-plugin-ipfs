@@ -12,26 +12,19 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/ipfs-content/paths"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 )
 
 var JanitorTestOptions = coreTesting.CombineOptions(
-	coreTesting.NewMockPluginBuilder(internal.ProtocolName).
-		WithMockServiceFactory(pluginCore.WEBSITE_SERVICE, mocks.NewMockWebsiteService).
+	testopts.NewMockPluginBuilder().
 		WithServiceConfig(pluginCore.WEBSITE_SERVICE, &pluginConfig.WebsiteConfig{
 			NotificationsEnabled: false,
 		}).
-		WithMockServiceFactory(pluginCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService).
-		WithMockServiceFactory(pluginCore.PIN_SERVICE, mocks.NewMockIPFSPinService).
-		WithMockServiceFactory(pluginCore.FILE_MANAGER_SERVICE, mocks.NewMockFileManagerService).
-		WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService).
-		WithServiceConfig(pluginCore.DNS_SERVICE, &pluginConfig.DnsConfig{}).
 		WithMigrations(map[core.DBType]fs.FS{
 			core.DB_TYPE_SQLITE: migrations.GetSQLite(),
 		}).BuilderOption(),

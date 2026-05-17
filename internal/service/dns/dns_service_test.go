@@ -12,12 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	apiDTO "go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.uber.org/zap"
@@ -116,7 +116,7 @@ func setupDefaultServerHandlers(mux *http.ServeMux) {
 
 // createTestOptionsWithPowerDNSClient creates test options with a custom PowerDNS client
 func createTestOptionsWithPowerDNSClient(client *PowerDNSClient) coreTesting.TestContextBuilderOption {
-	return coreTesting.NewMockPluginBuilder(internal.ProtocolName).WithService(pluginCore.DNS_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
+	return testopts.NewBaseMockPluginBuilder().WithService(pluginCore.DNS_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
 		return NewDNSServiceWithOptions(WithPowerDNSClient(client))
 	}).WithServiceConfig(pluginCore.DNS_SERVICE, getTestDnsConfig()).WithMigrations(map[core.DBType]fs.FS{
 		core.DB_TYPE_SQLITE: migrations.GetSQLite(),
