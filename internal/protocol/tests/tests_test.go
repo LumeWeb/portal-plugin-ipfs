@@ -18,6 +18,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/fixtures"
 	pluginTusUtils "go.lumeweb.com/portal-plugin-ipfs/internal/testing/tus"
 	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
@@ -25,6 +26,8 @@ import (
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	contentArchive "go.lumeweb.com/ipfs-content/archive"
 	"go.lumeweb.com/portal/db/models"
+	"go.lumeweb.com/queryutil"
+	"go.lumeweb.com/queryutil/filter"
 	"gorm.io/gorm"
 )
 
@@ -171,21 +174,54 @@ func testArchiveUpload(t *testing.T, format contentArchive.Format, creator plugi
 
 // setupTUSUpload creates a TUS upload with optional hash and returns protocol, request ID, and user ID
 // hash can be nil for files where hash is not yet known (e.g., non-CAR files)
-func setupTUSUpload(tb coreTesting.TB, ctx coreTesting.TestContext, uploadFile *os.File, hash core.StorageHash) (core.StorageProtocol, uint, uint) {
-	return pluginTusUtils.SetupTUSUpload(tb, ctx, uploadFile, hash)
+func setupTUSUpload(tb coreTesting.TB, ctx coreTesting.TestContext, uploadFile *os.File, hash core.StorageHash, opts ...pluginTusUtils.TusUploadOption) (core.StorageProtocol, uint, uint) {
+	return pluginTusUtils.SetupTUSUpload(tb, ctx, uploadFile, hash, opts...)
 }
 
-func testUploadWorkflow(t *testing.T, ctx coreTesting.TestContext, universalReader *pluginUpload.UniversalReader, format contentArchive.Format, mode pluginUpload.ArchiveMode, operationName string, assertionFunc func(*coreTesting.WorkflowTest, *models.Request), workflowDataBuilder func(string) interface{}) {
-	// Arrange - Setup test user and services
-	testUser := setupTestUser(t, ctx, format, mode)
-	wfTest, uploadService := setupTestServices(ctx)
+type uploadWorkflowOption func(*uploadWorkflowConfig)
 
-	// Handle upload with specified mode
+type uploadWorkflowConfig struct {
+	existingUser *models.User
+	existingWf   *coreTesting.WorkflowTest
+}
+
+func withExistingUser(user *models.User) uploadWorkflowOption {
+	return func(cfg *uploadWorkflowConfig) {
+		cfg.existingUser = user
+	}
+}
+
+func withExistingWorkflow(wf *coreTesting.WorkflowTest) uploadWorkflowOption {
+	return func(cfg *uploadWorkflowConfig) {
+		cfg.existingWf = wf
+	}
+}
+
+func testUploadWorkflow(t *testing.T, ctx coreTesting.TestContext, universalReader *pluginUpload.UniversalReader, format contentArchive.Format, mode pluginUpload.ArchiveMode, operationName string, assertionFunc func(*coreTesting.WorkflowTest, *models.Request), workflowDataBuilder func(string) interface{}, opts ...uploadWorkflowOption) (cid.Cid, *coreTesting.WorkflowTest) {
+	var cfg uploadWorkflowConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	var testUser *models.User
+	if cfg.existingUser != nil {
+		testUser = cfg.existingUser
+	} else {
+		testUser = setupTestUser(t, ctx, format, mode)
+	}
+
+	var wfTest *coreTesting.WorkflowTest
+	var uploadService pluginCore.UploadService
+	if cfg.existingWf != nil {
+		wfTest = cfg.existingWf
+		uploadService = core.GetService[pluginCore.UploadService](ctx, pluginCore.UPLOAD_SERVICE)
+	} else {
+		wfTest, uploadService = setupTestServices(ctx)
+	}
+
 	root, uploadId, err := handleUploadWithMode(uploadService, ctx, universalReader, testUser.ID, mode)
 	require.NoError(t, err)
 
-	// Start the workflow with the upload hash using the specified operation name
-	// Build workflow options with the provided builder function if available
 	var workflowOptions []core.WorkflowOption
 	workflowOptions = append(workflowOptions,
 		core.WithWorkflowStorageHash(internal.NewIPFSHash(root)),
@@ -204,12 +240,30 @@ func testUploadWorkflow(t *testing.T, ctx coreTesting.TestContext, universalRead
 
 	req := wfTest.StartOperationWorkflow(operationName, workflowOptions...)
 
-	// Act
 	wfTest.ExecuteWorkflowStep(req)
 	wfTest.CompleteWorkflowStep(req)
 
-	// Assert using the provided assertion function
 	assertionFunc(wfTest, req)
+
+	return root, wfTest
+}
+
+func assertRootBlockFetchable(t *testing.T, ctx coreTesting.TestContext, rootCID cid.Cid) {
+	t.Helper()
+
+	proto := core.GetProtocol(internal.ProtocolName)
+	require.NotNil(t, proto, "IPFS protocol not found")
+
+	nodeProto, ok := proto.(protocol.ProtoNode)
+	require.True(t, ok, "protocol does not implement ProtoNode")
+
+	ipfsNode := nodeProto.GetNode()
+	require.NotNil(t, ipfsNode, "IPFS node not available")
+
+	fetchCtx := pc.SkipQuotaCheckOption(ctx, true)
+	node, err := ipfsNode.GetBlock(fetchCtx, rootCID)
+	require.NoError(t, err, "failed to fetch root block %s after upload", rootCID)
+	require.NotNil(t, node, "fetched root block node is nil")
 }
 
 // getCARRootsFromFile gets CAR roots from a file (helper for TUS)
@@ -224,7 +278,8 @@ func getCARRootsFromFile(t *testing.T, file *os.File) cid.Cid {
 
 // executeTUSWorkflowHelper is a helper function that executes TUS upload workflow
 // It handles the common workflow execution pattern for both archives and plain files
-func executeTUSWorkflowHelper(t *testing.T, ctx coreTesting.TestContext, tempFile *os.File, format contentArchive.Format, requestID uint, userID uint) {
+// Returns the root CID of the uploaded content.
+func executeTUSWorkflowHelper(t *testing.T, ctx coreTesting.TestContext, tempFile *os.File, format contentArchive.Format, requestID uint, userID uint) cid.Cid {
 	wfTest := coreTesting.NewWorkflowTest(ctx)
 
 	wf := wfTest.NewOperationWorkflow(core.TUSUploadOperationName(internal.ProtocolName))
@@ -252,15 +307,29 @@ func executeTUSWorkflowHelper(t *testing.T, ctx coreTesting.TestContext, tempFil
 
 	// Assertions
 	assertTUSWorkflowSuccess(wfTest, req)
+
+	rootCID, err := internal.CIDFromHash(req.Hash, req.CIDType)
+	if err != nil {
+		pinSvc := core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		require.NotNil(t, pinSvc, "IPFS pin service not found")
+
+		sort := []filter.Sort{
+			{Field: "created_at", Order: filter.OrderDesc},
+		}
+		pins, _, pinErr := pinSvc.ListPins(ctx, nil, sort, queryutil.DefaultPagination)
+		require.NoError(t, pinErr, "failed to list pins for root CID lookup")
+		require.NotEmpty(t, pins, "no pins found for root CID lookup")
+		rootCID, err = cid.Cast(pins[0].CID)
+		require.NoError(t, err, "failed to cast pin CID")
+	}
+	return rootCID
 }
 
 // runTUSFileUploadInternal is the internal logic for TUS file uploads
 // This function should be called from within a RunTestCaseWithDB context
-func runTUSFileUploadInternal(t *testing.T, ctx coreTesting.TestContext, fileContent string) {
-	// Read the data for TUS processing
+func runTUSFileUploadInternal(t *testing.T, ctx coreTesting.TestContext, fileContent string, opts ...pluginTusUtils.TusUploadOption) (cid.Cid, uint) {
 	fileData := []byte(fileContent)
 
-	// Create a temporary file from the data for TUS processing
 	tempFile, err := os.CreateTemp("", "tus-test-*.tmp")
 	require.NoError(t, err)
 	defer func() {
@@ -271,15 +340,15 @@ func runTUSFileUploadInternal(t *testing.T, ctx coreTesting.TestContext, fileCon
 	_, err = tempFile.Write(fileData)
 	require.NoError(t, err)
 
-	// Seek back to beginning for TUS processing
 	_, err = tempFile.Seek(0, 0)
 	require.NoError(t, err)
 
-	// For plain files, hash is not known yet (will be computed during upload)
-	_, requestID, userID := setupTUSUpload(t, ctx, tempFile, nil)
+	_, requestID, userID := setupTUSUpload(t, ctx, tempFile, nil, opts...)
 
-	// Execute workflow using the helper
-	executeTUSWorkflowHelper(t, ctx, tempFile, contentArchive.FormatFile, requestID, userID)
+	root := executeTUSWorkflowHelper(t, ctx, tempFile, contentArchive.FormatFile, requestID, userID)
+
+	assertRootBlockFetchable(t, ctx, root)
+	return root, userID
 }
 
 // testTUSFileUpload tests plain file uploads (FormatFile) through the TUS upload workflow
@@ -321,7 +390,9 @@ func runTUSArchiveUploadInternal(t *testing.T, ctx coreTesting.TestContext, form
 	}
 
 	// Execute workflow using the helper
-	executeTUSWorkflowHelper(t, ctx, tempFile, format, requestID, userID)
+	root := executeTUSWorkflowHelper(t, ctx, tempFile, format, requestID, userID)
+
+	assertRootBlockFetchable(t, ctx, root)
 }
 
 // testTUSArchiveUpload is a TUS-specific wrapper for testArchiveUpload
