@@ -41,7 +41,7 @@ require (
 	github.com/tus/tusd/v2 v2.9.2
 	go.lumeweb.com/httputil v0.5.4
 	go.lumeweb.com/ipfs-content v0.1.17
-	go.lumeweb.com/portal v0.4.2-0.20260515233534-84bbeedc75ef
+	go.lumeweb.com/portal v0.4.2-0.20260517060720-7dd3e0013a14
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20260516134603-d27705f976e4
