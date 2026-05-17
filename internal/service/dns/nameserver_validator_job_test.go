@@ -10,18 +10,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.uber.org/zap"
 )
 
 var NameserverValidatorTestOptions = coreTesting.CombineOptions(
-	coreTesting.NewMockPluginBuilder(internal.ProtocolName).WithService(pluginCore.DNS_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
+	testopts.NewBaseMockPluginBuilder().WithService(pluginCore.DNS_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
 		logger := zap.NewNop()
 		coreLogger := &core.Logger{Logger: logger}
 		pdnsClient, err := NewPowerDNSClient("http://localhost:8081", "test-api-key", coreLogger)

@@ -18,6 +18,7 @@ import (
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
@@ -157,16 +158,13 @@ func createMockDNSZone(zoneID uint, domain string, userID uint) *pluginDb.DNSZon
 
 var TestOptions = coreTesting.CombineOptions(
 	coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{}),
-	coreTesting.NewMockPluginBuilder(internal.ProtocolName).
+	testopts.NewBaseMockPluginBuilder().
 		WithService(pluginCore.WEBSITE_SERVICE, NewWebsiteService).
 		WithServiceConfig(pluginCore.WEBSITE_SERVICE, &pluginConfig.WebsiteConfig{
 			NotificationsEnabled: false,
 			AdminEmail:           "",
 			ValidationTokenTTL:   24 * time.Hour,
 		}).
-		WithMockServiceFactory(pluginCore.IPNS_KEY_SERVICE, mocks.NewMockIPNSKeyService).
-		WithMockServiceFactory(pluginCore.PIN_SERVICE, mocks.NewMockIPFSPinService).
-		WithMockServiceFactory(pluginCore.FILE_MANAGER_SERVICE, mocks.NewMockFileManagerService).
 		WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService).
 		WithServiceConfig(pluginCore.DNS_SERVICE, &pluginConfig.DnsConfig{
 			Enabled:                      true,
