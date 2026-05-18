@@ -2024,3 +2024,106 @@ func TestWebsiteService_UpdateWebsite_DNSHostingTransitionWithExistingZone(t *te
 		mockDNS.AssertNotCalled(t, "CreateZone")
 	}, TestOptions)
 }
+
+func TestWebsiteService_CreateWebsite_InheritsSSLFromSoftDeletedWebsite(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "ssl-inherit-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		now := time.Now()
+		_, err = websiteService.UpdateSSLStatus(context.Background(), domain, pluginDb.SSLStatusReady, "", &now)
+		require.NoError(tb, err)
+
+		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
+		require.NoError(tb, err)
+
+		_, err = websiteService.GetWebsiteByDomain(context.Background(), domain)
+		require.NoError(tb, err)
+
+		newWebsite := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		recreatedWebsite, err := websiteService.CreateWebsite(context.Background(), newWebsite)
+		require.NoError(tb, err)
+
+		assert.Equal(tb, string(pluginDb.SSLStatusReady), recreatedWebsite.SSLStatus)
+		assert.NotNil(tb, recreatedWebsite.SSLIssuedAt)
+		assert.NotNil(tb, recreatedWebsite.SSLLastUpdatedAt)
+	}, TestOptions)
+}
+
+func TestWebsiteService_CreateWebsite_DoesNotInheritExpiredSSLCert(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "ssl-expired-inherit-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		oldIssuedAt := time.Now().Add(-91 * 24 * time.Hour)
+		_, err = websiteService.UpdateSSLStatus(context.Background(), domain, pluginDb.SSLStatusReady, "", &oldIssuedAt)
+		require.NoError(tb, err)
+
+		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
+		require.NoError(tb, err)
+
+		newWebsite := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		recreatedWebsite, err := websiteService.CreateWebsite(context.Background(), newWebsite)
+		require.NoError(tb, err)
+
+		assert.Equal(tb, string(pluginDb.SSLStatusPending), recreatedWebsite.SSLStatus)
+		assert.Nil(tb, recreatedWebsite.SSLIssuedAt)
+	}, TestOptions)
+}
+
+func TestWebsiteService_CreateWebsite_DoesNotInheritFailedSSL(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "ssl-failed-inherit-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		_, err = websiteService.UpdateSSLStatus(context.Background(), domain, pluginDb.SSLStatusFailed, "cert failed", nil)
+		require.NoError(tb, err)
+
+		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
+		require.NoError(tb, err)
+
+		newWebsite := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		recreatedWebsite, err := websiteService.CreateWebsite(context.Background(), newWebsite)
+		require.NoError(tb, err)
+
+		assert.Equal(tb, string(pluginDb.SSLStatusPending), recreatedWebsite.SSLStatus)
+	}, TestOptions)
+}
+
+func TestWebsiteService_CreateWebsite_NoInheritWithoutSoftDeletedWebsite(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "ssl-no-inherit-test.com"
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		assert.Equal(tb, string(pluginDb.SSLStatusPending), createdWebsite.SSLStatus)
+		assert.Nil(tb, createdWebsite.SSLIssuedAt)
+	}, TestOptions)
+}

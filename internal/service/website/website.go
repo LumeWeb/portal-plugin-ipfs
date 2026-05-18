@@ -29,6 +29,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+const sslCertValidity = 90 * 24 * time.Hour
+
 // Validation error types
 var (
 	ErrInvalidCID    = errors.New("invalid CID")
@@ -105,6 +107,23 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 			}
 			if existing != nil {
 				return nil, fmt.Errorf("domain already exists: %s", website.Domain)
+			}
+
+			// Inherit SSL state from soft-deleted website if cert is still valid
+			var deletedWebsite pluginDb.Website
+			err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Unscoped().
+					Where("domain = ? AND deleted_at IS NOT NULL", website.Domain).
+					Where("ssl_status = ?", string(pluginDb.SSLStatusReady)).
+					Order("deleted_at DESC").
+					First(&deletedWebsite)
+			})
+			if err == nil && deletedWebsite.SSLIssuedAt != nil {
+				if time.Since(*deletedWebsite.SSLIssuedAt) < sslCertValidity {
+					website.SSLStatus = string(pluginDb.SSLStatusReady)
+					website.SSLIssuedAt = deletedWebsite.SSLIssuedAt
+					website.SSLLastUpdatedAt = deletedWebsite.SSLLastUpdatedAt
+				}
 			}
 
 			// Generate validation token
