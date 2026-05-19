@@ -64,6 +64,19 @@ func (s *DNSServiceDefault) CreateZone(ctx context.Context, domain string, userI
 		return tx.Create(dnsZone)
 	})
 	if err != nil {
+		if isDuplicateKeyError(err) {
+			s.Logger().Info("DNS zone already exists in database (concurrent create), fetching existing",
+				zap.String("domain", domain))
+
+			existing, getErr := s.GetZoneByDomain(ctx, domain)
+			if getErr != nil {
+				return nil, fmt.Errorf("concurrent zone creation detected but failed to fetch existing: %w", getErr)
+			}
+			if existing == nil {
+				return nil, fmt.Errorf("concurrent zone creation detected but existing zone not found for domain %q", domain)
+			}
+			return existing, nil
+		}
 		return nil, fmt.Errorf("failed to create zone in database: %w", err)
 	}
 
@@ -494,11 +507,8 @@ func (s *DNSServiceDefault) validateDomain(domain string) error {
 		return fmt.Errorf("domain too long (max 255 characters)")
 	}
 
-	// Strip trailing dot if present (FQDN format)
 	trimmedDomain := strings.TrimSuffix(domain, ".")
 
-	// Validate domain format according to RFC 1035
-	// Domain labels must be 1-63 characters, alphanumeric or hyphen, cannot start/end with hyphen
 	labels := strings.Split(trimmedDomain, ".")
 
 	for _, label := range labels {
@@ -516,4 +526,14 @@ func (s *DNSServiceDefault) validateDomain(domain string) error {
 	}
 
 	return nil
+}
+
+func isDuplicateKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") ||
+		strings.Contains(msg, "Duplicate entry") ||
+		strings.Contains(msg, "duplicate key value")
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -962,6 +963,29 @@ func TestCreateZoneConflictExistingZoneNoID(t *testing.T) {
 	}
 	if zone != nil {
 		t.Errorf("expected nil zone on error, got %v", zone)
+	}
+}
+
+func TestIsDuplicateKeyError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{"sqlite unique", fmt.Errorf("UNIQUE constraint failed: ipfs_dns_zones.domain"), true},
+		{"mysql duplicate", fmt.Errorf("Duplicate entry 'example.com' for key 'idx_dns_zones_domain'"), true},
+		{"postgres duplicate", fmt.Errorf("duplicate key value violates unique constraint"), true},
+		{"other error", fmt.Errorf("some other error"), false},
+		{"nil error", nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isDuplicateKeyError(tt.err)
+			if result != tt.expected {
+				t.Errorf("isDuplicateKeyError(%v) = %v, want %v", tt.err, result, tt.expected)
+			}
+		})
 	}
 }
 
