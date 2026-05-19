@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -500,6 +501,34 @@ func TestBuildFullName_RealWorldScenarios(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := buildFullName(tt.name, tt.domain)
 			assert.Equal(t, tt.expected, result, "buildFullName(%q, %q)", tt.name, tt.domain)
+		})
+	}
+}
+
+func TestBuildTargetPath(t *testing.T) {
+	tests := []struct {
+		name       string
+		targetHash string
+		targetType pluginDb.WebsiteTargetType
+		expected   DNSLinkTarget
+	}{
+		{
+			name:       "ipfs target includes dnslink prefix",
+			targetHash: "QmHash123",
+			targetType: pluginDb.WebsiteTargetTypeIPFS,
+			expected:   DNSLinkTarget("dnslink=/ipfs/QmHash123"),
+		},
+		{
+			name:       "ipns target includes dnslink prefix",
+			targetHash: "12D3KooWExamplePeerID",
+			targetType: pluginDb.WebsiteTargetTypeIPNS,
+			expected:   DNSLinkTarget("dnslink=/ipns/12D3KooWExamplePeerID"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildTargetPath(tt.targetHash, tt.targetType)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
