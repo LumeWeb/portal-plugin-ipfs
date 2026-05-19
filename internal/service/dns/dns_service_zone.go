@@ -37,37 +37,10 @@ func (s *DNSServiceDefault) CreateZone(ctx context.Context, domain string, userI
 		if existing.UserID != userID {
 			return nil, fmt.Errorf("domain %q is already owned by another user", domain)
 		}
-		// If soft-deleted, un-delete and reset
 		if existing.DeletedAt.Valid {
-			var newPowerDNSZoneID string
-			if s.pdnsClient != nil {
-				nameservers := s.config.Nameservers
-				if len(nameservers) == 0 {
-					return nil, fmt.Errorf("no approved nameservers configured")
-				}
-				pdnsZone, pdnsErr := s.pdnsClient.CreateZone(ctx, domain, nameservers)
-				if pdnsErr != nil {
-					return nil, fmt.Errorf("failed to recreate zone in PowerDNS: %w", pdnsErr)
-				}
-				newPowerDNSZoneID = *pdnsZone.Id
+			if err := s.restoreSoftDeletedZone(ctx, existing, domain); err != nil {
+				return nil, err
 			}
-
-			err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				return tx.Unscoped().Model(existing).Updates(map[string]interface{}{
-					"deleted_at":       nil,
-					"status":           string(pluginDb.DNSZoneStatusPendingNameserver),
-					"powerdns_zone_id": newPowerDNSZoneID,
-				})
-			})
-			if err != nil {
-				return nil, fmt.Errorf("failed to restore soft-deleted zone: %w", err)
-			}
-			existing.DeletedAt = gorm.DeletedAt{}
-			existing.Status = string(pluginDb.DNSZoneStatusPendingNameserver)
-			existing.PowerDNSZoneID = newPowerDNSZoneID
-			s.Logger().Info("Restored soft-deleted DNS zone",
-				zap.Uint("id", existing.ID),
-				zap.String("domain", domain))
 		}
 		return existing, nil
 	}
@@ -113,34 +86,10 @@ func (s *DNSServiceDefault) CreateZone(ctx context.Context, domain string, userI
 			if existing.UserID != userID {
 				return nil, fmt.Errorf("domain %q is already owned by another user", domain)
 			}
-			// If soft-deleted, un-delete and reset
 			if existing.DeletedAt.Valid {
-				var newPowerDNSZoneID string
-				if s.pdnsClient != nil {
-					nameservers := s.config.Nameservers
-					if len(nameservers) == 0 {
-						return nil, fmt.Errorf("no approved nameservers configured")
-					}
-					pdnsZone, pdnsErr := s.pdnsClient.CreateZone(ctx, domain, nameservers)
-					if pdnsErr != nil {
-						return nil, fmt.Errorf("concurrent zone creation detected but failed to recreate zone in PowerDNS: %w", pdnsErr)
-					}
-					newPowerDNSZoneID = *pdnsZone.Id
+				if restoreErr := s.restoreSoftDeletedZone(ctx, existing, domain); restoreErr != nil {
+					return nil, fmt.Errorf("concurrent zone creation detected but failed to restore soft-deleted zone: %w", restoreErr)
 				}
-
-				unDeleteErr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-					return tx.Unscoped().Model(existing).Updates(map[string]interface{}{
-						"deleted_at":       nil,
-						"status":           string(pluginDb.DNSZoneStatusPendingNameserver),
-						"powerdns_zone_id": newPowerDNSZoneID,
-					})
-				})
-				if unDeleteErr != nil {
-					return nil, fmt.Errorf("concurrent zone creation detected but failed to restore soft-deleted zone: %w", unDeleteErr)
-				}
-				existing.DeletedAt = gorm.DeletedAt{}
-				existing.Status = string(pluginDb.DNSZoneStatusPendingNameserver)
-				existing.PowerDNSZoneID = newPowerDNSZoneID
 			}
 			return existing, nil
 		}
@@ -592,6 +541,48 @@ func (s *DNSServiceDefault) validateDomain(domain string) error {
 		}
 	}
 
+	return nil
+}
+
+func (s *DNSServiceDefault) restoreSoftDeletedZone(ctx context.Context, zone *pluginDb.DNSZone, domain string) error {
+	updates := map[string]interface{}{
+		"deleted_at": nil,
+		"status":     string(pluginDb.DNSZoneStatusPendingNameserver),
+	}
+	var newPowerDNSZoneID string
+	if s.pdnsClient != nil {
+		nameservers := s.config.Nameservers
+		if len(nameservers) == 0 {
+			return fmt.Errorf("no approved nameservers configured")
+		}
+		pdnsZone, pdnsErr := s.pdnsClient.CreateZone(ctx, domain, nameservers)
+		if pdnsErr != nil {
+			return fmt.Errorf("failed to recreate zone in PowerDNS: %w", pdnsErr)
+		}
+		newPowerDNSZoneID = *pdnsZone.Id
+		updates["powerdns_zone_id"] = newPowerDNSZoneID
+	}
+
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		return tx.Unscoped().Model(zone).Updates(updates)
+	})
+	if err != nil {
+		if s.pdnsClient != nil && newPowerDNSZoneID != "" {
+			if delErr := s.pdnsClient.DeleteZone(ctx, newPowerDNSZoneID); delErr != nil {
+				s.Logger().Warn("Failed to clean up orphaned PowerDNS zone after DB restore failure",
+					zap.Error(delErr), zap.String("powerdns_zone_id", newPowerDNSZoneID))
+			}
+		}
+		return fmt.Errorf("failed to restore soft-deleted zone: %w", err)
+	}
+	zone.DeletedAt = gorm.DeletedAt{}
+	zone.Status = string(pluginDb.DNSZoneStatusPendingNameserver)
+	if newPowerDNSZoneID != "" {
+		zone.PowerDNSZoneID = newPowerDNSZoneID
+	}
+	s.Logger().Info("Restored soft-deleted DNS zone",
+		zap.Uint("id", zone.ID),
+		zap.String("domain", domain))
 	return nil
 }
 
