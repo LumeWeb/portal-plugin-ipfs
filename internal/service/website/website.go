@@ -153,72 +153,12 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 			}
 
 			// Auto-create IPNS key for managed DNS when using IPFS target
-			var ipnsKey *pluginDb.IPFSIPNSKey
 			if website.Enabled && website.TargetType == string(pluginDb.WebsiteTargetTypeIPFS) {
-				// Generate IPNS key name based on domain
-				keyName := fmt.Sprintf("%s-auto", website.Domain)
-
-				// Check if IPNS key with this name already exists
-				keys, err := s.ipnsKeySvc.ListKeys(ctx, website.UserID)
+				ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, website.Domain, website.TargetHash())
 				if err != nil {
-					s.Logger().Error("Failed to list existing IPNS keys",
-						zap.Error(err),
-						zap.String("domain", website.Domain))
-					return nil, fmt.Errorf("failed to list existing IPNS keys: %w", err)
-				}
-				for _, k := range keys {
-					if k.Name == keyName {
-						ipnsKey = &k
-						break
-					}
+					return nil, err
 				}
 
-				// Create IPNS key if it doesn't exist
-				if ipnsKey == nil {
-					ipnsKey, err = s.ipnsKeySvc.CreateKey(ctx, website.UserID, keyName, 1)
-					if err != nil {
-						s.Logger().Error("Failed to create IPNS key for managed DNS",
-							zap.Error(err),
-							zap.String("domain", website.Domain))
-						return nil, fmt.Errorf("failed to create IPNS key: %w", err)
-					}
-					s.Logger().Info("Created new IPNS key for managed DNS",
-						zap.String("domain", website.Domain),
-						zap.String("key_name", keyName),
-						zap.Stringer("peer_id", ipnsKey.PeerID()))
-				} else {
-					s.Logger().Info("Reusing existing IPNS key for managed DNS",
-						zap.String("domain", website.Domain),
-						zap.String("key_name", keyName),
-						zap.Stringer("peer_id", ipnsKey.PeerID()))
-				}
-				if err != nil {
-					s.Logger().Error("Failed to create IPNS key for managed DNS",
-						zap.Error(err),
-						zap.String("domain", website.Domain))
-					return nil, fmt.Errorf("failed to create IPNS key: %w", err)
-				}
-
-				// Publish the IPFS CID to the IPNS key
-				if s.ipnsKeySvc != nil {
-					// Use default TTL (24 hours)
-					ttl := 24 * time.Hour
-					err = s.ipnsKeySvc.PublishCID(ctx, ipnsKey.PeerID().String(), website.TargetHash(), ttl)
-					if err != nil {
-						s.Logger().Warn("Failed to publish CID to IPNS key for managed DNS",
-							zap.Error(err),
-							zap.String("domain", website.Domain),
-							zap.String("peer_id", ipnsKey.PeerID().String()))
-						// Continue - DNS records will still be created
-					} else {
-						s.Logger().Info("Published CID to IPNS key for managed DNS",
-							zap.String("domain", website.Domain),
-							zap.String("peer_id", ipnsKey.PeerID().String()),
-							zap.String("cid", website.TargetHash()))
-					}
-				}
-
-				// Update website to use IPNS target instead of IPFS
 				website.TargetType = string(pluginDb.WebsiteTargetTypeIPNS)
 				website.TargetMultihash = ipnsKey.PeerIDMultihash
 				website.CIDVersion = nil
@@ -459,6 +399,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				oldEnabled = website.Enabled
 				targetHashChanged := false
 				dnsEnabledChanged = false
+				ipnsAutoCreated := false
 				var newTargetHashStr string
 
 				// Validate domain if being updated
@@ -482,51 +423,103 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 						targetType = tt
 					}
 
-					// Auto-detect targetType if it's IPFS but target_hash is a peer ID
-					// This handles cases where user updates target_hash without updating target_type
-					if targetType == string(pluginDb.WebsiteTargetTypeIPFS) && isValidIPNSTarget(targetHashStr) {
-						targetType = string(pluginDb.WebsiteTargetTypeIPNS)
-						updates["target_type"] = targetType
-					}
+					// Auto-detect: target_type=ipns with a plain IPFS CID means
+					// "create/use IPNS key and publish this CID to it"
+					if targetType == string(pluginDb.WebsiteTargetTypeIPNS) && isIPFSCid(targetHashStr) && !isValidIPNSTarget(targetHashStr) {
+						publishCID := targetHashStr
+						var publishHash string
 
-					// Validate target hash
-					if err := s.validateTarget(targetType, targetHashStr); err != nil {
-						_ = tx.AddError(fmt.Errorf("invalid target: %w", err))
-						return tx
-					}
-
-					// Check if target hash changed
-					if targetHashStr != oldTargetHash {
-						targetHashChanged = true
-						newTargetHashStr = targetHashStr
-					}
-
-					// Convert string to multihash and CID version
-					if targetType == string(pluginDb.WebsiteTargetTypeIPFS) {
-						c, err := cid.Decode(targetHashStr)
+						ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, website.Domain, publishCID)
 						if err != nil {
-							_ = tx.AddError(fmt.Errorf("failed to decode CID: %w", err))
+							_ = tx.AddError(err)
 							return tx
 						}
-						normalizedCid := encoding.NormalizeCid(c)
-						updates["target_multihash"] = normalizedCid.Hash()
-						version := uint8(normalizedCid.Version())
-						updates["cid_version"] = &version
-						codec := uint8(normalizedCid.Type())
-						updates["cid_type"] = &codec
+						publishHash = ipnsKey.PeerID().String()
+						ipnsAutoCreated = true
+
+						setIPNSTargetUpdates(updates, ipnsKey)
+						updates["target_type"] = string(pluginDb.WebsiteTargetTypeIPNS)
+
+						if publishHash != oldTargetHash {
+							targetHashChanged = true
+							newTargetHashStr = publishHash
+						}
+						delete(updates, "target_hash")
 					} else {
-						target, err := pluginDb.NewIPNSTargetFromString(targetHashStr)
-						if err != nil {
-							_ = tx.AddError(fmt.Errorf("failed to parse IPNS target: %w", err))
+						// Auto-detect targetType if it's IPFS but target_hash is a peer ID
+						if targetType == string(pluginDb.WebsiteTargetTypeIPFS) && isValidIPNSTarget(targetHashStr) {
+							targetType = string(pluginDb.WebsiteTargetTypeIPNS)
+							updates["target_type"] = targetType
+						}
+
+						// Validate target hash
+						if err := s.validateTarget(targetType, targetHashStr); err != nil {
+							_ = tx.AddError(fmt.Errorf("invalid target: %w", err))
 							return tx
 						}
-						updates["target_multihash"] = target.ToMultihash()
-						updates["cid_version"] = nil
-						updates["cid_type"] = nil
-					}
 
-					// Remove old target_hash from updates
-					delete(updates, "target_hash")
+						// Check if target hash changed
+						if targetHashStr != oldTargetHash {
+							targetHashChanged = true
+							newTargetHashStr = targetHashStr
+						}
+
+						// Convert string to multihash and CID version
+						if targetType == string(pluginDb.WebsiteTargetTypeIPFS) {
+							c, err := cid.Decode(targetHashStr)
+							if err != nil {
+								_ = tx.AddError(fmt.Errorf("failed to decode CID: %w", err))
+								return tx
+							}
+							normalizedCid := encoding.NormalizeCid(c)
+							updates["target_multihash"] = normalizedCid.Hash()
+							version := uint8(normalizedCid.Version())
+							updates["cid_version"] = &version
+							codec := uint8(normalizedCid.Type())
+							updates["cid_type"] = &codec
+						} else {
+							target, err := pluginDb.NewIPNSTargetFromString(targetHashStr)
+							if err != nil {
+								_ = tx.AddError(fmt.Errorf("failed to parse IPNS target: %w", err))
+								return tx
+							}
+							updates["target_multihash"] = target.ToMultihash()
+							updates["cid_version"] = nil
+							updates["cid_type"] = nil
+						}
+
+						// Remove old target_hash from updates
+						delete(updates, "target_hash")
+					}
+				} else if newTargetType, ok := updates["target_type"].(string); ok {
+					// target_type provided without target_hash — conversion request
+					requestedType := pluginDb.WebsiteTargetType(newTargetType)
+
+					if requestedType == pluginDb.WebsiteTargetTypeIPNS && oldTargetType == pluginDb.WebsiteTargetTypeIPFS {
+						// IPFS → IPNS: auto-create key, publish current CID
+						publishCID := oldTargetHash
+
+						ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, website.Domain, publishCID)
+						if err != nil {
+							_ = tx.AddError(err)
+							return tx
+						}
+						ipnsAutoCreated = true
+
+						setIPNSTargetUpdates(updates, ipnsKey)
+
+						newPeerID := ipnsKey.PeerID().String()
+						if newPeerID != oldTargetHash {
+							targetHashChanged = true
+							newTargetHashStr = newPeerID
+						}
+					} else if requestedType == pluginDb.WebsiteTargetTypeIPFS && oldTargetType == pluginDb.WebsiteTargetTypeIPNS {
+						_ = tx.AddError(fmt.Errorf("cannot convert from IPNS to IPFS without specifying a target CID"))
+						return tx
+					} else if requestedType == oldTargetType {
+						// Same type — no-op, remove from updates
+						delete(updates, "target_type")
+					}
 				}
 
 				// Check if dns_enabled is being changed with validation
@@ -548,7 +541,8 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				updatedWebsite = &website
 
 				// If target hash changed and website has auto-created IPNS key, republish to IPNS
-				if targetHashChanged && website.IPNSKeyID != nil {
+				// Skip if ensureIPNSKey already handled the publish
+				if targetHashChanged && website.IPNSKeyID != nil && !ipnsAutoCreated {
 					ipnsKey, err := s.ipnsKeySvc.GetKeyByID(ctx, website.UserID, *website.IPNSKeyID)
 					if err != nil {
 						s.Logger().Warn("Failed to get IPNS key for republishing",
@@ -583,7 +577,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 			// Note: Skip DNS only when staying as IPNS (peer ID doesn't change)
 			if targetHashChanged && website.Enabled && website.DNSZoneID != nil && s.dnsSvc != nil {
 				newTargetType := pluginDb.WebsiteTargetType(website.TargetType)
-				if !(oldTargetType == pluginDb.WebsiteTargetTypeIPNS && newTargetType == pluginDb.WebsiteTargetTypeIPNS) {
+				if oldTargetType != pluginDb.WebsiteTargetTypeIPNS || newTargetType != pluginDb.WebsiteTargetTypeIPNS {
 					newTargetHash := website.TargetHash()
 					if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *website.DNSZoneID, newTargetHash, newTargetType); err != nil {
 						s.Logger().Warn("Failed to update DNS records for website",
@@ -1186,6 +1180,75 @@ func isValidIPNSTarget(targetHash string) bool {
 		return true
 	}
 	return true
+}
+
+// ensureIPNSKey creates or reuses an IPNS key for a domain, and publishes the given CID to it.
+// Returns the IPNS key on success.
+func (s *WebsiteServiceDefault) ensureIPNSKey(ctx context.Context, userID uint, domain string, publishCID string) (*pluginDb.IPFSIPNSKey, error) {
+	keyName := fmt.Sprintf("%s-auto", domain)
+
+	keys, err := s.ipnsKeySvc.ListKeys(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list existing IPNS keys: %w", err)
+	}
+
+	var ipnsKey *pluginDb.IPFSIPNSKey
+	for i := range keys {
+		if keys[i].Name == keyName {
+			ipnsKey = &keys[i]
+			break
+		}
+	}
+
+	if ipnsKey == nil {
+		ipnsKey, err = s.ipnsKeySvc.CreateKey(ctx, userID, keyName, 1)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create IPNS key: %w", err)
+		}
+		s.Logger().Info("Created new IPNS key for managed DNS",
+			zap.String("domain", domain),
+			zap.String("key_name", keyName),
+			zap.Stringer("peer_id", ipnsKey.PeerID()))
+	} else {
+		s.Logger().Info("Reusing existing IPNS key for managed DNS",
+			zap.String("domain", domain),
+			zap.String("key_name", keyName),
+			zap.Stringer("peer_id", ipnsKey.PeerID()))
+	}
+
+	if s.ipnsKeySvc != nil && publishCID != "" {
+		ttl := 24 * time.Hour
+		err = s.ipnsKeySvc.PublishCID(ctx, ipnsKey.PeerID().String(), publishCID, ttl)
+		if err != nil {
+			s.Logger().Warn("Failed to publish CID to IPNS key",
+				zap.Error(err),
+				zap.String("domain", domain),
+				zap.String("peer_id", ipnsKey.PeerID().String()),
+				zap.String("cid", publishCID))
+		} else {
+			s.Logger().Info("Published CID to IPNS key",
+				zap.String("domain", domain),
+				zap.String("peer_id", ipnsKey.PeerID().String()),
+				zap.String("cid", publishCID))
+		}
+	}
+
+	return ipnsKey, nil
+}
+
+// setIPNSTargetUpdates populates the updates map with IPNS target fields
+// from an IPNS key, preparing them for a GORM Updates call.
+func setIPNSTargetUpdates(updates map[string]any, ipnsKey *pluginDb.IPFSIPNSKey) {
+	updates["target_multihash"] = ipnsKey.PeerIDMultihash
+	updates["cid_version"] = nil
+	updates["cid_type"] = nil
+	updates["ipns_key_id"] = ipnsKey.ID
+}
+
+// isIPFSCid checks if a string is a valid IPFS CID (not an IPNS peer ID).
+func isIPFSCid(hash string) bool {
+	_, err := cid.Decode(hash)
+	return err == nil
 }
 
 // validateTarget validates the target type and hash

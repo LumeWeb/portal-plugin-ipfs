@@ -897,15 +897,21 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 		}, TestOptions)
 	})
 
-	t.Run("error_target_type_without_target_hash", func(t *testing.T) {
+	t.Run("success_target_type_ipns_without_target_hash", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
-			token, _ := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
 
-			reqBody := `{"target_type":"ipfs"}`
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			mockWebsite := createMockIPFSWebsite(1, userID, "example.com", TestCID, db.WebsiteStatusActive, "")
+
+			mockWebsiteService.EXPECT().UpdateWebsite(mock.Anything, userID, uint(1), mock.AnythingOfType("map[string]interface {}")).Return(mockWebsite, nil)
+
+			reqBody := `{"target_type":"ipns"}`
 			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
 
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			assert.Equal(t, http.StatusOK, rec.Code)
 		}, TestOptions)
 	})
 
