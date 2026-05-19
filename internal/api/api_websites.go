@@ -247,10 +247,11 @@ func (a *API) updateWebsite(c echo.Context) error {
 	if req.Domain != nil {
 		updates["domain"] = *req.Domain
 	}
-	if req.TargetType != nil {
+	if req.TargetType != nil || req.TargetHash != nil {
+		if req.TargetType == nil || req.TargetHash == nil {
+			return ctx.Error(NewError(ErrKeyInvalidRequest, fmt.Errorf("target_type and target_hash must both be provided")), http.StatusUnprocessableEntity)
+		}
 		updates["target_type"] = string(*req.TargetType)
-	}
-	if req.TargetHash != nil {
 		updates["target_hash"] = *req.TargetHash
 	}
 	if req.DNSEnabled != nil {
