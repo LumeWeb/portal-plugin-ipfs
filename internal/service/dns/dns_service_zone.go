@@ -335,9 +335,11 @@ func (s *DNSServiceDefault) ValidateNameservers(ctx context.Context, zoneID uint
 	return true, nil
 }
 
-// buildTargetPath constructs the DNSLink target path based on target type
+// buildTargetPath constructs the DNSLink target path based on target type.
+// Per the dnslink spec (https://dnslink.info/), TXT record values must be
+// prefixed with "dnslink=" (e.g., "dnslink=/ipns/<peerID>").
 func buildTargetPath(targetHash string, targetType pluginDb.WebsiteTargetType) DNSLinkTarget {
-	return DNSLinkTarget(targetType.ToDNSLinkPath(targetHash))
+	return DNSLinkTarget("dnslink=" + targetType.ToDNSLinkPath(targetHash))
 }
 
 // CreateWebsiteDNSRecords creates initial DNS records for a new website
