@@ -28,21 +28,20 @@ func (s *DNSServiceDefault) CreateZone(ctx context.Context, domain string, userI
 		return nil, fmt.Errorf("invalid domain: %w", err)
 	}
 
-	// Check if domain already exists
+	// Check if domain already exists in database
 	existing, err := s.GetZoneByDomain(ctx, domain)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check existing domain: %w", err)
 	}
 	if existing != nil {
-		return nil, fmt.Errorf("domain already exists: %s", domain)
+		return existing, nil
 	}
 
-	// Create zone in PowerDNS
+	// Create zone in PowerDNS (idempotent: returns existing zone on 409)
 	if s.pdnsClient == nil {
 		return nil, fmt.Errorf("DNS hosting not enabled")
 	}
 
-	// Get approved nameservers from config
 	nameservers := s.config.Nameservers
 	if len(nameservers) == 0 {
 		return nil, fmt.Errorf("no approved nameservers configured")

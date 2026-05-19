@@ -2,6 +2,7 @@ package website
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"testing"
 	"time"
@@ -2022,6 +2023,90 @@ func TestWebsiteService_UpdateWebsite_DNSHostingTransitionWithExistingZone(t *te
 
 		// Verify CreateZone was NOT called (zone already existed)
 		mockDNS.AssertNotCalled(t, "CreateZone")
+	}, TestOptions)
+}
+
+func TestWebsiteService_UpdateWebsite_DNSEnableToggleOffOn(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "dns-toggle-test.com"
+		testZoneID := uint(8001)
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+		website.Status = string(pluginDb.WebsiteStatusActive)
+
+		// Initial creation with DNS enabled
+		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
+		setupDNSZoneCreationMocks(t, mockDNS, testZoneID, domain, testUserID1)
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+		assert.True(t, createdWebsite.Enabled)
+		assert.NotNil(t, createdWebsite.DNSZoneID)
+
+		// Toggle DNS off
+		mockDNS.EXPECT().DeleteZone(mock.Anything, *createdWebsite.DNSZoneID).Return(nil).Once()
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
+			"dns_enabled": false,
+		})
+		require.NoError(tb, err)
+		assert.False(t, updatedWebsite.Enabled)
+		assert.Nil(t, updatedWebsite.DNSZoneID, "dns_zone_id should be nil after successful delete")
+
+		// Toggle DNS back on - handleDNSEnabledTransition only creates zone + records (no IPNS)
+		newZoneID := uint(8002)
+		newMockZone := createMockDNSZone(newZoneID, domain, testUserID1)
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(newMockZone, nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(mock.Anything, newZoneID, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+
+		updatedWebsite2, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
+			"dns_enabled": true,
+		})
+		require.NoError(tb, err)
+		assert.True(t, updatedWebsite2.Enabled)
+		assert.NotNil(t, updatedWebsite2.DNSZoneID, "dns_zone_id should be set after re-enable")
+		assert.Equal(t, newZoneID, *updatedWebsite2.DNSZoneID)
+	}, TestOptions)
+}
+
+func TestWebsiteService_UpdateWebsite_DisableDNSHostingDeleteZoneFails(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "dns-delete-fail-test.com"
+		testZoneID := uint(8003)
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+		website.Status = string(pluginDb.WebsiteStatusActive)
+
+		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
+		setupDNSZoneCreationMocks(t, mockDNS, testZoneID, domain, testUserID1)
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+		assert.NotNil(t, createdWebsite.DNSZoneID)
+
+		// Toggle DNS off but DeleteZone fails
+		mockDNS.EXPECT().DeleteZone(mock.Anything, *createdWebsite.DNSZoneID).Return(errors.New("powerdns unavailable")).Once()
+
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
+			"dns_enabled": false,
+		})
+		require.NoError(tb, err)
+		assert.False(t, updatedWebsite.Enabled)
+		assert.NotNil(t, updatedWebsite.DNSZoneID, "dns_zone_id should be preserved when DeleteZone fails")
+		assert.Equal(t, *createdWebsite.DNSZoneID, *updatedWebsite.DNSZoneID)
 	}, TestOptions)
 }
 
