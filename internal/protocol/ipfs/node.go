@@ -171,12 +171,13 @@ type Node struct {
 	log              *core.Logger
 	host             host.Host
 	routing          DHTRouting
+	companionDHT     *dht.IpfsDHT
 	reprovider       *Reprovider
 	blockService     blockservice.BlockService
 	dagService       format.DAGService
 	bitswap          *bitswap.Bitswap
 	reproviderCancel context.CancelFunc
-	datastore        datastore.Batching
+	datastore        datastore.Datastore
 	keystore         keystore.Keystore
 	publisher        *namesys.IPNSPublisher
 }
@@ -189,21 +190,26 @@ func (n *Node) Close() error {
 	if n.reproviderCancel != nil {
 		n.reproviderCancel()
 	}
-	err := n.routing.Close()
-	if err != nil {
-		return err
+	var errs []error
+	if n.companionDHT != nil {
+		if err := n.companionDHT.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to close companion DHT: %w", err))
+		}
 	}
-	err = n.bitswap.Close()
-	if err != nil {
-		return err
+	if err := n.routing.Close(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to close routing: %w", err))
 	}
-	err = n.host.Close()
-	if err != nil {
-		return err
+	if err := n.bitswap.Close(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to close bitswap: %w", err))
 	}
-	err = n.blockService.Close()
-	if err != nil {
-		return err
+	if err := n.host.Close(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to close host: %w", err))
+	}
+	if err := n.blockService.Close(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to close block service: %w", err))
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("errors during node close: %v", errs)
 	}
 	return nil
 }
@@ -416,9 +422,20 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		dhtProvider = newBasicDHTProvider(basicDHT)
 		hasProvider = true
 	case config.DHTModeFullRT, "":
-		// Use FullRT (default)
+		// FullRT is a client-only DHT — it does not register protocol handlers
+		// and cannot respond to inbound DHT queries. Per its own docs, a
+		// companion IpfsDHT in server mode must be run alongside it so that
+		// other peers (including the website gateway) can query this node
+		// for IPNS records and content routing.
+		companion, dhtErr := dht.New(ctx, node, dhtOpts...)
+		if dhtErr != nil {
+			return nil, fmt.Errorf("failed to create companion DHT: %w", dhtErr)
+		}
+		if err := companion.Bootstrap(ctx); err != nil {
+			ctx.Logger().Warn("failed to bootstrap companion DHT", zap.Error(err))
+		}
+		ipfsNode.companionDHT = companion
 
-		// FullRT requires specific BucketSize and Concurrency
 		fullRTOpts := []fullrt.Option{
 			fullrt.DHTOption(
 				append(dhtOpts,
@@ -430,10 +447,10 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 
 		frt, dhtErr := fullrt.NewFullRT(node, dht.DefaultPrefix, fullRTOpts...)
 		if dhtErr != nil {
+			companion.Close()
 			return nil, fmt.Errorf("failed to create fullrt: %w", dhtErr)
 		}
 		routingImpl = frt
-		// FullRT already implements pluginCore.Provider
 		dhtProvider = frt
 		hasProvider = true
 	}
