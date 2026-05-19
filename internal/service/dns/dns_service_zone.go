@@ -291,10 +291,14 @@ func (s *DNSServiceDefault) ValidateNameservers(ctx context.Context, zoneID uint
 	}
 
 	// Check if at least one approved nameserver is present in DNS response
+	// Normalize by stripping trailing dots — net.LookupNS returns FQDNs with
+	// trailing dots (e.g. "ns1.example.com.") but config values typically lack them.
 	valid := false
 	for _, approvedNS := range approvedNameservers {
+		normalizedApproved := strings.TrimSuffix(approvedNS, ".")
 		for _, dnsNS := range dnsNameservers {
-			if dnsNS.Host == approvedNS {
+			normalizedDNS := strings.TrimSuffix(dnsNS.Host, ".")
+			if normalizedDNS == normalizedApproved {
 				valid = true
 				break
 			}
