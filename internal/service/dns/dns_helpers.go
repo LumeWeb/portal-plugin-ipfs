@@ -194,13 +194,40 @@ func recordToDTOWithZoneID(rrset powerdns.RRSet, record powerdns.Record, zoneDom
 		ZoneID:   zoneID,
 		Name:     stripDomain(rrset.Name, zoneDomain),
 		Type:     rrset.Type,
-		Content:  record.Content,
+		Content:  stripTXTQuotes(rrset.Type, record.Content),
 		TTL:      uint(getTTL(rrset.Ttl)),
 		Disabled: getDisabled(record.Disabled),
 	}
 }
 
 
+
+// formatTXTContent wraps TXT record content in double quotes as required by PowerDNS API.
+// PowerDNS expects TXT record values to be quoted strings (e.g., "v=spf1 ~all").
+func formatTXTContent(content string) string {
+	if len(content) >= 2 && content[0] == '"' && content[len(content)-1] == '"' {
+		return content
+	}
+	return `"` + content + `"`
+}
+
+// formatRecordContent formats DNS record content for PowerDNS based on record type.
+// TXT records require double-quoted content; other types are passed through as-is.
+func formatRecordContent(recordType, content string) string {
+	if strings.EqualFold(recordType, "TXT") {
+		return formatTXTContent(content)
+	}
+	return content
+}
+
+// stripTXTQuotes removes surrounding double quotes from TXT record content
+// when reading back from PowerDNS, so the API returns unquoted values.
+func stripTXTQuotes(recordType, content string) string {
+	if strings.EqualFold(recordType, "TXT") && len(content) >= 2 && content[0] == '"' && content[len(content)-1] == '"' {
+		return content[1 : len(content)-1]
+	}
+	return content
+}
 
 // buildCreatedRecord creates a CreatedRecord response from zone file entry data
 func buildCreatedRecord(name, recordType, content string, ttl uint) apiDTO.CreatedRecord {

@@ -358,7 +358,6 @@ func (s *DNSServiceDefault) CreateWebsiteDNSRecords(ctx context.Context, zoneID 
 	targetPath := string(buildTargetPath(targetHash, targetType))
 
 	rrsets := []powerdns.RRSet{
-		// _dnslink.domain.com TXT record → DNSLink path
 		{
 			Name:       "_dnslink." + zone.Domain + ".",
 			Type:       "TXT",
@@ -366,12 +365,11 @@ func (s *DNSServiceDefault) CreateWebsiteDNSRecords(ctx context.Context, zoneID 
 			Ttl:        &ttl,
 			Records: []powerdns.Record{
 				{
-					Content:  targetPath,
+					Content:  formatTXTContent(targetPath),
 					Disabled: &disabled,
 				},
 			},
 		},
-		// domain.com TXT record → lumeweb-verify=TOKEN (for validation)
 		{
 			Name:       zone.Domain + ".",
 			Type:       "TXT",
@@ -379,24 +377,26 @@ func (s *DNSServiceDefault) CreateWebsiteDNSRecords(ctx context.Context, zoneID 
 			Ttl:        &ttl,
 			Records: []powerdns.Record{
 				{
-					Content:  "lumeweb-verify=" + validationToken,
+					Content:  formatTXTContent(validationToken),
 					Disabled: &disabled,
 				},
 			},
 		},
-		// www.domain.com CNAME → domain.com (flattening support)
-		{
-			Name:       "www." + zone.Domain + ".",
-			Type:       "CNAME",
+	}
+
+	if s.config.GatewayDomain != "" {
+		rrsets = append(rrsets, powerdns.RRSet{
+			Name:       zone.Domain + ".",
+			Type:       "ALIAS",
 			Changetype: "REPLACE",
 			Ttl:        &ttl,
 			Records: []powerdns.Record{
 				{
-					Content:  zone.Domain + ".",
+					Content:  s.config.GatewayDomain + ".",
 					Disabled: &disabled,
 				},
 			},
-		},
+		})
 	}
 
 	if err := s.pdnsClient.UpdateZoneRRSets(ctx, zone.PowerDNSZoneID, rrsets); err != nil {
@@ -434,7 +434,6 @@ func (s *DNSServiceDefault) UpdateWebsiteDNSRecords(ctx context.Context, zoneID 
 	targetPath := string(buildTargetPath(targetHash, targetType))
 
 	rrsets := []powerdns.RRSet{
-		// Update _dnslink.domain.com TXT record with new target
 		{
 			Name:       "_dnslink." + zone.Domain + ".",
 			Type:       "TXT",
@@ -442,7 +441,7 @@ func (s *DNSServiceDefault) UpdateWebsiteDNSRecords(ctx context.Context, zoneID 
 			Ttl:        &ttl,
 			Records: []powerdns.Record{
 				{
-					Content:  targetPath,
+					Content:  formatTXTContent(targetPath),
 					Disabled: &disabled,
 				},
 			},
@@ -478,26 +477,25 @@ func (s *DNSServiceDefault) DeleteWebsiteDNSRecords(ctx context.Context, zoneID 
 		return fmt.Errorf("DNS hosting not enabled")
 	}
 
-	// Delete all DNS records created by CreateWebsiteDNSRecords
 	rrsets := []powerdns.RRSet{
-		// Delete _dnslink.domain.com TXT record
 		{
 			Name:       "_dnslink." + zone.Domain + ".",
 			Type:       "TXT",
 			Changetype: "DELETE",
 		},
-		// Delete domain.com TXT record (validation token)
 		{
 			Name:       zone.Domain + ".",
 			Type:       "TXT",
 			Changetype: "DELETE",
 		},
-		// Delete www.domain.com CNAME record
-		{
-			Name:       "www." + zone.Domain + ".",
-			Type:       "CNAME",
+	}
+
+	if s.config.GatewayDomain != "" {
+		rrsets = append(rrsets, powerdns.RRSet{
+			Name:       zone.Domain + ".",
+			Type:       "ALIAS",
 			Changetype: "DELETE",
-		},
+		})
 	}
 
 	if err := s.pdnsClient.UpdateZoneRRSets(ctx, zone.PowerDNSZoneID, rrsets); err != nil {

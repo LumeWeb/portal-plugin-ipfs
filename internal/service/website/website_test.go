@@ -3,6 +3,7 @@ package website
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"testing"
 	"time"
@@ -162,9 +163,10 @@ var TestOptions = coreTesting.CombineOptions(
 	testopts.NewBaseMockPluginBuilder().
 		WithService(pluginCore.WEBSITE_SERVICE, NewWebsiteService).
 		WithServiceConfig(pluginCore.WEBSITE_SERVICE, &pluginConfig.WebsiteConfig{
-			NotificationsEnabled: false,
-			AdminEmail:           "",
-			ValidationTokenTTL:   24 * time.Hour,
+			NotificationsEnabled:  false,
+			AdminEmail:            "",
+			ValidationTokenTTL:    24 * time.Hour,
+			VerificationTokenKey:  "lumeweb-verify",
 		}).
 		WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService).
 		WithServiceConfig(pluginCore.DNS_SERVICE, &pluginConfig.DnsConfig{
@@ -1220,7 +1222,8 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreated(t *testing.T) {
 		assert.NotEmpty(tb, capturedTargetHash, "Target hash should be captured")
 		assert.Equal(tb, pluginDb.WebsiteTargetTypeIPNS, capturedTargetType, "Target type should be IPNS after auto-conversion")
 		assert.NotEmpty(tb, capturedToken, "Validation token should be non-empty")
-		assert.Equal(tb, createdWebsite.ValidationToken, capturedToken, "Validation token should match website token")
+		expectedFormattedToken := fmt.Sprintf("lumeweb-verify=%s", createdWebsite.ValidationToken)
+		assert.Equal(tb, expectedFormattedToken, capturedToken, "Validation token should be formatted with key prefix")
 
 	}, TestOptions)
 }
