@@ -592,12 +592,12 @@ See also:.*`),
 				router.WithSummary("Update website"),
 				router.WithDescription(`Updates an existing website configuration.
 
-Modifies domain, target CID, or settings for a website. Changes take effect after validation and DNS propagation.
+Modifies domain, target CID, DNS hosting, or other settings for a website. Only fields included in the request body will be updated; omitted fields remain unchanged. Changes take effect after validation and DNS propagation.
 
 See also:.*`),
 				router.WithTags("Websites"),
 				router.WithPathParam("id", "Website ID", ""),
-				router.WithRequestBody(&dto.WebsiteRequest{}, "Website request", true),
+				router.WithRequestBody(&dto.WebsiteUpdateRequest{}, "Website update request", true),
 				router.WithSuccessResponse(http.StatusOK, "Website updated", router.WithJSONContent(dto.WebsiteResponse{})),
 			),
 		),

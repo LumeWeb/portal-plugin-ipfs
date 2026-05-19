@@ -167,7 +167,7 @@ func (r *IPNSRepublishResponse) FromModel(any) error {
 
 // Website DTOs
 
-// WebsiteRequest represents a request to create or update a website
+// WebsiteRequest represents a request to create a website
 type WebsiteRequest struct {
 	Domain          string              `json:"domain"`
 	TargetType      db.WebsiteTargetType `json:"target_type"` // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
@@ -242,6 +242,82 @@ func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 		}
 		website.TargetMultihash = target.ToMultihash()
 		website.CIDVersion = nil // NULL for IPNS
+	}
+
+	return website, nil
+}
+
+// WebsiteUpdateRequest represents a request to update a website
+// All fields are optional — only provided fields will be updated
+type WebsiteUpdateRequest struct {
+	Domain     *string              `json:"domain,omitempty"`
+	TargetType *db.WebsiteTargetType `json:"target_type,omitempty"`
+	TargetHash *string              `json:"target_hash,omitempty"`
+	DNSEnabled *bool                `json:"dns_hosting_enabled,omitempty"`
+}
+
+// HasUpdates returns true if at least one field is set
+func (r *WebsiteUpdateRequest) HasUpdates() bool {
+	return r.Domain != nil || r.TargetType != nil || r.TargetHash != nil || r.DNSEnabled != nil
+}
+
+func (r WebsiteUpdateRequest) Schema() *zog.StructSchema {
+	return zog.Struct(zog.Shape{
+		"Domain": zog.Ptr(zog.String().Required().Min(1).Max(255)),
+		"TargetType": zog.Ptr(config.ZogStringLike[db.WebsiteTargetType]().OneOf([]db.WebsiteTargetType{
+			db.WebsiteTargetTypeIPFS,
+			db.WebsiteTargetTypeIPNS,
+		})),
+		"TargetHash": zog.Ptr(zog.String().Required().Min(1).Max(255)),
+		"DNSEnabled": zog.Ptr(zog.Bool()),
+	})
+}
+
+func (r *WebsiteUpdateRequest) ToModel() (*db.Website, error) {
+	website := &db.Website{}
+
+	if r.Domain != nil {
+		website.Domain = *r.Domain
+	}
+
+	if r.TargetType != nil {
+		website.TargetType = string(*r.TargetType)
+	}
+
+	if r.DNSEnabled != nil {
+		website.Enabled = *r.DNSEnabled
+	}
+
+	if r.TargetHash != nil && r.TargetType != nil {
+		if *r.TargetType == db.WebsiteTargetTypeIPFS {
+			c, err := cid.Parse(*r.TargetHash)
+			if err != nil {
+				return nil, &httputil.ValidationError{
+					FieldErrors: map[string]string{
+						"target_hash": fmt.Sprintf("invalid CID: %v", err),
+					},
+				}
+			}
+			normalizedCid := encoding.NormalizeCid(c)
+			website.TargetMultihash = normalizedCid.Hash()
+			version := uint8(normalizedCid.Version())
+			website.CIDVersion = &version
+			codec := uint8(normalizedCid.Type())
+			website.CIDType = &codec
+		}
+
+		if *r.TargetType == db.WebsiteTargetTypeIPNS {
+			target, err := db.NewIPNSTargetFromString(*r.TargetHash)
+			if err != nil {
+				return nil, &httputil.ValidationError{
+					FieldErrors: map[string]string{
+						"target_hash": fmt.Sprintf("invalid IPNS target: %v", err),
+					},
+				}
+			}
+			website.TargetMultihash = target.ToMultihash()
+			website.CIDVersion = nil
+		}
 	}
 
 	return website, nil
@@ -424,6 +500,8 @@ var _ httputil.DTOValidator = (*IPNSPublishRequest)(nil)
 var _ httputil.DTORequest[*IPNSPublishRequest] = (*IPNSPublishRequest)(nil)
 var _ httputil.DTOValidator = (*WebsiteRequest)(nil)
 var _ httputil.DTORequest[*db.Website] = (*WebsiteRequest)(nil)
+var _ httputil.DTOValidator = (*WebsiteUpdateRequest)(nil)
+var _ httputil.DTORequest[*db.Website] = (*WebsiteUpdateRequest)(nil)
 var _ httputil.DTOValidator = (*WebsiteFilter)(nil)
 var _ httputil.DTORequest[WebsiteFilter] = (*WebsiteFilter)(nil)
 var _ httputil.DTOValidator = (*SSLStatusUpdateRequest)(nil)
