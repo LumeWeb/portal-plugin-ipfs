@@ -455,9 +455,11 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 
 				// Store old values for DNS updates and state transitions
 				oldTargetHash := website.TargetHash()
+				oldTargetType := pluginDb.WebsiteTargetType(website.TargetType)
 				oldEnabled = website.Enabled
 				targetHashChanged := false
 				dnsEnabledChanged = false
+				var newTargetHashStr string
 
 				// Validate domain if being updated
 				if domain, ok := updates["domain"].(string); ok {
@@ -496,6 +498,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 					// Check if target hash changed
 					if targetHashStr != oldTargetHash {
 						targetHashChanged = true
+						newTargetHashStr = targetHashStr
 					}
 
 					// Convert string to multihash and CID version
@@ -553,44 +556,42 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 							zap.Uint("website_id", websiteID),
 							zap.Uint("ipns_key_id", *website.IPNSKeyID))
 					} else {
-						// Get the new target hash (from updates, since website was just updated)
-						newTargetHash := oldTargetHash
-						if targetHashStr, ok := updates["target_hash"].(string); ok {
-							newTargetHash = targetHashStr
+						publishHash := newTargetHashStr
+						if publishHash == "" {
+							publishHash = website.TargetHash()
 						}
 
 						// Publish the new CID to the IPNS key
 						ttl := 24 * time.Hour
-						err = s.ipnsKeySvc.PublishCID(ctx, ipnsKey.PeerID().String(), newTargetHash, ttl)
+						err = s.ipnsKeySvc.PublishCID(ctx, ipnsKey.PeerID().String(), publishHash, ttl)
 						if err != nil {
 							s.Logger().Warn("Failed to republish new CID to IPNS key",
 								zap.Error(err),
 								zap.String("domain", website.Domain),
 								zap.String("peer_id", ipnsKey.PeerID().String()),
-								zap.String("cid", newTargetHash))
+								zap.String("cid", publishHash))
 						} else {
 							s.Logger().Info("Republished new CID to IPNS key",
 								zap.String("domain", website.Domain),
 								zap.String("peer_id", ipnsKey.PeerID().String()),
-								zap.String("cid", newTargetHash))
+								zap.String("cid", publishHash))
 						}
 					}
 				}
 
-				// Update DNS records if target changed and DNS hosting is enabled
-				// Note: For IPNS targets, DNS records don't need updating since the peer ID stays the same
-				if targetHashChanged && website.Enabled && website.DNSZoneID != nil && s.dnsSvc != nil {
-					// Only update DNS if not using IPNS (IPNS peer ID doesn't change)
-					if website.IPNSKeyID == nil {
-						newTargetHash := website.TargetHash()
-						newTargetType := pluginDb.WebsiteTargetType(website.TargetType)
-						if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *website.DNSZoneID, newTargetHash, newTargetType); err != nil {
-							s.Logger().Warn("Failed to update DNS records for website",
-								zap.Error(err),
-								zap.Uint("website_id", websiteID),
-								zap.Uint("dns_zone_id", *website.DNSZoneID))
-						}
+			// Update DNS records if target changed and DNS hosting is enabled
+			// Note: Skip DNS only when staying as IPNS (peer ID doesn't change)
+			if targetHashChanged && website.Enabled && website.DNSZoneID != nil && s.dnsSvc != nil {
+				newTargetType := pluginDb.WebsiteTargetType(website.TargetType)
+				if !(oldTargetType == pluginDb.WebsiteTargetTypeIPNS && newTargetType == pluginDb.WebsiteTargetTypeIPNS) {
+					newTargetHash := website.TargetHash()
+					if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *website.DNSZoneID, newTargetHash, newTargetType); err != nil {
+						s.Logger().Warn("Failed to update DNS records for website",
+							zap.Error(err),
+							zap.Uint("website_id", websiteID),
+							zap.Uint("dns_zone_id", *website.DNSZoneID))
 					}
+				}
 				}
 
 				return tx
