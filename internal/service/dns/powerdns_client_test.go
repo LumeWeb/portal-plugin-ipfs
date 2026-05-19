@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -842,6 +843,149 @@ func TestCreateZoneErrorResponseBody(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "DNS Name is not canonical") {
 		t.Errorf("expected error to contain PowerDNS error message, got %v", err)
+	}
+}
+
+func TestCreateZoneConflictFetchesExisting(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if r.Method == http.MethodPost && r.URL.Path == "/servers/localhost/zones" {
+			w.WriteHeader(http.StatusConflict)
+			w.Write([]byte(`{"error": "Conflict"}`))
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/servers/localhost/zones/example.com." {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(powerdns.Zone{
+				Id:   strPtr("example.com."),
+				Name: strPtr("example.com."),
+				Kind: (*powerdns.ZoneKind)(strPtr("Native")),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	logger := zap.NewNop()
+	coreLogger := &core.Logger{Logger: logger}
+	client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+	if err != nil {
+		t.Fatalf("NewPowerDNSClient failed: %v", err)
+	}
+
+	ctx := context.Background()
+	zone, err := client.CreateZone(ctx, "example.com", []string{"ns1.example.com."})
+
+	if err != nil {
+		t.Fatalf("expected no error on 409 conflict, got: %v", err)
+	}
+	if zone == nil {
+		t.Fatal("expected zone, got nil")
+	}
+	if zone.Id == nil || *zone.Id != "example.com." {
+		t.Errorf("expected zone ID 'example.com.', got %v", zone.Id)
+	}
+	if requestCount != 2 {
+		t.Errorf("expected 2 requests (POST + GET), got %d", requestCount)
+	}
+}
+
+func TestCreateZoneConflictGetAlsoFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/servers/localhost/zones" {
+			w.WriteHeader(http.StatusConflict)
+			w.Write([]byte(`{"error": "Conflict"}`))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	logger := zap.NewNop()
+	coreLogger := &core.Logger{Logger: logger}
+	client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+	if err != nil {
+		t.Fatalf("NewPowerDNSClient failed: %v", err)
+	}
+
+	ctx := context.Background()
+	zone, err := client.CreateZone(ctx, "example.com", []string{"ns1.example.com."})
+
+	if err == nil {
+		t.Error("expected error when GET also fails after 409")
+	}
+	if !strings.Contains(err.Error(), "zone already exists") {
+		t.Errorf("expected error to mention 'zone already exists', got: %v", err)
+	}
+	if zone != nil {
+		t.Errorf("expected nil zone on error, got %v", zone)
+	}
+}
+
+func TestCreateZoneConflictExistingZoneNoID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/servers/localhost/zones" {
+			w.WriteHeader(http.StatusConflict)
+			w.Write([]byte(`{"error": "Conflict"}`))
+			return
+		}
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(powerdns.Zone{
+				Name: strPtr("example.com."),
+				Kind: (*powerdns.ZoneKind)(strPtr("Native")),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	logger := zap.NewNop()
+	coreLogger := &core.Logger{Logger: logger}
+	client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+	if err != nil {
+		t.Fatalf("NewPowerDNSClient failed: %v", err)
+	}
+
+	ctx := context.Background()
+	zone, err := client.CreateZone(ctx, "example.com", []string{"ns1.example.com."})
+
+	if err == nil {
+		t.Error("expected error when existing zone has no ID")
+	}
+	if !strings.Contains(err.Error(), "existing zone has no ID") {
+		t.Errorf("expected error about missing ID, got: %v", err)
+	}
+	if zone != nil {
+		t.Errorf("expected nil zone on error, got %v", zone)
+	}
+}
+
+func TestIsDuplicateKeyError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{"sqlite unique", fmt.Errorf("UNIQUE constraint failed: ipfs_dns_zones.domain"), true},
+		{"mysql duplicate", fmt.Errorf("Duplicate entry 'example.com' for key 'idx_dns_zones_domain'"), true},
+		{"postgres duplicate", fmt.Errorf("duplicate key value violates unique constraint"), true},
+		{"other error", fmt.Errorf("some other error"), false},
+		{"nil error", nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isDuplicateKeyError(tt.err)
+			if result != tt.expected {
+				t.Errorf("isDuplicateKeyError(%v) = %v, want %v", tt.err, result, tt.expected)
+			}
+		})
 	}
 }
 

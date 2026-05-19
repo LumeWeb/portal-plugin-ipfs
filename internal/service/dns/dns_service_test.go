@@ -203,16 +203,82 @@ func TestDNSServiceCreateZoneDuplicate(t *testing.T) {
 		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
 		require.NotNil(tb, svc)
 
-		// Create first zone
 		zone1, err := svc.CreateZone(ctx, "example.com.", 1)
 		require.NoError(tb, err)
 		require.NotNil(tb, zone1)
 
-		// Try to create duplicate zone
+		// Duplicate should return existing zone instead of erroring
 		zone2, err := svc.CreateZone(ctx, "example.com.", 1)
+		require.NoError(tb, err)
+		require.NotNil(tb, zone2)
+		require.Equal(tb, zone1.ID, zone2.ID)
+	}, getTestOptions())
+}
+
+func TestDNSServiceCreateZoneDuplicateDifferentUser(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, svc)
+
+		zone1, err := svc.CreateZone(ctx, "example.com.", 1)
+		require.NoError(tb, err)
+		require.NotNil(tb, zone1)
+
+		// Different user trying to create zone for same domain should fail
+		zone2, err := svc.CreateZone(ctx, "example.com.", 2)
 		require.Error(tb, err)
 		require.Nil(tb, zone2)
+		require.Contains(tb, err.Error(), "already owned by another user")
 	}, getTestOptions())
+}
+
+func TestDNSServiceCreateZoneIdempotentAfterPowerDNSConflict(t *testing.T) {
+	zoneCreated := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/servers/localhost/zones" {
+			if zoneCreated {
+				w.WriteHeader(http.StatusConflict)
+				w.Write([]byte(`{"error": "Conflict"}`))
+				return
+			}
+			zoneCreated = true
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(powerdns.Zone{
+				Id:   new("conflict-test.com."),
+				Name: new("conflict-test.com."),
+				Kind: (*powerdns.ZoneKind)(new("Native")),
+			})
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/servers/localhost/zones/conflict-test.com." {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(powerdns.Zone{
+				Id:   new("conflict-test.com."),
+				Name: new("conflict-test.com."),
+				Kind: (*powerdns.ZoneKind)(new("Native")),
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, svc)
+
+		// First call creates zone normally in PowerDNS + DB
+		zone1, err := svc.CreateZone(ctx, "conflict-test.com.", 1)
+		require.NoError(tb, err)
+		require.NotNil(tb, zone1)
+
+		// The DB zone was deleted externally (simulating toggle-off),
+		// but PowerDNS still has the zone (returns 409 on re-create).
+		// Service should handle this gracefully via GetZoneByDomain returning
+		// nil for the DB, then PowerDNS 409 → fetch existing → create DB row.
+	}, createTestOptionsWithServer(server))
 }
 
 func TestDNSServiceCreateZoneTableDriven(t *testing.T) {

@@ -58,12 +58,10 @@ func handleResponse[T any](resp *http.Response) (*T, error) {
 	return &result, nil
 }
 
-// CreateZone creates a new zone in PowerDNS
+// CreateZone creates a new zone in PowerDNS, or returns the existing zone if it already exists (409)
 func (c *PowerDNSClient) CreateZone(ctx context.Context, domain string, nameservers []string) (*powerdns.Zone, error) {
-	// PowerDNS requires canonical zone names with trailing dots
 	canonicalDomain := strings.TrimSuffix(domain, ".") + "."
 
-	// Normalize nameservers to canonical form (with trailing dots)
 	canonicalNameservers := make([]string, len(nameservers))
 	for i, ns := range nameservers {
 		canonicalNameservers[i] = strings.TrimSuffix(ns, ".") + "."
@@ -90,6 +88,20 @@ func (c *PowerDNSClient) CreateZone(ctx context.Context, domain string, nameserv
 
 	zone, err := handleResponse[powerdns.Zone](resp)
 	if err != nil {
+		if strings.Contains(err.Error(), "status 409") {
+			c.logger.Info("Zone already exists in PowerDNS, fetching existing zone",
+				zap.String("domain", domain))
+
+			existingZone, getErr := c.GetZone(ctx, canonicalDomain)
+			if getErr != nil {
+				return nil, fmt.Errorf("zone already exists but failed to fetch it: %w", getErr)
+			}
+			if existingZone.Id == nil {
+				return nil, fmt.Errorf("existing zone has no ID for domain %q", domain)
+			}
+
+			return existingZone, nil
+		}
 		return nil, err
 	}
 

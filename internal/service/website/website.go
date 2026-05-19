@@ -726,6 +726,8 @@ func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context,
 		zap.Uint("website_id", website.ID),
 		zap.String("domain", website.Domain))
 
+	zoneDeleted := false
+
 	// Delete DNS zone if it exists
 	if website.DNSZoneID != nil && s.dnsSvc != nil {
 		err := s.dnsSvc.DeleteZone(ctx, *website.DNSZoneID)
@@ -734,20 +736,25 @@ func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context,
 				zap.Error(err),
 				zap.Uint("website_id", website.ID),
 				zap.Uint("dns_zone_id", *website.DNSZoneID))
-			// Continue despite DNS zone deletion failure
 		} else {
+			zoneDeleted = true
 			s.Logger().Info("DNS zone deleted for website",
 				zap.Uint("website_id", website.ID),
 				zap.Uint("dns_zone_id", *website.DNSZoneID))
 		}
 	}
 
-	// Reset status to pending_validation and clear dns_zone_id so user can re-validate without DNS
+	// Reset status to pending_validation
+	// Only clear dns_zone_id if the zone was actually deleted from PowerDNS
+	updates := map[string]interface{}{
+		"status": string(pluginDb.WebsiteStatusPendingValidation),
+	}
+	if zoneDeleted {
+		updates["dns_zone_id"] = nil
+	}
+
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		return tx.Model(website).Updates(map[string]interface{}{
-			"status":      string(pluginDb.WebsiteStatusPendingValidation),
-			"dns_zone_id": nil,
-		})
+		return tx.Model(website).Updates(updates)
 	})
 	if err != nil {
 		s.Logger().Error("Failed to update website",
@@ -756,9 +763,10 @@ func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context,
 		return fmt.Errorf("failed to update website: %w", err)
 	}
 
-	s.Logger().Info("DNS zone deleted, website reset to pending_validation",
+	s.Logger().Info("DNS hosting disabled, website reset to pending_validation",
 		zap.Uint("website_id", website.ID),
-		zap.String("domain", website.Domain))
+		zap.String("domain", website.Domain),
+		zap.Bool("zone_deleted", zoneDeleted))
 
 	return nil
 }
