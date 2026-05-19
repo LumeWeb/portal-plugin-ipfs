@@ -93,7 +93,9 @@ func (s *DNSServiceDefault) CreateRecord(ctx context.Context, zoneID uint, name 
 
 	fullName := buildFullName(name, zone.Domain)
 
-	rrset := buildRRSet(fullName, recordType, powerdns.REPLACE, lo.ToPtr(int(ttl)), []powerdns.Record{{Content: content}})
+	pdnsContent := formatRecordContent(recordType, content)
+
+	rrset := buildRRSet(fullName, recordType, powerdns.REPLACE, lo.ToPtr(int(ttl)), []powerdns.Record{{Content: pdnsContent}})
 
 	err = s.pdnsClient.UpdateZoneRRSets(ctx, zone.PowerDNSZoneID, []powerdns.RRSet{rrset})
 	if err != nil {
@@ -143,7 +145,7 @@ func (s *DNSServiceDefault) UpdateRecord(ctx context.Context, zoneID uint, name 
 	fullName := buildFullName(name, zone.Domain)
 
 	pdnsRecords := lo.Map(records, func(r string, _ int) powerdns.Record {
-		return powerdns.Record{Content: r}
+		return powerdns.Record{Content: formatRecordContent(recordType, r)}
 	})
 
 	rrset := buildRRSet(fullName, recordType, powerdns.REPLACE, lo.ToPtr(int(ttl)), pdnsRecords)

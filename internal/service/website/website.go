@@ -274,7 +274,7 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 						zap.String("domain", website.Domain))
 
 					// Create DNS records for the website
-					if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, dnsZone.ID, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), website.ValidationToken); err != nil {
+					if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, dnsZone.ID, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), fmt.Sprintf("%s=%s", s.config.VerificationTokenKey, website.ValidationToken)); err != nil {
 						s.Logger().Error("Failed to create DNS records for website",
 							zap.Error(err),
 							zap.Uint("website_id", website.ID),
@@ -688,7 +688,7 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 		}
 
 		// Create DNS records
-		err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), newToken)
+		err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), fmt.Sprintf("%s=%s", s.config.VerificationTokenKey, newToken))
 		if err != nil {
 			return fmt.Errorf("failed to create DNS records: %w", err)
 		}
