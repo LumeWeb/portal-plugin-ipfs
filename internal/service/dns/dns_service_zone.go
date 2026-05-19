@@ -28,7 +28,7 @@ func (s *DNSServiceDefault) CreateZone(ctx context.Context, domain string, userI
 		return nil, fmt.Errorf("invalid domain: %w", err)
 	}
 
-	// Check if domain already exists in database
+	// Check if domain already exists in database (including soft-deleted)
 	existing, err := s.GetZoneByDomain(ctx, domain)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check existing domain: %w", err)
@@ -36,6 +36,23 @@ func (s *DNSServiceDefault) CreateZone(ctx context.Context, domain string, userI
 	if existing != nil {
 		if existing.UserID != userID {
 			return nil, fmt.Errorf("domain %q is already owned by another user", domain)
+		}
+		// If soft-deleted, un-delete and reset
+		if existing.DeletedAt.Valid {
+			err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Unscoped().Model(existing).Updates(map[string]interface{}{
+					"deleted_at": nil,
+					"status":     string(pluginDb.DNSZoneStatusPendingNameserver),
+				})
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to restore soft-deleted zone: %w", err)
+			}
+			existing.DeletedAt = gorm.DeletedAt{}
+			existing.Status = string(pluginDb.DNSZoneStatusPendingNameserver)
+			s.Logger().Info("Restored soft-deleted DNS zone",
+				zap.Uint("id", existing.ID),
+				zap.String("domain", domain))
 		}
 		return existing, nil
 	}
@@ -81,6 +98,20 @@ func (s *DNSServiceDefault) CreateZone(ctx context.Context, domain string, userI
 			if existing.UserID != userID {
 				return nil, fmt.Errorf("domain %q is already owned by another user", domain)
 			}
+			// If soft-deleted, un-delete and reset
+			if existing.DeletedAt.Valid {
+				unDeleteErr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+					return tx.Unscoped().Model(existing).Updates(map[string]interface{}{
+						"deleted_at": nil,
+						"status":     string(pluginDb.DNSZoneStatusPendingNameserver),
+					})
+				})
+				if unDeleteErr != nil {
+					return nil, fmt.Errorf("concurrent zone creation detected but failed to restore soft-deleted zone: %w", unDeleteErr)
+				}
+				existing.DeletedAt = gorm.DeletedAt{}
+				existing.Status = string(pluginDb.DNSZoneStatusPendingNameserver)
+			}
 			return existing, nil
 		}
 		return nil, fmt.Errorf("failed to create zone in database: %w", err)
@@ -120,7 +151,7 @@ func (s *DNSServiceDefault) GetZone(ctx context.Context, zoneID uint) (*pluginDb
 	return &zone, nil
 }
 
-// GetZoneByDomain retrieves a zone by domain name
+// GetZoneByDomain retrieves a zone by domain name, including soft-deleted zones
 func (s *DNSServiceDefault) GetZoneByDomain(ctx context.Context, domain string) (*pluginDb.DNSZone, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.GetZoneByDomain")
 	defer span.End()
@@ -128,7 +159,7 @@ func (s *DNSServiceDefault) GetZoneByDomain(ctx context.Context, domain string) 
 	var zone pluginDb.DNSZone
 
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		return tx.Where("domain = ?", domain).First(&zone)
+		return tx.Unscoped().Where("domain = ?", domain).First(&zone)
 	})
 
 	if err != nil {

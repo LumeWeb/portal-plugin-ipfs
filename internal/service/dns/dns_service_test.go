@@ -1018,3 +1018,110 @@ func TestDNSServiceGetRRSet(t *testing.T) {
 		}, testOptions)
 	})
 }
+
+func TestDNSServiceCreateZoneRestoresSoftDeletedZone(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, svc)
+
+		// Create a zone
+		zone1, err := svc.CreateZone(ctx, "example.com.", 1)
+		require.NoError(tb, err)
+		require.NotNil(tb, zone1)
+		originalID := zone1.ID
+
+		// Soft-delete the zone
+		err = svc.DeleteZone(ctx, zone1.ID)
+		require.NoError(tb, err)
+
+		// Verify GetZoneByDomain still finds the soft-deleted zone
+		deleted, err := svc.GetZoneByDomain(ctx, "example.com.")
+		require.NoError(tb, err)
+		require.NotNil(tb, deleted)
+		require.True(tb, deleted.DeletedAt.Valid, "zone should be soft-deleted")
+
+		// Verify normal GetZone no longer finds it
+		_, err = svc.GetZone(ctx, originalID)
+		require.Equal(tb, gorm.ErrRecordNotFound, err)
+
+		// Re-create the zone — should restore the soft-deleted row
+		zone2, err := svc.CreateZone(ctx, "example.com.", 1)
+		require.NoError(tb, err)
+		require.NotNil(tb, zone2)
+
+		// Should be the same row (restored, not new)
+		require.Equal(tb, originalID, zone2.ID, "restored zone should have same ID")
+		require.False(tb, zone2.DeletedAt.Valid, "restored zone should not be soft-deleted")
+		require.Equal(tb, string(pluginDb.DNSZoneStatusPendingNameserver), zone2.Status)
+
+		// Verify GetZone now finds it normally
+		freshZone, err := svc.GetZone(ctx, zone2.ID)
+		require.NoError(tb, err)
+		require.NotNil(tb, freshZone)
+		require.Equal(tb, "example.com.", freshZone.Domain)
+	}, getTestOptions())
+}
+
+func TestDNSServiceCreateZoneSoftDeletedDifferentUser(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, svc)
+
+		// Create a zone for user 1
+		zone1, err := svc.CreateZone(ctx, "example.com.", 1)
+		require.NoError(tb, err)
+		require.NotNil(tb, zone1)
+
+		// Soft-delete the zone
+		err = svc.DeleteZone(ctx, zone1.ID)
+		require.NoError(tb, err)
+
+		// User 2 trying to create the same domain should fail
+		zone2, err := svc.CreateZone(ctx, "example.com.", 2)
+		require.Error(tb, err)
+		require.Nil(tb, zone2)
+		require.Contains(tb, err.Error(), "already owned by another user")
+	}, getTestOptions())
+}
+
+func TestDNSServiceGetZoneByDomainFindsSoftDeleted(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, svc)
+
+		// Create a zone
+		zone, err := svc.CreateZone(ctx, "example.com.", 1)
+		require.NoError(tb, err)
+		require.NotNil(tb, zone)
+
+		// Soft-delete the zone
+		err = svc.DeleteZone(ctx, zone.ID)
+		require.NoError(tb, err)
+
+		// GetZoneByDomain should still find the soft-deleted zone
+		found, err := svc.GetZoneByDomain(ctx, "example.com.")
+		require.NoError(tb, err)
+		require.NotNil(tb, found)
+		require.Equal(tb, "example.com.", found.Domain)
+		require.True(tb, found.DeletedAt.Valid, "should find the soft-deleted zone")
+	}, getTestOptions())
+}
+
+func TestDNSServiceCreateZoneActiveZoneNotSoftDeletedReturnsExisting(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, svc)
+
+		// Create a zone
+		zone1, err := svc.CreateZone(ctx, "example.com.", 1)
+		require.NoError(tb, err)
+		require.NotNil(tb, zone1)
+
+		// Creating again should return the existing zone (not soft-deleted)
+		zone2, err := svc.CreateZone(ctx, "example.com.", 1)
+		require.NoError(tb, err)
+		require.NotNil(tb, zone2)
+		require.Equal(tb, zone1.ID, zone2.ID)
+		require.False(tb, zone2.DeletedAt.Valid, "existing active zone should not be soft-deleted")
+	}, getTestOptions())
+}
