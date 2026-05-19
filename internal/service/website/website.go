@@ -455,6 +455,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 
 				// Store old values for DNS updates and state transitions
 				oldTargetHash := website.TargetHash()
+				oldTargetType := pluginDb.WebsiteTargetType(website.TargetType)
 				oldEnabled = website.Enabled
 				targetHashChanged := false
 				dnsEnabledChanged = false
@@ -579,19 +580,18 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				}
 
 			// Update DNS records if target changed and DNS hosting is enabled
-			// Note: For IPNS targets staying as IPNS, DNS records don't need updating since the peer ID stays the same
+			// Note: Skip DNS only when staying as IPNS (peer ID doesn't change)
 			if targetHashChanged && website.Enabled && website.DNSZoneID != nil && s.dnsSvc != nil {
 				newTargetType := pluginDb.WebsiteTargetType(website.TargetType)
-				// Update DNS unless the new target type is still IPNS (peer ID doesn't change)
-				if newTargetType != pluginDb.WebsiteTargetTypeIPNS {
+				if !(oldTargetType == pluginDb.WebsiteTargetTypeIPNS && newTargetType == pluginDb.WebsiteTargetTypeIPNS) {
 					newTargetHash := website.TargetHash()
-						if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *website.DNSZoneID, newTargetHash, newTargetType); err != nil {
-							s.Logger().Warn("Failed to update DNS records for website",
-								zap.Error(err),
-								zap.Uint("website_id", websiteID),
-								zap.Uint("dns_zone_id", *website.DNSZoneID))
-						}
+					if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *website.DNSZoneID, newTargetHash, newTargetType); err != nil {
+						s.Logger().Warn("Failed to update DNS records for website",
+							zap.Error(err),
+							zap.Uint("website_id", websiteID),
+							zap.Uint("dns_zone_id", *website.DNSZoneID))
 					}
+				}
 				}
 
 				return tx
