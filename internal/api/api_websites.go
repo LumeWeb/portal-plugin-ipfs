@@ -251,11 +251,14 @@ func (a *API) updateWebsite(c echo.Context) error {
 		updates["domain"] = *req.Domain
 	}
 	if req.TargetType != nil || req.TargetHash != nil {
-		if req.TargetType == nil || req.TargetHash == nil {
-			return ctx.Error(NewError(ErrKeyInvalidRequest, fmt.Errorf("target_type and target_hash must both be provided")), http.StatusUnprocessableEntity)
+		if req.TargetType != nil && req.TargetHash == nil {
+			updates["target_type"] = string(*req.TargetType)
+		} else if req.TargetHash != nil && req.TargetType == nil {
+			return ctx.Error(NewError(ErrKeyInvalidRequest, fmt.Errorf("target_type is required when target_hash is provided")), http.StatusUnprocessableEntity)
+		} else {
+			updates["target_type"] = string(*req.TargetType)
+			updates["target_hash"] = *req.TargetHash
 		}
-		updates["target_type"] = string(*req.TargetType)
-		updates["target_hash"] = *req.TargetHash
 	}
 	if req.DNSEnabled != nil {
 		updates["dns_enabled"] = *req.DNSEnabled
