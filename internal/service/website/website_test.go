@@ -2215,3 +2215,123 @@ func TestWebsiteService_CreateWebsite_NoInheritWithoutSoftDeletedWebsite(t *test
 		assert.Nil(tb, createdWebsite.SSLIssuedAt)
 	}, TestOptions)
 }
+
+// TestWebsiteService_UpdateWebsite_ConvertIPNSToIPFS_UpdatesDNSRecords verifies that
+// when a website with DNS hosting enabled is updated from IPNS to IPFS target type,
+// the DNS _dnslink record is updated from /ipns/<peerID> to /ipfs/<cid>.
+// This tests the fix for the bug where IPNSKeyID != nil caused DNS update to be skipped
+// even when the target type was changing away from IPNS.
+func TestWebsiteService_UpdateWebsite_ConvertIPNSToIPFS_UpdatesDNSRecords(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "ipns-to-ipfs-dns-test.com"
+		testZoneID := uint(9001)
+
+		// Create website with DNS hosting enabled (auto-creates IPNS key)
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+
+		testIPNSKey := setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
+
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID,
+			mock.Anything,
+			pluginDb.WebsiteTargetTypeIPNS,
+			mock.Anything,
+		).Return(nil).Once()
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType)
+		require.NotNil(tb, createdWebsite.IPNSKeyID)
+		require.NotNil(tb, createdWebsite.DNSZoneID)
+
+		// Act - Update from IPNS to IPFS
+		newCID := util.GenerateTestCID(t, "new ipfs content")
+		updates := map[string]interface{}{
+			"target_hash": newCID.String(),
+			"target_type": string(pluginDb.WebsiteTargetTypeIPFS),
+		}
+
+		// IPNS republish attempt (website still has IPNSKeyID from creation)
+		mockIPNSKey.EXPECT().GetKeyByID(mock.Anything, testUserID1, *createdWebsite.IPNSKeyID).Return(testIPNSKey, nil).Once()
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
+
+		// DNS records must be updated when switching from IPNS to IPFS
+		mockDNS.EXPECT().UpdateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID,
+			newCID.String(),
+			pluginDb.WebsiteTargetTypeIPFS,
+		).Return(nil).Once()
+
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
+
+		// Assert
+		require.NoError(tb, err)
+		require.NotNil(tb, updatedWebsite)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPFS), updatedWebsite.TargetType)
+		assert.Equal(tb, newCID.String(), updatedWebsite.TargetHash())
+	}, TestOptions)
+}
+
+// TestWebsiteService_UpdateWebsite_IPNSToIPNS_NoDNSUpdate verifies that
+// when a website with DNS hosting stays as IPNS (only the CID published
+// to the IPNS key changes), DNS records are NOT updated since the peer ID
+// in the _dnslink record stays the same.
+func TestWebsiteService_UpdateWebsite_IPNSToIPNS_NoDNSUpdate(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "ipns-same-type-test.com"
+		testZoneID := uint(9002)
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+
+		testIPNSKey := setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
+
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID,
+			mock.Anything,
+			pluginDb.WebsiteTargetTypeIPNS,
+			mock.Anything,
+		).Return(nil).Once()
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+
+		// Act - Update to a new IPNS peer ID (staying as IPNS)
+		testPeerID := "12D3KooWCqvCZqaG6LmG4mtoWZZwrvYB911DK8qqwE9gc25s4Hft"
+		updates := map[string]interface{}{
+			"target_hash": testPeerID,
+		}
+
+		// IPNS republish attempt (website still has IPNSKeyID)
+		mockIPNSKey.EXPECT().GetKeyByID(mock.Anything, testUserID1, *createdWebsite.IPNSKeyID).Return(testIPNSKey, nil).Once()
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
+
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
+
+		// Assert
+		require.NoError(tb, err)
+		require.NotNil(tb, updatedWebsite)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), updatedWebsite.TargetType)
+
+		// DNS records should NOT be updated when staying as IPNS
+		mockDNS.AssertNotCalled(t, "UpdateWebsiteDNSRecords")
+	}, TestOptions)
+}
