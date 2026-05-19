@@ -34,6 +34,9 @@ func (s *DNSServiceDefault) CreateZone(ctx context.Context, domain string, userI
 		return nil, fmt.Errorf("failed to check existing domain: %w", err)
 	}
 	if existing != nil {
+		if existing.UserID != userID {
+			return nil, fmt.Errorf("domain %q is already owned by another user", domain)
+		}
 		return existing, nil
 	}
 
@@ -74,6 +77,9 @@ func (s *DNSServiceDefault) CreateZone(ctx context.Context, domain string, userI
 			}
 			if existing == nil {
 				return nil, fmt.Errorf("concurrent zone creation detected but existing zone not found for domain %q", domain)
+			}
+			if existing.UserID != userID {
+				return nil, fmt.Errorf("domain %q is already owned by another user", domain)
 			}
 			return existing, nil
 		}

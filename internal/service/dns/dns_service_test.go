@@ -215,6 +215,23 @@ func TestDNSServiceCreateZoneDuplicate(t *testing.T) {
 	}, getTestOptions())
 }
 
+func TestDNSServiceCreateZoneDuplicateDifferentUser(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, svc)
+
+		zone1, err := svc.CreateZone(ctx, "example.com.", 1)
+		require.NoError(tb, err)
+		require.NotNil(tb, zone1)
+
+		// Different user trying to create zone for same domain should fail
+		zone2, err := svc.CreateZone(ctx, "example.com.", 2)
+		require.Error(tb, err)
+		require.Nil(tb, zone2)
+		require.Contains(tb, err.Error(), "already owned by another user")
+	}, getTestOptions())
+}
+
 func TestDNSServiceCreateZoneIdempotentAfterPowerDNSConflict(t *testing.T) {
 	zoneCreated := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
