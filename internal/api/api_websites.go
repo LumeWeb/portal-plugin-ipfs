@@ -232,19 +232,27 @@ func (a *API) updateWebsite(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	var req dto.WebsiteRequest
+	var req dto.WebsiteUpdateRequest
 	if _, ok := httputil.DecodeAndValidateRequest(ctx, &req); !ok {
 		return nil
 	}
 
-	// Build updates map
-	updates := map[string]interface{}{
-		"domain":      req.Domain,
-		"target_type": req.TargetType,
-		"target_hash": req.TargetHash,
+	if !req.HasUpdates() {
+		return ctx.Error(NewError(ErrKeyInvalidRequest, fmt.Errorf("at least one field must be provided")), http.StatusUnprocessableEntity)
 	}
 
-	// Add dns_enabled if specified in request
+	// Build updates map from non-nil fields
+	updates := map[string]interface{}{}
+
+	if req.Domain != nil {
+		updates["domain"] = *req.Domain
+	}
+	if req.TargetType != nil {
+		updates["target_type"] = string(*req.TargetType)
+	}
+	if req.TargetHash != nil {
+		updates["target_hash"] = *req.TargetHash
+	}
 	if req.DNSEnabled != nil {
 		updates["dns_enabled"] = *req.DNSEnabled
 	}

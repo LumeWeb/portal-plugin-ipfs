@@ -862,6 +862,41 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 		}, TestOptions)
 	})
 
+	t.Run("success_dns_hosting_only", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			mockWebsite := createMockIPFSWebsite(1, userID, "example.com", TestCID, db.WebsiteStatusActive, "")
+
+			mockWebsiteService.EXPECT().UpdateWebsite(mock.Anything, userID, uint(1), mock.AnythingOfType("map[string]interface {}")).Return(mockWebsite, nil)
+
+			reqBody := `{"dns_hosting_enabled":true}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			var response dto.WebsiteResponse
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Equal(t, uint(1), response.ID)
+		}, TestOptions)
+	})
+
+	t.Run("error_no_fields", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, _ := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			reqBody := `{}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		}, TestOptions)
+	})
+
 	t.Run("error_invalid_id", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
