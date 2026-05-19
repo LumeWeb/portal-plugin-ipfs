@@ -441,17 +441,20 @@ func (f WebsiteFilter) ToModel() (WebsiteFilter, error) {
 // WebsiteConfig holds website-related configuration
 type WebsiteConfig struct {
 	GatewayDomain string
+	Nameservers   []string
 }
 
 // WebsiteConfigResponse returns website-related configuration for client use
 type WebsiteConfigResponse struct {
-	GatewayDomain string `json:"gateway_domain,omitempty"`
+	GatewayDomain string   `json:"gateway_domain,omitempty"`
+	Nameservers   []string `json:"nameservers,omitempty"`
 }
 
 var _ httputil.DTOResponse[*WebsiteConfig] = (*WebsiteConfigResponse)(nil)
 
 func (r *WebsiteConfigResponse) FromModel(cfg *WebsiteConfig) error {
 	r.GatewayDomain = cfg.GatewayDomain
+	r.Nameservers = cfg.Nameservers
 	return nil
 }
 

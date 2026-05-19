@@ -38,6 +38,9 @@ func (a *API) getWebsiteConfig(c echo.Context) error {
 	cfg := &dto.WebsiteConfig{
 		GatewayDomain: a.gatewayDomain(),
 	}
+	if a.dnsConfig != nil && a.dnsConfig.Enabled && len(a.dnsConfig.Nameservers) > 0 {
+		cfg.Nameservers = a.dnsConfig.Nameservers
+	}
 	return httputil.EncodeResponse(ctx, cfg, &dto.WebsiteConfigResponse{})
 }
 
