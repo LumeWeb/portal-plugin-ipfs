@@ -343,6 +343,7 @@ type WebsiteResponse struct {
 	LastCheckedAt       *time.Time     `json:"last_checked_at,omitempty"`
 	DNSZoneID           *uint          `json:"dns_zone_id,omitempty"`
 	Enabled             bool           `json:"dns_hosting_enabled"`
+	IsSubdomain         bool           `json:"is_subdomain"`
 	GatewayDomain       string         `json:"gateway_domain,omitempty"`
 	Created             time.Time      `json:"created"`
 	Updated             time.Time      `json:"updated"`
@@ -385,6 +386,12 @@ func (r *WebsiteResponse) FromModel(model *db.Website) error {
 	}
 
 	return nil
+}
+
+// SetSubdomainInfo sets the IsSubdomain flag based on the zone's domain.
+// If zoneDomain is empty, the website is considered a top-level website.
+func (r *WebsiteResponse) SetSubdomainInfo(zoneDomain string) {
+	r.IsSubdomain = zoneDomain != "" && zoneDomain != r.Domain
 }
 
 // WebsiteValidateResponse represents a website validation response

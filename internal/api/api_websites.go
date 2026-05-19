@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -31,6 +32,17 @@ func (a *API) gatewayDomain() string {
 		return a.dnsConfig.GatewayDomain
 	}
 	return ""
+}
+
+func (a *API) zoneDomain(ctx context.Context, dnsZoneID *uint) string {
+	if dnsZoneID == nil || a.dnsService == nil {
+		return ""
+	}
+	zone, err := a.dnsService.GetZone(ctx, *dnsZoneID)
+	if err != nil || zone == nil {
+		return ""
+	}
+	return zone.Domain
 }
 
 func (a *API) getWebsiteConfig(c echo.Context) error {
@@ -115,6 +127,7 @@ func (a *API) createWebsite(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 	resp.GatewayDomain = a.gatewayDomain()
+	resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
 
 	ctx.Response().Before(func() {
 		ctx.Response().Status = http.StatusCreated
@@ -169,6 +182,7 @@ func (a *API) listWebsites(c echo.Context) error {
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
 		responses[i].GatewayDomain = a.gatewayDomain()
+		responses[i].SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
 	}
 
 	// Convert to WebsiteItem for list response
@@ -209,6 +223,7 @@ func (a *API) getWebsite(c echo.Context) error {
 		var resp dto.WebsiteResponse
 		if err := resp.FromModel(website); err == nil {
 			resp.GatewayDomain = a.gatewayDomain()
+			resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
 			ctx.Response().Before(func() {
 				ctx.Response().Status = http.StatusGone
 			})
@@ -218,6 +233,7 @@ func (a *API) getWebsite(c echo.Context) error {
 
 	resp := &dto.WebsiteResponse{}
 	resp.GatewayDomain = a.gatewayDomain()
+	resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
 	return httputil.EncodeResponse(ctx, website, resp)
 }
 
@@ -278,6 +294,7 @@ func (a *API) updateWebsite(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 	resp.GatewayDomain = a.gatewayDomain()
+	resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
 
 	return httputil.EncodeResponse(ctx, website, &resp)
 }
@@ -377,6 +394,7 @@ func (a *API) getSSLStatus(c echo.Context) error {
 
 	resp := &dto.WebsiteResponse{}
 	resp.GatewayDomain = a.gatewayDomain()
+	resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
 	return httputil.EncodeResponse(ctx, website, resp)
 }
 
@@ -418,5 +436,6 @@ func (a *API) updateSSLStatus(c echo.Context) error {
 
 	resp := &dto.WebsiteResponse{}
 	resp.GatewayDomain = a.gatewayDomain()
+	resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
 	return httputil.EncodeResponse(ctx, website, resp)
 }
