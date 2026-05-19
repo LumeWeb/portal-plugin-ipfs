@@ -445,7 +445,7 @@ func TestDNSServiceCreateWebsiteDNSRecords(t *testing.T) {
 		require.NotNil(tb, zone)
 
 		// Create website DNS records
-		err = svc.CreateWebsiteDNSRecords(ctx, zone.ID, "QmHash123", pluginDb.WebsiteTargetTypeIPFS, "test-validation-token")
+		err = svc.CreateWebsiteDNSRecords(ctx, zone.ID, "example.com", "QmHash123", pluginDb.WebsiteTargetTypeIPFS, "test-validation-token")
 		require.NoError(tb, err)
 	}, getTestOptions())
 }
@@ -461,7 +461,7 @@ func TestDNSServiceDeleteWebsiteDNSRecords(t *testing.T) {
 		require.NotNil(tb, zone)
 
 		// Delete website DNS records
-		err = svc.DeleteWebsiteDNSRecords(ctx, zone.ID)
+		err = svc.DeleteWebsiteDNSRecords(ctx, zone.ID, "example.com")
 		require.NoError(tb, err)
 	}, getTestOptions())
 }

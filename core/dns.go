@@ -37,14 +37,17 @@ type DNSService interface {
 	// ValidateNameservers validates that domain's nameservers match approved list
 	ValidateNameservers(ctx context.Context, zoneID uint) (bool, error)
 
-	// CreateWebsiteDNSRecords creates initial DNS records for a new website
-	CreateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType pluginDb.WebsiteTargetType, validationToken string) error
+	// CreateWebsiteDNSRecords creates initial DNS records for a new website.
+	// websiteDomain is the full domain of the website (may differ from the zone's domain for subdomain websites).
+	CreateWebsiteDNSRecords(ctx context.Context, zoneID uint, websiteDomain string, targetHash string, targetType pluginDb.WebsiteTargetType, validationToken string) error
 
-	// UpdateWebsiteDNSRecords updates DNS records for a website
-	UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType pluginDb.WebsiteTargetType) error
+	// UpdateWebsiteDNSRecords updates DNS records for a website.
+	// websiteDomain is the full domain of the website (may differ from the zone's domain for subdomain websites).
+	UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, websiteDomain string, targetHash string, targetType pluginDb.WebsiteTargetType) error
 
-	// DeleteWebsiteDNSRecords removes DNS records for a website
-	DeleteWebsiteDNSRecords(ctx context.Context, zoneID uint) error
+	// DeleteWebsiteDNSRecords removes DNS records for a website.
+	// websiteDomain is the full domain of the website (may differ from the zone's domain for subdomain websites).
+	DeleteWebsiteDNSRecords(ctx context.Context, zoneID uint, websiteDomain string) error
 
 	// GetZoneRecords retrieves DNS records for a zone from PowerDNS
 	// Returns list of DNSRecord DTOs representing PowerDNS RRSets with filtering applied

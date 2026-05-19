@@ -342,8 +342,10 @@ func buildTargetPath(targetHash string, targetType pluginDb.WebsiteTargetType) D
 	return DNSLinkTarget("dnslink=" + targetType.ToDNSLinkPath(targetHash))
 }
 
-// CreateWebsiteDNSRecords creates initial DNS records for a new website
-func (s *DNSServiceDefault) CreateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType pluginDb.WebsiteTargetType, validationToken string) error {
+// CreateWebsiteDNSRecords creates initial DNS records for a new website.
+// websiteDomain is the full domain of the website and may differ from the zone's domain
+// when this is a subdomain website sharing a parent zone.
+func (s *DNSServiceDefault) CreateWebsiteDNSRecords(ctx context.Context, zoneID uint, websiteDomain string, targetHash string, targetType pluginDb.WebsiteTargetType, validationToken string) error {
 	ctx, span := core.TraceMethod(ctx, "DNSService.CreateWebsiteDNSRecords")
 	defer span.End()
 
@@ -363,9 +365,12 @@ func (s *DNSServiceDefault) CreateWebsiteDNSRecords(ctx context.Context, zoneID 
 	disabled := false
 	targetPath := string(buildTargetPath(targetHash, targetType))
 
+	dnslinkName := buildFullName("_dnslink", websiteDomain)
+	recordName := buildFullName(websiteDomain, websiteDomain)
+
 	rrsets := []powerdns.RRSet{
 		{
-			Name:       "_dnslink." + zone.Domain + ".",
+			Name:       dnslinkName,
 			Type:       "TXT",
 			Changetype: "REPLACE",
 			Ttl:        &ttl,
@@ -377,7 +382,7 @@ func (s *DNSServiceDefault) CreateWebsiteDNSRecords(ctx context.Context, zoneID 
 			},
 		},
 		{
-			Name:       zone.Domain + ".",
+			Name:       recordName,
 			Type:       "TXT",
 			Changetype: "REPLACE",
 			Ttl:        &ttl,
@@ -392,7 +397,7 @@ func (s *DNSServiceDefault) CreateWebsiteDNSRecords(ctx context.Context, zoneID 
 
 	if s.config.GatewayDomain != "" {
 		rrsets = append(rrsets, powerdns.RRSet{
-			Name:       zone.Domain + ".",
+			Name:       recordName,
 			Type:       "ALIAS",
 			Changetype: "REPLACE",
 			Ttl:        &ttl,
@@ -411,15 +416,17 @@ func (s *DNSServiceDefault) CreateWebsiteDNSRecords(ctx context.Context, zoneID 
 
 	s.Logger().Info("DNS records created for website",
 		zap.Uint("zone_id", zoneID),
-		zap.String("domain", zone.Domain),
+		zap.String("domain", websiteDomain),
 		zap.String("target_hash", targetHash),
 		zap.String("target_type", string(targetType)))
 
 	return nil
 }
 
-// UpdateWebsiteDNSRecords updates DNS records for a website
-func (s *DNSServiceDefault) UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType pluginDb.WebsiteTargetType) error {
+// UpdateWebsiteDNSRecords updates DNS records for a website.
+// websiteDomain is the full domain of the website and may differ from the zone's domain
+// when this is a subdomain website sharing a parent zone.
+func (s *DNSServiceDefault) UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, websiteDomain string, targetHash string, targetType pluginDb.WebsiteTargetType) error {
 	ctx, span := core.TraceMethod(ctx, "DNSService.UpdateWebsiteDNSRecords")
 	defer span.End()
 
@@ -439,9 +446,11 @@ func (s *DNSServiceDefault) UpdateWebsiteDNSRecords(ctx context.Context, zoneID 
 	disabled := false
 	targetPath := string(buildTargetPath(targetHash, targetType))
 
+	dnslinkName := buildFullName("_dnslink", websiteDomain)
+
 	rrsets := []powerdns.RRSet{
 		{
-			Name:       "_dnslink." + zone.Domain + ".",
+			Name:       dnslinkName,
 			Type:       "TXT",
 			Changetype: "REPLACE",
 			Ttl:        &ttl,
@@ -460,14 +469,16 @@ func (s *DNSServiceDefault) UpdateWebsiteDNSRecords(ctx context.Context, zoneID 
 
 	s.Logger().Info("DNS records updated for website",
 		zap.Uint("zone_id", zoneID),
-		zap.String("domain", zone.Domain),
+		zap.String("domain", websiteDomain),
 		zap.String("target_hash", targetHash))
 
 	return nil
 }
 
-// DeleteWebsiteDNSRecords removes DNS records for a website
-func (s *DNSServiceDefault) DeleteWebsiteDNSRecords(ctx context.Context, zoneID uint) error {
+// DeleteWebsiteDNSRecords removes DNS records for a website.
+// websiteDomain is the full domain of the website and may differ from the zone's domain
+// when this is a subdomain website sharing a parent zone.
+func (s *DNSServiceDefault) DeleteWebsiteDNSRecords(ctx context.Context, zoneID uint, websiteDomain string) error {
 	ctx, span := core.TraceMethod(ctx, "DNSService.DeleteWebsiteDNSRecords")
 	defer span.End()
 
@@ -483,14 +494,17 @@ func (s *DNSServiceDefault) DeleteWebsiteDNSRecords(ctx context.Context, zoneID 
 		return fmt.Errorf("DNS hosting not enabled")
 	}
 
+	dnslinkName := buildFullName("_dnslink", websiteDomain)
+	recordName := buildFullName(websiteDomain, websiteDomain)
+
 	rrsets := []powerdns.RRSet{
 		{
-			Name:       "_dnslink." + zone.Domain + ".",
+			Name:       dnslinkName,
 			Type:       "TXT",
 			Changetype: "DELETE",
 		},
 		{
-			Name:       zone.Domain + ".",
+			Name:       recordName,
 			Type:       "TXT",
 			Changetype: "DELETE",
 		},
@@ -498,7 +512,7 @@ func (s *DNSServiceDefault) DeleteWebsiteDNSRecords(ctx context.Context, zoneID 
 
 	if s.config.GatewayDomain != "" {
 		rrsets = append(rrsets, powerdns.RRSet{
-			Name:       zone.Domain + ".",
+			Name:       recordName,
 			Type:       "ALIAS",
 			Changetype: "DELETE",
 		})
@@ -513,7 +527,7 @@ func (s *DNSServiceDefault) DeleteWebsiteDNSRecords(ctx context.Context, zoneID 
 
 	s.Logger().Info("DNS records deleted for website",
 		zap.Uint("zone_id", zoneID),
-		zap.String("domain", zone.Domain))
+		zap.String("domain", websiteDomain))
 
 	return nil
 }

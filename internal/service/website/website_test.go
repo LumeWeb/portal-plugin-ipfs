@@ -103,6 +103,7 @@ func setupDNSZoneCreationMocks(t *testing.T, mockDNS *mocks.MockDNSService, zone
 		mock.Anything,
 		zoneID,
 		mock.Anything,
+		mock.Anything,
 		mock.AnythingOfType("db.WebsiteTargetType"),
 		mock.Anything,
 	).Return(nil).Once()
@@ -1152,6 +1153,7 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreatedWhenEnabled(t *testing.T) {
 			mock.Anything,
 			testZoneID1,
 			mock.Anything,
+			mock.Anything,
 			pluginDb.WebsiteTargetTypeIPNS,
 			mock.Anything,
 		).Return(nil).Once()
@@ -1169,7 +1171,7 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreatedWhenEnabled(t *testing.T) {
 
 		// Verify critical operations were called
 		mockDNS.AssertCalled(t, "CreateZone", mock.Anything, domain, testUserID1)
-		mockDNS.AssertCalled(t, "CreateWebsiteDNSRecords", mock.Anything, testZoneID1, mock.Anything, pluginDb.WebsiteTargetTypeIPNS, mock.Anything)
+		mockDNS.AssertCalled(t, "CreateWebsiteDNSRecords", mock.Anything, testZoneID1, mock.Anything, mock.Anything, pluginDb.WebsiteTargetTypeIPNS, mock.Anything)
 
 	}, TestOptions)
 }
@@ -1200,6 +1202,7 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreated(t *testing.T) {
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID2,
+			mock.Anything,
 			mock.MatchedBy(func(targetHash string) bool {
 				capturedTargetHash = targetHash
 				return true
@@ -1281,6 +1284,7 @@ func TestWebsiteService_DeleteWebsite_DNSRecordsCleanedUp(t *testing.T) {
 			mock.Anything,
 			testZoneID4,
 			mock.Anything,
+			mock.Anything,
 			pluginDb.WebsiteTargetTypeIPNS,
 			mock.Anything,
 		).Return(nil).Once()
@@ -1290,7 +1294,7 @@ func TestWebsiteService_DeleteWebsite_DNSRecordsCleanedUp(t *testing.T) {
 		require.NotNil(tb, createdWebsite)
 
 		// Act - Delete website and expect only DNS records to be cleaned up, NOT the zone
-		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, testZoneID4).Return(nil).Once()
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, testZoneID4, mock.Anything).Return(nil).Once()
 
 		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
 
@@ -1326,6 +1330,7 @@ func TestWebsiteService_DeleteWebsite_DNSCleanupFailureDoesNotPreventDeletion(t 
 			mock.Anything,
 			testZoneID5,
 			mock.Anything,
+			mock.Anything,
 			pluginDb.WebsiteTargetTypeIPNS,
 			mock.Anything,
 		).Return(nil).Once()
@@ -1335,7 +1340,7 @@ func TestWebsiteService_DeleteWebsite_DNSCleanupFailureDoesNotPreventDeletion(t 
 		require.NotNil(tb, createdWebsite)
 
 		// Act - Delete website with DNS cleanup failure
-		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, testZoneID5).Return(assert.AnError).Once()
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, testZoneID5, mock.Anything).Return(assert.AnError).Once()
 
 		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
 
@@ -1437,7 +1442,8 @@ func TestWebsiteService_CreateWebsite_DNSHostingEnabled_CreatesZoneAndRecords(t 
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID6,
-			mock.Anything,                  // target hash varies (IPNS peer ID)
+			mock.Anything,
+			mock.Anything,                  // website domain
 			pluginDb.WebsiteTargetTypeIPNS, // Converted to IPNS for managed DNS
 			mock.Anything,
 		).Return(nil).Once()
@@ -1478,7 +1484,8 @@ func TestWebsiteService_UpdateWebsite_DNSHostingEnabled_NoDNSUpdateWhenTargetUnc
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID7,
-			mock.Anything,                  // target hash varies (IPNS peer ID)
+			mock.Anything,
+			mock.Anything,                  // website domain
 			pluginDb.WebsiteTargetTypeIPNS, // Converted to IPNS for managed DNS
 			mock.Anything,
 		).Return(nil).Once()
@@ -1523,7 +1530,8 @@ func TestWebsiteService_DeleteWebsite_DNSHostingEnabled_ZoneRemainsAfterDeletion
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID8,
-			mock.Anything,                  // target hash varies (IPNS peer ID)
+			mock.Anything,
+			mock.Anything,                  // website domain
 			pluginDb.WebsiteTargetTypeIPNS, // Converted to IPNS for managed DNS
 			mock.Anything,
 		).Return(nil).Once()
@@ -1532,7 +1540,7 @@ func TestWebsiteService_DeleteWebsite_DNSHostingEnabled_ZoneRemainsAfterDeletion
 		require.NoError(tb, err)
 
 		// Mock DNS records deletion
-		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, testZoneID8).Return(nil).Once()
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, testZoneID8, mock.Anything).Return(nil).Once()
 
 		// Act - Delete website
 		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
@@ -1720,7 +1728,8 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreationFailure_ContinuesWithout
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID8,
-			mock.Anything,                  // target hash varies (IPNS peer ID)
+			mock.Anything,
+			mock.Anything,                  // website domain
 			pluginDb.WebsiteTargetTypeIPNS, // Converted to IPNS for managed DNS
 			mock.Anything,
 		).Return(assert.AnError).Once()
@@ -1780,6 +1789,7 @@ func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing
 			mock.Anything,
 			testZoneID1,
 			mock.Anything,
+			mock.Anything,
 			pluginDb.WebsiteTargetTypeIPNS,
 			mock.Anything,
 		).Return(nil).Once()
@@ -1796,7 +1806,7 @@ func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite1.TargetType, "First website should use IPNS target")
 
 		// Expect DNS records deletion when website is deleted
-		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, testZoneID1).Return(nil).Once()
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, testZoneID1, mock.Anything).Return(nil).Once()
 
 		// Act - Delete first website
 		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite1.ID)
@@ -1817,6 +1827,7 @@ func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID1,
+			mock.Anything,
 			mock.Anything,
 			pluginDb.WebsiteTargetTypeIPNS,
 			mock.Anything,
@@ -1938,7 +1949,10 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingTransition(t *testing.T) 
 		assert.True(t, createdWebsite.Enabled)
 		assert.NotNil(t, createdWebsite.DNSZoneID)
 
-		// Set up mock DNS service expectation for disabling DNS hosting (delete zone)
+		// Set up mock DNS service expectations for disabling DNS hosting
+		// First, DeleteWebsiteDNSRecords is called to remove the website's DNS records
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, testZoneID, mock.Anything).Return(nil).Once()
+		// Then, DeleteZone is called because no other websites share the zone
 		setupDeleteZoneMocks(t, mockDNS, testZoneID)
 
 		// Act - Disable DNS hosting
@@ -2010,7 +2024,7 @@ func TestWebsiteService_UpdateWebsite_DNSHostingTransitionWithExistingZone(t *te
 		// Act - Enable DNS hosting when zone already exists
 		// Note: We don't mock CreateWebsiteDNSRecords here because handleDNSEnabledTransition
 		// will add its own expectation when calling the method
-		mockDNS.EXPECT().CreateWebsiteDNSRecords(mock.Anything, testZoneID, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(mock.Anything, testZoneID, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 		newDNSEnabled := true
 		updates := map[string]interface{}{
 			"dns_enabled": newDNSEnabled,
@@ -2054,6 +2068,9 @@ func TestWebsiteService_UpdateWebsite_DNSEnableToggleOffOn(t *testing.T) {
 		assert.NotNil(t, createdWebsite.DNSZoneID)
 
 		// Toggle DNS off
+		// First, DeleteWebsiteDNSRecords is called to remove the website's DNS records
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, *createdWebsite.DNSZoneID, mock.Anything).Return(nil).Once()
+		// Then, DeleteZone is called because no other websites share the zone
 		mockDNS.EXPECT().DeleteZone(mock.Anything, *createdWebsite.DNSZoneID).Return(nil).Once()
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
 			"dns_enabled": false,
@@ -2066,7 +2083,7 @@ func TestWebsiteService_UpdateWebsite_DNSEnableToggleOffOn(t *testing.T) {
 		newZoneID := uint(8002)
 		newMockZone := createMockDNSZone(newZoneID, domain, testUserID1)
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(newMockZone, nil).Once()
-		mockDNS.EXPECT().CreateWebsiteDNSRecords(mock.Anything, newZoneID, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(mock.Anything, newZoneID, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
 		updatedWebsite2, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
 			"dns_enabled": true,
@@ -2101,6 +2118,9 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingDeleteZoneFails(t *testin
 		assert.NotNil(t, createdWebsite.DNSZoneID)
 
 		// Toggle DNS off but DeleteZone fails
+		// First, DeleteWebsiteDNSRecords is called and succeeds
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, *createdWebsite.DNSZoneID, mock.Anything).Return(nil).Once()
+		// Then, DeleteZone is called but fails
 		mockDNS.EXPECT().DeleteZone(mock.Anything, *createdWebsite.DNSZoneID).Return(errors.New("powerdns unavailable")).Once()
 
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
@@ -2242,6 +2262,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPNSToIPFS_UpdatesDNSRecords(t *tes
 			mock.Anything,
 			testZoneID,
 			mock.Anything,
+			mock.Anything,
 			pluginDb.WebsiteTargetTypeIPNS,
 			mock.Anything,
 		).Return(nil).Once()
@@ -2268,6 +2289,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPNSToIPFS_UpdatesDNSRecords(t *tes
 		mockDNS.EXPECT().UpdateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID,
+			mock.Anything,
 			newCID.String(),
 			pluginDb.WebsiteTargetTypeIPFS,
 		).Return(nil).Once()
@@ -2305,6 +2327,7 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPNS_NoDNSUpdate(t *testing.T) {
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID,
+			mock.Anything,
 			mock.Anything,
 			pluginDb.WebsiteTargetTypeIPNS,
 			mock.Anything,
@@ -2360,6 +2383,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 			mock.Anything,
 			testZoneID,
 			mock.Anything,
+			mock.Anything,
 			pluginDb.WebsiteTargetTypeIPNS,
 			mock.Anything,
 		).Return(nil).Once()
@@ -2381,6 +2405,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 		mockDNS.EXPECT().UpdateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID,
+			mock.Anything,
 			newCID.String(),
 			pluginDb.WebsiteTargetTypeIPFS,
 		).Return(nil).Once()
@@ -2403,6 +2428,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 		mockDNS.EXPECT().UpdateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID,
+			mock.Anything,
 			testPeerID,
 			pluginDb.WebsiteTargetTypeIPNS,
 		).Return(nil).Once()
@@ -2477,6 +2503,7 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone_DNSRecordsUpdated(t *t
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID,
+			mock.Anything,
 			testIPNSKey.PeerID().String(),
 			pluginDb.WebsiteTargetTypeIPNS,
 			mock.Anything,
@@ -2541,6 +2568,7 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPFSWithoutCID(t *testing.T) {
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID,
+			mock.Anything,
 			mock.Anything,
 			pluginDb.WebsiteTargetTypeIPNS,
 			mock.Anything,

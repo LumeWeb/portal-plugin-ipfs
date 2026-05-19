@@ -314,16 +314,16 @@ func (_c *MockDNSService_CreateRecord_Call) RunAndReturn(run func(ctx context.Co
 }
 
 // CreateWebsiteDNSRecords provides a mock function for the type MockDNSService
-func (_mock *MockDNSService) CreateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType db.WebsiteTargetType, validationToken string) error {
-	ret := _mock.Called(ctx, zoneID, targetHash, targetType, validationToken)
+func (_mock *MockDNSService) CreateWebsiteDNSRecords(ctx context.Context, zoneID uint, websiteDomain string, targetHash string, targetType db.WebsiteTargetType, validationToken string) error {
+	ret := _mock.Called(ctx, zoneID, websiteDomain, targetHash, targetType, validationToken)
 
 	if len(ret) == 0 {
 		panic("no return value specified for CreateWebsiteDNSRecords")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, db.WebsiteTargetType, string) error); ok {
-		r0 = returnFunc(ctx, zoneID, targetHash, targetType, validationToken)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, string, db.WebsiteTargetType, string) error); ok {
+		r0 = returnFunc(ctx, zoneID, websiteDomain, targetHash, targetType, validationToken)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -338,14 +338,15 @@ type MockDNSService_CreateWebsiteDNSRecords_Call struct {
 // CreateWebsiteDNSRecords is a helper method to define mock.On call
 //   - ctx context.Context
 //   - zoneID uint
+//   - websiteDomain string
 //   - targetHash string
 //   - targetType db.WebsiteTargetType
 //   - validationToken string
-func (_e *MockDNSService_Expecter) CreateWebsiteDNSRecords(ctx interface{}, zoneID interface{}, targetHash interface{}, targetType interface{}, validationToken interface{}) *MockDNSService_CreateWebsiteDNSRecords_Call {
-	return &MockDNSService_CreateWebsiteDNSRecords_Call{Call: _e.mock.On("CreateWebsiteDNSRecords", ctx, zoneID, targetHash, targetType, validationToken)}
+func (_e *MockDNSService_Expecter) CreateWebsiteDNSRecords(ctx interface{}, zoneID interface{}, websiteDomain interface{}, targetHash interface{}, targetType interface{}, validationToken interface{}) *MockDNSService_CreateWebsiteDNSRecords_Call {
+	return &MockDNSService_CreateWebsiteDNSRecords_Call{Call: _e.mock.On("CreateWebsiteDNSRecords", ctx, zoneID, websiteDomain, targetHash, targetType, validationToken)}
 }
 
-func (_c *MockDNSService_CreateWebsiteDNSRecords_Call) Run(run func(ctx context.Context, zoneID uint, targetHash string, targetType db.WebsiteTargetType, validationToken string)) *MockDNSService_CreateWebsiteDNSRecords_Call {
+func (_c *MockDNSService_CreateWebsiteDNSRecords_Call) Run(run func(ctx context.Context, zoneID uint, websiteDomain string, targetHash string, targetType db.WebsiteTargetType, validationToken string)) *MockDNSService_CreateWebsiteDNSRecords_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -359,13 +360,17 @@ func (_c *MockDNSService_CreateWebsiteDNSRecords_Call) Run(run func(ctx context.
 		if args[2] != nil {
 			arg2 = args[2].(string)
 		}
-		var arg3 db.WebsiteTargetType
+		var arg3 string
 		if args[3] != nil {
-			arg3 = args[3].(db.WebsiteTargetType)
+			arg3 = args[3].(string)
 		}
-		var arg4 string
+		var arg4 db.WebsiteTargetType
 		if args[4] != nil {
-			arg4 = args[4].(string)
+			arg4 = args[4].(db.WebsiteTargetType)
+		}
+		var arg5 string
+		if args[5] != nil {
+			arg5 = args[5].(string)
 		}
 		run(
 			arg0,
@@ -373,6 +378,7 @@ func (_c *MockDNSService_CreateWebsiteDNSRecords_Call) Run(run func(ctx context.
 			arg2,
 			arg3,
 			arg4,
+			arg5,
 		)
 	})
 	return _c
@@ -383,7 +389,7 @@ func (_c *MockDNSService_CreateWebsiteDNSRecords_Call) Return(err error) *MockDN
 	return _c
 }
 
-func (_c *MockDNSService_CreateWebsiteDNSRecords_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, targetHash string, targetType db.WebsiteTargetType, validationToken string) error) *MockDNSService_CreateWebsiteDNSRecords_Call {
+func (_c *MockDNSService_CreateWebsiteDNSRecords_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, websiteDomain string, targetHash string, targetType db.WebsiteTargetType, validationToken string) error) *MockDNSService_CreateWebsiteDNSRecords_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -578,16 +584,16 @@ func (_c *MockDNSService_DeleteRecord_Call) RunAndReturn(run func(ctx context.Co
 }
 
 // DeleteWebsiteDNSRecords provides a mock function for the type MockDNSService
-func (_mock *MockDNSService) DeleteWebsiteDNSRecords(ctx context.Context, zoneID uint) error {
-	ret := _mock.Called(ctx, zoneID)
+func (_mock *MockDNSService) DeleteWebsiteDNSRecords(ctx context.Context, zoneID uint, websiteDomain string) error {
+	ret := _mock.Called(ctx, zoneID, websiteDomain)
 
 	if len(ret) == 0 {
 		panic("no return value specified for DeleteWebsiteDNSRecords")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint) error); ok {
-		r0 = returnFunc(ctx, zoneID)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string) error); ok {
+		r0 = returnFunc(ctx, zoneID, websiteDomain)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -602,11 +608,12 @@ type MockDNSService_DeleteWebsiteDNSRecords_Call struct {
 // DeleteWebsiteDNSRecords is a helper method to define mock.On call
 //   - ctx context.Context
 //   - zoneID uint
-func (_e *MockDNSService_Expecter) DeleteWebsiteDNSRecords(ctx interface{}, zoneID interface{}) *MockDNSService_DeleteWebsiteDNSRecords_Call {
-	return &MockDNSService_DeleteWebsiteDNSRecords_Call{Call: _e.mock.On("DeleteWebsiteDNSRecords", ctx, zoneID)}
+//   - websiteDomain string
+func (_e *MockDNSService_Expecter) DeleteWebsiteDNSRecords(ctx interface{}, zoneID interface{}, websiteDomain interface{}) *MockDNSService_DeleteWebsiteDNSRecords_Call {
+	return &MockDNSService_DeleteWebsiteDNSRecords_Call{Call: _e.mock.On("DeleteWebsiteDNSRecords", ctx, zoneID, websiteDomain)}
 }
 
-func (_c *MockDNSService_DeleteWebsiteDNSRecords_Call) Run(run func(ctx context.Context, zoneID uint)) *MockDNSService_DeleteWebsiteDNSRecords_Call {
+func (_c *MockDNSService_DeleteWebsiteDNSRecords_Call) Run(run func(ctx context.Context, zoneID uint, websiteDomain string)) *MockDNSService_DeleteWebsiteDNSRecords_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -616,9 +623,14 @@ func (_c *MockDNSService_DeleteWebsiteDNSRecords_Call) Run(run func(ctx context.
 		if args[1] != nil {
 			arg1 = args[1].(uint)
 		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
 		run(
 			arg0,
 			arg1,
+			arg2,
 		)
 	})
 	return _c
@@ -629,7 +641,7 @@ func (_c *MockDNSService_DeleteWebsiteDNSRecords_Call) Return(err error) *MockDN
 	return _c
 }
 
-func (_c *MockDNSService_DeleteWebsiteDNSRecords_Call) RunAndReturn(run func(ctx context.Context, zoneID uint) error) *MockDNSService_DeleteWebsiteDNSRecords_Call {
+func (_c *MockDNSService_DeleteWebsiteDNSRecords_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, websiteDomain string) error) *MockDNSService_DeleteWebsiteDNSRecords_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -1483,16 +1495,16 @@ func (_c *MockDNSService_UpdateRecord_Call) RunAndReturn(run func(ctx context.Co
 }
 
 // UpdateWebsiteDNSRecords provides a mock function for the type MockDNSService
-func (_mock *MockDNSService) UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, targetHash string, targetType db.WebsiteTargetType) error {
-	ret := _mock.Called(ctx, zoneID, targetHash, targetType)
+func (_mock *MockDNSService) UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, websiteDomain string, targetHash string, targetType db.WebsiteTargetType) error {
+	ret := _mock.Called(ctx, zoneID, websiteDomain, targetHash, targetType)
 
 	if len(ret) == 0 {
 		panic("no return value specified for UpdateWebsiteDNSRecords")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, db.WebsiteTargetType) error); ok {
-		r0 = returnFunc(ctx, zoneID, targetHash, targetType)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, string, db.WebsiteTargetType) error); ok {
+		r0 = returnFunc(ctx, zoneID, websiteDomain, targetHash, targetType)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -1507,13 +1519,14 @@ type MockDNSService_UpdateWebsiteDNSRecords_Call struct {
 // UpdateWebsiteDNSRecords is a helper method to define mock.On call
 //   - ctx context.Context
 //   - zoneID uint
+//   - websiteDomain string
 //   - targetHash string
 //   - targetType db.WebsiteTargetType
-func (_e *MockDNSService_Expecter) UpdateWebsiteDNSRecords(ctx interface{}, zoneID interface{}, targetHash interface{}, targetType interface{}) *MockDNSService_UpdateWebsiteDNSRecords_Call {
-	return &MockDNSService_UpdateWebsiteDNSRecords_Call{Call: _e.mock.On("UpdateWebsiteDNSRecords", ctx, zoneID, targetHash, targetType)}
+func (_e *MockDNSService_Expecter) UpdateWebsiteDNSRecords(ctx interface{}, zoneID interface{}, websiteDomain interface{}, targetHash interface{}, targetType interface{}) *MockDNSService_UpdateWebsiteDNSRecords_Call {
+	return &MockDNSService_UpdateWebsiteDNSRecords_Call{Call: _e.mock.On("UpdateWebsiteDNSRecords", ctx, zoneID, websiteDomain, targetHash, targetType)}
 }
 
-func (_c *MockDNSService_UpdateWebsiteDNSRecords_Call) Run(run func(ctx context.Context, zoneID uint, targetHash string, targetType db.WebsiteTargetType)) *MockDNSService_UpdateWebsiteDNSRecords_Call {
+func (_c *MockDNSService_UpdateWebsiteDNSRecords_Call) Run(run func(ctx context.Context, zoneID uint, websiteDomain string, targetHash string, targetType db.WebsiteTargetType)) *MockDNSService_UpdateWebsiteDNSRecords_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -1527,15 +1540,20 @@ func (_c *MockDNSService_UpdateWebsiteDNSRecords_Call) Run(run func(ctx context.
 		if args[2] != nil {
 			arg2 = args[2].(string)
 		}
-		var arg3 db.WebsiteTargetType
+		var arg3 string
 		if args[3] != nil {
-			arg3 = args[3].(db.WebsiteTargetType)
+			arg3 = args[3].(string)
+		}
+		var arg4 db.WebsiteTargetType
+		if args[4] != nil {
+			arg4 = args[4].(db.WebsiteTargetType)
 		}
 		run(
 			arg0,
 			arg1,
 			arg2,
 			arg3,
+			arg4,
 		)
 	})
 	return _c
@@ -1546,7 +1564,7 @@ func (_c *MockDNSService_UpdateWebsiteDNSRecords_Call) Return(err error) *MockDN
 	return _c
 }
 
-func (_c *MockDNSService_UpdateWebsiteDNSRecords_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, targetHash string, targetType db.WebsiteTargetType) error) *MockDNSService_UpdateWebsiteDNSRecords_Call {
+func (_c *MockDNSService_UpdateWebsiteDNSRecords_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, websiteDomain string, targetHash string, targetType db.WebsiteTargetType) error) *MockDNSService_UpdateWebsiteDNSRecords_Call {
 	_c.Call.Return(run)
 	return _c
 }
