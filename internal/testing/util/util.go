@@ -8,7 +8,6 @@ import (
 
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/crypto"
-	"github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -16,7 +15,6 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	protocol "go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.lumeweb.com/portal/db"
@@ -142,7 +140,7 @@ func GetProtocolMock() coreTesting.TestContextBuilderOption {
 		ipfsNode := mocks.NewMockIPFSNode(ctx.T())
 		mockPeer := config.BootstrapPeers[0].ToAddrInfo()
 		ipfsNode.EXPECT().PeerID().Return(mockPeer.ID).Maybe()
-		ipfsNode.EXPECT().DelegateAddresses().Return(ipfs.ConnectionAddresses(ipfsNode, nil, "")).Maybe()
+		ipfsNode.EXPECT().DelegateAddresses().Return(nil, nil).Maybe()
 		protoMock.EXPECT().GetNode().Return(ipfsNode).Maybe()
 		protoMock.EXPECT().GetIPNSNode().Return(ipfsNode).Maybe()
 		ipfsNode.EXPECT().GetKeystore().Return(mockKeystore).Maybe()
@@ -154,12 +152,10 @@ func GetProtocolMock() coreTesting.TestContextBuilderOption {
 		require.NoError(ctx.T(), err, "Failed to generate test private key")
 		ipfsNode.EXPECT().GetPrivateKey().Return(privKey).Maybe()
 
-		ipfsNode.EXPECT().GetAnnounceAddrs().Return(nil).Maybe()
-		ipfsNode.EXPECT().GetAnnounceDomain().Return("").Maybe()
-
-		ipfsNode.EXPECT().ConnectionAddresses().RunAndReturn(func() ([]multiaddr.Multiaddr, error) {
-			return ipfs.ConnectionAddresses(ipfsNode, nil, "")
-		}).Maybe()
+		ipfsNode.EXPECT().ConnectionAddresses().Return(nil, nil).Maybe()
+		ipfsNode.EXPECT().HostAddrs().Return(nil).Maybe()
+		ipfsNode.EXPECT().AnnounceWeb().Return(false).Maybe()
+		ipfsNode.EXPECT().AnnounceDomain().Return("").Maybe()
 
 		// Mock AddBlock to return nil (success)
 		ipfsNode.EXPECT().AddBlock(mock.Anything, mock.Anything).Return(nil).Maybe()
