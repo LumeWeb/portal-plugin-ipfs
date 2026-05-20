@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS ipfs_ipns_keys (
     name VARCHAR(255) NOT NULL,
     peer_id_multihash VARBINARY(64) NOT NULL,
     private_key_encrypted BLOB NOT NULL,
+    last_published_cid VARCHAR(255) DEFAULT NULL,
+    last_published_at TIMESTAMP NULL DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP NULL DEFAULT NULL,
 

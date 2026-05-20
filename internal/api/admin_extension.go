@@ -256,6 +256,11 @@ func (e *AdminExtension) republishIPNS(c echo.Context) error {
 	for ipnsName, record := range records {
 		peerID := ipnsName.Peer().String()
 
+		if record == nil {
+			e.logger.Warn("Nil record in published list, skipping", zap.String("peer_id", peerID))
+			continue
+		}
+
 		privKey, _, err := e.ipnsKeyService.GetPrivateKeyByPeerID(reqCtx, peerID)
 		if err != nil {
 			e.logger.Warn("Failed to get private key for republish, skipping", zap.Error(err), zap.String("peer_id", peerID))

@@ -892,6 +892,22 @@ func (s *IPNSKeyServiceDefault) PublishWithKey(ctx context.Context, privKey ic.P
 		zap.String("cid", cidStr),
 	)
 
+	now := time.Now()
+	err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		return tx.Model(&pluginDb.IPFSIPNSKey{}).
+			Where("peer_id_multihash = ?", mh.Multihash(peerID)).
+			Updates(map[string]any{
+				"last_published_cid": cidStr,
+				"last_published_at":  now,
+			})
+	})
+	if err != nil {
+		s.Logger().Warn("Failed to update last published CID in database",
+			zap.Error(err),
+			zap.String("peer_id", peerID.String()),
+		)
+	}
+
 	return nil
 }
 
