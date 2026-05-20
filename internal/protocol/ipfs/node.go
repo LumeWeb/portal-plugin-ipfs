@@ -45,6 +45,10 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
+	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
+	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	ws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
+	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 )
@@ -89,6 +93,7 @@ type IPFSNode interface {
 	GetDatastore() datastore.Datastore
 	GetPrivateKey() crypto.PrivKey
 	GetAnnounceAddrs() []string
+	GetAnnounceDomain() string
 }
 
 // NopExchange wraps an exchange.Interface and disables NotifyNewBlocks.
@@ -172,6 +177,7 @@ func (f *NodeFactory) CreateNode() (*Node, error) {
 // A Node is a minimal IPFS node
 type Node struct {
 	log              *core.Logger
+	ctx              core.Context
 	host             host.Host
 	routing          DHTRouting
 	companionDHT     *dht.IpfsDHT
@@ -259,11 +265,26 @@ func (n *Node) PeerID() peer.ID {
 }
 
 func (n *Node) ConnectionAddresses() ([]multiaddr.Multiaddr, error) {
-	return ConnectionAddresses(n, n.announceAddrs)
+	return ConnectionAddresses(n, n.announceAddrs, n.announceDomain())
+}
+
+func (n *Node) announceDomain() string {
+	if n.ctx == nil {
+		return ""
+	}
+	httpSvc := core.GetService[core.HTTPService](n.ctx, core.HTTP_SERVICE)
+	if httpSvc == nil {
+		return ""
+	}
+	return httpSvc.APISubdomain(internal.ProtocolName, false)
 }
 
 func (n *Node) GetAnnounceAddrs() []string {
 	return n.announceAddrs
+}
+
+func (n *Node) GetAnnounceDomain() string {
+	return n.announceDomain()
 }
 
 // DelegateAddresses returns the multiaddr addresses that can be used as delegates
@@ -368,10 +389,15 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		libp2p.EnableRelay(),
 		libp2p.ResourceManager(rm),
 		libp2p.DefaultPeerstore,
-		libp2p.DefaultTransports,
+		libp2p.Transport(tcp.NewTCPTransport),
+		libp2p.Transport(ws.New),
+		libp2p.ShareTCPListener(),
+		libp2p.Transport(quic.NewTransport),
+		libp2p.Transport(webtransport.New),
 		libp2p.PrometheusRegisterer(prometheus.WrapRegistererWithPrefix("libp2p_", core.PluginMetricsRegistry(internal.ProtocolName))),
 		libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
-			announceAddresses, err := AnnouncementAddresses(cfg.AnnounceAddresses)
+			domain := core.GetService[core.HTTPService](ctx, core.HTTP_SERVICE).APISubdomain(internal.ProtocolName, false)
+			announceAddresses, err := AnnouncementAddresses(cfg.AnnounceAddresses, domain)
 			if err != nil {
 				ctx.Logger().Error("failed to get announcement addresses", zap.Error(err))
 				return lo.Filter(addrs, func(addr multiaddr.Multiaddr, _ int) bool {
@@ -408,6 +434,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	ipfsNode := &Node{
 		host:          node,
 		log:           ctx.Logger(),
+		ctx:           ctx,
 		announceAddrs: cfg.AnnounceAddresses,
 	}
 
@@ -569,13 +596,25 @@ func parseAnnounceAddr(addrStr string) (multiaddr.Multiaddr, error) {
 	return multiaddr.NewMultiaddr(fmt.Sprintf("/ip6/%s/tcp/%d", host, port))
 }
 
-func AnnouncementAddresses(announceAddrs []string) ([]multiaddr.Multiaddr, error) {
+func AnnouncementAddresses(announceAddrs []string, domain string) ([]multiaddr.Multiaddr, error) {
 	if len(announceAddrs) > 0 {
 		return lo.MapErr(announceAddrs, func(addrStr string, _ int) (multiaddr.Multiaddr, error) {
 			return parseAnnounceAddr(addrStr)
 		})
 	}
 
+	if domain != "" {
+		return []multiaddr.Multiaddr{
+			multiaddr.StringCast(fmt.Sprintf("/dns/%s/tcp/443/wss", domain)),
+			multiaddr.StringCast(fmt.Sprintf("/dns/%s/udp/443/quic-v1", domain)),
+			multiaddr.StringCast(fmt.Sprintf("/dns/%s/udp/443/quic-v1/webtransport", domain)),
+		}, nil
+	}
+
+	return resolvePublicAddresses()
+}
+
+func resolvePublicAddresses() ([]multiaddr.Multiaddr, error) {
 	cacheMutex.RLock()
 	if len(cachedAnnouncementAddresses) > 0 {
 		cached := cachedAnnouncementAddresses
@@ -592,13 +631,10 @@ func AnnouncementAddresses(announceAddrs []string) ([]multiaddr.Multiaddr, error
 	}
 
 	unspecAddrs := []multiaddr.Multiaddr{
-		// TCP
 		multiaddr.StringCast("/ip4/0.0.0.0/tcp/4001"),
 		multiaddr.StringCast("/ip6/::/tcp/4001"),
-		// QUIC v1
 		multiaddr.StringCast("/ip4/0.0.0.0/udp/4001/quic-v1"),
 		multiaddr.StringCast("/ip6/::/udp/4001/quic-v1"),
-		// WebSocket
 		multiaddr.StringCast("/ip4/0.0.0.0/tcp/4002/ws"),
 		multiaddr.StringCast("/ip6/::/tcp/4002/ws"),
 	}
@@ -617,8 +653,8 @@ func AnnouncementAddresses(announceAddrs []string) ([]multiaddr.Multiaddr, error
 	return announcementAddrs, nil
 }
 
-func ConnectionAddresses(node IPFSNode, announceAddrs []string) ([]multiaddr.Multiaddr, error) {
-	annAddrs, err := AnnouncementAddresses(announceAddrs)
+func ConnectionAddresses(node IPFSNode, announceAddrs []string, domain string) ([]multiaddr.Multiaddr, error) {
+	annAddrs, err := AnnouncementAddresses(announceAddrs, domain)
 	if err != nil {
 		return nil, err
 	}
