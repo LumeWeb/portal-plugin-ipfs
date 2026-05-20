@@ -598,6 +598,78 @@ func TestAPI_RepublishIPNS(t *testing.T) {
 		}, TestOptions)
 	})
 
+	t.Run("success_nil_local_record_falls_back_to_db_cid", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockIPNSKeyService := helper.SetupIPNSServiceMocksNoDefaults(userID)
+
+			mockKey := createTestIPNSKey(1, userID, "test-key", TestPeerID)
+			mockKey.LastPublishedCID = TestCID
+
+			mockIPNSKeyService.EXPECT().GetKeyByID(mock.Anything, userID, uint(1)).Return(&mockKey, nil)
+			mockIPNSKeyService.EXPECT().GetPublished(mock.Anything, mockKey.PeerID().String(), false).Return((*ipns.Record)(nil), nil)
+			mockIPNSKeyService.EXPECT().GetPrivateKeyByPeerID(mock.Anything, mockKey.PeerID().String()).Return(nil, userID, nil)
+			mockIPNSKeyService.EXPECT().PublishWithKey(mock.Anything, nil, TestCID, mock.AnythingOfType("time.Duration")).Return(nil)
+
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/ipns/keys/1/republish", token, nil)
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			var response dto.IPNSRepublishResponse
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Equal(t, 1, response.Count)
+		}, TestOptions)
+	})
+
+	t.Run("success_nil_local_and_db_falls_back_to_dht", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockIPNSKeyService := helper.SetupIPNSServiceMocksNoDefaults(userID)
+
+			mockKey := createTestIPNSKey(1, userID, "test-key", TestPeerID)
+			mockRecord := createMockIPNSRecord(t, TestCID)
+
+			mockIPNSKeyService.EXPECT().GetKeyByID(mock.Anything, userID, uint(1)).Return(&mockKey, nil)
+			mockIPNSKeyService.EXPECT().GetPublished(mock.Anything, mockKey.PeerID().String(), false).Return((*ipns.Record)(nil), nil)
+			mockIPNSKeyService.EXPECT().GetPublished(mock.Anything, mockKey.PeerID().String(), true).Return(mockRecord, nil)
+			mockIPNSKeyService.EXPECT().GetPrivateKeyByPeerID(mock.Anything, mockKey.PeerID().String()).Return(nil, userID, nil)
+			mockIPNSKeyService.EXPECT().PublishWithKey(mock.Anything, nil, TestCID, mock.AnythingOfType("time.Duration")).Return(nil)
+
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/ipns/keys/1/republish", token, nil)
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			var response dto.IPNSRepublishResponse
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Equal(t, 1, response.Count)
+		}, TestOptions)
+	})
+
+	t.Run("error_nil_record_local_db_and_dht", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockIPNSKeyService := helper.SetupIPNSServiceMocksNoDefaults(userID)
+
+			mockKey := createTestIPNSKey(1, userID, "test-key", TestPeerID)
+
+			mockIPNSKeyService.EXPECT().GetKeyByID(mock.Anything, userID, uint(1)).Return(&mockKey, nil)
+			mockIPNSKeyService.EXPECT().GetPublished(mock.Anything, mockKey.PeerID().String(), false).Return((*ipns.Record)(nil), nil)
+			mockIPNSKeyService.EXPECT().GetPublished(mock.Anything, mockKey.PeerID().String(), true).Return((*ipns.Record)(nil), nil)
+
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/ipns/keys/1/republish", token, nil)
+
+			assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		}, TestOptions)
+	})
+
 	t.Run("unauthorized", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			req := ctx.NewAPIRequest(http.MethodPost, "/api/ipns/keys/1/republish", nil)

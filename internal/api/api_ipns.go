@@ -231,6 +231,15 @@ func (a *API) publishIPNS(c echo.Context) error {
 		return httputil.EncodeResponse(ctx, nil, &resp)
 	}
 
+	if record == nil {
+		resp := dto.IPNSPublishResponse{
+			Name:      key.PeerID().String(),
+			Value:     req.CID,
+			Published: time.Now(),
+		}
+		return httputil.EncodeResponse(ctx, nil, &resp)
+	}
+
 	// Convert IPNS record to response
 	valuePath, err := record.Value()
 	if err != nil {
@@ -383,23 +392,52 @@ func (a *API) republishIPNS(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	valuePath, err := record.Value()
-	if err != nil {
-		a.Logger().Error("Failed to get IPNS record value for republish", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
-		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to get IPNS record value: %w", err))
-		return ctx.Error(apiErr, apiErr.HttpStatus())
+	var cidStr string
+	if record != nil {
+		valuePath, err := record.Value()
+		if err != nil {
+			a.Logger().Error("Failed to get IPNS record value for republish", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
+			apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to get IPNS record value: %w", err))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		cidStr, err = paths.ExtractCIDFromPathStrict(valuePath)
+		if err != nil {
+			apiErr := NewError(ErrKeyInvalidRequest, err)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+	} else {
+		if key.LastPublishedCID != "" {
+			a.Logger().Debug("No local record found, using last published CID from database", zap.String("peer_id", key.PeerID().String()), zap.String("cid", key.LastPublishedCID))
+			cidStr = key.LastPublishedCID
+		} else {
+			a.Logger().Debug("No local record found, checking DHT", zap.String("peer_id", key.PeerID().String()))
+			record, err = ipnsKeyService.GetPublished(reqCtx, key.PeerID().String(), true)
+			if err != nil {
+				a.Logger().Error("Failed to get published record from DHT", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
+				apiErr := NewError(ErrKeyPinFetchFailed, fmt.Errorf("failed to get published record from routing: %w", err))
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			if record == nil {
+				apiErr := NewError(ErrKeyPinFetchFailed, fmt.Errorf("no published record found for key %d", keyID))
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			valuePath, err := record.Value()
+			if err != nil {
+				apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to get IPNS record value from DHT: %w", err))
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			cidStr, err = paths.ExtractCIDFromPathStrict(valuePath)
+			if err != nil {
+				apiErr := NewError(ErrKeyInvalidRequest, err)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+		}
 	}
 
 	privKey, _, err := a.ipnsKeyService.GetPrivateKeyByPeerID(reqCtx, key.PeerID().String())
 	if err != nil {
 		a.Logger().Error("Failed to get private key for republish", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
 		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to get private key: %w", err))
-		return ctx.Error(apiErr, apiErr.HttpStatus())
-	}
-
-	cidStr, err := paths.ExtractCIDFromPathStrict(valuePath)
-	if err != nil {
-		apiErr := NewError(ErrKeyInvalidRequest, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 

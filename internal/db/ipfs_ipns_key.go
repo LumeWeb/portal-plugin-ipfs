@@ -15,13 +15,15 @@ var _ schema.Tabler = (*IPFSIPNSKey)(nil)
 
 // IPFSIPNSKey represents an IPNS key stored in the database
 type IPFSIPNSKey struct {
-	ID                  uint           `gorm:"primaryKey;autoIncrement"`
-	UserID              uint           `gorm:"index:idx_ipfs_ipns_keys_user_id;not null"`
-	Name                string         `gorm:"type:varchar(255);not null"` // User-friendly name
-	PeerIDMultihash     mh.Multihash   `gorm:"type:varbinary(64);uniqueIndex:user_peer;not null"`
-	PrivateKeyEncrypted []byte         `gorm:"type:blob;not null"` // Encrypted with portal seed
-	CreatedAt           time.Time      `gorm:"autoCreateTime"`
-	DeletedAt           gorm.DeletedAt `gorm:"index:idx_ipfs_ipns_keys_deleted_at"`
+	ID                   uint           `gorm:"primaryKey;autoIncrement"`
+	UserID               uint           `gorm:"index:idx_ipfs_ipns_keys_user_id;not null"`
+	Name                 string         `gorm:"type:varchar(255);not null"`
+	PeerIDMultihash      mh.Multihash   `gorm:"type:varbinary(64);uniqueIndex:user_peer;not null"`
+	PrivateKeyEncrypted  []byte         `gorm:"type:blob;not null"`
+	LastPublishedCID     string         `gorm:"column:last_published_cid;type:varchar(255)"`
+	LastPublishedAt      *time.Time     `gorm:"column:last_published_at"`
+	CreatedAt            time.Time      `gorm:"autoCreateTime"`
+	DeletedAt            gorm.DeletedAt `gorm:"index:idx_ipfs_ipns_keys_deleted_at"`
 }
 
 func (I IPFSIPNSKey) TableName() string {
