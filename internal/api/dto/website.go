@@ -157,8 +157,8 @@ func (r *IPNSResolveResponse) FromModel(any) error {
 
 // IPNSRepublishResponse represents an IPNS republish response
 type IPNSRepublishResponse struct {
-	Count   int    `json:"count"`   // Number of records republished
-	Message string `json:"message"` // Status message
+	Count   int    `json:"count"`
+	Message string `json:"message"`
 }
 
 func (r *IPNSRepublishResponse) FromModel(any) error {

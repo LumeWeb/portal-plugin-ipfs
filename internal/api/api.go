@@ -523,17 +523,18 @@ See also:.*`),
 				router.WithSuccessResponse(http.StatusOK, "IPNS resolve result", router.WithJSONContent(dto.IPNSResolveResponse{})),
 			),
 		),
-		router.NewRoute(http.MethodPost, "/ipns/republish", a.republishIPNS,
+		router.NewRoute(http.MethodPost, "/ipns/keys/:id/republish", a.republishIPNS,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
-				router.WithSummary("Trigger IPNS republish"),
-				router.WithDescription(`Triggers IPNS record republishing for all keys.
+				router.WithSummary("Republish IPNS record"),
+				router.WithDescription(`Republishes an IPNS record for a specific key owned by the authenticated user.
 
-Forces all IPNS records to be republished to the network. Useful for ensuring content remains available and records are refreshed.
+Re-broadcasts the current IPNS record to the network. Useful for refreshing records that may have fallen out of the DHT.
 
-See also:.*`),
+Prerequisites: User must own the specified IPNS key.`),
 				router.WithTags("IPNS"),
-				router.WithSuccessResponse(http.StatusAccepted, "Republish triggered"),
+				router.WithPathParam("id", "IPNS key ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Republish result", router.WithJSONContent(dto.IPNSRepublishResponse{})),
 			),
 		),
 	)

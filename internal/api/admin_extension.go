@@ -13,6 +13,7 @@ import (
 	"go.lumeweb.com/portal-router"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/ipfs-content/paths"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -24,6 +25,7 @@ type AdminExtension struct {
 	config         config.Manager
 	db             *gorm.DB
 	websiteService pluginCore.WebsiteService
+	ipnsKeyService pluginCore.IPNSKeyService
 }
 
 // NewAdminExtension creates a new Admin API extension for IPFS website management
@@ -37,10 +39,15 @@ func NewAdminExtension() core.APIExtensionFactory {
 			ext.config = ctx.Config()
 
 			// Get and verify required services
-			ext.websiteService = core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-			if ext.websiteService == nil {
-				return fmt.Errorf("website service not available")
-			}
+		ext.websiteService = core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		if ext.websiteService == nil {
+			return fmt.Errorf("website service not available")
+		}
+
+		ext.ipnsKeyService = core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		if ext.ipnsKeyService == nil {
+			return fmt.Errorf("ipns key service not available")
+		}
 
 			return nil
 		})), nil
@@ -54,14 +61,16 @@ func (e *AdminExtension) TargetAPI() string {
 
 // Configure is called to set up routes on the admin API router
 func (e *AdminExtension) Configure(gRouter router.Router, accessSvc core.AccessService) error {
-	// Create a subrouter for IPFS website management
 	ipfsRouter, err := gRouter.Group("/api/ipfs")
 	if err != nil {
 		return err
 	}
 
-	// Register admin website routes
 	if err := e.registerWebsiteHandlers(ipfsRouter, accessSvc); err != nil {
+		return err
+	}
+
+	if err := e.registerIPNSHandlers(ipfsRouter, accessSvc); err != nil {
 		return err
 	}
 
@@ -205,4 +214,78 @@ func (e *AdminExtension) unblockWebsite(c echo.Context) error {
 	}
 
 	return ctx.NoContent(http.StatusOK)
+}
+
+func (e *AdminExtension) registerIPNSHandlers(gRouter router.Router, accessSvc core.AccessService) error {
+	routes := router.DefineRoutes(
+		router.NewRoute(http.MethodPost, "/ipns/republish", e.republishIPNS,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Trigger IPNS republish"),
+				router.WithDescription(`Triggers IPNS record republishing for all keys on the node.
+
+Admin-only operation that forces all IPNS records to be republished to the network. Useful for ensuring content remains available and records are refreshed.
+
+Prerequisites: Admin access required`),
+				router.WithTags("Admin", "IPNS"),
+				router.WithSuccessResponse(http.StatusOK, "Republish result", router.WithJSONContent(dto.IPNSRepublishResponse{})),
+			),
+		),
+	)
+
+	apiGroup := internal.ProtocolName
+	if err := router.RegisterRoutes(gRouter, accessSvc, apiGroup, routes); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (e *AdminExtension) republishIPNS(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	records, err := e.ipnsKeyService.ListPublished(reqCtx)
+	if err != nil {
+		e.logger.Error("Failed to list published records", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to list published records: %w", err))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	var count int
+	for ipnsName, record := range records {
+		peerID := ipnsName.Peer().String()
+
+		privKey, _, err := e.ipnsKeyService.GetPrivateKeyByPeerID(reqCtx, peerID)
+		if err != nil {
+			e.logger.Warn("Failed to get private key for republish, skipping", zap.Error(err), zap.String("peer_id", peerID))
+			continue
+		}
+
+		valuePath, err := record.Value()
+		if err != nil {
+			e.logger.Warn("Failed to get IPNS record value for republish, skipping", zap.Error(err), zap.String("peer_id", peerID))
+			continue
+		}
+
+		cidStr, err := paths.ExtractCIDFromPathStrict(valuePath)
+		if err != nil {
+			e.logger.Warn("Invalid IPNS record path format, skipping", zap.Error(err), zap.String("peer_id", peerID))
+			continue
+		}
+
+		if err := e.ipnsKeyService.PublishWithKey(reqCtx, privKey, cidStr, 0); err != nil {
+			e.logger.Warn("Failed to republish IPNS record, skipping", zap.Error(err), zap.String("peer_id", peerID))
+			continue
+		}
+
+		count++
+	}
+
+	resp := dto.IPNSRepublishResponse{
+		Count:   count,
+		Message: fmt.Sprintf("Successfully republished %d IPNS record(s)", count),
+	}
+
+	return httputil.EncodeResponse(ctx, nil, &resp)
 }
