@@ -5,6 +5,8 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"fmt"
+	"net"
+	"strconv"
 	"io"
 	"sync"
 	"time"
@@ -545,14 +547,32 @@ func (n *Node) TriggerReprovider() {
 	n.reprovider.Trigger()
 }
 
+func parseAnnounceAddr(addrStr string) (multiaddr.Multiaddr, error) {
+	if ma, err := multiaddr.NewMultiaddr(addrStr); err == nil {
+		return ma, nil
+	}
+	host, portStr, err := net.SplitHostPort(addrStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid announce address %q: %w", addrStr, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid port in announce address %q: %w", addrStr, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid IP in announce address %q", addrStr)
+	}
+	if ip.To4() != nil {
+		return multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", host, port))
+	}
+	return multiaddr.NewMultiaddr(fmt.Sprintf("/ip6/%s/tcp/%d", host, port))
+}
+
 func AnnouncementAddresses(announceAddrs []string) ([]multiaddr.Multiaddr, error) {
 	if len(announceAddrs) > 0 {
 		return lo.MapErr(announceAddrs, func(addrStr string, _ int) (multiaddr.Multiaddr, error) {
-			ma, err := multiaddr.NewMultiaddr(addrStr)
-			if err != nil {
-				return nil, fmt.Errorf("invalid announce address %q: %w", addrStr, err)
-			}
-			return ma, nil
+			return parseAnnounceAddr(addrStr)
 		})
 	}
 
