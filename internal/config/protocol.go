@@ -28,7 +28,16 @@ type ProtocolConfig struct {
 
 func (c ProtocolConfig) Defaults() map[string]any {
 	return map[string]any{
-		"ListenAddresses": []string{"/ip4/0.0.0.0/tcp/4001"},
+		"ListenAddresses": []string{
+			"/ip4/0.0.0.0/tcp/4001",
+			"/ip4/0.0.0.0/tcp/4002/ws",
+			"/ip4/0.0.0.0/udp/443/quic-v1",
+			"/ip4/0.0.0.0/udp/443/quic-v1/webtransport",
+			"/ip6/::/tcp/4001",
+			"/ip6/::/tcp/4002/ws",
+			"/ip6/::/udp/443/quic-v1",
+			"/ip6/::/udp/443/quic-v1/webtransport",
+		},
 		"BootstrapPeers":  BootstrapPeers,
 		"DHTMode":         "fullrt",
 	}
