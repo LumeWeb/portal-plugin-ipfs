@@ -609,19 +609,25 @@ func AnnouncementAddresses(announceWeb bool, domain string, hostAddrs []multiadd
 
 func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiaddr, configPort int) ([]multiaddr.Multiaddr, error) {
 	configPortStr := strconv.Itoa(configPort)
+	var tcpAddrs []multiaddr.Multiaddr
 	var wssAddrs []multiaddr.Multiaddr
 	var udpAddrs []multiaddr.Multiaddr
+	seenTCP := make(map[string]bool)
 	seenWSS := make(map[string]bool)
 	seenUDP := make(map[string]bool)
 
 	for _, addr := range hostAddrs {
 		var hasWS bool
 		var hasQUIC bool
+		var hasTCP bool
 		var port string
 		var quicProtos []string
 		var certhashes []string
 		multiaddr.ForEach(addr, func(c multiaddr.Component) bool {
 			switch c.Protocol().Code {
+			case multiaddr.P_TCP:
+				port = c.Value()
+				hasTCP = true
 			case multiaddr.P_WS, multiaddr.P_WSS:
 				hasWS = true
 			case multiaddr.P_UDP:
@@ -671,10 +677,19 @@ func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiad
 				seenUDP[ma.String()] = true
 				udpAddrs = append(udpAddrs, ma)
 			}
+		} else if hasTCP {
+			ma, err := multiaddr.NewMultiaddr(fmt.Sprintf("/dns/%s/tcp/%s", domain, port))
+			if err != nil {
+				continue
+			}
+			if !seenTCP[ma.String()] {
+				seenTCP[ma.String()] = true
+				tcpAddrs = append(tcpAddrs, ma)
+			}
 		}
 	}
 
-	result := append(wssAddrs, udpAddrs...)
+	result := append(tcpAddrs, append(wssAddrs, udpAddrs...)...)
 	if len(result) > 0 {
 		return result, nil
 	}

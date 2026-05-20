@@ -10,6 +10,7 @@ import (
 
 func TestAnnouncementAddresses_AnnounceWeb(t *testing.T) {
 	hostAddrs := []multiaddr.Multiaddr{
+		multiaddr.StringCast("/ip4/1.2.3.4/tcp/4001"),
 		multiaddr.StringCast("/ip4/1.2.3.4/tcp/4001/ws"),
 		multiaddr.StringCast("/ip4/1.2.3.4/udp/4001/quic-v1"),
 		multiaddr.StringCast("/ip4/1.2.3.4/udp/4001/quic-v1/webtransport"),
@@ -19,6 +20,7 @@ func TestAnnouncementAddresses_AnnounceWeb(t *testing.T) {
 	require.NoError(t, err)
 
 	expected := []string{
+		"/dns/ipfs.example.com/tcp/4001",
 		"/dns/web.ipfs.example.com/tcp/443/wss",
 		"/dns/ipfs.example.com/udp/4001/quic-v1",
 		"/dns/ipfs.example.com/udp/4001/quic-v1/webtransport",
@@ -31,6 +33,7 @@ func TestAnnouncementAddresses_AnnounceWeb(t *testing.T) {
 
 func TestAnnouncementAddresses_AnnounceWebFalse(t *testing.T) {
 	hostAddrs := []multiaddr.Multiaddr{
+		multiaddr.StringCast("/ip4/1.2.3.4/tcp/4001"),
 		multiaddr.StringCast("/ip4/1.2.3.4/tcp/4001/ws"),
 		multiaddr.StringCast("/ip4/1.2.3.4/udp/4001/quic-v1"),
 		multiaddr.StringCast("/ip4/192.168.1.1/tcp/4001/ws"),
@@ -40,9 +43,22 @@ func TestAnnouncementAddresses_AnnounceWebFalse(t *testing.T) {
 	result, err := AnnouncementAddresses(false, "ipfs.example.com", hostAddrs, 4001)
 	require.NoError(t, err)
 
-	require.Len(t, result, 2)
-	assert.Equal(t, "/ip4/1.2.3.4/tcp/4001/ws", result[0].String())
-	assert.Equal(t, "/ip4/1.2.3.4/udp/4001/quic-v1", result[1].String())
+	require.Len(t, result, 3)
+	assert.Equal(t, "/ip4/1.2.3.4/tcp/4001", result[0].String())
+	assert.Equal(t, "/ip4/1.2.3.4/tcp/4001/ws", result[1].String())
+	assert.Equal(t, "/ip4/1.2.3.4/udp/4001/quic-v1", result[2].String())
+}
+
+func TestAnnouncementAddresses_PlainTCP(t *testing.T) {
+	hostAddrs := []multiaddr.Multiaddr{
+		multiaddr.StringCast("/ip4/1.2.3.4/tcp/4001"),
+	}
+
+	result, err := AnnouncementAddresses(true, "ipfs.example.com", hostAddrs, 4001)
+	require.NoError(t, err)
+
+	require.Len(t, result, 1)
+	assert.Equal(t, "/dns/ipfs.example.com/tcp/4001", result[0].String())
 }
 
 func TestAnnouncementAddresses_AnnounceWebWSSToPort443(t *testing.T) {
@@ -191,6 +207,7 @@ func TestAnnouncementAddresses_DNSHostAddrReplaced(t *testing.T) {
 
 func TestAnnouncementAddresses_MixedTransports(t *testing.T) {
 	hostAddrs := []multiaddr.Multiaddr{
+		multiaddr.StringCast("/ip4/1.2.3.4/tcp/4001"),
 		multiaddr.StringCast("/ip4/1.2.3.4/tcp/4001/ws"),
 		multiaddr.StringCast("/ip4/1.2.3.4/udp/4001/quic-v1"),
 		multiaddr.StringCast("/ip4/1.2.3.4/udp/4001/quic-v1/webtransport/certhash/uEiBzadLZbQCvscarMZg74tDg1l0trRpbTcWQOipBLFmSGg"),
@@ -200,6 +217,7 @@ func TestAnnouncementAddresses_MixedTransports(t *testing.T) {
 	require.NoError(t, err)
 
 	expected := []string{
+		"/dns/ipfs.example.com/tcp/4001",
 		"/dns/web.ipfs.example.com/tcp/443/wss",
 		"/dns/ipfs.example.com/udp/4001/quic-v1",
 		"/dns/ipfs.example.com/udp/4001/quic-v1/webtransport/certhash/uEiBzadLZbQCvscarMZg74tDg1l0trRpbTcWQOipBLFmSGg",
