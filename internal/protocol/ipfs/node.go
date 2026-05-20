@@ -665,7 +665,7 @@ func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiad
 			return true
 		})
 
-		if hasQUIC && configPort != 0 && port != configPortStr {
+		if !hasWS && configPort != 0 && port != configPortStr {
 			continue
 		}
 
