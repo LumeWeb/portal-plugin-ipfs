@@ -396,7 +396,11 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		libp2p.Transport(webtransport.New),
 		libp2p.PrometheusRegisterer(prometheus.WrapRegistererWithPrefix("libp2p_", core.PluginMetricsRegistry(internal.ProtocolName))),
 		libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
-			domain := core.GetService[core.HTTPService](ctx, core.HTTP_SERVICE).APISubdomain(internal.ProtocolName, false)
+			httpSvc := core.GetService[core.HTTPService](ctx, core.HTTP_SERVICE)
+			var domain string
+			if httpSvc != nil {
+				domain = httpSvc.APISubdomain(internal.ProtocolName, false)
+			}
 			announceAddresses, err := AnnouncementAddresses(cfg.AnnounceAddresses, domain)
 			if err != nil {
 				ctx.Logger().Error("failed to get announcement addresses", zap.Error(err))
@@ -633,8 +637,10 @@ func resolvePublicAddresses() ([]multiaddr.Multiaddr, error) {
 	unspecAddrs := []multiaddr.Multiaddr{
 		multiaddr.StringCast("/ip4/0.0.0.0/tcp/4001"),
 		multiaddr.StringCast("/ip6/::/tcp/4001"),
-		multiaddr.StringCast("/ip4/0.0.0.0/udp/4001/quic-v1"),
-		multiaddr.StringCast("/ip6/::/udp/4001/quic-v1"),
+		multiaddr.StringCast("/ip4/0.0.0.0/udp/443/quic-v1"),
+		multiaddr.StringCast("/ip6/::/udp/443/quic-v1"),
+		multiaddr.StringCast("/ip4/0.0.0.0/udp/443/quic-v1/webtransport"),
+		multiaddr.StringCast("/ip6/::/udp/443/quic-v1/webtransport"),
 		multiaddr.StringCast("/ip4/0.0.0.0/tcp/4002/ws"),
 		multiaddr.StringCast("/ip6/::/tcp/4002/ws"),
 	}
