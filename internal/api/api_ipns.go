@@ -343,23 +343,21 @@ func (a *API) resolveIPNS(c echo.Context) error {
 	return httputil.EncodeResponse(ctx, nil, &resp)
 }
 
-// republishIPNS republishes IPNS records to keep them alive in the network.
-// If key_id is provided in request body, republishes only that key.
-// Otherwise republishes all records owned by the authenticated user.
-// Returns 200 OK with IPNSRepublishResponse containing count of republished records.
 func (a *API) republishIPNS(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
 
-	// Parse optional key_id parameter from request body
-	var req struct {
-		KeyID *uint `json:"key_id,omitempty"`
-	}
-	if err := c.Bind(&req); err != nil {
-		// If body parsing fails, it's okay - key_id is optional
+	user, err := mcontext.GetUserID(c)
+	if err != nil {
+		return err
 	}
 
-	// Get IPNSKeyService
+	keyID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidUUIDFormat, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
 	ipnsKeyService := core.GetService[pluginCore.IPNSKeyService](a.Context(), pluginCore.IPNS_KEY_SERVICE)
 	if ipnsKeyService == nil {
 		a.Logger().Error("IPNSKeyService not available")
@@ -367,109 +365,53 @@ func (a *API) republishIPNS(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	var count int
-
-	if req.KeyID != nil {
-		// Republish a specific key
-		user, err := mcontext.GetUserID(c)
-		if err != nil {
-			return err
-		}
-
-		// Get the IPNS key by ID and verify ownership
-		key, err := a.ipnsKeyService.GetKeyByID(reqCtx, user, *req.KeyID)
-		if err != nil {
-			a.Logger().Error("Failed to get IPNS key", zap.Error(err), zap.Uint("key_id", *req.KeyID), zap.Uint("user_id", user))
-			apiErr := NewError(ErrKeyPinFetchFailed, err)
+	key, err := a.ipnsKeyService.GetKeyByID(reqCtx, user, uint(keyID))
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			apiErr := NewError(ErrKeyUploadNotFound, err)
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
-
-		// Get the current published record
-		record, err := ipnsKeyService.GetPublished(reqCtx, key.PeerID().String(), false)
-		if err != nil {
-			a.Logger().Error("Failed to get published record for republish", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
-			apiErr := NewError(ErrKeyPinFetchFailed, fmt.Errorf("failed to get published record: %w", err))
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-
-		// Get the value from the record
-		valuePath, err := record.Value()
-		if err != nil {
-			a.Logger().Error("Failed to get IPNS record value for republish", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
-			apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to get IPNS record value: %w", err))
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-
-		// Get the private key and republish
-		privKey, _, err := a.ipnsKeyService.GetPrivateKeyByPeerID(reqCtx, key.PeerID().String())
-		if err != nil {
-			a.Logger().Error("Failed to get private key for republish", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
-			apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to get private key: %w", err))
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-
-		// Extract CID from the path
-		cidStr, err := paths.ExtractCIDFromPathStrict(valuePath)
-		if err != nil {
-			apiErr := NewError(ErrKeyInvalidRequest, err)
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-
-		// Republish with the same value
-		err = ipnsKeyService.PublishWithKey(reqCtx, privKey, cidStr, 0)
-		if err != nil {
-			a.Logger().Error("Failed to republish IPNS record", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
-			apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to republish IPNS record: %w", err))
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-
-		count = 1
-	} else {
-		// Republish all keys
-		records, err := ipnsKeyService.ListPublished(reqCtx)
-		if err != nil {
-			a.Logger().Error("Failed to list published records", zap.Error(err))
-			apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to list published records: %w", err))
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-
-		// Republish each record
-		for ipnsName, record := range records {
-			peerID := ipnsName.Peer().String()
-
-			privKey, _, err := a.ipnsKeyService.GetPrivateKeyByPeerID(reqCtx, peerID)
-			if err != nil {
-				a.Logger().Warn("Failed to get private key for republish, skipping", zap.Error(err), zap.String("peer_id", peerID))
-				continue
-			}
-
-			valuePath, err := record.Value()
-			if err != nil {
-				a.Logger().Warn("Failed to get IPNS record value for republish, skipping", zap.Error(err), zap.String("peer_id", peerID))
-				continue
-			}
-
-			// Extract CID from the path
-			cidStr, err := paths.ExtractCIDFromPathStrict(valuePath)
-			if err != nil {
-				a.Logger().Warn("Invalid IPNS record path format, skipping", zap.Error(err), zap.String("peer_id", peerID))
-				continue
-			}
-
-			err = ipnsKeyService.PublishWithKey(reqCtx, privKey, cidStr, 0)
-			if err != nil {
-				a.Logger().Warn("Failed to republish IPNS record, skipping", zap.Error(err), zap.String("peer_id", peerID))
-				continue
-			}
-
-			count++
-		}
+		a.Logger().Error("Failed to get IPNS key", zap.Error(err), zap.Uint("key_id", uint(keyID)), zap.Uint("user_id", user))
+		apiErr := NewError(ErrKeyPinFetchFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	// Return response
+	record, err := ipnsKeyService.GetPublished(reqCtx, key.PeerID().String(), false)
+	if err != nil {
+		a.Logger().Error("Failed to get published record for republish", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
+		apiErr := NewError(ErrKeyPinFetchFailed, fmt.Errorf("failed to get published record: %w", err))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	valuePath, err := record.Value()
+	if err != nil {
+		a.Logger().Error("Failed to get IPNS record value for republish", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to get IPNS record value: %w", err))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	privKey, _, err := a.ipnsKeyService.GetPrivateKeyByPeerID(reqCtx, key.PeerID().String())
+	if err != nil {
+		a.Logger().Error("Failed to get private key for republish", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to get private key: %w", err))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	cidStr, err := paths.ExtractCIDFromPathStrict(valuePath)
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidRequest, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	if err := ipnsKeyService.PublishWithKey(reqCtx, privKey, cidStr, 0); err != nil {
+		a.Logger().Error("Failed to republish IPNS record", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to republish IPNS record: %w", err))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
 	resp := dto.IPNSRepublishResponse{
-		Count:   count,
-		Message: fmt.Sprintf("Successfully republished %d IPNS record(s)", count),
+		Count:   1,
+		Message: "Successfully republished IPNS record",
 	}
 
 	return httputil.EncodeResponse(ctx, nil, &resp)
