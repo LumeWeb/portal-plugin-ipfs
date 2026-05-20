@@ -665,10 +665,6 @@ func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiad
 			return true
 		})
 
-		if !manet.IsPublicAddr(addr) || manet.IsIPLoopback(addr) || manet.IsIPUnspecified(addr) || manet.IsPrivateAddr(addr) {
-			continue
-		}
-
 		if hasQUIC && configPort != 0 && port != configPortStr {
 			continue
 		}

@@ -10,10 +10,10 @@ import (
 
 func TestAnnouncementAddresses_AnnounceWeb(t *testing.T) {
 	hostAddrs := []multiaddr.Multiaddr{
-		multiaddr.StringCast("/ip4/1.2.3.4/tcp/4001"),
-		multiaddr.StringCast("/ip4/1.2.3.4/tcp/4001/ws"),
-		multiaddr.StringCast("/ip4/1.2.3.4/udp/4001/quic-v1"),
-		multiaddr.StringCast("/ip4/1.2.3.4/udp/4001/quic-v1/webtransport"),
+		multiaddr.StringCast("/ip4/172.18.0.19/tcp/4001"),
+		multiaddr.StringCast("/ip4/172.18.0.19/tcp/4001/ws"),
+		multiaddr.StringCast("/ip4/172.18.0.19/udp/4001/quic-v1"),
+		multiaddr.StringCast("/ip4/172.18.0.19/udp/4001/quic-v1/webtransport"),
 	}
 
 	result, err := AnnouncementAddresses(true, "ipfs.example.com", hostAddrs, 4001)
@@ -238,6 +238,30 @@ func TestAnnouncementAddresses_NoWSFallback(t *testing.T) {
 
 	require.Len(t, result, 1)
 	assert.Equal(t, "/dns/ipfs.example.com/udp/4001/quic-v1", result[0].String())
+}
+
+func TestAnnouncementAddresses_PrivateIPsWithDomain(t *testing.T) {
+	hostAddrs := []multiaddr.Multiaddr{
+		multiaddr.StringCast("/ip4/127.0.0.1/tcp/4001"),
+		multiaddr.StringCast("/ip4/127.0.0.1/tcp/4001/ws"),
+		multiaddr.StringCast("/ip4/172.18.0.19/udp/4001/quic-v1"),
+		multiaddr.StringCast("/ip4/172.18.0.19/udp/4001/webrtc-direct"),
+		multiaddr.StringCast("/ip6/::1/tcp/4001/ws"),
+	}
+
+	result, err := AnnouncementAddresses(true, "ipfs.dev.pinner.xyz", hostAddrs, 4001)
+	require.NoError(t, err)
+
+	expected := []string{
+		"/dns/ipfs.dev.pinner.xyz/tcp/4001",
+		"/dns/web.ipfs.dev.pinner.xyz/tcp/443/wss",
+		"/dns/ipfs.dev.pinner.xyz/udp/4001/quic-v1",
+		"/dns/ipfs.dev.pinner.xyz/udp/4001/webrtc-direct",
+	}
+	require.Len(t, result, len(expected))
+	for i, addr := range result {
+		assert.Equal(t, expected[i], addr.String())
+	}
 }
 
 func TestAnnouncementAddresses_WebRTCDirect(t *testing.T) {
