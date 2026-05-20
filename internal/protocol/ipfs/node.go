@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +47,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	webrtc "github.com/libp2p/go-libp2p/p2p/transport/webrtc"
 	ws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
@@ -89,6 +91,7 @@ type IPFSNode interface {
 	AnnounceWeb() bool
 	AnnounceDomain() string
 	HostAddrs() []multiaddr.Multiaddr
+	Port() int
 }
 
 // NopExchange wraps an exchange.Interface and disables NotifyNewBlocks.
@@ -185,6 +188,7 @@ type Node struct {
 	keystore         keystore.Keystore
 	publisher        *namesys.IPNSPublisher
 	announceWeb      bool
+	port             int
 }
 
 // Close closes the node
@@ -260,7 +264,7 @@ func (n *Node) PeerID() peer.ID {
 }
 
 func (n *Node) ConnectionAddresses() ([]multiaddr.Multiaddr, error) {
-	annAddrs, err := AnnouncementAddresses(n.announceWeb, n.announceDomain(), n.host.Addrs())
+	annAddrs, err := AnnouncementAddresses(n.announceWeb, n.announceDomain(), n.host.Addrs(), n.port)
 	if err != nil {
 		return nil, err
 	}
@@ -278,6 +282,10 @@ func (n *Node) AnnounceWeb() bool {
 
 func (n *Node) AnnounceDomain() string {
 	return n.announceDomain()
+}
+
+func (n *Node) Port() int {
+	return n.port
 }
 
 func (n *Node) announceDomain() string {
@@ -405,6 +413,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		libp2p.ShareTCPListener(),
 		libp2p.Transport(quic.NewTransport),
 		libp2p.Transport(webtransport.New),
+		libp2p.Transport(webrtc.New),
 		libp2p.PrometheusRegisterer(prometheus.WrapRegistererWithPrefix("libp2p_", core.PluginMetricsRegistry(internal.ProtocolName))),
 		libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 			var domain string
@@ -414,7 +423,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 					domain = httpSvc.APISubdomain(internal.ProtocolName, false)
 				}
 			}
-			announceAddresses, err := AnnouncementAddresses(cfg.AnnounceWeb, domain, addrs)
+			announceAddresses, err := AnnouncementAddresses(cfg.AnnounceWeb, domain, addrs, cfg.Port)
 			if err != nil {
 				ctx.Logger().Error("failed to get announcement addresses", zap.Error(err))
 				return lo.Filter(addrs, func(addr multiaddr.Multiaddr, _ int) bool {
@@ -453,6 +462,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		log:         ctx.Logger(),
 		ctx:         ctx,
 		announceWeb: cfg.AnnounceWeb,
+		port:        cfg.Port,
 	}
 
 	// Build common DHT options using factory's GetBootstrapPeers()
@@ -591,37 +601,47 @@ func (n *Node) TriggerReprovider() {
 	n.reprovider.Trigger()
 }
 
-func AnnouncementAddresses(announceWeb bool, domain string, hostAddrs []multiaddr.Multiaddr) ([]multiaddr.Multiaddr, error) {
+func AnnouncementAddresses(announceWeb bool, domain string, hostAddrs []multiaddr.Multiaddr, configPort int) ([]multiaddr.Multiaddr, error) {
 	if announceWeb && domain != "" {
-		return announceFromDomainAndHostAddrs(domain, hostAddrs)
+		return announceFromDomainAndHostAddrs(domain, hostAddrs, configPort)
 	}
 
 	return filterPublicAddrs(hostAddrs), nil
 }
 
-func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiaddr) ([]multiaddr.Multiaddr, error) {
+func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiaddr, configPort int) ([]multiaddr.Multiaddr, error) {
+	configPortStr := strconv.Itoa(configPort)
+	var tcpAddrs []multiaddr.Multiaddr
 	var wssAddrs []multiaddr.Multiaddr
 	var udpAddrs []multiaddr.Multiaddr
+	seenTCP := make(map[string]bool)
 	seenWSS := make(map[string]bool)
 	seenUDP := make(map[string]bool)
 
 	for _, addr := range hostAddrs {
 		var hasWS bool
 		var hasQUIC bool
+		var hasTCP bool
 		var port string
-		var quicProtos []string
+		var udpProtos []string
 		var certhashes []string
 		multiaddr.ForEach(addr, func(c multiaddr.Component) bool {
 			switch c.Protocol().Code {
+			case multiaddr.P_TCP:
+				port = c.Value()
+				hasTCP = true
 			case multiaddr.P_WS, multiaddr.P_WSS:
 				hasWS = true
 			case multiaddr.P_UDP:
 				port = c.Value()
 			case multiaddr.P_QUIC_V1:
 				hasQUIC = true
-				quicProtos = append(quicProtos, "quic-v1")
+				udpProtos = append(udpProtos, "quic-v1")
 			case multiaddr.P_WEBTRANSPORT:
-				quicProtos = append(quicProtos, "webtransport")
+				udpProtos = append(udpProtos, "webtransport")
+			case multiaddr.P_WEBRTC_DIRECT:
+				hasQUIC = true
+				udpProtos = append(udpProtos, "webrtc-direct")
 			case multiaddr.P_CERTHASH:
 				certhashes = append(certhashes, c.Value())
 			}
@@ -629,6 +649,10 @@ func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiad
 		})
 
 		if !manet.IsPublicAddr(addr) || manet.IsIPLoopback(addr) || manet.IsIPUnspecified(addr) || manet.IsPrivateAddr(addr) {
+			continue
+		}
+
+		if hasQUIC && configPort != 0 && port != configPortStr {
 			continue
 		}
 
@@ -644,7 +668,7 @@ func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiad
 		} else if hasQUIC {
 			var parts []string
 			parts = append(parts, fmt.Sprintf("/dns/%s/udp/%s", domain, port))
-			for _, p := range quicProtos {
+			for _, p := range udpProtos {
 				parts = append(parts, "/"+p)
 			}
 			for _, ch := range certhashes {
@@ -658,10 +682,19 @@ func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiad
 				seenUDP[ma.String()] = true
 				udpAddrs = append(udpAddrs, ma)
 			}
+		} else if hasTCP {
+			ma, err := multiaddr.NewMultiaddr(fmt.Sprintf("/dns/%s/tcp/%s", domain, port))
+			if err != nil {
+				continue
+			}
+			if !seenTCP[ma.String()] {
+				seenTCP[ma.String()] = true
+				tcpAddrs = append(tcpAddrs, ma)
+			}
 		}
 	}
 
-	result := append(wssAddrs, udpAddrs...)
+	result := append(tcpAddrs, append(wssAddrs, udpAddrs...)...)
 	if len(result) > 0 {
 		return result, nil
 	}

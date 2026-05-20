@@ -156,6 +156,7 @@ func GetProtocolMock() coreTesting.TestContextBuilderOption {
 		ipfsNode.EXPECT().HostAddrs().Return(nil).Maybe()
 		ipfsNode.EXPECT().AnnounceWeb().Return(false).Maybe()
 		ipfsNode.EXPECT().AnnounceDomain().Return("").Maybe()
+		ipfsNode.EXPECT().Port().Return(4001).Maybe()
 
 		// Mock AddBlock to return nil (success)
 		ipfsNode.EXPECT().AddBlock(mock.Anything, mock.Anything).Return(nil).Maybe()
