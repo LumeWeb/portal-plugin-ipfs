@@ -344,6 +344,52 @@ func (_c *MockIPFSNode_DelegateAddresses_Call) RunAndReturn(run func() ([]multia
 	return _c
 }
 
+// GetAnnounceAddrs provides a mock function for the type MockIPFSNode
+func (_mock *MockIPFSNode) GetAnnounceAddrs() []string {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetAnnounceAddrs")
+	}
+
+	var r0 []string
+	if returnFunc, ok := ret.Get(0).(func() []string); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]string)
+		}
+	}
+	return r0
+}
+
+// MockIPFSNode_GetAnnounceAddrs_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetAnnounceAddrs'
+type MockIPFSNode_GetAnnounceAddrs_Call struct {
+	*mock.Call
+}
+
+// GetAnnounceAddrs is a helper method to define mock.On call
+func (_e *MockIPFSNode_Expecter) GetAnnounceAddrs() *MockIPFSNode_GetAnnounceAddrs_Call {
+	return &MockIPFSNode_GetAnnounceAddrs_Call{Call: _e.mock.On("GetAnnounceAddrs")}
+}
+
+func (_c *MockIPFSNode_GetAnnounceAddrs_Call) Run(run func()) *MockIPFSNode_GetAnnounceAddrs_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockIPFSNode_GetAnnounceAddrs_Call) Return(strings []string) *MockIPFSNode_GetAnnounceAddrs_Call {
+	_c.Call.Return(strings)
+	return _c
+}
+
+func (_c *MockIPFSNode_GetAnnounceAddrs_Call) RunAndReturn(run func() []string) *MockIPFSNode_GetAnnounceAddrs_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetBlock provides a mock function for the type MockIPFSNode
 func (_mock *MockIPFSNode) GetBlock(ctx context.Context, c cid.Cid) (format.Node, error) {
 	ret := _mock.Called(ctx, c)
