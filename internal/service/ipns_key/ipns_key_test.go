@@ -9,17 +9,20 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	portalDb "go.lumeweb.com/portal/db"
 	"go.uber.org/zap/zaptest"
+	"gorm.io/gorm"
 )
 
 var TestOptions = coreTesting.CombineOptions(
@@ -727,5 +730,77 @@ func TestSafeRepublisherKeystore_ListFiltersNilKeys(t *testing.T) {
 	assert.Len(t, names, 1, "Should only list the valid key")
 	assert.Contains(t, names, "valid-key", "Should contain valid key")
 	assert.NotContains(t, names, "corrupted-key", "Should not contain corrupted key")
+}
+
+func TestIPNSKeyService_PublishWithKey_UpdatesLastPublishedCID(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		keyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, keyService)
+
+		userID := uint(1)
+
+		createdKey, err := keyService.CreateKey(context.Background(), userID, "test-publish-key", KeyType_Ed25519)
+		require.NoError(tb, err)
+		require.Empty(tb, createdKey.LastPublishedCID)
+
+		testCID := "bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4"
+
+		privKey, _, err := keyService.GetPrivateKeyByPeerID(context.Background(), createdKey.PeerID().String())
+		require.NoError(tb, err)
+
+		proto := core.GetProtocol(internal.ProtocolName)
+		ipnsAccess := proto.(pluginCore.IPNSBoxoServices)
+		mockPublisher := ipnsAccess.GetIPNSNode().GetPublisher().(*mocks.MockIPNSPublisher)
+		mockPublisher.EXPECT().Publish(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+
+		err = keyService.PublishWithKey(context.Background(), privKey, testCID, 0)
+		require.NoError(tb, err)
+
+		// Re-read the key directly from DB to verify the update
+		var dbKey pluginDb.IPFSIPNSKey
+		dbErr := portalDb.RetryableTransaction(context.Background(), ctx.DB(), func(tx *gorm.DB) *gorm.DB {
+			return tx.Where("id = ?", createdKey.ID).First(&dbKey)
+		})
+		require.NoError(tb, dbErr, "Failed to read key from DB")
+		assert.Equal(tb, testCID, dbKey.LastPublishedCID, "LastPublishedCID should be updated in DB")
+		assert.NotNil(tb, dbKey.LastPublishedAt, "LastPublishedAt should be set in DB")
+
+		// Also verify via the service method
+		updatedKey, err := keyService.GetKeyByID(context.Background(), userID, createdKey.ID)
+		require.NoError(tb, err)
+		assert.Equal(tb, testCID, updatedKey.LastPublishedCID)
+	}, TestOptions)
+}
+
+func TestIPNSKeyService_PublishCID_UpdatesLastPublishedCID(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		keyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, keyService)
+
+		userID := uint(1)
+
+		createdKey, err := keyService.CreateKey(context.Background(), userID, "test-publishcid-key", KeyType_Ed25519)
+		require.NoError(tb, err)
+		require.Empty(tb, createdKey.LastPublishedCID)
+
+		testCID := "bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4"
+
+		proto := core.GetProtocol(internal.ProtocolName)
+		ipnsAccess := proto.(pluginCore.IPNSBoxoServices)
+		mockPublisher := ipnsAccess.GetIPNSNode().GetPublisher().(*mocks.MockIPNSPublisher)
+		mockPublisher.EXPECT().Publish(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+
+		err = keyService.PublishCID(context.Background(), createdKey.PeerID().String(), testCID, 0)
+		require.NoError(tb, err)
+
+		// Re-read the key directly from DB to verify the update
+		var dbKey pluginDb.IPFSIPNSKey
+		dbErr := portalDb.RetryableTransaction(context.Background(), ctx.DB(), func(tx *gorm.DB) *gorm.DB {
+			return tx.Where("id = ?", createdKey.ID).First(&dbKey)
+		})
+		require.NoError(tb, dbErr, "Failed to read key from DB")
+		assert.Equal(tb, testCID, dbKey.LastPublishedCID, "LastPublishedCID should be updated in DB")
+		assert.NotNil(tb, dbKey.LastPublishedAt, "LastPublishedAt should be set in DB")
+	}, TestOptions)
 }
 
