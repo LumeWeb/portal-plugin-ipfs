@@ -203,8 +203,7 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 	}
 
 	// Update last_checked_at timestamp
-	now := time.Now()
-	website.LastCheckedAt = &now
+	website.LastCheckedAt = new(time.Now())
 
 	// Save changes
 	if err := j.db.WithContext(ctx).Save(website).Error; err != nil {
@@ -260,8 +259,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.String("peer_id", website.TargetHash()),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
-		now := time.Now()
-		website.LastCheckedAt = &now
+		website.LastCheckedAt = new(time.Now())
 		return nil
 	}
 
@@ -274,8 +272,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.Uint("key_user_id", userID),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
-		now := time.Now()
-		website.LastCheckedAt = &now
+		website.LastCheckedAt = new(time.Now())
 		return nil
 	}
 
@@ -291,8 +288,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.String("peer_id", website.TargetHash()),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
-		now := time.Now()
-		website.LastCheckedAt = &now
+		website.LastCheckedAt = new(time.Now())
 		return nil
 	}
 
@@ -304,8 +300,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.String("peer_id", website.TargetHash()),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
-		now := time.Now()
-		website.LastCheckedAt = &now
+		website.LastCheckedAt = new(time.Now())
 		return nil
 	}
 
@@ -319,8 +314,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.String("peer_id", website.TargetHash()),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
-		now := time.Now()
-		website.LastCheckedAt = &now
+		website.LastCheckedAt = new(time.Now())
 		return nil
 	}
 
@@ -335,8 +329,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.String("cid", cidStr),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
-		now := time.Now()
-		website.LastCheckedAt = &now
+		website.LastCheckedAt = new(time.Now())
 		return nil
 	}
 
@@ -347,8 +340,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.String("cid", cidStr),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
-		now := time.Now()
-		website.LastCheckedAt = &now
+		website.LastCheckedAt = new(time.Now())
 		return nil
 	}
 
@@ -362,8 +354,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.String("peer_id", website.TargetHash()),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
-		now := time.Now()
-		website.LastCheckedAt = &now
+		website.LastCheckedAt = new(time.Now())
 		return nil
 	}
 
@@ -375,15 +366,13 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.Time("validity", validity),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
-		now := time.Now()
-		website.LastCheckedAt = &now
+		website.LastCheckedAt = new(time.Now())
 		return nil
 	}
 
 	// All validations passed
 	website.Status = string(pluginDb.WebsiteStatusActive)
-	now := time.Now()
-	website.LastCheckedAt = &now
+	website.LastCheckedAt = new(time.Now())
 
 	j.logger.Debug("IPNS target validated successfully",
 		zap.Uint("website_id", website.ID),
@@ -426,7 +415,6 @@ func (j *WebsiteJanitorJob) validateDNSZones(ctx context.Context) error {
 		validated, err := j.dnsService.ValidateNameservers(ctx, zone.ID)
 
 		// Always update the timestamp to avoid re-checking immediately
-		now := time.Now()
 
 		if err != nil {
 			j.logger.Warn("Failed to validate DNS zone nameservers",
@@ -434,14 +422,14 @@ func (j *WebsiteJanitorJob) validateDNSZones(ctx context.Context) error {
 				zap.Uint("zone_id", zone.ID),
 				zap.String("domain", zone.Domain))
 			// Still save the timestamp to prevent a fast retry loop
-			zone.LastNameserverCheckAt = &now
+			zone.LastNameserverCheckAt = new(time.Now())
 			if err := j.db.WithContext(ctx).Model(&zone).Select("LastNameserverCheckAt").Updates(&zone).Error; err != nil {
 				j.logger.Error("Failed to update zone timestamp", zap.Error(err), zap.Uint("zone_id", zone.ID))
 			}
 			continue
 		}
 
-		zone.LastNameserverCheckAt = &now
+		zone.LastNameserverCheckAt = new(time.Now())
 		updateCols := []string{"LastNameserverCheckAt"}
 
 		if validated {

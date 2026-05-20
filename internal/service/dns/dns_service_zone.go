@@ -282,8 +282,7 @@ func (s *DNSServiceDefault) ValidateNameservers(ctx context.Context, zoneID uint
 	dnsNameservers, err := s.dnsLookup.LookupNS(zone.Domain)
 	if err != nil {
 		// Update check timestamp even on failure to prevent retry loops
-		now := time.Now()
-		zone.LastNameserverCheckAt = &now
+		zone.LastNameserverCheckAt = new(time.Now())
 		_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 			return tx.Save(zone)
 		})
@@ -309,16 +308,14 @@ func (s *DNSServiceDefault) ValidateNameservers(ctx context.Context, zoneID uint
 	}
 
 	if !valid {
-		now := time.Now()
-		zone.LastNameserverCheckAt = &now
+		zone.LastNameserverCheckAt = new(time.Now())
 		_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 			return tx.Save(zone)
 		})
 		return false, fmt.Errorf("no approved nameservers found in DNS for domain %s", zone.Domain)
 	}
 
-	now := time.Now()
-	zone.NameserversVerifiedAt = &now
+	zone.NameserversVerifiedAt = new(time.Now())
 
 	err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		zone.Status = string(pluginDb.DNSZoneStatusActive)
