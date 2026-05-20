@@ -62,7 +62,7 @@ func (a *API) handleGetBlockMetaBatch(c echo.Context) error {
 func (a *API) handleGetInfo(c echo.Context) error {
 	ctx := httputil.Context(c)
 
-	addrs, err := ipfs.AnnouncementAddresses()
+	addrs, err := ipfs.AnnouncementAddresses(a.ipfs.GetNode().GetAnnounceAddrs())
 	if err != nil {
 		a.Logger().Error("Failed to get announcement addresses", zap.Error(err))
 		apiErr := NewError(ErrKeyMetadataFetchFailed, err)

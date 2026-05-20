@@ -86,6 +86,7 @@ type IPFSNode interface {
 	GetKeystore() keystore.Keystore
 	GetDatastore() datastore.Datastore
 	GetPrivateKey() crypto.PrivKey
+	GetAnnounceAddrs() []string
 }
 
 // NopExchange wraps an exchange.Interface and disables NotifyNewBlocks.
@@ -180,6 +181,7 @@ type Node struct {
 	datastore        datastore.Datastore
 	keystore         keystore.Keystore
 	publisher        *namesys.IPNSPublisher
+	announceAddrs    []string
 }
 
 // Close closes the node
@@ -255,7 +257,11 @@ func (n *Node) PeerID() peer.ID {
 }
 
 func (n *Node) ConnectionAddresses() ([]multiaddr.Multiaddr, error) {
-	return ConnectionAddresses(n)
+	return ConnectionAddresses(n, n.announceAddrs)
+}
+
+func (n *Node) GetAnnounceAddrs() []string {
+	return n.announceAddrs
 }
 
 // DelegateAddresses returns the multiaddr addresses that can be used as delegates
@@ -363,9 +369,15 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		libp2p.DefaultTransports,
 		libp2p.PrometheusRegisterer(prometheus.WrapRegistererWithPrefix("libp2p_", core.PluginMetricsRegistry(internal.ProtocolName))),
 		libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
-			announceAddresses, err := AnnouncementAddresses()
+			announceAddresses, err := AnnouncementAddresses(cfg.AnnounceAddresses)
 			if err != nil {
 				ctx.Logger().Error("failed to get announcement addresses", zap.Error(err))
+				return lo.Filter(addrs, func(addr multiaddr.Multiaddr, _ int) bool {
+					return addr != nil
+				})
+			}
+
+			if len(announceAddresses) == 0 {
 				return lo.Filter(addrs, func(addr multiaddr.Multiaddr, _ int) bool {
 					return addr != nil
 				})
@@ -392,8 +404,9 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 
 	// Create node with minimal fields
 	ipfsNode := &Node{
-		host: node,
-		log:  ctx.Logger(),
+		host:          node,
+		log:           ctx.Logger(),
+		announceAddrs: cfg.AnnounceAddresses,
 	}
 
 	// Build common DHT options using factory's GetBootstrapPeers()
@@ -532,7 +545,17 @@ func (n *Node) TriggerReprovider() {
 	n.reprovider.Trigger()
 }
 
-func AnnouncementAddresses() ([]multiaddr.Multiaddr, error) {
+func AnnouncementAddresses(announceAddrs []string) ([]multiaddr.Multiaddr, error) {
+	if len(announceAddrs) > 0 {
+		return lo.MapErr(announceAddrs, func(addrStr string, _ int) (multiaddr.Multiaddr, error) {
+			ma, err := multiaddr.NewMultiaddr(addrStr)
+			if err != nil {
+				return nil, fmt.Errorf("invalid announce address %q: %w", addrStr, err)
+			}
+			return ma, nil
+		})
+	}
+
 	cacheMutex.RLock()
 	if len(cachedAnnouncementAddresses) > 0 {
 		cached := cachedAnnouncementAddresses
@@ -574,8 +597,8 @@ func AnnouncementAddresses() ([]multiaddr.Multiaddr, error) {
 	return announcementAddrs, nil
 }
 
-func ConnectionAddresses(node IPFSNode) ([]multiaddr.Multiaddr, error) {
-	annAddrs, err := AnnouncementAddresses()
+func ConnectionAddresses(node IPFSNode, announceAddrs []string) ([]multiaddr.Multiaddr, error) {
+	annAddrs, err := AnnouncementAddresses(announceAddrs)
 	if err != nil {
 		return nil, err
 	}

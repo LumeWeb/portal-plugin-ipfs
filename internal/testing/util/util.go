@@ -142,7 +142,7 @@ func GetProtocolMock() coreTesting.TestContextBuilderOption {
 		ipfsNode := mocks.NewMockIPFSNode(ctx.T())
 		mockPeer := config.BootstrapPeers[0].ToAddrInfo()
 		ipfsNode.EXPECT().PeerID().Return(mockPeer.ID).Maybe()
-		ipfsNode.EXPECT().DelegateAddresses().Return(ipfs.ConnectionAddresses(ipfsNode)).Maybe()
+		ipfsNode.EXPECT().DelegateAddresses().Return(ipfs.ConnectionAddresses(ipfsNode, nil)).Maybe()
 		protoMock.EXPECT().GetNode().Return(ipfsNode).Maybe()
 		protoMock.EXPECT().GetIPNSNode().Return(ipfsNode).Maybe()
 		ipfsNode.EXPECT().GetKeystore().Return(mockKeystore).Maybe()
@@ -154,8 +154,10 @@ func GetProtocolMock() coreTesting.TestContextBuilderOption {
 		require.NoError(ctx.T(), err, "Failed to generate test private key")
 		ipfsNode.EXPECT().GetPrivateKey().Return(privKey).Maybe()
 
+		ipfsNode.EXPECT().GetAnnounceAddrs().Return(nil).Maybe()
+
 		ipfsNode.EXPECT().ConnectionAddresses().RunAndReturn(func() ([]multiaddr.Multiaddr, error) {
-			return ipfs.ConnectionAddresses(ipfsNode)
+			return ipfs.ConnectionAddresses(ipfsNode, nil)
 		}).Maybe()
 
 		// Mock AddBlock to return nil (success)

@@ -16,6 +16,7 @@ var _ config.Defaults = (*ProtocolConfig)(nil)
 
 type ProtocolConfig struct {
 	ListenAddresses         []string        `config:"listen_addresses"`
+	AnnounceAddresses       []string        `config:"announce_addresses"`
 	Peers                   []IPFSPeer      `config:"peers"`
 	BootstrapPeers          []IPFSPeer      `config:"bootstrap_peers"`
 	Provider                IPFSProvider    `config:"provider"`
