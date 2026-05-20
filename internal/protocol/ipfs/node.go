@@ -593,72 +593,80 @@ func (n *Node) TriggerReprovider() {
 
 func AnnouncementAddresses(announceWeb bool, domain string, hostAddrs []multiaddr.Multiaddr) ([]multiaddr.Multiaddr, error) {
 	if announceWeb && domain != "" {
-		webDomain := webSubdomainPrefix + domain
-		return announceFromDomainAndHostAddrs(webDomain, hostAddrs)
+		return announceFromDomainAndHostAddrs(domain, hostAddrs)
 	}
 
 	return filterPublicAddrs(hostAddrs), nil
 }
 
 func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiaddr) ([]multiaddr.Multiaddr, error) {
-	type addrKey struct {
-		proto string
-		port  string
-	}
-
-	seen := make(map[addrKey]bool)
-	var result []multiaddr.Multiaddr
+	var wssAddrs []multiaddr.Multiaddr
+	var udpAddrs []multiaddr.Multiaddr
+	seenWSS := make(map[string]bool)
+	seenUDP := make(map[string]bool)
 
 	for _, addr := range hostAddrs {
-		var components []string
-		var proto string
+		var hasWS bool
+		var hasQUIC bool
 		var port string
-
+		var quicProtos []string
+		var certhashes []string
 		multiaddr.ForEach(addr, func(c multiaddr.Component) bool {
 			switch c.Protocol().Code {
-			case multiaddr.P_IP4, multiaddr.P_IP6, multiaddr.P_DNS, multiaddr.P_DNS4, multiaddr.P_DNS6:
-				components = append(components, fmt.Sprintf("/dns/%s", domain))
-			case multiaddr.P_TCP:
-				port = c.Value()
-				components = append(components, fmt.Sprintf("/tcp/%s", c.Value()))
+			case multiaddr.P_WS, multiaddr.P_WSS:
+				hasWS = true
 			case multiaddr.P_UDP:
 				port = c.Value()
-				components = append(components, fmt.Sprintf("/udp/%s", c.Value()))
-			case multiaddr.P_WS:
-				proto = "wss"
-				components = append(components, "/wss")
-			case multiaddr.P_WSS:
-				proto = "wss"
-				components = append(components, "/wss")
 			case multiaddr.P_QUIC_V1:
-				proto = "quic-v1"
-				components = append(components, "/quic-v1")
+				hasQUIC = true
+				quicProtos = append(quicProtos, "quic-v1")
 			case multiaddr.P_WEBTRANSPORT:
-				proto = "webtransport"
-				components = append(components, "/webtransport")
+				quicProtos = append(quicProtos, "webtransport")
 			case multiaddr.P_CERTHASH:
-				components = append(components, fmt.Sprintf("/certhash/%s", c.Value()))
-			default:
-				components = append(components, fmt.Sprintf("/%s/%s", c.Protocol().Name, c.Value()))
+				certhashes = append(certhashes, c.Value())
 			}
 			return true
 		})
 
-		key := addrKey{proto: proto, port: port}
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-
-		replaced, err := multiaddr.NewMultiaddr(strings.Join(components, ""))
-		if err != nil {
+		if !manet.IsPublicAddr(addr) || manet.IsIPLoopback(addr) || manet.IsIPUnspecified(addr) || manet.IsPrivateAddr(addr) {
 			continue
 		}
 
-		result = append(result, replaced)
+		if hasWS {
+			ma, err := multiaddr.NewMultiaddr(fmt.Sprintf("/dns/%s%s/tcp/443/wss", webSubdomainPrefix, domain))
+			if err != nil {
+				continue
+			}
+			if !seenWSS[ma.String()] {
+				seenWSS[ma.String()] = true
+				wssAddrs = append(wssAddrs, ma)
+			}
+		} else if hasQUIC {
+			var parts []string
+			parts = append(parts, fmt.Sprintf("/dns/%s/udp/%s", domain, port))
+			for _, p := range quicProtos {
+				parts = append(parts, "/"+p)
+			}
+			for _, ch := range certhashes {
+				parts = append(parts, fmt.Sprintf("/certhash/%s", ch))
+			}
+			ma, err := multiaddr.NewMultiaddr(strings.Join(parts, ""))
+			if err != nil {
+				continue
+			}
+			if !seenUDP[ma.String()] {
+				seenUDP[ma.String()] = true
+				udpAddrs = append(udpAddrs, ma)
+			}
+		}
 	}
 
-	return result, nil
+	result := append(wssAddrs, udpAddrs...)
+	if len(result) > 0 {
+		return result, nil
+	}
+
+	return filterPublicAddrs(hostAddrs), nil
 }
 
 func filterPublicAddrs(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {

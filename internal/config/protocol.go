@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	DefaultPort = 4002
+	DefaultPort = 4001
 
 	DHTModeBasic  = "basic"
 	DHTModeFullRT = "fullrt"
