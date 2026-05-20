@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -89,6 +90,7 @@ type IPFSNode interface {
 	AnnounceWeb() bool
 	AnnounceDomain() string
 	HostAddrs() []multiaddr.Multiaddr
+	Port() int
 }
 
 // NopExchange wraps an exchange.Interface and disables NotifyNewBlocks.
@@ -185,6 +187,7 @@ type Node struct {
 	keystore         keystore.Keystore
 	publisher        *namesys.IPNSPublisher
 	announceWeb      bool
+	port             int
 }
 
 // Close closes the node
@@ -260,7 +263,7 @@ func (n *Node) PeerID() peer.ID {
 }
 
 func (n *Node) ConnectionAddresses() ([]multiaddr.Multiaddr, error) {
-	annAddrs, err := AnnouncementAddresses(n.announceWeb, n.announceDomain(), n.host.Addrs())
+	annAddrs, err := AnnouncementAddresses(n.announceWeb, n.announceDomain(), n.host.Addrs(), n.port)
 	if err != nil {
 		return nil, err
 	}
@@ -278,6 +281,10 @@ func (n *Node) AnnounceWeb() bool {
 
 func (n *Node) AnnounceDomain() string {
 	return n.announceDomain()
+}
+
+func (n *Node) Port() int {
+	return n.port
 }
 
 func (n *Node) announceDomain() string {
@@ -414,7 +421,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 					domain = httpSvc.APISubdomain(internal.ProtocolName, false)
 				}
 			}
-			announceAddresses, err := AnnouncementAddresses(cfg.AnnounceWeb, domain, addrs)
+			announceAddresses, err := AnnouncementAddresses(cfg.AnnounceWeb, domain, addrs, cfg.Port)
 			if err != nil {
 				ctx.Logger().Error("failed to get announcement addresses", zap.Error(err))
 				return lo.Filter(addrs, func(addr multiaddr.Multiaddr, _ int) bool {
@@ -453,6 +460,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		log:         ctx.Logger(),
 		ctx:         ctx,
 		announceWeb: cfg.AnnounceWeb,
+		port:        cfg.Port,
 	}
 
 	// Build common DHT options using factory's GetBootstrapPeers()
@@ -591,15 +599,16 @@ func (n *Node) TriggerReprovider() {
 	n.reprovider.Trigger()
 }
 
-func AnnouncementAddresses(announceWeb bool, domain string, hostAddrs []multiaddr.Multiaddr) ([]multiaddr.Multiaddr, error) {
+func AnnouncementAddresses(announceWeb bool, domain string, hostAddrs []multiaddr.Multiaddr, configPort int) ([]multiaddr.Multiaddr, error) {
 	if announceWeb && domain != "" {
-		return announceFromDomainAndHostAddrs(domain, hostAddrs)
+		return announceFromDomainAndHostAddrs(domain, hostAddrs, configPort)
 	}
 
 	return filterPublicAddrs(hostAddrs), nil
 }
 
-func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiaddr) ([]multiaddr.Multiaddr, error) {
+func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiaddr, configPort int) ([]multiaddr.Multiaddr, error) {
+	configPortStr := strconv.Itoa(configPort)
 	var wssAddrs []multiaddr.Multiaddr
 	var udpAddrs []multiaddr.Multiaddr
 	seenWSS := make(map[string]bool)
@@ -629,6 +638,10 @@ func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiad
 		})
 
 		if !manet.IsPublicAddr(addr) || manet.IsIPLoopback(addr) || manet.IsIPUnspecified(addr) || manet.IsPrivateAddr(addr) {
+			continue
+		}
+
+		if hasQUIC && port != configPortStr {
 			continue
 		}
 
