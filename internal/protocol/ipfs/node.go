@@ -419,7 +419,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 			ctx.Logger().Debug("ipfs AddrsFactory invoked",
 				zap.Int("host_addr_count", len(addrs)),
 				zap.Int("config_port", cfg.Port),
-				zap.Strings("host_addrs", lo.Map(addrs, func(a multiaddr.Multiaddr, _ int) string {
+				zap.Strings("host_addrs", lo.Map(lo.Filter(addrs, func(a multiaddr.Multiaddr, _ int) bool { return a != nil }), func(a multiaddr.Multiaddr, _ int) string {
 					return a.String()
 				})),
 			)
