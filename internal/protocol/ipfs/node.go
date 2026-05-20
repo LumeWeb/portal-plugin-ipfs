@@ -416,6 +416,13 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		libp2p.Transport(webrtc.New),
 		libp2p.PrometheusRegisterer(prometheus.WrapRegistererWithPrefix("libp2p_", core.PluginMetricsRegistry(internal.ProtocolName))),
 		libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+			ctx.Logger().Debug("ipfs AddrsFactory invoked",
+				zap.Int("host_addr_count", len(addrs)),
+				zap.Int("config_port", cfg.Port),
+				zap.Strings("host_addrs", lo.Map(addrs, func(a multiaddr.Multiaddr, _ int) string {
+					return a.String()
+				})),
+			)
 			var domain string
 			if cfg.AnnounceWeb {
 				httpSvc := core.GetService[core.HTTPService](ctx, core.HTTP_SERVICE)
@@ -424,6 +431,16 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 				}
 			}
 			announceAddresses, err := AnnouncementAddresses(cfg.AnnounceWeb, domain, addrs, cfg.Port)
+			ctx.Logger().Debug("ipfs announcement addresses resolved",
+				zap.Bool("announce_web", cfg.AnnounceWeb),
+				zap.String("domain", domain),
+				zap.Int("config_port", cfg.Port),
+				zap.Int("announce_addr_count", len(announceAddresses)),
+				zap.Strings("announce_addrs", lo.Map(announceAddresses, func(a multiaddr.Multiaddr, _ int) string {
+					return a.String()
+				})),
+				zap.Error(err),
+			)
 			if err != nil {
 				ctx.Logger().Error("failed to get announcement addresses", zap.Error(err))
 				return lo.Filter(addrs, func(addr multiaddr.Multiaddr, _ int) bool {
