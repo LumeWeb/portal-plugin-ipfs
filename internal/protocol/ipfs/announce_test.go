@@ -239,3 +239,15 @@ func TestAnnouncementAddresses_NoWSFallback(t *testing.T) {
 	require.Len(t, result, 1)
 	assert.Equal(t, "/dns/ipfs.example.com/udp/4001/quic-v1", result[0].String())
 }
+
+func TestAnnouncementAddresses_WebRTCDirect(t *testing.T) {
+	hostAddrs := []multiaddr.Multiaddr{
+		multiaddr.StringCast("/ip4/1.2.3.4/udp/4001/webrtc-direct"),
+	}
+
+	result, err := AnnouncementAddresses(true, "ipfs.example.com", hostAddrs, 4001)
+	require.NoError(t, err)
+
+	require.Len(t, result, 1)
+	assert.Equal(t, "/dns/ipfs.example.com/udp/4001/webrtc-direct", result[0].String())
+}

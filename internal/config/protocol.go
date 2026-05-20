@@ -60,10 +60,12 @@ func (c ProtocolConfig) ListenAddrs() []string {
 		fmt.Sprintf("/ip4/0.0.0.0/tcp/%d/ws", port),
 		fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", port),
 		fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1/webtransport", port),
+		fmt.Sprintf("/ip4/0.0.0.0/udp/%d/webrtc-direct", port),
 		fmt.Sprintf("/ip6/::/tcp/%d", port),
 		fmt.Sprintf("/ip6/::/tcp/%d/ws", port),
 		fmt.Sprintf("/ip6/::/udp/%d/quic-v1", port),
 		fmt.Sprintf("/ip6/::/udp/%d/quic-v1/webtransport", port),
+		fmt.Sprintf("/ip6/::/udp/%d/webrtc-direct", port),
 	}
 
 	return append(base, c.ListenAddresses...)

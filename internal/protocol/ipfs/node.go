@@ -47,6 +47,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	webrtc "github.com/libp2p/go-libp2p/p2p/transport/webrtc"
 	ws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
@@ -412,6 +413,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		libp2p.ShareTCPListener(),
 		libp2p.Transport(quic.NewTransport),
 		libp2p.Transport(webtransport.New),
+		libp2p.Transport(webrtc.New),
 		libp2p.PrometheusRegisterer(prometheus.WrapRegistererWithPrefix("libp2p_", core.PluginMetricsRegistry(internal.ProtocolName))),
 		libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 			var domain string
@@ -621,7 +623,7 @@ func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiad
 		var hasQUIC bool
 		var hasTCP bool
 		var port string
-		var quicProtos []string
+		var udpProtos []string
 		var certhashes []string
 		multiaddr.ForEach(addr, func(c multiaddr.Component) bool {
 			switch c.Protocol().Code {
@@ -634,9 +636,12 @@ func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiad
 				port = c.Value()
 			case multiaddr.P_QUIC_V1:
 				hasQUIC = true
-				quicProtos = append(quicProtos, "quic-v1")
+				udpProtos = append(udpProtos, "quic-v1")
 			case multiaddr.P_WEBTRANSPORT:
-				quicProtos = append(quicProtos, "webtransport")
+				udpProtos = append(udpProtos, "webtransport")
+			case multiaddr.P_WEBRTC_DIRECT:
+				hasQUIC = true
+				udpProtos = append(udpProtos, "webrtc-direct")
 			case multiaddr.P_CERTHASH:
 				certhashes = append(certhashes, c.Value())
 			}
@@ -663,7 +668,7 @@ func announceFromDomainAndHostAddrs(domain string, hostAddrs []multiaddr.Multiad
 		} else if hasQUIC {
 			var parts []string
 			parts = append(parts, fmt.Sprintf("/dns/%s/udp/%s", domain, port))
-			for _, p := range quicProtos {
+			for _, p := range udpProtos {
 				parts = append(parts, "/"+p)
 			}
 			for _, ch := range certhashes {
