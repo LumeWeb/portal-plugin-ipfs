@@ -21,6 +21,7 @@ import (
 	manet "github.com/multiformats/go-multiaddr/net"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/samber/lo"
+	pluginBuild "go.lumeweb.com/portal-plugin-ipfs/build"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
@@ -437,6 +438,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		libp2p.ForceReachabilityPublic(),
 		libp2p.ResourceManager(rm),
 		libp2p.DefaultPeerstore,
+		libp2p.UserAgent("lumeweb-ipfs/" + pluginBuild.GetInfo().Short()),
 		libp2p.Transport(tcp.NewTCPTransport),
 		libp2p.Transport(ws.New),
 		libp2p.ShareTCPListener(),
