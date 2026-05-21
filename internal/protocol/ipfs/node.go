@@ -402,6 +402,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 				{Prefix: netip.MustParsePrefix("172.16.0.0/12"), Limit: rate.Limit{}},
 				{Prefix: netip.MustParsePrefix("10.0.0.0/8"), Limit: rate.Limit{}},
 				{Prefix: netip.MustParsePrefix("192.168.0.0/16"), Limit: rate.Limit{}},
+				{Prefix: netip.MustParsePrefix("fc00::/7"), Limit: rate.Limit{}},
 			},
 			GlobalLimit: rate.Limit{},
 		}),
