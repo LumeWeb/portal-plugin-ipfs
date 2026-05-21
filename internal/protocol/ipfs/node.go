@@ -406,6 +406,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		libp2p.ConnectionManager(cmgr),
 		libp2p.Identity(privateKey),
 		libp2p.EnableRelay(),
+		libp2p.ForceReachabilityPublic(),
 		libp2p.ResourceManager(rm),
 		libp2p.DefaultPeerstore,
 		libp2p.Transport(tcp.NewTCPTransport),
