@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"math"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +54,7 @@ import (
 	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	"github.com/libp2p/go-libp2p/x/rate"
 )
 
 const (
@@ -389,9 +392,34 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	if cfg.AutoScaleResourceLimits {
 		limits = scalingLimits.AutoScale()
 	}
-
 	limiter := rcmgr.NewFixedLimiter(limits)
-	rm, err := rcmgr.NewResourceManager(limiter, rcmgr.WithMetricsDisabled())
+
+	rm, err := rcmgr.NewResourceManager(limiter,
+		rcmgr.WithConnRateLimiters(&rate.Limiter{
+			NetworkPrefixLimits: []rate.PrefixLimit{
+				{Prefix: netip.MustParsePrefix("127.0.0.0/8"), Limit: rate.Limit{}},
+				{Prefix: netip.MustParsePrefix("::1/128"), Limit: rate.Limit{}},
+				{Prefix: netip.MustParsePrefix("172.16.0.0/12"), Limit: rate.Limit{}},
+				{Prefix: netip.MustParsePrefix("10.0.0.0/8"), Limit: rate.Limit{}},
+				{Prefix: netip.MustParsePrefix("192.168.0.0/16"), Limit: rate.Limit{}},
+				{Prefix: netip.MustParsePrefix("fc00::/7"), Limit: rate.Limit{}},
+			},
+			GlobalLimit: rate.Limit{},
+		}),
+		rcmgr.WithNetworkPrefixLimit(
+			[]rcmgr.NetworkPrefixLimit{
+				{Network: netip.MustParsePrefix("127.0.0.0/8"), ConnCount: math.MaxInt},
+				{Network: netip.MustParsePrefix("::1/128"), ConnCount: math.MaxInt},
+				{Network: netip.MustParsePrefix("172.16.0.0/12"), ConnCount: math.MaxInt},
+				{Network: netip.MustParsePrefix("10.0.0.0/8"), ConnCount: math.MaxInt},
+				{Network: netip.MustParsePrefix("192.168.0.0/16"), ConnCount: math.MaxInt},
+			},
+			[]rcmgr.NetworkPrefixLimit{
+				{Network: netip.MustParsePrefix("::1/128"), ConnCount: math.MaxInt},
+				{Network: netip.MustParsePrefix("fc00::/7"), ConnCount: math.MaxInt},
+			},
+		),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource manager: %w", err)
 	}
@@ -409,7 +437,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		libp2p.ForceReachabilityPublic(),
 		libp2p.ResourceManager(rm),
 		libp2p.DefaultPeerstore,
-		libp2p.Transport(tcp.NewTCPTransport, tcp.DisableReuseport()),
+		libp2p.Transport(tcp.NewTCPTransport),
 		libp2p.Transport(ws.New),
 		libp2p.ShareTCPListener(),
 		libp2p.Transport(quic.NewTransport),
