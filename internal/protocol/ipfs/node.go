@@ -409,7 +409,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		libp2p.ForceReachabilityPublic(),
 		libp2p.ResourceManager(rm),
 		libp2p.DefaultPeerstore,
-		libp2p.Transport(tcp.NewTCPTransport),
+		libp2p.Transport(tcp.NewTCPTransport, tcp.DisableReuseport()),
 		libp2p.Transport(ws.New),
 		libp2p.ShareTCPListener(),
 		libp2p.Transport(quic.NewTransport),
