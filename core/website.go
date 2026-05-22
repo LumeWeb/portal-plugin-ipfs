@@ -12,6 +12,22 @@ import (
 
 const WEBSITE_SERVICE = "ipfs.website"
 
+type ValidationReason string
+
+const (
+	ValidationReasonValidated    ValidationReason = "validated"
+	ValidationReasonTokenExpired ValidationReason = "token_expired"
+	ValidationReasonDNSMissing   ValidationReason = "dns_missing"
+	ValidationReasonDNSMismatch  ValidationReason = "dns_mismatch"
+	ValidationReasonTokenMissing ValidationReason = "token_missing"
+)
+
+type ValidateDNSResult struct {
+	Valid   bool
+	Message string
+	Reason  ValidationReason // machine-readable: "validated", "token_expired", "dns_missing", "dns_mismatch", "token_missing"
+}
+
 // WebsiteService defines the interface for managing website configurations
 type WebsiteService interface {
 	core.Service
@@ -42,7 +58,7 @@ type WebsiteService interface {
 	UnblockWebsite(ctx context.Context, websiteID uint) error
 
 	// ValidateDNS validates the DNS TXT record for a website domain
-	ValidateDNS(ctx context.Context, userID uint, websiteID uint) (bool, error)
+	ValidateDNS(ctx context.Context, userID uint, websiteID uint) (ValidateDNSResult, error)
 
 	// CheckStatus checks the status of a website by validating its target
 	CheckStatus(ctx context.Context, website *pluginDb.Website) (pluginDb.WebsiteStatus, error)

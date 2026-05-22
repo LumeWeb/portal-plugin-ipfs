@@ -1096,7 +1096,7 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 
 			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusActive, "")
 
-			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(true, nil)
+			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(pluginCore.ValidateDNSResult{Valid: true, Message: "DNS validation successful for test.example.com", Reason: pluginCore.ValidationReasonValidated}, nil)
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/1/validate", token, nil)
@@ -1109,7 +1109,7 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 			assert.Equal(t, uint(1), response.ID)
 			assert.Equal(t, TestDomain, response.Domain)
 			assert.True(t, response.Valid)
-			assert.Equal(t, "DNS validation successful", response.Message)
+			assert.Equal(t, "validated", response.Reason)
 		}, TestOptions)
 	})
 
@@ -1122,7 +1122,7 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 
 			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusPendingValidation, "")
 
-			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(false, nil)
+			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(pluginCore.ValidateDNSResult{Valid: false, Message: "DNS validation failed: missing validation token for test.example.com", Reason: pluginCore.ValidationReasonTokenMissing}, nil)
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/1/validate", token, nil)
@@ -1135,7 +1135,7 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 			assert.Equal(t, uint(1), response.ID)
 			assert.Equal(t, TestDomain, response.Domain)
 			assert.False(t, response.Valid)
-			assert.Equal(t, "DNS validation failed", response.Message)
+			assert.Equal(t, "token_missing", response.Reason)
 		}, TestOptions)
 	})
 
@@ -1157,7 +1157,7 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(false, errors.New("validation failed"))
+			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(pluginCore.ValidateDNSResult{}, errors.New("validation failed"))
 
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/1/validate", token, nil)
 
@@ -1172,7 +1172,7 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(true, nil)
+			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(pluginCore.ValidateDNSResult{Valid: true, Message: "DNS validation successful", Reason: pluginCore.ValidationReasonValidated}, nil)
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(nil, errors.New("get failed"))
 
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/1/validate", token, nil)

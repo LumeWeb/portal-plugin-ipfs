@@ -9,6 +9,7 @@ import (
 	"time"
 
 	mock "github.com/stretchr/testify/mock"
+	core0 "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
@@ -1199,22 +1200,22 @@ func (_c *MockWebsiteService_UpdateWebsite_Call) RunAndReturn(run func(ctx conte
 }
 
 // ValidateDNS provides a mock function for the type MockWebsiteService
-func (_mock *MockWebsiteService) ValidateDNS(ctx context.Context, userID uint, websiteID uint) (bool, error) {
+func (_mock *MockWebsiteService) ValidateDNS(ctx context.Context, userID uint, websiteID uint) (core0.ValidateDNSResult, error) {
 	ret := _mock.Called(ctx, userID, websiteID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ValidateDNS")
 	}
 
-	var r0 bool
+	var r0 core0.ValidateDNSResult
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, uint) (bool, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, uint) (core0.ValidateDNSResult, error)); ok {
 		return returnFunc(ctx, userID, websiteID)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, uint) bool); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, uint) core0.ValidateDNSResult); ok {
 		r0 = returnFunc(ctx, userID, websiteID)
 	} else {
-		r0 = ret.Get(0).(bool)
+		r0 = ret.Get(0).(core0.ValidateDNSResult)
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, uint, uint) error); ok {
 		r1 = returnFunc(ctx, userID, websiteID)
@@ -1260,12 +1261,12 @@ func (_c *MockWebsiteService_ValidateDNS_Call) Run(run func(ctx context.Context,
 	return _c
 }
 
-func (_c *MockWebsiteService_ValidateDNS_Call) Return(b bool, err error) *MockWebsiteService_ValidateDNS_Call {
-	_c.Call.Return(b, err)
+func (_c *MockWebsiteService_ValidateDNS_Call) Return(validateDNSResult core0.ValidateDNSResult, err error) *MockWebsiteService_ValidateDNS_Call {
+	_c.Call.Return(validateDNSResult, err)
 	return _c
 }
 
-func (_c *MockWebsiteService_ValidateDNS_Call) RunAndReturn(run func(ctx context.Context, userID uint, websiteID uint) (bool, error)) *MockWebsiteService_ValidateDNS_Call {
+func (_c *MockWebsiteService_ValidateDNS_Call) RunAndReturn(run func(ctx context.Context, userID uint, websiteID uint) (core0.ValidateDNSResult, error)) *MockWebsiteService_ValidateDNS_Call {
 	_c.Call.Return(run)
 	return _c
 }

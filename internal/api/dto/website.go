@@ -420,6 +420,7 @@ type WebsiteValidateResponse struct {
 	Domain  string `json:"domain"`
 	Valid   bool   `json:"valid"`
 	Message string `json:"message"`
+	Reason  string `json:"reason"`
 }
 
 // WebsiteItem represents a website listing item (used in list responses)

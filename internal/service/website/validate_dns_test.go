@@ -26,7 +26,7 @@ func setMockResolver(ws pluginCore.WebsiteService, r DNSResolver) {
 	svc.resolver = r
 }
 
-func TestValidateDNS_PendingValidation_ValidDNSLinkAndToken_ReturnsTrue(t *testing.T) {
+func TestValidateDNS_PendingValidation_ValidDNSLinkAndToken_ReturnsValidated(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, ws)
@@ -48,17 +48,19 @@ func TestValidateDNS_PendingValidation_ValidDNSLinkAndToken_ReturnsTrue(t *testi
 		}, nil)
 		setMockResolver(ws, mockResolver)
 
-		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
-		assert.True(tb, validated)
+		assert.True(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
 
 		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
 		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
+		assert.False(tb, final.IsExpired(), "validation expiry should be refreshed after successful validation")
 	}, TestOptions)
 }
 
-func TestValidateDNS_PendingValidation_MissingDNSLink_ReturnsFalse(t *testing.T) {
+func TestValidateDNS_PendingValidation_MissingDNSLink_ReturnsDNSMismatch(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, ws)
@@ -74,14 +76,15 @@ func TestValidateDNS_PendingValidation_MissingDNSLink_ReturnsFalse(t *testing.T)
 		}, nil)
 		setMockResolver(ws, mockResolver)
 
-		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
-		require.Error(tb, err)
-		assert.False(tb, validated)
-		assert.Contains(tb, err.Error(), "missing or incorrect dnslink record")
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.False(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonDNSMismatch, result.Reason)
+		assert.Contains(tb, result.Message, "missing or incorrect dnslink record")
 	}, TestOptions)
 }
 
-func TestValidateDNS_PendingValidation_MissingToken_ReturnsFalse(t *testing.T) {
+func TestValidateDNS_PendingValidation_MissingToken_ReturnsTokenMissing(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, ws)
@@ -100,14 +103,15 @@ func TestValidateDNS_PendingValidation_MissingToken_ReturnsFalse(t *testing.T) {
 		mockResolver.EXPECT().LookupTXT("missing-token.com").Return([]string{"some-other-txt-record=foo"}, nil)
 		setMockResolver(ws, mockResolver)
 
-		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
-		require.Error(tb, err)
-		assert.False(tb, validated)
-		assert.Contains(tb, err.Error(), "missing validation token")
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.False(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonTokenMissing, result.Reason)
+		assert.Contains(tb, result.Message, "missing validation token")
 	}, TestOptions)
 }
 
-func TestValidateDNS_ActiveSite_ExpiredToken_SkipsTokenCheck(t *testing.T) {
+func TestValidateDNS_ActiveSite_ExpiredToken_SkipsTokenCheckAndValidates(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, ws)
@@ -141,17 +145,19 @@ func TestValidateDNS_ActiveSite_ExpiredToken_SkipsTokenCheck(t *testing.T) {
 		}, nil)
 		setMockResolver(ws, mockResolver)
 
-		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
-		assert.True(tb, validated)
+		assert.True(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
 
 		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
 		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
+		assert.False(tb, final.IsExpired(), "validation expiry should be refreshed after successful validation of expired active site")
 	}, TestOptions)
 }
 
-func TestValidateDNS_BrokenSite_ExpiredToken_SkipsTokenCheck(t *testing.T) {
+func TestValidateDNS_BrokenSite_ExpiredToken_SkipsTokenCheckAndValidates(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, ws)
@@ -184,17 +190,19 @@ func TestValidateDNS_BrokenSite_ExpiredToken_SkipsTokenCheck(t *testing.T) {
 		}, nil)
 		setMockResolver(ws, mockResolver)
 
-		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
-		assert.True(tb, validated)
+		assert.True(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
 
 		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
 		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
+		assert.False(tb, final.IsExpired(), "validation expiry should be refreshed after successful validation of expired broken site")
 	}, TestOptions)
 }
 
-func TestValidateDNS_PendingValidation_ExpiredToken_RolledBackOnFailure(t *testing.T) {
+func TestValidateDNS_PendingValidation_ExpiredToken_ReturnsTokenExpiredWithRegen(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, ws)
@@ -214,22 +222,18 @@ func TestValidateDNS_PendingValidation_ExpiredToken_RolledBackOnFailure(t *testi
 		require.NoError(tb, err)
 		assert.True(tb, expiredWebsite.IsExpired())
 
-		mockResolver := mocks.NewMockDNSResolver(t)
-		mockResolver.EXPECT().ResolveDNSLink("regen-token.com").Return(dnslink.Result{
-			Links: map[string]dnslink.NamespaceEntries{},
-		}, nil)
-		setMockResolver(ws, mockResolver)
-
-		_, err = ws.ValidateDNS(context.Background(), testUserID1, created.ID)
-		require.Error(tb, err)
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.False(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonTokenExpired, result.Reason)
 
 		afterWebsite, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
-		assert.True(tb, afterWebsite.IsExpired(), "token should remain expired when validation fails")
+		assert.False(tb, afterWebsite.IsExpired(), "token should be refreshed after regeneration")
 	}, TestOptions)
 }
 
-func TestValidateDNS_NXDOMAIN_ReturnsError(t *testing.T) {
+func TestValidateDNS_NXDOMAIN_ReturnsDNSMissing(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, ws)
@@ -248,10 +252,11 @@ func TestValidateDNS_NXDOMAIN_ReturnsError(t *testing.T) {
 		})
 		setMockResolver(ws, mockResolver)
 
-		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
-		require.Error(tb, err)
-		assert.False(tb, validated)
-		assert.Contains(tb, err.Error(), "no DNS records found")
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.False(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonDNSMissing, result.Reason)
+		assert.Contains(tb, result.Message, "No DNS records found")
 	}, TestOptions)
 }
 
@@ -269,9 +274,9 @@ func TestValidateDNS_DNSLinkLookupFailure_ReturnsError(t *testing.T) {
 		mockResolver.EXPECT().ResolveDNSLink("dns-fail-test.com").Return(dnslink.Result{}, fmt.Errorf("network error"))
 		setMockResolver(ws, mockResolver)
 
-		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
 		require.Error(tb, err)
-		assert.False(tb, validated)
+		assert.False(tb, result.Valid)
 		assert.Contains(tb, err.Error(), "DNS lookup failed")
 	}, TestOptions)
 }
@@ -295,14 +300,14 @@ func TestValidateDNS_TxTTLookupFailure_ReturnsError(t *testing.T) {
 		mockResolver.EXPECT().LookupTXT("txt-fail-test.com").Return(nil, fmt.Errorf("TXT lookup timeout"))
 		setMockResolver(ws, mockResolver)
 
-		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
 		require.Error(tb, err)
-		assert.False(tb, validated)
+		assert.False(tb, result.Valid)
 		assert.Contains(tb, err.Error(), "DNS TXT lookup failed")
 	}, TestOptions)
 }
 
-func TestValidateDNS_WrongDNSLink_ReturnsError(t *testing.T) {
+func TestValidateDNS_WrongDNSLink_ReturnsDNSMismatch(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, ws)
@@ -321,10 +326,11 @@ func TestValidateDNS_WrongDNSLink_ReturnsError(t *testing.T) {
 		}, nil)
 		setMockResolver(ws, mockResolver)
 
-		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
-		require.Error(tb, err)
-		assert.False(tb, validated)
-		assert.Contains(tb, err.Error(), "missing or incorrect dnslink record")
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.False(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonDNSMismatch, result.Reason)
+		assert.Contains(tb, result.Message, "missing or incorrect dnslink record")
 	}, TestOptions)
 }
 
@@ -349,13 +355,14 @@ func TestValidateDNS_IPNSTarget_ValidDNSLinkAndToken(t *testing.T) {
 		}, nil)
 		setMockResolver(ws, mockResolver)
 
-		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
-		assert.True(tb, validated)
+		assert.True(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
 	}, TestOptions)
 }
 
-func TestValidateDNS_PendingValidation_ExpiredToken_ManagedDNS_CreatesDNSRecordsWithNewToken(t *testing.T) {
+func TestValidateDNS_PendingValidation_ExpiredToken_ManagedDNS_RegeneratesToken(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
@@ -408,25 +415,15 @@ func TestValidateDNS_PendingValidation_ExpiredToken_ManagedDNS_CreatesDNSRecords
 			}),
 		).Return(nil).Once()
 
-		mockResolver := mocks.NewMockDNSResolver(t)
-		mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
-			Links: map[string]dnslink.NamespaceEntries{
-				"ipns": {{Identifier: expiredWebsite.TargetHash()}},
-			},
-		}, nil)
-		mockResolver.EXPECT().LookupTXT(domain).RunAndReturn(func(d string) ([]string, error) {
-			return []string{capturedToken}, nil
-		})
-		setMockResolver(ws, mockResolver)
-
-		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
-		assert.True(tb, validated)
+		assert.False(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonTokenExpired, result.Reason)
 		assert.Contains(tb, capturedToken, "lumeweb-verify=", "DNS token record should contain the verification key prefix")
 
-		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		afterWebsite, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
-		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
+		assert.False(tb, afterWebsite.IsExpired(), "token should be refreshed after regeneration")
 	}, TestOptions)
 }
 
@@ -435,9 +432,9 @@ func TestValidateDNS_WebsiteNotFound_ReturnsError(t *testing.T) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, ws)
 
-		validated, err := ws.ValidateDNS(context.Background(), testUserID1, 99999)
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, 99999)
 		require.Error(tb, err)
-		assert.False(tb, validated)
+		assert.False(tb, result.Valid)
 		assert.Contains(tb, err.Error(), "website not found")
 	}, TestOptions)
 }
