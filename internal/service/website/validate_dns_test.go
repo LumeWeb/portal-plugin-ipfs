@@ -8,6 +8,7 @@ import (
 
 	dnslink "github.com/dnslink-std/go"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
@@ -351,6 +352,81 @@ func TestValidateDNS_IPNSTarget_ValidDNSLinkAndToken(t *testing.T) {
 		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
 		assert.True(tb, validated)
+	}, TestOptions)
+}
+
+func TestValidateDNS_PendingValidation_ExpiredToken_ManagedDNS_CreatesDNSRecordsWithNewToken(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, ws)
+		require.NotNil(tb, mockDNS)
+
+		testCID := util.GenerateTestCID(t, "managed-dns-regen")
+		domain := "managed-dns-regen.com"
+		zoneID := uint(5001)
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+
+		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(zoneID, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			zoneID,
+			mock.Anything,
+			mock.Anything,
+			pluginDb.WebsiteTargetTypeIPNS,
+			mock.Anything,
+		).Return(nil).Once()
+
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, created.DNSZoneID)
+
+		pastTime := time.Now().Add(-1 * time.Hour)
+		_, err = ws.UpdateWebsite(context.Background(), testUserID1, created.ID, map[string]interface{}{
+			"validation_expires_at": &pastTime,
+		})
+		require.NoError(tb, err)
+
+		expiredWebsite, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, expiredWebsite.IsExpired())
+
+		var capturedToken string
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			zoneID,
+			mock.Anything,
+			mock.Anything,
+			pluginDb.WebsiteTargetType(expiredWebsite.TargetType),
+			mock.MatchedBy(func(token string) bool {
+				capturedToken = token
+				return token != ""
+			}),
+		).Return(nil).Once()
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipns": {{Identifier: expiredWebsite.TargetHash()}},
+			},
+		}, nil)
+		mockResolver.EXPECT().LookupTXT(domain).RunAndReturn(func(d string) ([]string, error) {
+			return []string{capturedToken}, nil
+		})
+		setMockResolver(ws, mockResolver)
+
+		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, validated)
+		assert.Contains(tb, capturedToken, "lumeweb-verify=", "DNS token record should contain the verification key prefix")
+
+		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
 	}, TestOptions)
 }
 

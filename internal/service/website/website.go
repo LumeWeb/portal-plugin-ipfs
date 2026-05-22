@@ -1052,9 +1052,10 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 						return tx
 					}
 
-					// Managed DNS: update the TXT record automatically
+					// Managed DNS: update DNS records with the new verification token
 					if website.DNSZoneID != nil && s.dnsSvc != nil {
-						if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType)); err != nil {
+						tokenRecord := fmt.Sprintf("%s=%s", s.config.VerificationTokenKey, newToken)
+						if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), tokenRecord); err != nil {
 							s.Logger().Warn("Failed to update DNS records with new validation token",
 								zap.Error(err),
 								zap.Uint("website_id", website.ID),
