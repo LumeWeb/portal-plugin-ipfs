@@ -41,7 +41,7 @@ require (
 	github.com/tus/tusd/v2 v2.9.2
 	go.lumeweb.com/httputil v0.5.4
 	go.lumeweb.com/ipfs-content v0.1.17
-	go.lumeweb.com/portal v0.4.2-0.20260517210257-ab8d4bd4ddbf
+	go.lumeweb.com/portal v0.4.2-0.20260522013733-751f2886dc8c
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47
 	go.lumeweb.com/portal-plugin-dashboard v0.2.7-0.20260516134603-d27705f976e4
@@ -50,7 +50,7 @@ require (
 	go.lumeweb.com/queryutil v0.3.16
 	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260519214542-bc9c8d2af880
 	go.uber.org/zap v1.28.0
-	golang.org/x/crypto v0.51.0
+	golang.org/x/crypto v0.52.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/datatypes v1.2.7
 	gorm.io/gorm v1.31.1
@@ -356,7 +356,7 @@ require (
 	golang.org/x/net v0.54.0
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260508192327-42602be52be6 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
