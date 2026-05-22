@@ -167,21 +167,24 @@ func TestCompositeValueStore_GetValue_UsesPrimary(t *testing.T) {
 	}
 }
 
-func TestCompositeValueStore_SearchValue_PrefersSecondary(t *testing.T) {
-	secondaryCh := make(chan []byte, 1)
-	secondaryCh <- []byte("from-secondary")
+func TestCompositeValueStore_SearchValue_MergesBothChannels(t *testing.T) {
+	secCh := make(chan []byte, 1)
+	secCh <- []byte("from-pubsub")
+	close(secCh)
+
+	priCh := make(chan []byte, 1)
+	priCh <- []byte("from-dht")
+	close(priCh)
 
 	secondary := &mockValueStore{
 		searchValueFn: func(_ context.Context, _ string, _ ...routing.Option) (<-chan []byte, error) {
-			return secondaryCh, nil
+			return secCh, nil
 		},
 	}
 
 	primary := &mockValueStore{
 		searchValueFn: func(_ context.Context, _ string, _ ...routing.Option) (<-chan []byte, error) {
-			ch := make(chan []byte, 1)
-			ch <- []byte("from-primary")
-			return ch, nil
+			return priCh, nil
 		},
 	}
 
@@ -190,9 +193,68 @@ func TestCompositeValueStore_SearchValue_PrefersSecondary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchValue returned error: %v", err)
 	}
+
+	var results []string
+	for v := range ch {
+		results = append(results, string(v))
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d: %v", len(results), results)
+	}
+}
+
+func TestCompositeValueStore_SearchValue_DeliversPrimaryWhenSecondaryEmpty(t *testing.T) {
+	secCh := make(chan []byte)
+	close(secCh)
+
+	priCh := make(chan []byte, 1)
+	priCh <- []byte("from-dht")
+	close(priCh)
+
+	secondary := &mockValueStore{
+		searchValueFn: func(_ context.Context, _ string, _ ...routing.Option) (<-chan []byte, error) {
+			return secCh, nil
+		},
+	}
+
+	primary := &mockValueStore{
+		searchValueFn: func(_ context.Context, _ string, _ ...routing.Option) (<-chan []byte, error) {
+			return priCh, nil
+		},
+	}
+
+	c := newCompositeValueStore(primary, secondary)
+	ch, err := c.SearchValue(context.Background(), "key")
+	if err != nil {
+		t.Fatalf("SearchValue returned error: %v", err)
+	}
+
 	val := <-ch
-	if string(val) != "from-secondary" {
-		t.Fatalf("got value %q, want %q", val, "from-secondary")
+	if string(val) != "from-dht" {
+		t.Fatalf("got value %q, want %q", val, "from-dht")
+	}
+}
+
+func TestCompositeValueStore_SearchValue_BothFail(t *testing.T) {
+	err1 := errors.New("primary failed")
+	err2 := errors.New("secondary failed")
+
+	primary := &mockValueStore{
+		searchValueFn: func(_ context.Context, _ string, _ ...routing.Option) (<-chan []byte, error) {
+			return nil, err1
+		},
+	}
+
+	secondary := &mockValueStore{
+		searchValueFn: func(_ context.Context, _ string, _ ...routing.Option) (<-chan []byte, error) {
+			return nil, err2
+		},
+	}
+
+	c := newCompositeValueStore(primary, secondary)
+	_, err := c.SearchValue(context.Background(), "key")
+	if err == nil {
+		t.Fatal("expected error, got nil")
 	}
 }
 
@@ -207,6 +269,7 @@ func TestCompositeValueStore_SearchValue_FallsBackToPrimary(t *testing.T) {
 
 	primaryCh := make(chan []byte, 1)
 	primaryCh <- []byte("from-primary")
+	close(primaryCh)
 
 	primary := &mockValueStore{
 		searchValueFn: func(_ context.Context, _ string, _ ...routing.Option) (<-chan []byte, error) {
@@ -222,5 +285,36 @@ func TestCompositeValueStore_SearchValue_FallsBackToPrimary(t *testing.T) {
 	val := <-ch
 	if string(val) != "from-primary" {
 		t.Fatalf("got value %q, want %q", val, "from-primary")
+	}
+}
+
+func TestCompositeValueStore_SearchValue_Regression_PubSubEmptyChannelDoesNotBlockDHT(t *testing.T) {
+	priCh := make(chan []byte, 1)
+	priCh <- []byte("from-dht")
+	close(priCh)
+
+	secondary := &mockValueStore{
+		searchValueFn: func(_ context.Context, _ string, _ ...routing.Option) (<-chan []byte, error) {
+			ch := make(chan []byte)
+			close(ch)
+			return ch, nil
+		},
+	}
+
+	primary := &mockValueStore{
+		searchValueFn: func(_ context.Context, _ string, _ ...routing.Option) (<-chan []byte, error) {
+			return priCh, nil
+		},
+	}
+
+	c := newCompositeValueStore(primary, secondary)
+	ch, err := c.SearchValue(context.Background(), "key")
+	if err != nil {
+		t.Fatalf("SearchValue returned error: %v", err)
+	}
+
+	val := <-ch
+	if string(val) != "from-dht" {
+		t.Fatalf("got value %q, want %q — DHT result not delivered when PubSub channel was empty", val, "from-dht")
 	}
 }

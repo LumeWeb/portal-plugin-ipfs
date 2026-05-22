@@ -46,9 +46,52 @@ func (c *compositeValueStore) GetValue(ctx context.Context, key string, opts ...
 }
 
 func (c *compositeValueStore) SearchValue(ctx context.Context, key string, opts ...routing.Option) (<-chan []byte, error) {
-	ch, err := c.secondary.SearchValue(ctx, key, opts...)
-	if err == nil {
-		return ch, nil
+	secCh, secErr := c.secondary.SearchValue(ctx, key, opts...)
+	priCh, priErr := c.primary.SearchValue(ctx, key, opts...)
+
+	if secErr != nil && priErr != nil {
+		return nil, secErr
 	}
-	return c.primary.SearchValue(ctx, key, opts...)
+	if secErr != nil {
+		return priCh, priErr
+	}
+	if priErr != nil {
+		return secCh, nil
+	}
+
+	merged := make(chan []byte)
+	go func() {
+		defer close(merged)
+		openCount := 2
+		for openCount > 0 {
+			select {
+			case v, ok := <-secCh:
+				if !ok {
+					secCh = nil
+					openCount--
+					continue
+				}
+				select {
+				case merged <- v:
+				case <-ctx.Done():
+					return
+				}
+			case v, ok := <-priCh:
+				if !ok {
+					priCh = nil
+					openCount--
+					continue
+				}
+				select {
+				case merged <- v:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return merged, nil
 }
