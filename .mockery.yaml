@@ -48,3 +48,6 @@ packages:
   go.lumeweb.com/portal-plugin-ipfs/internal/service/dns:
     interfaces:
       DNSLookup: {}
+  go.lumeweb.com/portal-plugin-ipfs/internal/service/website:
+    interfaces:
+      DNSResolver: {}
