@@ -11,7 +11,6 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
-	"go.lumeweb.com/ipfs-content/paths"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
@@ -249,21 +248,23 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	ctx, span := core.TraceMethod(ctx, "WebsiteJanitorJob.validateIPNSTarget")
 	defer span.End()
 
-	// Check if IPNS key exists in database by trying to get the private key
-	privKey, userID, err := j.ipnsKeyService.GetPrivateKeyByPeerID(ctx, website.TargetHash())
+	peerID := website.TargetHash()
+
+	privKey, userID, err := j.ipnsKeyService.GetPrivateKeyByPeerID(ctx, peerID)
 	if err != nil {
 		j.logger.Error("IPNS key not found in database",
 			zap.Error(err),
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", website.Domain),
-			zap.String("peer_id", website.TargetHash()),
+			zap.String("peer_id", peerID),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
 		website.LastCheckedAt = new(time.Now())
 		return nil
 	}
 
-	// Verify user ownership
+	_ = privKey
+
 	if website.UserID != userID {
 		j.logger.Error("IPNS key belongs to different user",
 			zap.Uint("website_id", website.ID),
@@ -276,57 +277,37 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 		return nil
 	}
 
-	_ = privKey
-
-	// Resolve IPNS record
-	record, err := j.ipnsKeyService.GetPublished(ctx, website.TargetHash(), true)
-	if err != nil {
-		j.logger.Error("Failed to resolve IPNS record",
+	var key pluginDb.IPFSIPNSKey
+	if err := j.db.WithContext(ctx).Where("user_id = ? AND peer_id_multihash = ?", userID, []byte(website.TargetMultihash)).First(&key).Error; err != nil {
+		j.logger.Error("Failed to look up IPNS key record",
 			zap.Error(err),
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", website.Domain),
-			zap.String("peer_id", website.TargetHash()),
+			zap.String("peer_id", peerID),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
 		website.LastCheckedAt = new(time.Now())
 		return nil
 	}
 
-	// Check if record is nil (key not yet published)
-	if record == nil {
-		j.logger.Warn("IPNS record not found",
+	if key.LastPublishedCID == "" {
+		j.logger.Warn("IPNS key has no published CID",
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", website.Domain),
-			zap.String("peer_id", website.TargetHash()),
+			zap.String("peer_id", peerID),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
 		website.LastCheckedAt = new(time.Now())
 		return nil
 	}
 
-	// Extract target path from IPNS record
-	targetPath, err := record.Value()
+	cidValid, err := j.validateCIDTarget(ctx, key.LastPublishedCID)
 	if err != nil {
-		j.logger.Error("Failed to extract target path from IPNS record",
+		j.logger.Warn("Failed to validate last published CID",
 			zap.Error(err),
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", website.Domain),
-			zap.String("peer_id", website.TargetHash()),
-		)
-		website.Status = string(pluginDb.WebsiteStatusBroken)
-		website.LastCheckedAt = new(time.Now())
-		return nil
-	}
-
-	// Extract CID from path using lenient matcher that handles both /ipfs/{cid} and plain CID strings
-	cidStr := paths.ExtractCIDFromPathLenient(targetPath)
-	cidValid, err := j.validateCIDTarget(ctx, cidStr)
-	if err != nil {
-		j.logger.Warn("Failed to validate resolved CID",
-			zap.Error(err),
-			zap.Uint("website_id", website.ID),
-			zap.String("domain", website.Domain),
-			zap.String("cid", cidStr),
+			zap.String("cid", key.LastPublishedCID),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
 		website.LastCheckedAt = new(time.Now())
@@ -334,50 +315,24 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	}
 
 	if !cidValid {
-		j.logger.Warn("Resolved CID is not pinned",
+		j.logger.Warn("Last published CID is not pinned",
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", website.Domain),
-			zap.String("cid", cidStr),
+			zap.String("cid", key.LastPublishedCID),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
 		website.LastCheckedAt = new(time.Now())
 		return nil
 	}
 
-	// Check record validity timestamp
-	validity, err := record.Validity()
-	if err != nil {
-		j.logger.Warn("Failed to get IPNS record validity",
-			zap.Error(err),
-			zap.Uint("website_id", website.ID),
-			zap.String("domain", website.Domain),
-			zap.String("peer_id", website.TargetHash()),
-		)
-		website.Status = string(pluginDb.WebsiteStatusBroken)
-		website.LastCheckedAt = new(time.Now())
-		return nil
-	}
-
-	if validity.Before(time.Now()) {
-		j.logger.Warn("IPNS record has expired",
-			zap.Uint("website_id", website.ID),
-			zap.String("domain", website.Domain),
-			zap.String("peer_id", website.TargetHash()),
-			zap.Time("validity", validity),
-		)
-		website.Status = string(pluginDb.WebsiteStatusBroken)
-		website.LastCheckedAt = new(time.Now())
-		return nil
-	}
-
-	// All validations passed
 	website.Status = string(pluginDb.WebsiteStatusActive)
 	website.LastCheckedAt = new(time.Now())
 
 	j.logger.Debug("IPNS target validated successfully",
 		zap.Uint("website_id", website.ID),
 		zap.String("domain", website.Domain),
-		zap.String("peer_id", website.TargetHash()),
+		zap.String("peer_id", peerID),
+		zap.String("cid", key.LastPublishedCID),
 	)
 
 	return nil
