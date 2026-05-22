@@ -1018,178 +1018,182 @@ func (s *WebsiteServiceDefault) UnblockWebsite(ctx context.Context, websiteID ui
 }
 
 // ValidateDNS validates the DNS TXT record for a website domain
-func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, websiteID uint) (bool, error) {
+func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, websiteID uint) (pluginCore.ValidateDNSResult, error) {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.ValidateDNS")
 	defer span.End()
 
 	return core.MetricTrackResult(
 		ValidateDNSDuration.WithLabelValues(),
 		ValidateDNSTotal.WithLabelValues(LabelStatusError),
-		func() (bool, error) {
-			var validated bool
-
-			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				// Get the website
-				var website pluginDb.Website
-				if err := tx.Where("user_id = ? AND id = ?", userID, websiteID).First(&website).Error; err != nil {
-					if err == gorm.ErrRecordNotFound {
-						_ = tx.AddError(fmt.Errorf("website not found"))
-						return tx
-					}
-					_ = tx.AddError(fmt.Errorf("failed to get website: %w", err))
-					return tx
+		func() (pluginCore.ValidateDNSResult, error) {
+			var website pluginDb.Website
+			if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Where("user_id = ? AND id = ?", userID, websiteID).First(&website)
+			}); err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return pluginCore.ValidateDNSResult{}, fmt.Errorf("website not found")
 				}
+				return pluginCore.ValidateDNSResult{}, fmt.Errorf("failed to get website: %w", err)
+			}
 
-				// The validation token proves domain ownership. Once a site has been
-				// validated (status != pending_validation), an expired token should NOT
-				// block re-validation — only the dnslink record matters for ongoing validity.
-				needsTokenCheck := website.Status == string(pluginDb.WebsiteStatusPendingValidation)
+			needsTokenCheck := website.Status == string(pluginDb.WebsiteStatusPendingValidation)
 
-				if needsTokenCheck && website.IsExpired() {
-					newToken, err := s.generateValidationToken()
-					if err != nil {
-						_ = tx.AddError(fmt.Errorf("failed to regenerate expired validation token: %w", err))
-						return tx
-					}
-
-					// Managed DNS: update DNS records with the new verification token
-					if website.DNSZoneID != nil && s.dnsSvc != nil {
-						tokenRecord := fmt.Sprintf("%s=%s", s.config.VerificationTokenKey, newToken)
-						if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), tokenRecord); err != nil {
-							s.Logger().Warn("Failed to update DNS records with new validation token",
-								zap.Error(err),
-								zap.Uint("website_id", website.ID),
-								zap.String("domain", website.Domain))
-						}
-					}
-
-					expiresAt := time.Now().Add(s.config.ValidationTokenTTL)
-					website.ValidationToken = newToken
-					website.ValidationExpiresAt = &expiresAt
-					if err := tx.Save(&website).Error; err != nil {
-						_ = tx.AddError(fmt.Errorf("failed to save regenerated validation token: %w", err))
-						return tx
-					}
-
-					s.Logger().Info("Regenerated expired validation token",
-						zap.Uint("website_id", website.ID),
-						zap.String("domain", website.Domain),
-						zap.Time("new_expiry", expiresAt))
+			if needsTokenCheck && website.IsExpired() {
+				if err := s.regenerateExpiredToken(ctx, &website); err != nil {
+					return pluginCore.ValidateDNSResult{}, err
 				}
+				return pluginCore.ValidateDNSResult{
+					Valid:   false,
+					Message: fmt.Sprintf("Validation token expired for %s — a new token has been generated. Please add the updated TXT record to your DNS configuration", website.Domain),
+					Reason:  pluginCore.ValidationReasonTokenExpired,
+				}, nil
+			}
 
-				// Query DNS for DNSlink records using dnslink library
-				result, err := s.resolver.ResolveDNSLink(website.Domain)
-				if err != nil {
-					if dnsErr, ok := errors.AsType[dnslink.DNSRCodeError](err); ok && dnsErr.DNSRCode == 3 {
-						s.Logger().Debug("DNS validation failed: no DNS records found (NXDOMAIN)",
-							zap.Error(err),
-							zap.String("domain", website.Domain),
-							zap.Uint("website_id", website.ID))
-						_ = tx.AddError(fmt.Errorf("DNS validation failed: no DNS records found for %s. Please add the required TXT records to your DNS configuration", website.Domain))
-						return tx
-					}
-
-					s.Logger().Debug("DNS lookup failed",
+			result, err := s.resolver.ResolveDNSLink(website.Domain)
+			if err != nil {
+				if dnsErr, ok := errors.AsType[dnslink.DNSRCodeError](err); ok && dnsErr.DNSRCode == 3 {
+					s.Logger().Debug("DNS validation failed: no DNS records found (NXDOMAIN)",
 						zap.Error(err),
 						zap.String("domain", website.Domain),
 						zap.Uint("website_id", website.ID))
-					_ = tx.AddError(fmt.Errorf("DNS lookup failed for %s: %w", website.Domain, err))
-					return tx
+					return pluginCore.ValidateDNSResult{
+						Valid:   false,
+						Message: fmt.Sprintf("No DNS records found for %s. Please add the required TXT records to your DNS configuration", website.Domain),
+						Reason:  pluginCore.ValidationReasonDNSMissing,
+					}, nil
 				}
 
-				expectedDNSlink := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
+				return pluginCore.ValidateDNSResult{}, fmt.Errorf("DNS lookup failed for %s: %w", website.Domain, err)
+			}
 
-				var hasDNSlink bool
-				var foundDNSlink string
+			expectedDNSlink := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
 
-				if ipfsLinks, ok := result.Links["ipfs"]; ok && len(ipfsLinks) > 0 {
-					foundDNSlink = dto.IPFSPath(ipfsLinks[0].Identifier)
-					if foundDNSlink == expectedDNSlink {
-						hasDNSlink = true
-						s.Logger().Debug("Found valid DNSlink record",
-							zap.String("domain", website.Domain),
-							zap.String("dnslink", foundDNSlink))
-					}
-				}
-				if ipnsLinks, ok := result.Links["ipns"]; ok && len(ipnsLinks) > 0 {
-					foundDNSlink = dto.IPNSPath(ipnsLinks[0].Identifier)
-					if foundDNSlink == expectedDNSlink {
-						hasDNSlink = true
-						s.Logger().Debug("Found valid DNSlink record",
-							zap.String("domain", website.Domain),
-							zap.String("dnslink", foundDNSlink))
-					}
-				}
+			var hasDNSlink bool
+			var foundDNSlink string
 
-				if !hasDNSlink {
-					s.Logger().Warn("DNS validation failed: missing or incorrect dnslink record",
+			if ipfsLinks, ok := result.Links["ipfs"]; ok && len(ipfsLinks) > 0 {
+				foundDNSlink = dto.IPFSPath(ipfsLinks[0].Identifier)
+				if foundDNSlink == expectedDNSlink {
+					hasDNSlink = true
+					s.Logger().Debug("Found valid DNSlink record",
 						zap.String("domain", website.Domain),
-						zap.String("expected", expectedDNSlink),
-						zap.String("found", foundDNSlink))
-					_ = tx.AddError(fmt.Errorf("DNS validation failed: missing or incorrect dnslink record (expected: %s, found: %s)", expectedDNSlink, foundDNSlink))
-					return tx
+						zap.String("dnslink", foundDNSlink))
 				}
-
-				if needsTokenCheck {
-					expectedTokenRecord := fmt.Sprintf("%s=%s", s.config.VerificationTokenKey, website.ValidationToken)
-					txtRecords, err := s.resolver.LookupTXT(website.Domain)
-					if err != nil {
-						s.Logger().Debug("DNS TXT lookup failed for validation token",
-							zap.Error(err),
-							zap.String("domain", website.Domain))
-						_ = tx.AddError(fmt.Errorf("DNS TXT lookup failed for %s: %w", website.Domain, err))
-						return tx
-					}
-
-					var hasToken bool
-					for _, txtRecord := range txtRecords {
-						if strings.Contains(txtRecord, expectedTokenRecord) {
-							hasToken = true
-							s.Logger().Debug("Found valid validation token",
-								zap.String("domain", website.Domain),
-								zap.String("token", website.ValidationToken))
-							break
-						}
-					}
-
-					if !hasToken {
-						s.Logger().Warn("DNS validation failed: missing validation token",
-							zap.String("domain", website.Domain),
-							zap.String("expected_token", website.ValidationToken))
-						_ = tx.AddError(fmt.Errorf("DNS validation failed: missing validation token"))
-						return tx
-					}
+			}
+			if ipnsLinks, ok := result.Links["ipns"]; ok && len(ipnsLinks) > 0 {
+				foundDNSlink = dto.IPNSPath(ipnsLinks[0].Identifier)
+				if foundDNSlink == expectedDNSlink {
+					hasDNSlink = true
+					s.Logger().Debug("Found valid DNSlink record",
+						zap.String("domain", website.Domain),
+						zap.String("dnslink", foundDNSlink))
 				}
+			}
 
-				// Validation passes - both records are present and correct
-				validated = true
-				s.Logger().Info("DNS validation successful",
+			if !hasDNSlink {
+				s.Logger().Warn("DNS validation failed: missing or incorrect dnslink record",
 					zap.String("domain", website.Domain),
-					zap.Uint("website_id", website.ID),
-					zap.String("dnslink", foundDNSlink))
+					zap.String("expected", expectedDNSlink),
+					zap.String("found", foundDNSlink))
+				return pluginCore.ValidateDNSResult{
+					Valid:   false,
+					Message: fmt.Sprintf("DNS validation failed: missing or incorrect dnslink record (expected: %s, found: %s)", expectedDNSlink, foundDNSlink),
+					Reason:  pluginCore.ValidationReasonDNSMismatch,
+				}, nil
+			}
 
-				// Update status to active
-				website.Status = string(pluginDb.WebsiteStatusActive)
-				if err := tx.Save(&website).Error; err != nil {
-					_ = tx.AddError(fmt.Errorf("failed to update website status: %w", err))
-					return tx
+			if needsTokenCheck {
+				expectedTokenRecord := fmt.Sprintf("%s=%s", s.config.VerificationTokenKey, website.ValidationToken)
+				txtRecords, err := s.resolver.LookupTXT(website.Domain)
+				if err != nil {
+					return pluginCore.ValidateDNSResult{}, fmt.Errorf("DNS TXT lookup failed for %s: %w", website.Domain, err)
 				}
 
-				return tx
-			})
+				var hasToken bool
+				for _, txtRecord := range txtRecords {
+					if strings.Contains(txtRecord, expectedTokenRecord) {
+						hasToken = true
+						s.Logger().Debug("Found valid validation token",
+							zap.String("domain", website.Domain),
+							zap.String("token", website.ValidationToken))
+						break
+					}
+				}
 
-			if err != nil {
-				return false, err
+				if !hasToken {
+					s.Logger().Warn("DNS validation failed: missing validation token",
+						zap.String("domain", website.Domain),
+						zap.String("expected_token", website.ValidationToken))
+					return pluginCore.ValidateDNSResult{
+						Valid:   false,
+						Message: fmt.Sprintf("DNS validation failed: missing validation token for %s", website.Domain),
+						Reason:  pluginCore.ValidationReasonTokenMissing,
+					}, nil
+				}
+			}
+
+			s.Logger().Info("DNS validation successful",
+				zap.String("domain", website.Domain),
+				zap.Uint("website_id", website.ID),
+				zap.String("dnslink", foundDNSlink))
+
+			if err := s.activateValidatedWebsite(ctx, &website); err != nil {
+				return pluginCore.ValidateDNSResult{}, err
 			}
 
 			s.Logger().Info("DNS validation completed",
 				zap.Uint("website_id", websiteID),
 				zap.Uint("user_id", userID),
-				zap.Bool("validated", validated))
+				zap.Bool("validated", true))
 
-			return validated, nil
+			return pluginCore.ValidateDNSResult{
+				Valid:   true,
+				Message: fmt.Sprintf("DNS validation successful for %s", website.Domain),
+				Reason:  pluginCore.ValidationReasonValidated,
+			}, nil
 		},
 	)
+}
+
+func (s *WebsiteServiceDefault) regenerateExpiredToken(ctx context.Context, website *pluginDb.Website) error {
+	newToken, err := s.generateValidationToken()
+	if err != nil {
+		return fmt.Errorf("failed to regenerate expired validation token: %w", err)
+	}
+
+	if website.DNSZoneID != nil && s.dnsSvc != nil {
+		tokenRecord := fmt.Sprintf("%s=%s", s.config.VerificationTokenKey, newToken)
+		if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), tokenRecord); err != nil {
+			s.Logger().Warn("Failed to update DNS records with new validation token",
+				zap.Error(err),
+				zap.Uint("website_id", website.ID),
+				zap.String("domain", website.Domain))
+		}
+	}
+
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		expiresAt := time.Now().Add(s.config.ValidationTokenTTL)
+		website.ValidationToken = newToken
+		website.ValidationExpiresAt = &expiresAt
+		return tx.Save(website)
+	}); err != nil {
+		return fmt.Errorf("failed to save regenerated validation token: %w", err)
+	}
+
+	s.Logger().Info("Regenerated expired validation token",
+		zap.Uint("website_id", website.ID),
+		zap.String("domain", website.Domain))
+
+	return nil
+}
+
+func (s *WebsiteServiceDefault) activateValidatedWebsite(ctx context.Context, website *pluginDb.Website) error {
+	return db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		website.Status = string(pluginDb.WebsiteStatusActive)
+		newExpiry := time.Now().Add(s.config.ValidationTokenTTL)
+		website.ValidationExpiresAt = &newExpiry
+		return tx.Save(website)
+	})
 }
 
 // CheckStatus checks the status of a website by validating its target

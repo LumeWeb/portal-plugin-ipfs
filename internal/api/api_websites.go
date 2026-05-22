@@ -354,14 +354,13 @@ func (a *API) validateWebsiteDNS(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	valid, err := a.websiteService.ValidateDNS(reqCtx, user, uint(websiteID))
+	result, err := a.websiteService.ValidateDNS(reqCtx, user, uint(websiteID))
 	if err != nil {
 		a.Logger().Error("Failed to validate website DNS", zap.Error(err), zap.Uint("website_id", uint(websiteID)), zap.Uint("user_id", user))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	// Get website for response
 	website, err := a.websiteService.GetWebsite(reqCtx, user, uint(websiteID))
 	if err != nil {
 		a.Logger().Error("Failed to get website after validation", zap.Error(err))
@@ -369,16 +368,12 @@ func (a *API) validateWebsiteDNS(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	message := "DNS validation failed"
-	if valid {
-		message = "DNS validation successful"
-	}
-
 	resp := dto.WebsiteValidateResponse{
 		ID:      website.ID,
 		Domain:  website.Domain,
-		Valid:   valid,
-		Message: message,
+		Valid:   result.Valid,
+		Message: result.Message,
+		Reason:  string(result.Reason),
 	}
 
 	return ctx.JSON(http.StatusOK, resp)
