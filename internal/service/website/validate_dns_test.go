@@ -1,0 +1,443 @@
+package website
+
+import (
+	"context"
+	"fmt"
+	"testing"
+	"time"
+
+	dnslink "github.com/dnslink-std/go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
+	"go.lumeweb.com/portal/core"
+	coreTesting "go.lumeweb.com/portal/core/testing"
+)
+
+func setMockResolver(ws pluginCore.WebsiteService, r DNSResolver) {
+	svc, ok := ws.(*WebsiteServiceDefault)
+	if !ok {
+		panic("setMockResolver: service is not *WebsiteServiceDefault")
+	}
+	svc.resolver = r
+}
+
+func TestValidateDNS_PendingValidation_ValidDNSLinkAndToken_ReturnsTrue(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "validate-test")
+		website := createTestIPFSWebsite(testUserID1, "validate-pending.com", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, created)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("validate-pending.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		mockResolver.EXPECT().LookupTXT("validate-pending.com").Return([]string{
+			fmt.Sprintf("lumeweb-verify=%s", created.ValidationToken),
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, validated)
+
+		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
+	}, TestOptions)
+}
+
+func TestValidateDNS_PendingValidation_MissingDNSLink_ReturnsFalse(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "missing-dnslink")
+		website := createTestIPFSWebsite(testUserID1, "missing-dnslink.com", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("missing-dnslink.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{},
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.Error(tb, err)
+		assert.False(tb, validated)
+		assert.Contains(tb, err.Error(), "missing or incorrect dnslink record")
+	}, TestOptions)
+}
+
+func TestValidateDNS_PendingValidation_MissingToken_ReturnsFalse(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "missing-token")
+		website := createTestIPFSWebsite(testUserID1, "missing-token.com", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("missing-token.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		mockResolver.EXPECT().LookupTXT("missing-token.com").Return([]string{"some-other-txt-record=foo"}, nil)
+		setMockResolver(ws, mockResolver)
+
+		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.Error(tb, err)
+		assert.False(tb, validated)
+		assert.Contains(tb, err.Error(), "missing validation token")
+	}, TestOptions)
+}
+
+func TestValidateDNS_ActiveSite_ExpiredToken_SkipsTokenCheck(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "active-expired-token")
+		website := createTestIPFSWebsite(testUserID1, "active-expired.com", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		_, err = ws.UpdateWebsite(context.Background(), testUserID1, created.ID, map[string]interface{}{
+			"status": string(pluginDb.WebsiteStatusActive),
+		})
+		require.NoError(tb, err)
+
+		pastTime := time.Now().Add(-1 * time.Hour)
+		_, err = ws.UpdateWebsite(context.Background(), testUserID1, created.ID, map[string]interface{}{
+			"validation_expires_at": &pastTime,
+		})
+		require.NoError(tb, err)
+
+		activeWebsite, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, activeWebsite.IsExpired())
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), activeWebsite.Status)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("active-expired.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: activeWebsite.TargetHash()}},
+			},
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, validated)
+
+		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
+	}, TestOptions)
+}
+
+func TestValidateDNS_BrokenSite_ExpiredToken_SkipsTokenCheck(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "broken-expired-token")
+		website := createTestIPFSWebsite(testUserID1, "broken-expired.com", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		_, err = ws.UpdateWebsite(context.Background(), testUserID1, created.ID, map[string]interface{}{
+			"status": string(pluginDb.WebsiteStatusBroken),
+		})
+		require.NoError(tb, err)
+
+		pastTime := time.Now().Add(-1 * time.Hour)
+		_, err = ws.UpdateWebsite(context.Background(), testUserID1, created.ID, map[string]interface{}{
+			"validation_expires_at": &pastTime,
+		})
+		require.NoError(tb, err)
+
+		brokenWebsite, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, brokenWebsite.IsExpired())
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("broken-expired.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: brokenWebsite.TargetHash()}},
+			},
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, validated)
+
+		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
+	}, TestOptions)
+}
+
+func TestValidateDNS_PendingValidation_ExpiredToken_RolledBackOnFailure(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "regen-token")
+		website := createTestIPFSWebsite(testUserID1, "regen-token.com", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		pastTime := time.Now().Add(-1 * time.Hour)
+		_, err = ws.UpdateWebsite(context.Background(), testUserID1, created.ID, map[string]interface{}{
+			"validation_expires_at": &pastTime,
+		})
+		require.NoError(tb, err)
+
+		expiredWebsite, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, expiredWebsite.IsExpired())
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("regen-token.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{},
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		_, err = ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.Error(tb, err)
+
+		afterWebsite, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, afterWebsite.IsExpired(), "token should remain expired when validation fails")
+	}, TestOptions)
+}
+
+func TestValidateDNS_NXDOMAIN_ReturnsError(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "nxdomain")
+		website := createTestIPFSWebsite(testUserID1, "nxdomain-test.com", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("nxdomain-test.com").Return(dnslink.Result{}, dnslink.DNSRCodeError{
+			DNSRCode: 3,
+			Code:     "RCODE_3",
+			Name:     "NXDomain",
+			Domain:   "nxdomain-test.com",
+		})
+		setMockResolver(ws, mockResolver)
+
+		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.Error(tb, err)
+		assert.False(tb, validated)
+		assert.Contains(tb, err.Error(), "no DNS records found")
+	}, TestOptions)
+}
+
+func TestValidateDNS_DNSLinkLookupFailure_ReturnsError(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "dns-fail")
+		website := createTestIPFSWebsite(testUserID1, "dns-fail-test.com", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("dns-fail-test.com").Return(dnslink.Result{}, fmt.Errorf("network error"))
+		setMockResolver(ws, mockResolver)
+
+		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.Error(tb, err)
+		assert.False(tb, validated)
+		assert.Contains(tb, err.Error(), "DNS lookup failed")
+	}, TestOptions)
+}
+
+func TestValidateDNS_TxTTLookupFailure_ReturnsError(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "txt-lookup-fail")
+		website := createTestIPFSWebsite(testUserID1, "txt-fail-test.com", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("txt-fail-test.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		mockResolver.EXPECT().LookupTXT("txt-fail-test.com").Return(nil, fmt.Errorf("TXT lookup timeout"))
+		setMockResolver(ws, mockResolver)
+
+		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.Error(tb, err)
+		assert.False(tb, validated)
+		assert.Contains(tb, err.Error(), "DNS TXT lookup failed")
+	}, TestOptions)
+}
+
+func TestValidateDNS_WrongDNSLink_ReturnsError(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "wrong-dnslink")
+		website := createTestIPFSWebsite(testUserID1, "wrong-dnslink.com", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		wrongCID := util.GenerateTestCID(t, "different content")
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("wrong-dnslink.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: wrongCID.String()}},
+			},
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.Error(tb, err)
+		assert.False(tb, validated)
+		assert.Contains(tb, err.Error(), "missing or incorrect dnslink record")
+	}, TestOptions)
+}
+
+func TestValidateDNS_IPNSTarget_ValidDNSLinkAndToken(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		ipnsName := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
+		website := createTestIPNSWebsite(testUserID1, "ipns-validate.com", ipnsName)
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("ipns-validate.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipns": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		mockResolver.EXPECT().LookupTXT("ipns-validate.com").Return([]string{
+			fmt.Sprintf("lumeweb-verify=%s", created.ValidationToken),
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, validated)
+	}, TestOptions)
+}
+
+func TestValidateDNS_PendingValidation_ExpiredToken_ManagedDNS_CreatesDNSRecordsWithNewToken(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, ws)
+		require.NotNil(tb, mockDNS)
+
+		testCID := util.GenerateTestCID(t, "managed-dns-regen")
+		domain := "managed-dns-regen.com"
+		zoneID := uint(5001)
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Enabled = true
+
+		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(zoneID, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			zoneID,
+			mock.Anything,
+			mock.Anything,
+			pluginDb.WebsiteTargetTypeIPNS,
+			mock.Anything,
+		).Return(nil).Once()
+
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, created.DNSZoneID)
+
+		pastTime := time.Now().Add(-1 * time.Hour)
+		_, err = ws.UpdateWebsite(context.Background(), testUserID1, created.ID, map[string]interface{}{
+			"validation_expires_at": &pastTime,
+		})
+		require.NoError(tb, err)
+
+		expiredWebsite, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, expiredWebsite.IsExpired())
+
+		var capturedToken string
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			zoneID,
+			mock.Anything,
+			mock.Anything,
+			pluginDb.WebsiteTargetType(expiredWebsite.TargetType),
+			mock.MatchedBy(func(token string) bool {
+				capturedToken = token
+				return token != ""
+			}),
+		).Return(nil).Once()
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipns": {{Identifier: expiredWebsite.TargetHash()}},
+			},
+		}, nil)
+		mockResolver.EXPECT().LookupTXT(domain).RunAndReturn(func(d string) ([]string, error) {
+			return []string{capturedToken}, nil
+		})
+		setMockResolver(ws, mockResolver)
+
+		validated, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, validated)
+		assert.Contains(tb, capturedToken, "lumeweb-verify=", "DNS token record should contain the verification key prefix")
+
+		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
+	}, TestOptions)
+}
+
+func TestValidateDNS_WebsiteNotFound_ReturnsError(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		validated, err := ws.ValidateDNS(context.Background(), testUserID1, 99999)
+		require.Error(tb, err)
+		assert.False(tb, validated)
+		assert.Contains(tb, err.Error(), "website not found")
+	}, TestOptions)
+}

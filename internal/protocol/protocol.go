@@ -119,11 +119,11 @@ func (p pinHandler) GetProtocolPinModel() data_models.PinDataModel {
 	return nil
 }
 
-func (p Protocol) PinHandler() core.ProtocolPinHandler {
+func (p *Protocol) PinHandler() core.ProtocolPinHandler {
 	return &pinHandler{}
 }
 
-func (p Protocol) ID() string {
+func (p *Protocol) ID() string {
 	return p.Name()
 }
 
@@ -136,8 +136,8 @@ func NewProtocolWorkflows(p core.Protocol) []core.WorkflowDefinition {
 	}
 }
 
-func (p Protocol) Workflows() []core.WorkflowDefinition {
-	return NewProtocolWorkflows(&p)
+func (p *Protocol) Workflows() []core.WorkflowDefinition {
+	return NewProtocolWorkflows(p)
 }
 
 func pinWorkflowSteps() []core.OperationStep {
@@ -222,23 +222,23 @@ func NewTUSOperationHandler(p core.Protocol) core.Operation {
 	return service.NewTUSOperationHandler(p.Context(), p, handleTUSUpload(p))
 }
 
-func (p Protocol) Operations() []core.Operation {
-	return NewProtocolOperations(&p)
+func (p *Protocol) Operations() []core.Operation {
+	return NewProtocolOperations(p)
 }
 
-func (p Protocol) GetProtocolPinModel() any {
+func (p *Protocol) GetProtocolPinModel() any {
 	return &pluginDb.IPFSPin{}
 }
 
-func (p Protocol) EncodeFileName(hash core.StorageHash) string {
+func (p *Protocol) EncodeFileName(hash core.StorageHash) string {
 	return hash.Multihash().B58String()
 }
 
-func (p Protocol) Hash(_ io.Reader, _ uint64) (core.StorageHash, error) {
+func (p *Protocol) Hash(_ io.Reader, _ uint64) (core.StorageHash, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (p Protocol) GetNode() ipfs.IPFSNode {
+func (p *Protocol) GetNode() ipfs.IPFSNode {
 	p.nodeMutex.RLock()
 	defer p.nodeMutex.RUnlock()
 	return p.node
@@ -284,29 +284,29 @@ func (p *Protocol) RestartNode() error {
 	return nil
 }
 
-func (p Protocol) GetPeerTracker() *ipfs.BlockRequestTracker {
+func (p *Protocol) GetPeerTracker() *ipfs.BlockRequestTracker {
 	// For now, return nil - tracker is managed differently
 	// Can be used to access tracker for testing/inspection
 	return nil
 }
 
-func (p Protocol) GetMetadataStore() pluginCore.MetadataStore {
+func (p *Protocol) GetMetadataStore() pluginCore.MetadataStore {
 	return p.metadataStore
 }
 
-func (p Protocol) GetNodeFactory() *ipfs.NodeFactory {
+func (p *Protocol) GetNodeFactory() *ipfs.NodeFactory {
 	return p.nodeFactory
 }
 
-func (p Protocol) Name() string {
+func (p *Protocol) Name() string {
 	return internal.ProtocolName
 }
 
-func (p Protocol) DisplayName() string {
+func (p *Protocol) DisplayName() string {
 	return internal.ProtocolDisplayName
 }
 
-func (p Protocol) GetConfig() config.ProtocolConfig {
+func (p *Protocol) GetConfig() config.ProtocolConfig {
 	return &pluginConfig.ProtocolConfig{}
 }
 
