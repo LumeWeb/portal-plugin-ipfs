@@ -59,6 +59,12 @@ type (
 		// RecordLifetime is how long republished IPNS records remain valid.
 		// Default is 48h which is the DHT hard cap — records are dropped after 48h regardless.
 		RecordLifetime time.Duration `config:"record_lifetime"`
+		// PubSubRebroadcastInterval is how frequently IPNS records are rebroadcast over PubSub.
+		// Default is 10m.
+		PubSubRebroadcastInterval time.Duration `config:"pubsub_rebroadcast_interval"`
+		// PubSubRebroadcastInitialDelay is the delay before the first PubSub rebroadcast.
+		// Default is 1m.
+		PubSubRebroadcastInitialDelay time.Duration `config:"pubsub_rebroadcast_initial_delay"`
 	}
 )
 
@@ -82,7 +88,9 @@ func (I IPFSProvider) Defaults() map[string]any {
 
 func (i IPNS) Defaults() map[string]any {
 	return map[string]any{
-		"RepublishInterval": time.Hour,
-		"RecordLifetime":    48 * time.Hour,
+		"RepublishInterval":             time.Hour,
+		"RecordLifetime":                48 * time.Hour,
+		"PubSubRebroadcastInterval":     10 * time.Minute,
+		"PubSubRebroadcastInitialDelay": 1 * time.Minute,
 	}
 }

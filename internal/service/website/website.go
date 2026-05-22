@@ -601,7 +601,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 						ttl := 24 * time.Hour
 						err = s.ipnsKeySvc.PublishCID(ctx, ipnsKey.PeerID().String(), publishHash, ttl)
 						if err != nil {
-							s.Logger().Warn("Failed to republish new CID to IPNS key",
+							s.Logger().Error("Failed to republish new CID to IPNS key",
 								zap.Error(err),
 								zap.String("domain", website.Domain),
 								zap.String("peer_id", ipnsKey.PeerID().String()),
@@ -1348,7 +1348,7 @@ func (s *WebsiteServiceDefault) ensureIPNSKey(ctx context.Context, userID uint, 
 		ttl := 24 * time.Hour
 		err = s.ipnsKeySvc.PublishCID(ctx, ipnsKey.PeerID().String(), publishCID, ttl)
 		if err != nil {
-			s.Logger().Warn("Failed to publish CID to IPNS key",
+			s.Logger().Error("Failed to publish CID to IPNS key",
 				zap.Error(err),
 				zap.String("domain", domain),
 				zap.String("peer_id", ipnsKey.PeerID().String()),

@@ -280,7 +280,7 @@ func (e *AdminExtension) republishIPNS(c echo.Context) error {
 		}
 
 		if err := e.ipnsKeyService.PublishWithKey(reqCtx, privKey, cidStr, 0); err != nil {
-			e.logger.Warn("Failed to republish IPNS record, skipping", zap.Error(err), zap.String("peer_id", peerID))
+			e.logger.Error("Failed to republish IPNS record, skipping", zap.Error(err), zap.String("peer_id", peerID))
 			continue
 		}
 
