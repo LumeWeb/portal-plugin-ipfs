@@ -30,6 +30,14 @@ import (
 
 const sslCertValidity = 90 * 24 * time.Hour
 
+const (
+	msgTokenExpired  = "Validation token expired for %s — a new token has been generated. Please add the updated TXT record to your DNS configuration"
+	msgDNSMissing    = "No DNS records found for %s. Please add the required TXT records to your DNS configuration"
+	msgDNSMismatch   = "DNS validation failed: missing or incorrect dnslink record (expected: %s, found: %s)"
+	msgTokenMissing  = "DNS validation failed: missing validation token for %s"
+	msgValidated     = "DNS validation successful for %s"
+)
+
 func extractParentDomain(domain string) string {
 	parts := strings.Split(domain, ".")
 	if len(parts) <= 2 {
@@ -1044,7 +1052,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				}
 				return pluginCore.ValidateDNSResult{
 					Valid:   false,
-					Message: fmt.Sprintf("Validation token expired for %s — a new token has been generated. Please add the updated TXT record to your DNS configuration", website.Domain),
+					Message: fmt.Sprintf(msgTokenExpired, website.Domain),
 					Reason:  pluginCore.ValidationReasonTokenExpired,
 				}, nil
 			}
@@ -1058,7 +1066,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 						zap.Uint("website_id", website.ID))
 					return pluginCore.ValidateDNSResult{
 						Valid:   false,
-						Message: fmt.Sprintf("No DNS records found for %s. Please add the required TXT records to your DNS configuration", website.Domain),
+						Message: fmt.Sprintf(msgDNSMissing, website.Domain),
 						Reason:  pluginCore.ValidationReasonDNSMissing,
 					}, nil
 				}
@@ -1097,7 +1105,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 					zap.String("found", foundDNSlink))
 				return pluginCore.ValidateDNSResult{
 					Valid:   false,
-					Message: fmt.Sprintf("DNS validation failed: missing or incorrect dnslink record (expected: %s, found: %s)", expectedDNSlink, foundDNSlink),
+					Message: fmt.Sprintf(msgDNSMismatch, expectedDNSlink, foundDNSlink),
 					Reason:  pluginCore.ValidationReasonDNSMismatch,
 				}, nil
 			}
@@ -1126,7 +1134,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 						zap.String("expected_token", website.ValidationToken))
 					return pluginCore.ValidateDNSResult{
 						Valid:   false,
-						Message: fmt.Sprintf("DNS validation failed: missing validation token for %s", website.Domain),
+						Message: fmt.Sprintf(msgTokenMissing, website.Domain),
 						Reason:  pluginCore.ValidationReasonTokenMissing,
 					}, nil
 				}
@@ -1148,7 +1156,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 
 			return pluginCore.ValidateDNSResult{
 				Valid:   true,
-				Message: fmt.Sprintf("DNS validation successful for %s", website.Domain),
+				Message: fmt.Sprintf(msgValidated, website.Domain),
 				Reason:  pluginCore.ValidationReasonValidated,
 			}, nil
 		},
