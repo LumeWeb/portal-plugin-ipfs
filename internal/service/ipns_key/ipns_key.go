@@ -24,6 +24,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
@@ -175,7 +176,8 @@ func NewIPNSKeyService() (core.Service, []core.ContextBuilderOption, error) {
 			svc.publisher = publisher
 
 			// Initialize the republisher
-			err := svc.initRepublisher(node)
+			cfg := core.GetProtocolConfig[*pluginConfig.ProtocolConfig](ctx, internal.ProtocolName)
+			err := svc.initRepublisher(node, cfg.IPNS)
 			if err != nil {
 				return fmt.Errorf("failed to initialize republisher: %w", err)
 			}
@@ -949,7 +951,7 @@ func (s *IPNSKeyServiceDefault) ListPublished(ctx context.Context) (map[ipns.Nam
 }
 
 // initRepublisher initializes the IPNS republisher
-func (s *IPNSKeyServiceDefault) initRepublisher(node pluginCore.IPNSNodeAccess) error {
+func (s *IPNSKeyServiceDefault) initRepublisher(node pluginCore.IPNSNodeAccess, cfg pluginConfig.IPNS) error {
 	publisher := node.GetPublisher()
 	if publisher == nil {
 		return fmt.Errorf("publisher not found")
@@ -980,9 +982,8 @@ func (s *IPNSKeyServiceDefault) initRepublisher(node pluginCore.IPNSNodeAccess) 
 	// Pass the node's private key as the self key to satisfy vendor code requirements
 	repub := boxoRepublisher.NewRepublisher(publisher, ds, selfKey, safeKS)
 
-	// Configure with defaults (4-hour interval, 24-hour record lifetime)
-	repub.Interval = boxoRepublisher.DefaultRebroadcastInterval
-	repub.RecordLifetime = ipns.DefaultRecordLifetime
+	repub.Interval = cfg.RepublishInterval
+	repub.RecordLifetime = cfg.RecordLifetime
 
 	s.republisher = repub
 

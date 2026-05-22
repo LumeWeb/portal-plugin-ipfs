@@ -10,6 +10,7 @@ import (
 // var _ config.Validator = (*ProtocolConfig)(nil)
 var _ config.Defaults = (*BlockStore)(nil)
 var _ config.Defaults = (*IPFSProvider)(nil)
+var _ config.Defaults = (*IPNS)(nil)
 
 func mustParsePeer(s string) IPFSPeer {
 	info, err := peer.AddrInfoFromString(s)
@@ -49,6 +50,16 @@ type (
 		Interval  time.Duration `config:"interval"`
 		Timeout   time.Duration `config:"timeout"`
 	}
+
+	// IPNS configures IPNS record publishing and republishing
+	IPNS struct {
+		// RepublishInterval is how frequently IPNS records are republished to the DHT.
+		// Default is 1h (boxo default is 4h).
+		RepublishInterval time.Duration `config:"republish_interval"`
+		// RecordLifetime is how long republished IPNS records remain valid.
+		// Default is 48h which is the DHT hard cap — records are dropped after 48h regardless.
+		RecordLifetime time.Duration `config:"record_lifetime"`
+	}
 )
 
 func (b BlockStore) Defaults() map[string]any {
@@ -66,5 +77,12 @@ func (I IPFSProvider) Defaults() map[string]any {
 		"BatchSize": 5000,
 		"Interval":  18 * time.Hour,
 		"Timeout":   30 * time.Minute,
+	}
+}
+
+func (i IPNS) Defaults() map[string]any {
+	return map[string]any{
+		"RepublishInterval": time.Hour,
+		"RecordLifetime":    48 * time.Hour,
 	}
 }

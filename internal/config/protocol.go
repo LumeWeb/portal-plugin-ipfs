@@ -24,6 +24,7 @@ type ProtocolConfig struct {
 	BootstrapPeers          []IPFSPeer   `config:"bootstrap_peers"`
 	Provider                IPFSProvider `config:"provider"`
 	BlockStore              BlockStore   `config:"blockstore"`
+	IPNS                    IPNS         `config:"ipns"`
 	LogLevel                string       `config:"log_level"`
 	AutoScaleResourceLimits bool         `config:"auto_scale_resource_limits"`
 	DHTMode                 string       `config:"dht_mode"`
