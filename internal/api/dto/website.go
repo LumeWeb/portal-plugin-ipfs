@@ -337,6 +337,8 @@ type WebsiteResponse struct {
 	Domain              string         `json:"domain"`
 	TargetType          string         `json:"target_type"`
 	TargetHash          string         `json:"target_hash"`
+	IPNSKeyID           *uint          `json:"ipns_key_id,omitempty"`  // FK to the linked IPNS key (set when DNS hosting auto-creates a key)
+	ActiveCID           string         `json:"active_cid,omitempty"`   // The currently-published IPFS content CID (distinct from target_hash when target is IPNS)
 	Status              string         `json:"status"`
 	ValidationToken     string         `json:"validation_token"`
 	ValidationExpiresAt *time.Time     `json:"validation_expires_at,omitempty"`
@@ -361,6 +363,7 @@ func (r *WebsiteResponse) FromModel(model *db.Website) error {
 	r.ValidationExpiresAt = model.ValidationExpiresAt
 	r.LastCheckedAt = model.LastCheckedAt
 	r.DNSZoneID = model.DNSZoneID
+	r.IPNSKeyID = model.IPNSKeyID
 	r.Enabled = model.Enabled
 	r.Created = model.CreatedAt
 	r.Updated = model.UpdatedAt
@@ -386,6 +389,23 @@ func (r *WebsiteResponse) FromModel(model *db.Website) error {
 	}
 
 	return nil
+}
+
+// IPNSKeyCIDResolver resolves the last-published CID for an IPNS key.
+type IPNSKeyCIDResolver interface {
+	GetKeyLastPublishedCID(userID uint, keyID uint) string
+}
+
+// EnrichActiveCID populates the ActiveCID field by resolving the linked IPNS key's
+// last-published CID from the resolver. This is separate from FromModel because
+// it requires a service lookup beyond the DB model.
+func (r *WebsiteResponse) EnrichActiveCID(resolver IPNSKeyCIDResolver, userID uint, model *db.Website) {
+	if model.IPNSKeyID == nil {
+		return
+	}
+	if cid := resolver.GetKeyLastPublishedCID(userID, *model.IPNSKeyID); cid != "" {
+		r.ActiveCID = cid
+	}
 }
 
 // SetSubdomainInfo sets the IsSubdomain flag based on the zone's domain.
