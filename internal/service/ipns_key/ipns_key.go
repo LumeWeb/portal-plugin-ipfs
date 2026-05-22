@@ -191,6 +191,8 @@ func NewIPNSKeyService() (core.Service, []core.ContextBuilderOption, error) {
 				// Don't fail startup - log and continue
 			}
 
+			svc.RepublishAllKeysOnBoot(ctx)
+
 			return nil
 		}),
 		core.ContextWithExitFunc(func(ctx core.Context) error {
@@ -720,6 +722,74 @@ func (s *IPNSKeyServiceDefault) SyncToBoxoKeystore(ctx context.Context) error {
 	)
 
 	return nil
+}
+
+// RepublishAllKeysOnBoot force-publishes all IPNS keys that have a known CID
+// in the database. This seeds the boxo datastore with a record for each key
+// so the republisher doesn't silently skip them (errNoEntry → return nil).
+// Publishes are fire-and-forget with detached context — they must not block
+// or be canceled by the caller's context.
+func (s *IPNSKeyServiceDefault) RepublishAllKeysOnBoot(ctx context.Context) {
+	ctx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.RepublishAllKeysOnBoot")
+	defer span.End()
+
+	var keys []pluginDb.IPFSIPNSKey
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		return tx.Where("last_published_cid != '' AND last_published_cid IS NOT NULL").Find(&keys)
+	})
+	if err != nil {
+		s.Logger().Error("Failed to list IPNS keys for boot republish", zap.Error(err))
+		return
+	}
+
+	if len(keys) == 0 {
+		s.Logger().Info("No IPNS keys with published CID to republish on boot")
+		return
+	}
+
+	publishedCount := 0
+	failedCount := 0
+
+	for _, key := range keys {
+		privKey, err := s.decryptPrivateKey(key.PrivateKeyEncrypted)
+		if err != nil {
+			s.Logger().Error("Failed to decrypt private key for boot republish",
+				zap.Error(err),
+				zap.Uint("key_id", key.ID),
+				zap.Stringer("peer_id", key.PeerID()),
+			)
+			failedCount++
+			continue
+		}
+
+		if privKey == nil {
+			s.Logger().Error("Decrypted private key is nil, skipping boot republish",
+				zap.Uint("key_id", key.ID),
+				zap.Stringer("peer_id", key.PeerID()),
+			)
+			failedCount++
+			continue
+		}
+
+		publishCtx := core.DetachContext(ctx)
+		if err := s.PublishWithKey(publishCtx, privKey, key.LastPublishedCID, 0); err != nil {
+			s.Logger().Error("Failed to republish IPNS key on boot",
+				zap.Error(err),
+				zap.Stringer("peer_id", key.PeerID()),
+				zap.String("cid", key.LastPublishedCID),
+			)
+			failedCount++
+			continue
+		}
+
+		publishedCount++
+	}
+
+	s.Logger().Info("Completed IPNS boot republish",
+		zap.Int("published", publishedCount),
+		zap.Int("failed", failedCount),
+		zap.Int("total", len(keys)),
+	)
 }
 
 // GetPrivateKeyByPeerID decrypts and returns the private key for a given peer ID

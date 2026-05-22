@@ -92,4 +92,7 @@ type IPNSKeyService interface {
 
 	// ListPublished returns all IPNS records published by this node
 	ListPublished(ctx context.Context) (map[ipns.Name]*ipns.Record, error)
+
+	// RepublishAllKeysOnBoot force-publishes all IPNS keys with a known CID
+	RepublishAllKeysOnBoot(ctx context.Context)
 }
