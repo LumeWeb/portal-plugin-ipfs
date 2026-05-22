@@ -1298,6 +1298,46 @@ func (_c *MockIPNSKeyService_PublishWithKey_Call) RunAndReturn(run func(ctx cont
 	return _c
 }
 
+// RepublishAllKeysOnBoot provides a mock function for the type MockIPNSKeyService
+func (_mock *MockIPNSKeyService) RepublishAllKeysOnBoot(ctx context.Context) {
+	_mock.Called(ctx)
+	return
+}
+
+// MockIPNSKeyService_RepublishAllKeysOnBoot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RepublishAllKeysOnBoot'
+type MockIPNSKeyService_RepublishAllKeysOnBoot_Call struct {
+	*mock.Call
+}
+
+// RepublishAllKeysOnBoot is a helper method to define mock.On call
+//   - ctx context.Context
+func (_e *MockIPNSKeyService_Expecter) RepublishAllKeysOnBoot(ctx interface{}) *MockIPNSKeyService_RepublishAllKeysOnBoot_Call {
+	return &MockIPNSKeyService_RepublishAllKeysOnBoot_Call{Call: _e.mock.On("RepublishAllKeysOnBoot", ctx)}
+}
+
+func (_c *MockIPNSKeyService_RepublishAllKeysOnBoot_Call) Run(run func(ctx context.Context)) *MockIPNSKeyService_RepublishAllKeysOnBoot_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPNSKeyService_RepublishAllKeysOnBoot_Call) Return() *MockIPNSKeyService_RepublishAllKeysOnBoot_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockIPNSKeyService_RepublishAllKeysOnBoot_Call) RunAndReturn(run func(ctx context.Context)) *MockIPNSKeyService_RepublishAllKeysOnBoot_Call {
+	_c.Run(run)
+	return _c
+}
+
 // SetConfig provides a mock function for the type MockIPNSKeyService
 func (_mock *MockIPNSKeyService) SetConfig(cfg config.Manager) {
 	_mock.Called(cfg)

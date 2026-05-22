@@ -441,7 +441,7 @@ func (a *API) republishIPNS(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	if err := ipnsKeyService.PublishWithKey(reqCtx, privKey, cidStr, 0); err != nil {
+	if err := ipnsKeyService.PublishWithKey(core.DetachContext(reqCtx), privKey, cidStr, 0); err != nil {
 		a.Logger().Error("Failed to republish IPNS record", zap.Error(err), zap.String("peer_id", key.PeerID().String()))
 		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to republish IPNS record: %w", err))
 		return ctx.Error(apiErr, apiErr.HttpStatus())

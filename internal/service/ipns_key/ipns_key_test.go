@@ -772,6 +772,66 @@ func TestIPNSKeyService_PublishWithKey_UpdatesLastPublishedCID(t *testing.T) {
 	}, TestOptions)
 }
 
+func TestIPNSKeyService_RepublishAllKeysOnBoot_NoKeysWithCID(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		keyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, keyService)
+
+		userID := uint(1)
+		_, err := keyService.CreateKey(context.Background(), userID, "no-cid-key", KeyType_Ed25519)
+		require.NoError(tb, err)
+
+		keyService.RepublishAllKeysOnBoot(context.Background())
+	}, TestOptions)
+}
+
+func TestIPNSKeyService_RepublishAllKeysOnBoot_PublishesKeysWithCID(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		keyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, keyService)
+
+		userID := uint(1)
+
+		key1, err := keyService.CreateKey(context.Background(), userID, "boot-repub1", KeyType_Ed25519)
+		require.NoError(tb, err)
+
+		key2, err := keyService.CreateKey(context.Background(), userID, "boot-repub2", KeyType_Ed25519)
+		require.NoError(tb, err)
+
+		testCID := "bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3ffq2ab4"
+
+		proto := core.GetProtocol(internal.ProtocolName)
+		ipnsAccess := proto.(pluginCore.IPNSBoxoServices)
+		mockPublisher := ipnsAccess.GetIPNSNode().GetPublisher().(*mocks.MockIPNSPublisher)
+
+		mockPublisher.EXPECT().Publish(mock.Anything, mock.Anything, mock.Anything).Return(nil).Twice()
+
+		privKey1, _, err := keyService.GetPrivateKeyByPeerID(context.Background(), key1.PeerID().String())
+		require.NoError(tb, err)
+		err = keyService.PublishWithKey(context.Background(), privKey1, testCID, 0)
+		require.NoError(tb, err)
+
+		privKey2, _, err := keyService.GetPrivateKeyByPeerID(context.Background(), key2.PeerID().String())
+		require.NoError(tb, err)
+		err = keyService.PublishWithKey(context.Background(), privKey2, testCID, 0)
+		require.NoError(tb, err)
+
+		var dbKey1, dbKey2 pluginDb.IPFSIPNSKey
+		portalDb.RetryableTransaction(context.Background(), ctx.DB(), func(tx *gorm.DB) *gorm.DB {
+			return tx.Where("id = ?", key1.ID).First(&dbKey1)
+		})
+		portalDb.RetryableTransaction(context.Background(), ctx.DB(), func(tx *gorm.DB) *gorm.DB {
+			return tx.Where("id = ?", key2.ID).First(&dbKey2)
+		})
+		require.NotEmpty(tb, dbKey1.LastPublishedCID)
+		require.NotEmpty(tb, dbKey2.LastPublishedCID)
+
+		mockPublisher.EXPECT().Publish(mock.Anything, mock.Anything, mock.Anything).Return(nil).Twice()
+
+		keyService.RepublishAllKeysOnBoot(context.Background())
+	}, TestOptions)
+}
+
 func TestIPNSKeyService_PublishCID_UpdatesLastPublishedCID(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		keyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)

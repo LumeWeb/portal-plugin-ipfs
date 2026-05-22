@@ -73,7 +73,7 @@ func (c *compositeValueStore) PutValue(ctx context.Context, key string, value []
 	pubsubRes := <-pubsubCh
 
 	if dhtRes.err != nil && pubsubRes.err != nil {
-		c.debug("PutValue failed on both backends",
+		c.logError("PutValue failed on both backends",
 			zap.String("key", key),
 			zap.String("write_target", targetName),
 			zap.Error(dhtRes.err),
@@ -83,7 +83,7 @@ func (c *compositeValueStore) PutValue(ctx context.Context, key string, value []
 	}
 
 	if dhtRes.err != nil {
-		c.debug("PutValue failed on DHT backend",
+		c.logError("PutValue failed on DHT backend",
 			zap.String("key", key),
 			zap.String("write_target", targetName),
 			zap.Error(dhtRes.err),
@@ -92,7 +92,7 @@ func (c *compositeValueStore) PutValue(ctx context.Context, key string, value []
 	}
 
 	if pubsubRes.err != nil {
-		c.debug("PutValue succeeded on DHT, failed on PubSub",
+		c.logError("PutValue succeeded on DHT, failed on PubSub",
 			zap.String("key", key),
 			zap.String("write_target", targetName),
 			zap.Error(pubsubRes.err),
@@ -166,5 +166,11 @@ func (c *compositeValueStore) SearchValue(ctx context.Context, key string, opts 
 func (c *compositeValueStore) debug(msg string, fields ...zap.Field) {
 	if c.log != nil {
 		c.log.Debug(msg, fields...)
+	}
+}
+
+func (c *compositeValueStore) logError(msg string, fields ...zap.Field) {
+	if c.log != nil {
+		c.log.Error(msg, fields...)
 	}
 }
