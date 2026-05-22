@@ -68,7 +68,7 @@ func TestCompositeValueStore_PutValue_WritesToBoth(t *testing.T) {
 		},
 	}
 
-	c := newCompositeValueStore(primary, secondary)
+	c := newCompositeValueStore(primary, secondary, nil)
 	err := c.PutValue(context.Background(), "test-key", []byte("test-value"))
 	if err != nil {
 		t.Fatalf("PutValue returned error: %v", err)
@@ -79,6 +79,95 @@ func TestCompositeValueStore_PutValue_WritesToBoth(t *testing.T) {
 	}
 	if !secondaryCalled {
 		t.Error("secondary PutValue was not called")
+	}
+}
+
+func TestCompositeValueStore_PutValue_WithCompanion_WritesToCompanion(t *testing.T) {
+	var companionCalled, secondaryCalled bool
+	var primaryCalled bool
+
+	primary := &mockValueStore{
+		putValueFn: func(_ context.Context, _ string, _ []byte, _ ...routing.Option) error {
+			primaryCalled = true
+			return nil
+		},
+	}
+
+	companion := &mockValueStore{
+		putValueFn: func(_ context.Context, key string, value []byte, _ ...routing.Option) error {
+			companionCalled = true
+			if key != "test-key" {
+				t.Errorf("companion got key %q, want %q", key, "test-key")
+			}
+			if string(value) != "test-value" {
+				t.Errorf("companion got value %q, want %q", value, "test-value")
+			}
+			return nil
+		},
+	}
+
+	secondary := &mockValueStore{
+		putValueFn: func(_ context.Context, key string, value []byte, _ ...routing.Option) error {
+			secondaryCalled = true
+			return nil
+		},
+	}
+
+	c := newCompositeValueStoreWithCompanion(primary, companion, secondary, nil)
+	err := c.PutValue(context.Background(), "test-key", []byte("test-value"))
+	if err != nil {
+		t.Fatalf("PutValue returned error: %v", err)
+	}
+
+	if primaryCalled {
+		t.Error("primary PutValue should NOT be called when companion is present")
+	}
+	if !companionCalled {
+		t.Error("companion PutValue was not called")
+	}
+	if !secondaryCalled {
+		t.Error("secondary PutValue was not called")
+	}
+}
+
+func TestCompositeValueStore_PutValue_WithCompanion_CompanionError(t *testing.T) {
+	testErr := errors.New("companion failed")
+
+	primary := &mockValueStore{}
+	companion := &mockValueStore{
+		putValueFn: func(_ context.Context, _ string, _ []byte, _ ...routing.Option) error {
+			return testErr
+		},
+	}
+	secondary := &mockValueStore{}
+
+	c := newCompositeValueStoreWithCompanion(primary, companion, secondary, nil)
+	err := c.PutValue(context.Background(), "key", []byte("value"))
+	if err != testErr {
+		t.Fatalf("got error %v, want %v", err, testErr)
+	}
+}
+
+func TestCompositeValueStore_PutValue_WithCompanion_FallsBackToPrimaryOnNilCompanion(t *testing.T) {
+	var primaryCalled bool
+
+	primary := &mockValueStore{
+		putValueFn: func(_ context.Context, _ string, _ []byte, _ ...routing.Option) error {
+			primaryCalled = true
+			return nil
+		},
+	}
+
+	secondary := &mockValueStore{}
+
+	c := newCompositeValueStoreWithCompanion(primary, nil, secondary, nil)
+	err := c.PutValue(context.Background(), "key", []byte("value"))
+	if err != nil {
+		t.Fatalf("PutValue returned error: %v", err)
+	}
+
+	if !primaryCalled {
+		t.Error("primary PutValue was not called when companion is nil")
 	}
 }
 
@@ -93,7 +182,7 @@ func TestCompositeValueStore_PutValue_PropagatesFirstError(t *testing.T) {
 
 	secondary := &mockValueStore{}
 
-	c := newCompositeValueStore(primary, secondary)
+	c := newCompositeValueStore(primary, secondary, nil)
 	err := c.PutValue(context.Background(), "key", []byte("value"))
 	if err != testErr {
 		t.Fatalf("got error %v, want %v", err, testErr)
@@ -111,10 +200,10 @@ func TestCompositeValueStore_PutValue_SecondaryErrorOnly(t *testing.T) {
 		},
 	}
 
-	c := newCompositeValueStore(primary, secondary)
+	c := newCompositeValueStore(primary, secondary, nil)
 	err := c.PutValue(context.Background(), "key", []byte("value"))
-	if err != testErr {
-		t.Fatalf("got error %v, want %v", err, testErr)
+	if err != nil {
+		t.Fatalf("PutValue should succeed when DHT write succeeds, even if PubSub fails; got error: %v", err)
 	}
 }
 
@@ -134,13 +223,13 @@ func TestCompositeValueStore_PutValue_BothFail(t *testing.T) {
 		},
 	}
 
-	c := newCompositeValueStore(primary, secondary)
+	c := newCompositeValueStore(primary, secondary, nil)
 	err := c.PutValue(context.Background(), "key", []byte("value"))
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if err != err1 && err != err2 {
-		t.Fatalf("got error %v, want either %v or %v", err, err1, err2)
+	if !errors.Is(err, err1) {
+		t.Fatalf("expected error to wrap primary error %v, got %v", err1, err)
 	}
 }
 
@@ -157,13 +246,42 @@ func TestCompositeValueStore_GetValue_UsesPrimary(t *testing.T) {
 		},
 	}
 
-	c := newCompositeValueStore(primary, secondary)
+	c := newCompositeValueStore(primary, secondary, nil)
 	val, err := c.GetValue(context.Background(), "key")
 	if err != nil {
 		t.Fatalf("GetValue returned error: %v", err)
 	}
 	if string(val) != "from-primary" {
 		t.Fatalf("got value %q, want %q", val, "from-primary")
+	}
+}
+
+func TestCompositeValueStore_GetValue_WithCompanion_StillUsesPrimary(t *testing.T) {
+	primary := &mockValueStore{
+		getValueFn: func(_ context.Context, _ string, _ ...routing.Option) ([]byte, error) {
+			return []byte("from-primary"), nil
+		},
+	}
+
+	companion := &mockValueStore{
+		getValueFn: func(_ context.Context, _ string, _ ...routing.Option) ([]byte, error) {
+			return []byte("from-companion"), nil
+		},
+	}
+
+	secondary := &mockValueStore{
+		getValueFn: func(_ context.Context, _ string, _ ...routing.Option) ([]byte, error) {
+			return []byte("from-secondary"), nil
+		},
+	}
+
+	c := newCompositeValueStoreWithCompanion(primary, companion, secondary, nil)
+	val, err := c.GetValue(context.Background(), "key")
+	if err != nil {
+		t.Fatalf("GetValue returned error: %v", err)
+	}
+	if string(val) != "from-primary" {
+		t.Fatalf("got value %q, want %q — GetValue should always use primary", val, "from-primary")
 	}
 }
 
@@ -188,7 +306,7 @@ func TestCompositeValueStore_SearchValue_MergesBothChannels(t *testing.T) {
 		},
 	}
 
-	c := newCompositeValueStore(primary, secondary)
+	c := newCompositeValueStore(primary, secondary, nil)
 	ch, err := c.SearchValue(context.Background(), "key")
 	if err != nil {
 		t.Fatalf("SearchValue returned error: %v", err)
@@ -223,7 +341,7 @@ func TestCompositeValueStore_SearchValue_DeliversPrimaryWhenSecondaryEmpty(t *te
 		},
 	}
 
-	c := newCompositeValueStore(primary, secondary)
+	c := newCompositeValueStore(primary, secondary, nil)
 	ch, err := c.SearchValue(context.Background(), "key")
 	if err != nil {
 		t.Fatalf("SearchValue returned error: %v", err)
@@ -251,7 +369,7 @@ func TestCompositeValueStore_SearchValue_BothFail(t *testing.T) {
 		},
 	}
 
-	c := newCompositeValueStore(primary, secondary)
+	c := newCompositeValueStore(primary, secondary, nil)
 	_, err := c.SearchValue(context.Background(), "key")
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -277,7 +395,7 @@ func TestCompositeValueStore_SearchValue_FallsBackToPrimary(t *testing.T) {
 		},
 	}
 
-	c := newCompositeValueStore(primary, secondary)
+	c := newCompositeValueStore(primary, secondary, nil)
 	ch, err := c.SearchValue(context.Background(), "key")
 	if err != nil {
 		t.Fatalf("SearchValue returned error: %v", err)
@@ -307,7 +425,7 @@ func TestCompositeValueStore_SearchValue_Regression_PubSubEmptyChannelDoesNotBlo
 		},
 	}
 
-	c := newCompositeValueStore(primary, secondary)
+	c := newCompositeValueStore(primary, secondary, nil)
 	ch, err := c.SearchValue(context.Background(), "key")
 	if err != nil {
 		t.Fatalf("SearchValue returned error: %v", err)

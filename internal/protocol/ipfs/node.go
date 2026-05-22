@@ -645,8 +645,8 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 
 	// Create IPNS PubSub value store for near-instant propagation to subscribers
 	pubsubValueStore, err := pubsubrouter.NewPubsubValueStore(ctx, node, gossipsub, ipns.Validator{KeyBook: node.Peerstore()},
-		pubsubrouter.WithRebroadcastInterval(10*time.Minute),
-		pubsubrouter.WithRebroadcastInitialDelay(1*time.Minute),
+		pubsubrouter.WithRebroadcastInterval(cfg.IPNS.PubSubRebroadcastInterval),
+		pubsubrouter.WithRebroadcastInitialDelay(cfg.IPNS.PubSubRebroadcastInitialDelay),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pubsub value store: %w", err)
@@ -655,7 +655,14 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	ipfsNode.pubsubValueStore = pubsubValueStore
 
 	// Create boxo IPNS publisher with composite routing (DHT + PubSub)
-	compositeRouting := newCompositeValueStore(routingImpl, pubsubValueStore)
+	// When a companion (server-mode) DHT exists, writes go there since FullRT
+	// is client-only and does not reliably put records into the DHT network.
+	var compositeRouting *compositeValueStore
+	if ipfsNode.companionDHT != nil {
+		compositeRouting = newCompositeValueStoreWithCompanion(routingImpl, ipfsNode.companionDHT, pubsubValueStore, ctx.Logger())
+	} else {
+		compositeRouting = newCompositeValueStore(routingImpl, pubsubValueStore, ctx.Logger())
+	}
 	boxoPublisher := namesys.NewIPNSPublisher(compositeRouting, ds)
 
 	// Update the IPFS node with remaining fields

@@ -2,43 +2,110 @@ package ipfs
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/libp2p/go-libp2p/core/routing"
+	"go.lumeweb.com/portal/core"
+	"go.uber.org/zap"
 )
 
 // compositeValueStore publishes IPNS records to multiple routing backends
-// simultaneously (e.g. DHT + PubSub). Writes go to all stores; reads come
-// from the primary store.
+// and splits read/write paths for optimal DHT behavior.
+//
+// In FullRT mode, the primary (FullRT) is excellent for reads but a
+// client-only DHT that does not reliably publish records to the network.
+// The companion (server-mode IpfsDHT) handles PutValue so records are
+// properly propagated. When no companion is provided, PutValue falls back
+// to the primary (basic DHT or FullRT without companion).
 type compositeValueStore struct {
 	primary   routing.ValueStore
+	companion routing.ValueStore // server-mode DHT for writes; nil falls back to primary
 	secondary routing.ValueStore
+	log       *core.Logger
 }
 
 var _ routing.ValueStore = (*compositeValueStore)(nil)
 
-func newCompositeValueStore(primary, secondary routing.ValueStore) *compositeValueStore {
-	return &compositeValueStore{primary: primary, secondary: secondary}
+func newCompositeValueStore(primary, secondary routing.ValueStore, log *core.Logger) *compositeValueStore {
+	return &compositeValueStore{primary: primary, secondary: secondary, log: log}
+}
+
+func newCompositeValueStoreWithCompanion(primary, companion, secondary routing.ValueStore, log *core.Logger) *compositeValueStore {
+	return &compositeValueStore{primary: primary, companion: companion, secondary: secondary, log: log}
+}
+
+// writeTarget returns the routing.ValueStore that PutValue should write to.
+// When a companion (server-mode DHT) is available, writes go there instead
+// of the primary (which may be a client-only FullRT).
+func (c *compositeValueStore) writeTarget() routing.ValueStore {
+	if c.companion != nil {
+		return c.companion
+	}
+	return c.primary
+}
+
+func (c *compositeValueStore) writeTargetName() string {
+	if c.companion != nil {
+		return "companion"
+	}
+	return "primary"
 }
 
 func (c *compositeValueStore) PutValue(ctx context.Context, key string, value []byte, opts ...routing.Option) error {
-	errs := make(chan error, 2)
+	target := c.writeTarget()
+	targetName := c.writeTargetName()
+
+	type putResult struct {
+		err error
+	}
+	dhtCh := make(chan putResult, 1)
+	pubsubCh := make(chan putResult, 1)
 
 	go func() {
-		errs <- c.primary.PutValue(ctx, key, value, opts...)
+		dhtCh <- putResult{err: target.PutValue(ctx, key, value, opts...)}
 	}()
 
 	go func() {
-		errs <- c.secondary.PutValue(ctx, key, value, opts...)
+		pubsubCh <- putResult{err: c.secondary.PutValue(ctx, key, value, opts...)}
 	}()
 
-	var firstErr error
-	for i := 0; i < 2; i++ {
-		if err := <-errs; err != nil && firstErr == nil {
-			firstErr = err
-		}
+	dhtRes := <-dhtCh
+	pubsubRes := <-pubsubCh
+
+	if dhtRes.err != nil && pubsubRes.err != nil {
+		c.debug("PutValue failed on both backends",
+			zap.String("key", key),
+			zap.String("write_target", targetName),
+			zap.Error(dhtRes.err),
+			zap.NamedError("pubsub_err", pubsubRes.err),
+		)
+		return fmt.Errorf("%s: %w; pubsub: %v", targetName, dhtRes.err, pubsubRes.err)
 	}
 
-	return firstErr
+	if dhtRes.err != nil {
+		c.debug("PutValue failed on DHT backend",
+			zap.String("key", key),
+			zap.String("write_target", targetName),
+			zap.Error(dhtRes.err),
+		)
+		return dhtRes.err
+	}
+
+	if pubsubRes.err != nil {
+		c.debug("PutValue succeeded on DHT, failed on PubSub",
+			zap.String("key", key),
+			zap.String("write_target", targetName),
+			zap.Error(pubsubRes.err),
+		)
+		return nil
+	}
+
+	c.debug("PutValue succeeded on both backends",
+		zap.String("key", key),
+		zap.String("write_target", targetName),
+	)
+
+	return nil
 }
 
 func (c *compositeValueStore) GetValue(ctx context.Context, key string, opts ...routing.Option) ([]byte, error) {
@@ -94,4 +161,10 @@ func (c *compositeValueStore) SearchValue(ctx context.Context, key string, opts 
 	}()
 
 	return merged, nil
+}
+
+func (c *compositeValueStore) debug(msg string, fields ...zap.Field) {
+	if c.log != nil {
+		c.log.Debug(msg, fields...)
+	}
 }
