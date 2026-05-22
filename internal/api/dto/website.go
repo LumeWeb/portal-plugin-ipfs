@@ -48,11 +48,13 @@ func (r *IPNSKeyRequest) ToModel() (*db.IPFSIPNSKey, error) {
 
 // IPNSKeyResponse represents an IPNS key response
 type IPNSKeyResponse struct {
-	ID       uint      `json:"id"`
-	Name     string    `json:"name"`
-	IPNSName string    `json:"ipns_name"`
-	PeerID   string    `json:"peer_id"`
-	Created  time.Time `json:"created"`
+	ID               uint       `json:"id"`
+	Name             string     `json:"name"`
+	IPNSName         string     `json:"ipns_name"`
+	PeerID           string     `json:"peer_id"`
+	Value            string     `json:"value,omitempty"`
+	LastPublishedAt  *time.Time `json:"last_published_at,omitempty"`
+	Created          time.Time  `json:"created"`
 }
 
 func (r *IPNSKeyResponse) FromModel(model *db.IPFSIPNSKey) error {
@@ -60,17 +62,21 @@ func (r *IPNSKeyResponse) FromModel(model *db.IPFSIPNSKey) error {
 	r.Name = model.Name
 	r.IPNSName = model.IPNSName()
 	r.PeerID = model.PeerID().String()
+	r.Value = model.LastPublishedCID
+	r.LastPublishedAt = model.LastPublishedAt
 	r.Created = model.CreatedAt
 	return nil
 }
 
 // IPNSKeyListResponse represents an IPNS key in a list response
 type IPNSKeyListResponse struct {
-	ID       uint      `json:"id"`
-	Name     string    `json:"name"`
-	IPNSName string    `json:"ipns_name"`
-	PeerID   string    `json:"peer_id"`
-	Created  time.Time `json:"created"`
+	ID               uint       `json:"id"`
+	Name             string     `json:"name"`
+	IPNSName         string     `json:"ipns_name"`
+	PeerID           string     `json:"peer_id"`
+	Value            string     `json:"value,omitempty"`
+	LastPublishedAt  *time.Time `json:"last_published_at,omitempty"`
+	Created          time.Time  `json:"created"`
 }
 
 func (r *IPNSKeyListResponse) FromModel(model *db.IPFSIPNSKey) error {
@@ -78,6 +84,8 @@ func (r *IPNSKeyListResponse) FromModel(model *db.IPFSIPNSKey) error {
 	r.Name = model.Name
 	r.IPNSName = model.IPNSName()
 	r.PeerID = model.PeerID().String()
+	r.Value = model.LastPublishedCID
+	r.LastPublishedAt = model.LastPublishedAt
 	r.Created = model.CreatedAt
 	return nil
 }
