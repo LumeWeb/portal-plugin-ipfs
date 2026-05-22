@@ -37,6 +37,7 @@ import (
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/boxo/exchange"
 	"github.com/ipfs/boxo/ipld/merkledag"
+	"github.com/ipfs/boxo/ipns"
 	"github.com/ipfs/boxo/keystore"
 	"github.com/ipfs/boxo/namesys"
 	blocks "github.com/ipfs/go-block-format"
@@ -48,6 +49,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	pubsubrouter "github.com/libp2p/go-libp2p-pubsub-router"
 	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	webrtc "github.com/libp2p/go-libp2p/p2p/transport/webrtc"
@@ -191,6 +194,8 @@ type Node struct {
 	datastore        datastore.Datastore
 	keystore         keystore.Keystore
 	publisher        *namesys.IPNSPublisher
+	pubsub           *pubsub.PubSub
+	pubsubValueStore *pubsubrouter.PubsubValueStore
 	announceWeb      bool
 	port             int
 }
@@ -629,8 +634,29 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	// Wrap with safe keystore to prevent nil keys from being stored
 	safeKeystore := NewSafeKeystore(boxoKeystore, ctx.Logger())
 
-	// Create boxo IPNS publisher
-	boxoPublisher := namesys.NewIPNSPublisher(routingImpl, ds)
+	// Initialize GossipSub for IPNS-over-PubSub routing
+	gossipsub, err := pubsub.NewGossipSub(ctx, node,
+		pubsub.WithMessageSigning(true),
+		pubsub.WithStrictSignatureVerification(true),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gossipsub: %w", err)
+	}
+
+	// Create IPNS PubSub value store for near-instant propagation to subscribers
+	pubsubValueStore, err := pubsubrouter.NewPubsubValueStore(ctx, node, gossipsub, ipns.Validator{KeyBook: node.Peerstore()},
+		pubsubrouter.WithRebroadcastInterval(10*time.Minute),
+		pubsubrouter.WithRebroadcastInitialDelay(1*time.Minute),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create pubsub value store: %w", err)
+	}
+	ipfsNode.pubsub = gossipsub
+	ipfsNode.pubsubValueStore = pubsubValueStore
+
+	// Create boxo IPNS publisher with composite routing (DHT + PubSub)
+	compositeRouting := newCompositeValueStore(routingImpl, pubsubValueStore)
+	boxoPublisher := namesys.NewIPNSPublisher(compositeRouting, ds)
 
 	// Update the IPFS node with remaining fields
 	ipfsNode.routing = routingImpl

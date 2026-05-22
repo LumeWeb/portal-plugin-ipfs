@@ -29,6 +29,8 @@ require (
 	github.com/labstack/echo/v4 v4.15.2
 	github.com/libp2p/go-libp2p v0.48.0
 	github.com/libp2p/go-libp2p-kad-dht v0.40.0
+	github.com/libp2p/go-libp2p-pubsub v0.16.0
+	github.com/libp2p/go-libp2p-pubsub-router v0.6.0
 	github.com/mholt/archives v0.1.5
 	github.com/mitchellh/copystructure v1.2.0
 	github.com/multiformats/go-multiaddr v0.16.1
@@ -64,6 +66,7 @@ require (
 	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
 	github.com/h2non/filetype v1.1.3 // indirect
 	github.com/huandu/go-tls v1.0.1 // indirect
+	github.com/ipfs/go-ipfs-ds-help v0.1.1 // indirect
 	github.com/knadh/koanf/providers/confmap v1.0.0 // indirect
 	github.com/knadh/koanf/v2 v2.3.4 // indirect
 	github.com/labstack/gommon v0.5.0 // indirect
