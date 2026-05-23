@@ -35,6 +35,7 @@ var NameserverValidatorTestOptions = coreTesting.CombineOptions(
 		PowerDNSAPIKey:               "test-api-key",
 		Nameservers:                  []string{"ns1.example.com.", "ns2.example.com."},
 		NameserverValidationInterval: 5 * time.Minute,
+		VerificationTokenKey:         "lumeweb-verify",
 	}).WithMigrations(map[core.DBType]fs.FS{
 		core.DB_TYPE_SQLITE: migrations.GetSQLite(),
 	}).BuilderOption(),

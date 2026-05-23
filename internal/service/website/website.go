@@ -30,11 +30,18 @@ import (
 
 const sslCertValidity = 90 * 24 * time.Hour
 
+func (s *WebsiteServiceDefault) verificationTokenKey() string {
+	if s.dnsConfig != nil && s.dnsConfig.VerificationTokenKey != "" {
+		return s.dnsConfig.VerificationTokenKey
+	}
+	return "lumeweb-verify"
+}
+
 const (
-	msgTokenExpired  = "Validation token expired for %s — a new token has been generated. Please add the updated TXT record to your DNS configuration"
+	msgTokenExpired  = "Validation token expired for %s — a new token has been generated. Please add the updated TXT record at %s.%s to your DNS configuration"
 	msgDNSMissing    = "No DNS records found for %s. Please add the required TXT records to your DNS configuration"
 	msgDNSMismatch   = "DNS validation failed: missing or incorrect dnslink record (expected: %s, found: %s)"
-	msgTokenMissing  = "DNS validation failed: missing validation token for %s"
+	msgTokenMissing  = "DNS validation failed: missing validation token at %s.%s for %s"
 	msgValidated     = "DNS validation successful for %s"
 )
 
@@ -62,6 +69,7 @@ type WebsiteServiceDefault struct {
 	mailerSvc  core.MailerService
 	dnsSvc     pluginCore.DNSService
 	config     *pluginConfig.WebsiteConfig
+	dnsConfig  *pluginConfig.DnsConfig
 	resolver   DNSResolver
 }
 
@@ -81,6 +89,7 @@ func NewWebsiteService() (core.Service, []core.ContextBuilderOption, error) {
 
 			// Load configuration from service config
 			svc.config = core.GetServiceConfig[*pluginConfig.WebsiteConfig](ctx, pluginCore.WEBSITE_SERVICE)
+			svc.dnsConfig = core.GetServiceConfig[*pluginConfig.DnsConfig](ctx, pluginCore.DNS_SERVICE)
 
 			if svc.resolver == nil {
 				svc.resolver = LiveResolver{}
@@ -273,7 +282,7 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 						zap.String("domain", website.Domain))
 
 					// Create DNS records for the website
-					if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, dnsZone.ID, website.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), fmt.Sprintf("%s=%s", s.config.VerificationTokenKey, website.ValidationToken)); err != nil {
+					if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, dnsZone.ID, website.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), fmt.Sprintf("%s=%s", s.verificationTokenKey(), website.ValidationToken)); err != nil {
 						s.Logger().Error("Failed to create DNS records for website",
 							zap.Error(err),
 							zap.Uint("website_id", website.ID),
@@ -762,7 +771,7 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 		}
 
 		// Create DNS records
-		err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), fmt.Sprintf("%s=%s", s.config.VerificationTokenKey, newToken))
+		err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), fmt.Sprintf("%s=%s", s.verificationTokenKey(), newToken))
 		if err != nil {
 			return fmt.Errorf("failed to create DNS records: %w", err)
 		}
@@ -1069,7 +1078,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				}
 				return pluginCore.ValidateDNSResult{
 					Valid:   false,
-					Message: fmt.Sprintf(msgTokenExpired, website.Domain),
+					Message: fmt.Sprintf(msgTokenExpired, website.Domain, s.verificationTokenKey(), website.Domain),
 					Reason:  pluginCore.ValidationReasonTokenExpired,
 				}, nil
 			}
@@ -1128,10 +1137,10 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 			}
 
 			if needsTokenCheck {
-				expectedTokenRecord := fmt.Sprintf("%s=%s", s.config.VerificationTokenKey, website.ValidationToken)
-				txtRecords, err := s.resolver.LookupTXT(website.Domain)
+				expectedTokenRecord := fmt.Sprintf("%s=%s", s.verificationTokenKey(), website.ValidationToken)
+				txtRecords, err := s.resolver.LookupTXT(s.verificationTokenKey() + "." + website.Domain)
 				if err != nil {
-					return pluginCore.ValidateDNSResult{}, fmt.Errorf("DNS TXT lookup failed for %s: %w", website.Domain, err)
+					return pluginCore.ValidateDNSResult{}, fmt.Errorf("DNS TXT lookup failed for %s.%s: %w", s.verificationTokenKey(), website.Domain, err)
 				}
 
 				var hasToken bool
@@ -1151,7 +1160,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 						zap.String("expected_token", website.ValidationToken))
 					return pluginCore.ValidateDNSResult{
 						Valid:   false,
-						Message: fmt.Sprintf(msgTokenMissing, website.Domain),
+						Message: fmt.Sprintf(msgTokenMissing, s.verificationTokenKey(), website.Domain, website.Domain),
 						Reason:  pluginCore.ValidationReasonTokenMissing,
 					}, nil
 				}
@@ -1187,7 +1196,7 @@ func (s *WebsiteServiceDefault) regenerateExpiredToken(ctx context.Context, webs
 	}
 
 	if website.DNSZoneID != nil && s.dnsSvc != nil {
-		tokenRecord := fmt.Sprintf("%s=%s", s.config.VerificationTokenKey, newToken)
+		tokenRecord := fmt.Sprintf("%s=%s", s.verificationTokenKey(), newToken)
 		if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), tokenRecord); err != nil {
 			s.Logger().Warn("Failed to update DNS records with new validation token",
 				zap.Error(err),

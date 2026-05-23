@@ -43,7 +43,7 @@ func TestValidateDNS_PendingValidation_ValidDNSLinkAndToken_ReturnsValidated(t *
 				"ipfs": {{Identifier: created.TargetHash()}},
 			},
 		}, nil)
-		mockResolver.EXPECT().LookupTXT("validate-pending.com").Return([]string{
+		mockResolver.EXPECT().LookupTXT("lumeweb-verify.validate-pending.com").Return([]string{
 			fmt.Sprintf("lumeweb-verify=%s", created.ValidationToken),
 		}, nil)
 		setMockResolver(ws, mockResolver)
@@ -100,7 +100,7 @@ func TestValidateDNS_PendingValidation_MissingToken_ReturnsTokenMissing(t *testi
 				"ipfs": {{Identifier: created.TargetHash()}},
 			},
 		}, nil)
-		mockResolver.EXPECT().LookupTXT("missing-token.com").Return([]string{"some-other-txt-record=foo"}, nil)
+		mockResolver.EXPECT().LookupTXT("lumeweb-verify.missing-token.com").Return([]string{"some-other-txt-record=foo"}, nil)
 		setMockResolver(ws, mockResolver)
 
 		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
@@ -297,7 +297,7 @@ func TestValidateDNS_TxTTLookupFailure_ReturnsError(t *testing.T) {
 				"ipfs": {{Identifier: created.TargetHash()}},
 			},
 		}, nil)
-		mockResolver.EXPECT().LookupTXT("txt-fail-test.com").Return(nil, fmt.Errorf("TXT lookup timeout"))
+		mockResolver.EXPECT().LookupTXT("lumeweb-verify.txt-fail-test.com").Return(nil, fmt.Errorf("TXT lookup timeout"))
 		setMockResolver(ws, mockResolver)
 
 		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
@@ -350,7 +350,7 @@ func TestValidateDNS_IPNSTarget_ValidDNSLinkAndToken(t *testing.T) {
 				"ipns": {{Identifier: created.TargetHash()}},
 			},
 		}, nil)
-		mockResolver.EXPECT().LookupTXT("ipns-validate.com").Return([]string{
+		mockResolver.EXPECT().LookupTXT("lumeweb-verify.ipns-validate.com").Return([]string{
 			fmt.Sprintf("lumeweb-verify=%s", created.ValidationToken),
 		}, nil)
 		setMockResolver(ws, mockResolver)

@@ -363,6 +363,7 @@ func (s *DNSServiceDefault) CreateWebsiteDNSRecords(ctx context.Context, zoneID 
 	targetPath := string(buildTargetPath(targetHash, targetType))
 
 	dnslinkName := buildFullName("_dnslink", websiteDomain)
+	verifyName := buildFullName(s.config.VerificationTokenKey, websiteDomain)
 	recordName := buildFullName(websiteDomain, websiteDomain)
 
 	rrsets := []powerdns.RRSet{
@@ -379,7 +380,7 @@ func (s *DNSServiceDefault) CreateWebsiteDNSRecords(ctx context.Context, zoneID 
 			},
 		},
 		{
-			Name:       recordName,
+			Name:       verifyName,
 			Type:       "TXT",
 			Changetype: "REPLACE",
 			Ttl:        &ttl,
@@ -492,6 +493,7 @@ func (s *DNSServiceDefault) DeleteWebsiteDNSRecords(ctx context.Context, zoneID 
 	}
 
 	dnslinkName := buildFullName("_dnslink", websiteDomain)
+	verifyName := buildFullName(s.config.VerificationTokenKey, websiteDomain)
 	recordName := buildFullName(websiteDomain, websiteDomain)
 
 	rrsets := []powerdns.RRSet{
@@ -501,7 +503,7 @@ func (s *DNSServiceDefault) DeleteWebsiteDNSRecords(ctx context.Context, zoneID 
 			Changetype: "DELETE",
 		},
 		{
-			Name:       recordName,
+			Name:       verifyName,
 			Type:       "TXT",
 			Changetype: "DELETE",
 		},

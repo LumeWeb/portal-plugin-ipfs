@@ -96,6 +96,14 @@ func NewDNSServiceWithOptions(options ...DNSServiceOption) (core.Service, []core
 				return nil
 			}
 
+			sanitized := pluginConfig.SanitizeDNSLabel(svc.config.VerificationTokenKey)
+			if sanitized != svc.config.VerificationTokenKey {
+				svc.Logger().Warn("verification_token_key sanitized for DNS compatibility",
+					zap.String("original", svc.config.VerificationTokenKey),
+					zap.String("sanitized", sanitized))
+				svc.config.VerificationTokenKey = sanitized
+			}
+
 			// Initialize PowerDNS client from config if not provided via options
 			if serviceOpts.PowerDNSClient == nil && svc.config.Enabled {
 				if svc.config.PowerDNSAPIURL == "" || svc.config.PowerDNSAPIKey == "" {

@@ -164,16 +164,16 @@ var TestOptions = coreTesting.CombineOptions(
 	testopts.NewBaseMockPluginBuilder().
 		WithService(pluginCore.WEBSITE_SERVICE, NewWebsiteService).
 		WithServiceConfig(pluginCore.WEBSITE_SERVICE, &pluginConfig.WebsiteConfig{
-			NotificationsEnabled:  false,
-			AdminEmail:            "",
-			ValidationTokenTTL:    24 * time.Hour,
-			VerificationTokenKey:  "lumeweb-verify",
+			NotificationsEnabled: false,
+			AdminEmail:           "",
+			ValidationTokenTTL:   24 * time.Hour,
 		}).
 		WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService).
 		WithServiceConfig(pluginCore.DNS_SERVICE, &pluginConfig.DnsConfig{
 			Enabled:                      true,
 			Nameservers:                  []string{"ns1.localhost", "ns2.localhost"},
 			NameserverValidationInterval: 5 * time.Minute,
+			VerificationTokenKey:         "lumeweb-verify",
 		}).
 		WithMigrations(map[core.DBType]fs.FS{
 			core.DB_TYPE_SQLITE: migrations.GetSQLite(),
