@@ -12,6 +12,7 @@ import (
 	contentArchive "go.lumeweb.com/ipfs-content/archive"
 	"go.uber.org/zap"
 
+	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
@@ -87,6 +88,10 @@ func handleTUSUpload(p core.Protocol) func(ctx context.Context, helper core.Oper
 		ipfsPin, err := processUploadWithServices(ctx, helper, p, allCids, rootCids, *request.UserID, reservations, request, metaStore)
 		if err != nil {
 			return err
+		}
+
+		if err := tusHandler.SetHashById(ctx, tsReq.TUSUploadID, internal.NewIPFSHash(rootCids[0])); err != nil {
+			helper.Logger().Error("Failed to set upload hash", zap.Error(err))
 		}
 
 		// Update workflow data
@@ -190,7 +195,11 @@ func createUploadProcessor(format contentArchive.Format, reader io.ReadCloser, p
 		return NewCARBlockProcessor(reader)
 	}
 
-	// Single file format (archives treated as files, not extracted)
+	if format.IsArchiveFormat() {
+		return createArchiveProcessorForTUS(reader, format, proto, logger)
+	}
+
+	// Single file format
 	return createFileProcessorForTUS(reader, proto, logger)
 }
 
@@ -280,7 +289,7 @@ func validateDAGForTUSUpload(ctx context.Context, helper core.OperationHelper, r
 		return nil
 	}
 
-	return err
+	return nil
 }
 
 // cidSliceToStringSlice converts a slice of CIDs to a slice of strings

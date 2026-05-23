@@ -46,6 +46,8 @@ type API struct {
 	websiteService     pluginCore.WebsiteService
 	dnsService         pluginCore.DNSService
 	dnsConfig          *pluginConfig.DnsConfig
+	tusService         core.TUSService
+	requestService     core.RequestService
 	tus                core.TusHandler
 	ipfs               protocol.ProtoNode
 }
@@ -64,6 +66,8 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 			api.websiteService = core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 			api.dnsService = core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
 			api.dnsConfig = core.GetServiceConfig[*pluginConfig.DnsConfig](ctx, pluginCore.DNS_SERVICE)
+			api.tusService = core.GetService[core.TUSService](ctx, core.TUS_SERVICE)
+			api.requestService = core.GetService[core.RequestService](ctx, core.REQUEST_SERVICE)
 			proto := core.GetProtocol(internal.ProtocolName)
 			sproto := proto.(core.StorageProtocol)
 			event.OnBootStartupFuncsCompleted(ctx, func(ctx core.Context, eventCtx context.Context) error {
@@ -99,11 +103,6 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 							return getCARUploadHash(reader, api.tus, ctx, sproto, hook.Upload.ID, api.Logger())
 						},
 					),
-					PreFinishResponse: service.TUSDefaultPreFinishResponse(func() core.TusHandler {
-						return _tus
-					}, func(hook handler.HookEvent, data io.Reader, size uint64) (core.StorageHash, error) {
-						return processCARData(data)
-					}),
 				})
 
 				if err != nil {
@@ -351,6 +350,21 @@ See also:.*`),
 				router.WithTags("Content"),
 				router.WithFileUpload("File to upload", true),
 				router.WithSuccessResponse(http.StatusOK, "File uploaded successfully"),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/upload/result/:identifier", a.handleUploadResult,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Get upload result"),
+				router.WithDescription(`Retrieves the result of an upload operation by identifier.
+
+Returns the root CID for completed uploads, or the current processing status for pending uploads.
+Accepts either a TUS upload ID or a numeric request ID as the identifier.
+
+See also: POST /upload (upload file), GET /pins/{id} (get pin details)`),
+				router.WithTags("Content"),
+				router.WithPathParam("identifier", "TUS upload ID or numeric request ID. Example: abc123-def456 or 42", ""),
+				router.WithSuccessResponse(http.StatusOK, "Upload result", router.WithJSONContent(dto.UploadResultResponse{})),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/block/meta/:cid", a.handleGetBlockMeta,
@@ -1029,12 +1043,8 @@ func validateCARUpload(upload io.ReadCloser, tus core.TusHandler, ctx core.Conte
 
 	_, err = uploadpkg.GetCarRoots(reader, false)
 	if err != nil {
-		logger.Error("Failed to validate car", zap.Error(err))
-		err = tus.FailUploadById(ctx, sproto, uploadId)
-		if err != nil {
-			logger.Error("Failed to fail ipfsUpload", zap.Error(err))
-		}
-		return false
+		logger.Warn("Upload is not CAR format, skipping CAR validation", zap.Error(err))
+		return true
 	}
 
 	return true
@@ -1053,26 +1063,9 @@ func getCARUploadHash(upload io.Reader, tus core.TusHandler, ctx core.Context, s
 
 	cids, err := uploadpkg.GetCarRoots(reader, false)
 	if err != nil {
-		err = tus.FailUploadById(ctx, sproto, uploadId)
-		if err != nil {
-			logger.Error("Failed to fail ipfsUpload", zap.Error(err))
-		}
-		return nil, err
+		logger.Warn("Upload is not CAR format, skipping hash computation", zap.Error(err))
+		return nil, nil
 	}
 
 	return internal.NewIPFSHash(cids[0]), nil
-}
-
-func processCARData(data io.Reader) (core.StorageHash, error) {
-	reader, err := createCARReader(data)
-	if err != nil {
-		return nil, err
-	}
-
-	roots, err := uploadpkg.GetCarRoots(reader, false)
-	if err != nil {
-		return nil, err
-	}
-
-	return internal.NewIPFSHash(roots[0]), nil
 }
