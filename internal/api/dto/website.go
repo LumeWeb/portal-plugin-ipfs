@@ -371,32 +371,44 @@ type SSLStatusInfo struct {
 type WebsiteResponse struct {
 	ID                  uint           `json:"id"`
 	Domain              string         `json:"domain"`
+	// IPFS or IPNS
 	TargetType          string         `json:"target_type"`
+	// CID (IPFS) or peer ID (IPNS)
 	TargetHash          string         `json:"target_hash"`
-	IPNSKeyID           *uint          `json:"ipns_key_id,omitempty"`  // FK to the linked IPNS key (set when DNS hosting auto-creates a key)
-	ActiveCID           string         `json:"active_cid,omitempty"`   // The currently-published IPFS content CID (distinct from target_hash when target is IPNS)
+	// FK to the linked IPNS key (set when DNS hosting auto-creates a key)
+	IPNSKeyID           *uint          `json:"ipns_key_id,omitempty"`
+	// The currently-published IPFS content CID (distinct from target_hash when target is IPNS)
+	ActiveCID           string         `json:"active_cid,omitempty"`
 	Status              string         `json:"status"`
-	ValidationToken       string     `json:"validation_token"`                      // The full TXT record value (e.g. "lumeweb-verify=abc123...")
-	ValidationRecordHost  string     `json:"validation_record_host,omitempty"`     // The DNS hostname for the TXT record (e.g. "lumeweb-verify.example.com")
+	// The full TXT record value (e.g. "lumeweb-verify=abc123...")
+	ValidationToken       string     `json:"validation_token"`
+	// The DNS hostname for the TXT record (e.g. "lumeweb-verify.example.com")
+	ValidationRecordHost  string     `json:"validation_record_host,omitempty"`
 	ValidationExpiresAt *time.Time     `json:"validation_expires_at,omitempty"`
 	LastCheckedAt       *time.Time     `json:"last_checked_at,omitempty"`
+	// FK to the DNS zone hosting this website's records
 	DNSZoneID           *uint          `json:"dns_zone_id,omitempty"`
+	// Whether DNS hosting (zone + records) is enabled for this website
 	Enabled             bool           `json:"dns_hosting_enabled"`
+	// True if domain is a subdomain of a shared DNS zone
 	IsSubdomain         bool           `json:"is_subdomain"`
+	// Gateway domain for constructing public URLs (e.g. ipfs.example.com)
 	GatewayDomain       string         `json:"gateway_domain,omitempty"`
 	Created             time.Time      `json:"created"`
 	Updated             time.Time      `json:"updated"`
-	Expired             bool            `json:"expired"` // Whether validation token has expired
+	// Whether validation token has expired
+	Expired             bool            `json:"expired"`
 	SSL                 *SSLStatusInfo  `json:"ssl,omitempty"`
+	// Set by SetValidationRecordInfo; consumed by FromModel to format ValidationToken/ValidationRecordHost
+	tokenKey            string
 }
 
 func (r *WebsiteResponse) FromModel(model *db.Website) error {
 	r.ID = model.ID
 	r.Domain = model.Domain
 	r.TargetType = model.TargetType
-	r.TargetHash = model.TargetHash() // Use helper to generate string from multihash
+	r.TargetHash = model.TargetHash() // helper generates string from multihash
 	r.Status = model.Status
-	r.ValidationToken = model.ValidationToken
 	r.ValidationExpiresAt = model.ValidationExpiresAt
 	r.LastCheckedAt = model.LastCheckedAt
 	r.DNSZoneID = model.DNSZoneID
@@ -405,6 +417,13 @@ func (r *WebsiteResponse) FromModel(model *db.Website) error {
 	r.Created = model.CreatedAt
 	r.Updated = model.UpdatedAt
 	r.Expired = model.IsExpired()
+
+	if r.tokenKey != "" && model.ValidationToken != "" {
+		r.ValidationToken = r.tokenKey + "=" + model.ValidationToken
+		r.ValidationRecordHost = r.tokenKey + "." + model.Domain
+	} else {
+		r.ValidationToken = model.ValidationToken
+	}
 
 	if model.SSLStatus != "" {
 		var lastUpdated *time.Time
@@ -452,8 +471,7 @@ func (r *WebsiteResponse) SetSubdomainInfo(zoneDomain string) {
 }
 
 func (r *WebsiteResponse) SetValidationRecordInfo(tokenKey string) {
-	r.ValidationRecordHost = tokenKey + "." + r.Domain
-	r.ValidationToken = tokenKey + "=" + r.ValidationToken
+	r.tokenKey = tokenKey
 }
 
 // WebsiteValidateResponse represents a website validation response

@@ -643,3 +643,48 @@ func TestWebsiteResponse_FromModel_SSL_NotPopulated(t *testing.T) {
 		assert.Equal(t, now, resp.Updated)
 	})
 }
+
+func TestWebsiteResponse_SetValidationRecordInfo(t *testing.T) {
+	now := time.Now()
+
+	model := &db.Website{
+		ID:              1,
+		Domain:          "dev.pinner.xyz",
+		TargetType:      string(db.WebsiteTargetTypeIPFS),
+		Status:          string(db.WebsiteStatusActive),
+		ValidationToken: "abc123",
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+
+	t.Run("formats validation_token and validation_record_host when tokenKey is set", func(t *testing.T) {
+		resp := &WebsiteResponse{}
+		resp.SetValidationRecordInfo("lumeweb-verify")
+		err := resp.FromModel(model)
+		require.NoError(t, err)
+		assert.Equal(t, "lumeweb-verify=abc123", resp.ValidationToken)
+		assert.Equal(t, "lumeweb-verify.dev.pinner.xyz", resp.ValidationRecordHost)
+	})
+
+	t.Run("returns raw validation_token when tokenKey is not set", func(t *testing.T) {
+		resp := &WebsiteResponse{}
+		err := resp.FromModel(model)
+		require.NoError(t, err)
+		assert.Equal(t, "abc123", resp.ValidationToken)
+		assert.Empty(t, resp.ValidationRecordHost)
+	})
+
+	t.Run("formats survive EncodeResponse re-calling FromModel", func(t *testing.T) {
+		resp := &WebsiteResponse{}
+		resp.SetValidationRecordInfo("lumeweb-verify")
+		err := resp.FromModel(model)
+		require.NoError(t, err)
+		assert.Equal(t, "lumeweb-verify=abc123", resp.ValidationToken)
+		assert.Equal(t, "lumeweb-verify.dev.pinner.xyz", resp.ValidationRecordHost)
+
+		err = resp.FromModel(model)
+		require.NoError(t, err)
+		assert.Equal(t, "lumeweb-verify=abc123", resp.ValidationToken)
+		assert.Equal(t, "lumeweb-verify.dev.pinner.xyz", resp.ValidationRecordHost)
+	})
+}
