@@ -157,6 +157,17 @@ func (s *MetadataStoreDefault) pinPreparedBlockInTx(tx *gorm.DB, pb preparedBloc
 		return fmt.Errorf("failed to insert/update block: %w", result.Error)
 	}
 
+	// GORM does not populate the auto-increment ID on the ON CONFLICT DO UPDATE
+	// path (MySQL: LAST_INSERT_ID() only returns on INSERT, not UPDATE). When a
+	// block was previously created as a placeholder by ensureChildBlocksFromSet
+	// and is now being pinned, the upsert hits the update path and parentBlock.ID
+	// remains 0. Query the row to get the actual ID.
+	if parentBlock.ID == 0 {
+		if err := tx.Where("cid = ?", b.Cid.Bytes()).First(&parentBlock).Error; err != nil {
+			return fmt.Errorf("failed to find block after upsert: %w", err)
+		}
+	}
+
 	// Write pre-extracted UnixFS metadata if applicable
 	if pb.unixfsNode != nil {
 		pb.unixfsNode.BlockID = parentBlock.ID
