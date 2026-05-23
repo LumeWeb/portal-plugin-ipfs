@@ -665,11 +665,12 @@ func (s *IPNSKeyServiceDefault) PublishWithKey(ctx context.Context, privKey ic.P
 		return fmt.Errorf("invalid CID %s: %w", cidStr, err)
 	}
 
-	// Normalize to v1 for consistent storage
-	normalizedCID := encoding.NormalizeCid(targetCid).String()
+	// Normalize to v1 for consistent storage and publishing
+	normalizedCid := encoding.NormalizeCid(targetCid)
+	normalizedCID := normalizedCid.String()
 
-	// Create an IPNS path from the CID
-	ipnsPath := path.FromCid(targetCid)
+	// Create an IPNS path from the normalized CID
+	ipnsPath := path.FromCid(normalizedCid)
 
 	// Build publish options
 	var options []namesys.PublishOption
