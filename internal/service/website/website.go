@@ -115,9 +115,26 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				return nil, fmt.Errorf("invalid domain: %w", err)
 			}
 
-			// Validate target type and hash
-			if err := s.validateTarget(website.TargetType, website.TargetHash()); err != nil {
-				return nil, fmt.Errorf("invalid target: %w", err)
+			// Auto-convert: target_type=ipns with a plain IPFS CID means
+			// "create/use IPNS key and publish this CID to it"
+			if website.TargetType == string(pluginDb.WebsiteTargetTypeIPNS) && website.CIDVersion != nil {
+				publishCID := website.TargetHash()
+
+				ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, website.Domain, publishCID)
+				if err != nil {
+					return nil, err
+				}
+
+				website.TargetType = string(pluginDb.WebsiteTargetTypeIPNS)
+				website.TargetMultihash = ipnsKey.PeerIDMultihash
+				website.CIDVersion = nil
+				website.CIDType = nil
+				website.IPNSKeyID = &ipnsKey.ID
+			} else {
+				// Validate target type and hash
+				if err := s.validateTarget(website.TargetType, website.TargetHash()); err != nil {
+					return nil, fmt.Errorf("invalid target: %w", err)
+				}
 			}
 
 			// Check if domain already exists

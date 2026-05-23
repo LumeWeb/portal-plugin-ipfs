@@ -497,6 +497,96 @@ func TestWebsiteResponse_FromModel_SSL_Populated(t *testing.T) {
 	})
 }
 
+func TestWebsiteRequest_ToModel_IPNS_WithValidPeerID(t *testing.T) {
+	targetType := db.WebsiteTargetTypeIPNS
+	req := WebsiteRequest{
+		Domain:     "example.com",
+		TargetType: targetType,
+		TargetHash: "12D3KooWRhWS6DXi1U1YnJ5r9E6KpSDHGbZAznXif4T9qDjHeEfE",
+	}
+
+	model, err := req.ToModel()
+	require.NoError(t, err)
+	assert.Equal(t, string(db.WebsiteTargetTypeIPNS), model.TargetType)
+	assert.Nil(t, model.CIDVersion, "CIDVersion should be nil for valid IPNS target")
+}
+
+func TestWebsiteRequest_ToModel_IPNS_WithCIDv1Libp2pKey(t *testing.T) {
+	targetType := db.WebsiteTargetTypeIPNS
+	req := WebsiteRequest{
+		Domain:     "example.com",
+		TargetType: targetType,
+		TargetHash: "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r",
+	}
+
+	model, err := req.ToModel()
+	require.NoError(t, err)
+	assert.Equal(t, string(db.WebsiteTargetTypeIPNS), model.TargetType)
+	assert.Nil(t, model.CIDVersion, "CIDVersion should be nil for valid IPNS target")
+}
+
+func TestWebsiteRequest_ToModel_IPNS_WithPlainCID_AutoConvert(t *testing.T) {
+	targetType := db.WebsiteTargetTypeIPNS
+	// CIDv1 with raw codec — valid CID but NOT a valid IPNS target,
+	// so it should be accepted for auto-conversion rather than rejected.
+	req := WebsiteRequest{
+		Domain:     "example.com",
+		TargetType: targetType,
+		TargetHash: "bafkreig2m6bzv4ysvqo2hz2jamofrof2iq3hwhnerso56g26pmawr37o64",
+	}
+
+	model, err := req.ToModel()
+	require.NoError(t, err)
+	assert.Equal(t, string(db.WebsiteTargetTypeIPNS), model.TargetType)
+	assert.NotNil(t, model.CIDVersion, "CIDVersion should be set temporarily for auto-conversion")
+	assert.NotNil(t, model.CIDType, "CIDType should be set temporarily for auto-conversion")
+	assert.NotNil(t, model.TargetMultihash, "TargetMultihash should be set from the CID")
+}
+
+func TestWebsiteRequest_ToModel_IPNS_WithInvalidHash_Rejected(t *testing.T) {
+	targetType := db.WebsiteTargetTypeIPNS
+	req := WebsiteRequest{
+		Domain:     "example.com",
+		TargetType: targetType,
+		TargetHash: "not-a-valid-cid-or-peer-id",
+	}
+
+	_, err := req.ToModel()
+	require.Error(t, err)
+	validationErr, ok := err.(*httputil.ValidationError)
+	require.True(t, ok, "error should be a ValidationError")
+	assert.Contains(t, validationErr.FieldErrors["target_hash"], "invalid IPNS target")
+}
+
+func TestWebsiteUpdateRequest_ToModel_IPNS_WithPlainCID_AutoConvert(t *testing.T) {
+	targetType := db.WebsiteTargetTypeIPNS
+	cidStr := "bafkreig2m6bzv4ysvqo2hz2jamofrof2iq3hwhnerso56g26pmawr37o64"
+	req := WebsiteUpdateRequest{
+		TargetType: &targetType,
+		TargetHash: &cidStr,
+	}
+
+	model, err := req.ToModel()
+	require.NoError(t, err)
+	assert.Equal(t, string(db.WebsiteTargetTypeIPNS), model.TargetType)
+	assert.NotNil(t, model.CIDVersion, "CIDVersion should be set temporarily for auto-conversion")
+	assert.NotNil(t, model.CIDType, "CIDType should be set temporarily for auto-conversion")
+}
+
+func TestWebsiteUpdateRequest_ToModel_IPNS_WithValidPeerID(t *testing.T) {
+	targetType := db.WebsiteTargetTypeIPNS
+	peerID := "12D3KooWRhWS6DXi1U1YnJ5r9E6KpSDHGbZAznXif4T9qDjHeEfE"
+	req := WebsiteUpdateRequest{
+		TargetType: &targetType,
+		TargetHash: &peerID,
+	}
+
+	model, err := req.ToModel()
+	require.NoError(t, err)
+	assert.Equal(t, string(db.WebsiteTargetTypeIPNS), model.TargetType)
+	assert.Nil(t, model.CIDVersion, "CIDVersion should be nil for valid IPNS target")
+}
+
 func TestWebsiteResponse_FromModel_SSL_NotPopulated(t *testing.T) {
 	t.Run("does not populate SSL field when SSL status is empty", func(t *testing.T) {
 		now := time.Now()

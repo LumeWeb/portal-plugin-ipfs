@@ -241,15 +241,31 @@ func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 	// Validate peer ID for IPNS targets
 	if r.TargetType == db.WebsiteTargetTypeIPNS {
 		target, err := db.NewIPNSTargetFromString(r.TargetHash)
-		if err != nil {
-			return nil, &httputil.ValidationError{
-				FieldErrors: map[string]string{
-					"target_hash": fmt.Sprintf("invalid IPNS target: %v", err),
-				},
+		if err == nil {
+			// Valid IPNS target — store directly
+			website.TargetMultihash = target.ToMultihash()
+			website.CIDVersion = nil // NULL for IPNS
+		} else {
+			// Not a valid IPNS peer ID/libp2p-key — check if it's a valid IPFS CID.
+			// The service layer will auto-create an IPNS key and publish this CID,
+			// converting the target from a plain CID to an IPNS peer ID.
+			c, cidErr := cid.Parse(r.TargetHash)
+			if cidErr != nil {
+				return nil, &httputil.ValidationError{
+					FieldErrors: map[string]string{
+						"target_hash": fmt.Sprintf("invalid IPNS target: %v", err),
+					},
+				}
 			}
+			// Store temporarily as IPFS-style fields; the service layer
+			// will detect auto-conversion and replace with IPNS target.
+			normalizedCid := encoding.NormalizeCid(c)
+			website.TargetMultihash = normalizedCid.Hash()
+			version := uint8(normalizedCid.Version())
+			website.CIDVersion = &version
+			codec := uint8(normalizedCid.Type())
+			website.CIDType = &codec
 		}
-		website.TargetMultihash = target.ToMultihash()
-		website.CIDVersion = nil // NULL for IPNS
 	}
 
 	return website, nil
@@ -316,15 +332,27 @@ func (r *WebsiteUpdateRequest) ToModel() (*db.Website, error) {
 
 		if *r.TargetType == db.WebsiteTargetTypeIPNS {
 			target, err := db.NewIPNSTargetFromString(*r.TargetHash)
-			if err != nil {
-				return nil, &httputil.ValidationError{
-					FieldErrors: map[string]string{
-						"target_hash": fmt.Sprintf("invalid IPNS target: %v", err),
-					},
+			if err == nil {
+				website.TargetMultihash = target.ToMultihash()
+				website.CIDVersion = nil
+			} else {
+				// Not a valid IPNS peer ID — check if it's a CID for auto-conversion.
+				c, cidErr := cid.Parse(*r.TargetHash)
+				if cidErr != nil {
+					return nil, &httputil.ValidationError{
+						FieldErrors: map[string]string{
+							"target_hash": fmt.Sprintf("invalid IPNS target: %v", err),
+						},
+					}
 				}
+				// Store temporarily as IPFS-style fields for service-layer auto-conversion.
+				normalizedCid := encoding.NormalizeCid(c)
+				website.TargetMultihash = normalizedCid.Hash()
+				version := uint8(normalizedCid.Version())
+				website.CIDVersion = &version
+				codec := uint8(normalizedCid.Type())
+				website.CIDType = &codec
 			}
-			website.TargetMultihash = target.ToMultihash()
-			website.CIDVersion = nil
 		}
 	}
 
