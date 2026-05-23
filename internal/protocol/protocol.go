@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/ipfs/boxo/blockservice"
 	"github.com/ipfs/boxo/blockstore"
+	"github.com/ipfs/boxo/exchange/offline"
+	"github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/boxo/datastore/dshelp"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
@@ -432,9 +435,12 @@ func KeyToCIDBinary(key ds.Key) string {
 func createArchiveProcessorForTUS(uploadFile io.ReadCloser, format contentArchive.Format, proto ProtoNode, logger *core.Logger) (BlockProcessor, error) {
 	doneTracker := NewDoneTracker()
 	bstore := proto.GetNode().GetBlockstore()
-	dagService := proto.GetNode().DagService()
 
 	bs := NewStreamingBlockstoreWithDefaults(logger, bstore, doneTracker, DEFAULT_BLOCK_QUEUE_SIZE)
+
+	archiveDagService := merkledag.NewDAGService(
+		blockservice.New(bs, offline.Exchange(bs)),
+	)
 
 	seekableUpload := pluginUpload.NewUniversalReader(uploadFile)
 
@@ -455,13 +461,13 @@ func createArchiveProcessorForTUS(uploadFile io.ReadCloser, format contentArchiv
 	}
 
 	nodeGenerator := contentUnixFS.NewUnixFSNodeGenerator(
-		contentUnixFS.WithUnixFSNodeDAGService(dagService),
+		contentUnixFS.WithUnixFSNodeDAGService(archiveDagService),
 		contentUnixFS.WithUnixFSNodeBlockstore(bs),
 	)
 
 	streamProcessor := pluginUpload.NewStreamingProcessor(
 		nodeGenerator,
-		dagService,
+		archiveDagService,
 		bs,
 		logger,
 	)

@@ -69,6 +69,7 @@ type BlockQueue struct {
 	errChan     chan error
 	errOnce     sync.Once
 	failedCount atomic.Int32
+	onPersisted func(cid.Cid)
 }
 
 // NewBlockQueue creates a new BlockQueue instance.
@@ -157,6 +158,11 @@ func (bp *BlockQueue) processBlockInternal(ctx context.Context, job *blockJob) e
 	if err := bp.proto.GetNode().AddBlock(ctx, job.Block); err != nil {
 		return fmt.Errorf("failed to add block: %w", err)
 	}
+
+	if bp.onPersisted != nil {
+		bp.onPersisted(job.Block.Cid())
+	}
+
 	return nil
 }
 
@@ -192,6 +198,15 @@ func ProcessBlocks(ctx core.Context, processor BlockProcessor, flusher store.Flu
 	}
 	defer bp.release()
 
+	// If the processor exposes a StreamingBlockstore, wire up the persistence
+	// callback so Done() is only called after the block is actually in the database.
+	if sbs, ok := processor.(interface{ GetStreamingBlockstore() StreamingBlockstore }); ok {
+		streamingBs := sbs.GetStreamingBlockstore()
+		bp.onPersisted = func(c cid.Cid) {
+			streamingBs.MarkBlockPersisted(c)
+		}
+	}
+
 	// Read blocks from processor and submit to worker pool.
 	// Submit() is non-blocking — the pool handles concurrency internally.
 	for {
@@ -210,7 +225,12 @@ func ProcessBlocks(ctx core.Context, processor BlockProcessor, flusher store.Flu
 			break
 		}
 
-		processor.Done(block.Cid())
+		// Only call processor.Done() for processors that don't use StreamingBlockstore
+		// (e.g., CARBlockProcessor). For archive/file processors, Done() is called
+		// by the onPersisted callback after the block is actually persisted.
+		if bp.onPersisted == nil {
+			processor.Done(block.Cid())
+		}
 	}
 
 	// Wait for all queued work to complete

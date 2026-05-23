@@ -8,6 +8,7 @@ import (
 	"go.lumeweb.com/httputil"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
+	mcontext "go.lumeweb.com/portal-middleware/context"
 	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/core"
 )
@@ -34,6 +35,18 @@ func (a *API) handleUploadResult(c echo.Context) error {
 	request, err := a.requestService.GetRequest(ctx.Request().Context(), requestID)
 	if err != nil {
 		apiErr := NewError(ErrKeyUploadNotFound, err)
+		_ = ctx.Error(apiErr, apiErr.HttpStatus())
+		return nil
+	}
+
+	userID, err := mcontext.GetUserID(ctx.Context)
+	if err != nil {
+		apiErr := NewError(ErrKeyUploadNotFound, nil)
+		_ = ctx.Error(apiErr, apiErr.HttpStatus())
+		return nil
+	}
+	if request.UserID == nil || *request.UserID != userID {
+		apiErr := NewError(ErrKeyUploadNotFound, nil)
 		_ = ctx.Error(apiErr, apiErr.HttpStatus())
 		return nil
 	}

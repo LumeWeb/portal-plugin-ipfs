@@ -151,6 +151,11 @@ func (fp *FileBlockProcessor) Next() (blocks.Block, error) {
 	}
 }
 
+// GetStreamingBlockstore returns the underlying StreamingBlockstore for callback wiring
+func (fp *FileBlockProcessor) GetStreamingBlockstore() StreamingBlockstore {
+	return fp.blockstore
+}
+
 // Roots implements BlockProcessor interface
 func (fp *FileBlockProcessor) Roots() []cid.Cid {
 	roots := fp.getRootCIDs()
