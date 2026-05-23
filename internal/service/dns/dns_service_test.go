@@ -27,10 +27,11 @@ import (
 // Helper function to get DNS service config
 func getTestDnsConfig() *pluginConfig.DnsConfig {
 	return &pluginConfig.DnsConfig{
-		Enabled:        true,
-		PowerDNSAPIURL: "http://localhost:8081",
-		PowerDNSAPIKey: "test-api-key",
-		Nameservers:    []string{"ns1.localhost", "ns2.localhost"},
+		Enabled:              true,
+		PowerDNSAPIURL:       "http://localhost:8081",
+		PowerDNSAPIKey:       "test-api-key",
+		Nameservers:          []string{"ns1.localhost", "ns2.localhost"},
+		VerificationTokenKey: "lumeweb-verify",
 	}
 }
 

@@ -376,7 +376,8 @@ type WebsiteResponse struct {
 	IPNSKeyID           *uint          `json:"ipns_key_id,omitempty"`  // FK to the linked IPNS key (set when DNS hosting auto-creates a key)
 	ActiveCID           string         `json:"active_cid,omitempty"`   // The currently-published IPFS content CID (distinct from target_hash when target is IPNS)
 	Status              string         `json:"status"`
-	ValidationToken     string         `json:"validation_token"`
+	ValidationToken       string     `json:"validation_token"`                      // The full TXT record value (e.g. "lumeweb-verify=abc123...")
+	ValidationRecordHost  string     `json:"validation_record_host,omitempty"`     // The DNS hostname for the TXT record (e.g. "lumeweb-verify.example.com")
 	ValidationExpiresAt *time.Time     `json:"validation_expires_at,omitempty"`
 	LastCheckedAt       *time.Time     `json:"last_checked_at,omitempty"`
 	DNSZoneID           *uint          `json:"dns_zone_id,omitempty"`
@@ -448,6 +449,11 @@ func (r *WebsiteResponse) EnrichActiveCID(resolver IPNSKeyCIDResolver, userID ui
 // If zoneDomain is empty, the website is considered a top-level website.
 func (r *WebsiteResponse) SetSubdomainInfo(zoneDomain string) {
 	r.IsSubdomain = zoneDomain != "" && zoneDomain != r.Domain
+}
+
+func (r *WebsiteResponse) SetValidationRecordInfo(tokenKey string) {
+	r.ValidationRecordHost = tokenKey + "." + r.Domain
+	r.ValidationToken = tokenKey + "=" + r.ValidationToken
 }
 
 // WebsiteValidateResponse represents a website validation response

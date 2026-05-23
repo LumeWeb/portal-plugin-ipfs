@@ -23,6 +23,9 @@ type DnsConfig struct {
 	// Gateway domain for ALIAS records (auto-wiring)
 	GatewayDomain string `config:"gateway_domain"`
 
+	// Verification token key used as the subdomain label for validation TXT records
+	VerificationTokenKey string `config:"verification_token_key"`
+
 	// Nameserver validation job configuration
 	NameserverValidationInterval time.Duration `config:"nameserver_validation_interval"`
 }
@@ -34,6 +37,7 @@ func (c DnsConfig) Defaults() map[string]any {
 		"PowerDNSAPIKey":                "",
 		"Nameservers":                   []string{},
 		"GatewayDomain":                 "",
+		"VerificationTokenKey":           "lumeweb-verify",
 		"NameserverValidationInterval":  5 * time.Minute,
 	}
 }

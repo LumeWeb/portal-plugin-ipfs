@@ -47,6 +47,13 @@ func (a *API) gatewayDomain() string {
 	return ""
 }
 
+func (a *API) verificationTokenKey() string {
+	if a.dnsConfig != nil && a.dnsConfig.VerificationTokenKey != "" {
+		return a.dnsConfig.VerificationTokenKey
+	}
+	return "lumeweb-verify"
+}
+
 func (a *API) zoneDomain(ctx context.Context, dnsZoneID *uint) string {
 	if dnsZoneID == nil || a.dnsService == nil {
 		return ""
@@ -141,6 +148,7 @@ func (a *API) createWebsite(c echo.Context) error {
 	}
 	resp.GatewayDomain = a.gatewayDomain()
 	resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
+	resp.SetValidationRecordInfo(a.verificationTokenKey())
 	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
 
 	ctx.Response().Before(func() {
@@ -197,6 +205,7 @@ func (a *API) listWebsites(c echo.Context) error {
 		}
 		responses[i].GatewayDomain = a.gatewayDomain()
 		responses[i].SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
+		responses[i].SetValidationRecordInfo(a.verificationTokenKey())
 		responses[i].EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
 	}
 
@@ -239,6 +248,7 @@ func (a *API) getWebsite(c echo.Context) error {
 		if err := resp.FromModel(website); err == nil {
 			resp.GatewayDomain = a.gatewayDomain()
 			resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
+			resp.SetValidationRecordInfo(a.verificationTokenKey())
 			resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
 			ctx.Response().Before(func() {
 				ctx.Response().Status = http.StatusGone
@@ -250,6 +260,7 @@ func (a *API) getWebsite(c echo.Context) error {
 	resp := &dto.WebsiteResponse{}
 	resp.GatewayDomain = a.gatewayDomain()
 	resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
+	resp.SetValidationRecordInfo(a.verificationTokenKey())
 	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
 	return httputil.EncodeResponse(ctx, website, resp)
 }
@@ -312,6 +323,7 @@ func (a *API) updateWebsite(c echo.Context) error {
 	}
 	resp.GatewayDomain = a.gatewayDomain()
 	resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
+	resp.SetValidationRecordInfo(a.verificationTokenKey())
 	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
 
 	return httputil.EncodeResponse(ctx, website, &resp)
@@ -408,6 +420,7 @@ func (a *API) getSSLStatus(c echo.Context) error {
 	resp := &dto.WebsiteResponse{}
 	resp.GatewayDomain = a.gatewayDomain()
 	resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
+	resp.SetValidationRecordInfo(a.verificationTokenKey())
 	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, website.UserID, website)
 	return httputil.EncodeResponse(ctx, website, resp)
 }
@@ -451,6 +464,7 @@ func (a *API) updateSSLStatus(c echo.Context) error {
 	resp := &dto.WebsiteResponse{}
 	resp.GatewayDomain = a.gatewayDomain()
 	resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
+	resp.SetValidationRecordInfo(a.verificationTokenKey())
 	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, website.UserID, website)
 	return httputil.EncodeResponse(ctx, website, resp)
 }

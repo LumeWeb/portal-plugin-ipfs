@@ -1,10 +1,31 @@
 package config
 
 import (
+	"strings"
 	"time"
 
 	"go.lumeweb.com/portal/config"
 )
+
+// SanitizeDNSLabel converts a string into a valid DNS label per RFC 1035.
+// Lowercases, strips invalid chars to hyphens, trims leading/trailing hyphens,
+// truncates to 63 chars.
+func SanitizeDNSLabel(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+		} else if c == '-' || c == '_' || c == ' ' {
+			b.WriteByte('-')
+		}
+	}
+	result := strings.Trim(b.String(), "-")
+	if len(result) > 63 {
+		result = result[:63]
+	}
+	return strings.TrimRight(result, "-")
+}
 
 var _ config.Defaults = (*WebsiteConfig)(nil)
 
@@ -17,8 +38,7 @@ type WebsiteConfig struct {
 	JanitorBatchSize    int           `config:"janitor_batch_size"`
 
 	// Validation configuration
-	ValidationTokenTTL   time.Duration `config:"validation_token_ttl"`
-	VerificationTokenKey string        `config:"verification_token_key"`
+	ValidationTokenTTL time.Duration `config:"validation_token_ttl"`
 
 	// Notification configuration
 	NotificationsEnabled bool   `config:"notifications_enabled"`
@@ -32,7 +52,6 @@ func (c WebsiteConfig) Defaults() map[string]any {
 		"JanitorWorkerCount": 10,
 		"JanitorBatchSize":   500,
 		"ValidationTokenTTL":   24 * time.Hour,
-		"VerificationTokenKey": "lumeweb-verify",
 		"NotificationsEnabled": true,
 		"AdminEmail":           "",
 	}
