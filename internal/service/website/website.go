@@ -1363,6 +1363,15 @@ func (s *WebsiteServiceDefault) ensureIPNSKey(ctx context.Context, userID uint, 
 }
 
 func (s *WebsiteServiceDefault) publishCIDAsync(ctx context.Context, peerID, cid, domain string) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.Logger().Error("Recovered from panic in publishCIDAsync",
+				zap.Any("panic", r),
+				zap.String("domain", domain),
+				zap.String("peer_id", peerID),
+				zap.String("cid", cid))
+		}
+	}()
 	if err := s.ipnsKeySvc.PublishCID(core.DetachContext(ctx), peerID, cid, 24*time.Hour); err != nil {
 		s.Logger().Error("Failed to publish CID to IPNS key (async)",
 			zap.Error(err),
