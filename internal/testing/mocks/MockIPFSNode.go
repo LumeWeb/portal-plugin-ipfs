@@ -1071,3 +1071,55 @@ func (_c *MockIPFSNode_TriggerReprovider_Call) RunAndReturn(run func()) *MockIPF
 	_c.Run(run)
 	return _c
 }
+
+func (_mock *MockIPFSNode) ProvideCID(ctx context.Context, c cid.Cid) error {
+	ret := _mock.Called(ctx, c)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ProvideCID")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, cid.Cid) error); ok {
+		r0 = returnFunc(ctx, c)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+type MockIPFSNode_ProvideCID_Call struct {
+	*mock.Call
+}
+
+func (_e *MockIPFSNode_Expecter) ProvideCID(ctx interface{}, c interface{}) *MockIPFSNode_ProvideCID_Call {
+	return &MockIPFSNode_ProvideCID_Call{Call: _e.mock.On("ProvideCID", ctx, c)}
+}
+
+func (_c *MockIPFSNode_ProvideCID_Call) Run(run func(ctx context.Context, c cid.Cid)) *MockIPFSNode_ProvideCID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 cid.Cid
+		if args[1] != nil {
+			arg1 = args[1].(cid.Cid)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPFSNode_ProvideCID_Call) Return(err error) *MockIPFSNode_ProvideCID_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockIPFSNode_ProvideCID_Call) RunAndReturn(run func(ctx context.Context, c cid.Cid) error) *MockIPFSNode_ProvideCID_Call {
+	_c.Call.Return(run)
+	return _c
+}

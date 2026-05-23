@@ -361,7 +361,7 @@ func NewProtocol() (core.Protocol, []core.ContextBuilderOption, error) {
 				zap.String("mapped_level", level.String()))
 
 			// Create node factory for managing node lifecycle and bootstrap peers
-			proto.nodeFactory = ipfs.NewNodeFactory(ctx, cfg, ms, _ds, virtualBS, peerTracker)
+			proto.nodeFactory = ipfs.NewNodeFactory(ctx, cfg, ms, _ds, virtualBS, peerTracker, ms)
 
 			// Create initial node instance
 			proto.node, err = proto.nodeFactory.CreateNode()

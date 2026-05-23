@@ -205,7 +205,7 @@ func TestNewReprovider(t *testing.T) {
 
 	assert.NotNil(t, reprovider)
 	assert.NotNil(t, reprovider.triggerProvide)
-	assert.Equal(t, 30*time.Second, reprovider.triggerDelayDuration)
+	assert.Equal(t, 2*time.Second, reprovider.triggerDelayDuration)
 	assert.Equal(t, time.Duration(0), reprovider.reprovideSleep)
 }
 
