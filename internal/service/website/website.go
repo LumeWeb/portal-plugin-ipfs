@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	dnslink "github.com/dnslink-std/go"
@@ -64,13 +65,14 @@ var (
 // WebsiteServiceDefault implements the WebsiteService interface
 type WebsiteServiceDefault struct {
 	*core.BaseComponent
-	pinSvc     pluginCore.IPFSPinService
-	ipnsKeySvc pluginCore.IPNSKeyService
-	mailerSvc  core.MailerService
-	dnsSvc     pluginCore.DNSService
-	config     *pluginConfig.WebsiteConfig
-	dnsConfig  *pluginConfig.DnsConfig
-	resolver   DNSResolver
+	pinSvc       pluginCore.IPFSPinService
+	ipnsKeySvc   pluginCore.IPNSKeyService
+	mailerSvc    core.MailerService
+	dnsSvc       pluginCore.DNSService
+	config       *pluginConfig.WebsiteConfig
+	dnsConfig    *pluginConfig.DnsConfig
+	resolver     DNSResolver
+	publishWg    sync.WaitGroup
 }
 
 // Ensure WebsiteServiceDefault implements the interface
@@ -622,7 +624,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 						if publishHash == "" {
 							publishHash = website.TargetHash()
 						}
-						go s.publishCIDAsync(ctx, ipnsKey.PeerID().String(), publishHash, website.Domain)
+						s.publishCIDAsync(ctx, ipnsKey.PeerID().String(), publishHash, website.Domain)
 					}
 				}
 
@@ -1356,34 +1358,42 @@ func (s *WebsiteServiceDefault) ensureIPNSKey(ctx context.Context, userID uint, 
 	}
 
 	if s.ipnsKeySvc != nil && publishCID != "" {
-		go s.publishCIDAsync(ctx, ipnsKey.PeerID().String(), publishCID, domain)
+		s.publishCIDAsync(ctx, ipnsKey.PeerID().String(), publishCID, domain)
 	}
 
 	return ipnsKey, nil
 }
 
 func (s *WebsiteServiceDefault) publishCIDAsync(ctx context.Context, peerID, cid, domain string) {
-	defer func() {
-		if r := recover(); r != nil {
-			s.Logger().Error("Recovered from panic in publishCIDAsync",
-				zap.Any("panic", r),
+	s.publishWg.Add(1)
+	go func() {
+		defer s.publishWg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				s.Logger().Error("Recovered from panic in publishCIDAsync",
+					zap.Any("panic", r),
+					zap.String("domain", domain),
+					zap.String("peer_id", peerID),
+					zap.String("cid", cid))
+			}
+		}()
+		if err := s.ipnsKeySvc.PublishCID(core.DetachContext(ctx), peerID, cid, 24*time.Hour); err != nil {
+			s.Logger().Error("Failed to publish CID to IPNS key (async)",
+				zap.Error(err),
+				zap.String("domain", domain),
+				zap.String("peer_id", peerID),
+				zap.String("cid", cid))
+		} else {
+			s.Logger().Info("Published CID to IPNS key (async)",
 				zap.String("domain", domain),
 				zap.String("peer_id", peerID),
 				zap.String("cid", cid))
 		}
 	}()
-	if err := s.ipnsKeySvc.PublishCID(core.DetachContext(ctx), peerID, cid, 24*time.Hour); err != nil {
-		s.Logger().Error("Failed to publish CID to IPNS key (async)",
-			zap.Error(err),
-			zap.String("domain", domain),
-			zap.String("peer_id", peerID),
-			zap.String("cid", cid))
-	} else {
-		s.Logger().Info("Published CID to IPNS key (async)",
-			zap.String("domain", domain),
-			zap.String("peer_id", peerID),
-			zap.String("cid", cid))
-	}
+}
+
+func (s *WebsiteServiceDefault) WaitForPublishes() {
+	s.publishWg.Wait()
 }
 
 // setIPNSTargetUpdates populates the updates map with IPNS target fields

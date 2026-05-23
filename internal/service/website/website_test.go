@@ -386,6 +386,7 @@ func TestWebsiteService_CreateWebsite_IPNSTargetWithPlainCID_AutoConvert(t *test
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 
 		// Assert
 		require.NoError(tb, err)
@@ -1202,6 +1203,7 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreatedWhenEnabled(t *testing.T) {
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 
 		// Assert
 		require.NoError(tb, err)
@@ -1261,6 +1263,7 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreated(t *testing.T) {
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 
 		// Assert
 		require.NoError(tb, err)
@@ -1333,6 +1336,7 @@ func TestWebsiteService_DeleteWebsite_DNSRecordsCleanedUp(t *testing.T) {
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 
@@ -1379,6 +1383,7 @@ func TestWebsiteService_DeleteWebsite_DNSCleanupFailureDoesNotPreventDeletion(t 
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 
@@ -1493,6 +1498,7 @@ func TestWebsiteService_CreateWebsite_DNSHostingEnabled_CreatesZoneAndRecords(t 
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 
 		// Assert
 		require.NoError(tb, err)
@@ -1534,6 +1540,7 @@ func TestWebsiteService_UpdateWebsite_DNSHostingEnabled_NoDNSUpdateWhenTargetUnc
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 
 		// Act - Update website without changing target (should NOT update DNS records)
@@ -1580,6 +1587,7 @@ func TestWebsiteService_DeleteWebsite_DNSHostingEnabled_ZoneRemainsAfterDeletion
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 
 		// Mock DNS records deletion
@@ -1733,6 +1741,7 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreationFailure_ContinuesWithoutDNS
 
 		// Act - Create website with DNS zone creation failure
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 
 		// Assert - Website should still be created despite DNS failure
 		require.NoError(tb, err)
@@ -1779,6 +1788,7 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreationFailure_ContinuesWithout
 
 		// Act - Create website with DNS records creation failure
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 
 		// Assert - Website should still be created with zone ID set
 		require.NoError(tb, err)
@@ -1841,6 +1851,7 @@ func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing
 		website1 := createTestIPFSWebsite(testUserID1, domain, testCID.String())
 		website1.Enabled = true // Enable DNS hosting
 		createdWebsite1, err := websiteService.CreateWebsite(context.Background(), website1)
+  websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 
 		// Assert - IPNS key was created
@@ -1987,6 +1998,7 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingTransition(t *testing.T) 
 		setupDNSZoneCreationMocks(t, mockDNS, testZoneID, domain, testUserID1)
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 		assert.True(t, createdWebsite.Enabled)
@@ -2105,6 +2117,7 @@ func TestWebsiteService_UpdateWebsite_DNSEnableToggleOffOn(t *testing.T) {
 		setupDNSZoneCreationMocks(t, mockDNS, testZoneID, domain, testUserID1)
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 		assert.True(t, createdWebsite.Enabled)
@@ -2156,6 +2169,7 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingDeleteZoneFails(t *testin
 		setupDNSZoneCreationMocks(t, mockDNS, testZoneID, domain, testUserID1)
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 		assert.NotNil(t, createdWebsite.DNSZoneID)
@@ -2311,6 +2325,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPNSToIPFS_UpdatesDNSRecords(t *tes
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType)
@@ -2377,6 +2392,7 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPNS_NoDNSUpdate(t *testing.T) {
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 
@@ -2432,6 +2448,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 		require.NotNil(tb, createdWebsite.DNSZoneID)
@@ -2508,6 +2525,7 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone(t *testing.T) {
 		}
 
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
+  websiteService.WaitForPublishes()
 
 		require.NoError(tb, err)
 		require.NotNil(tb, updatedWebsite)
@@ -2553,6 +2571,7 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone_DNSRecordsUpdated(t *t
 		).Return(nil).Once()
 
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
+  websiteService.WaitForPublishes()
 
 		require.NoError(tb, err)
 		require.NotNil(tb, updatedWebsite)
@@ -2584,6 +2603,7 @@ func TestWebsiteService_UpdateWebsite_IPNSTargetTypeWithCID(t *testing.T) {
 		}
 
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
+  websiteService.WaitForPublishes()
 
 		require.NoError(tb, err)
 		require.NotNil(tb, updatedWebsite)
@@ -2618,6 +2638,7 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPFSWithoutCID(t *testing.T) {
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+  websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType)
 

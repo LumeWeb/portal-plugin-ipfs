@@ -65,4 +65,7 @@ type WebsiteService interface {
 
 	// UpdateSSLStatus updates the SSL certificate status for a website domain
 	UpdateSSLStatus(ctx context.Context, domain string, status pluginDb.SSLStatus, sslError string, timestamp *time.Time) (*pluginDb.Website, error)
+
+	// WaitForPublishes blocks until all in-flight async publish operations complete
+	WaitForPublishes()
 }
