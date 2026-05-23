@@ -24,6 +24,7 @@ import (
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
 	"go.uber.org/zap"
@@ -664,8 +665,12 @@ func (s *IPNSKeyServiceDefault) PublishWithKey(ctx context.Context, privKey ic.P
 		return fmt.Errorf("invalid CID %s: %w", cidStr, err)
 	}
 
-	// Create an IPNS path from the CID
-	ipnsPath := path.FromCid(targetCid)
+	// Normalize to v1 for consistent storage and publishing
+	normalizedCid := encoding.NormalizeCid(targetCid)
+	normalizedCID := normalizedCid.String()
+
+	// Create an IPNS path from the normalized CID
+	ipnsPath := path.FromCid(normalizedCid)
 
 	// Build publish options
 	var options []namesys.PublishOption
@@ -695,7 +700,7 @@ func (s *IPNSKeyServiceDefault) PublishWithKey(ctx context.Context, privKey ic.P
 		if findResult := tx.Where("peer_id_multihash = ?", mh.Multihash(peerID)).First(&key); findResult.Error != nil {
 			return findResult
 		}
-		key.LastPublishedCID = cidStr
+		key.LastPublishedCID = normalizedCID
 		key.LastPublishedAt = now
 		return tx.Model(&key).Select("last_published_cid", "last_published_at").Updates(&key)
 	})
