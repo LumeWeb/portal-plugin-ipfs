@@ -356,6 +356,49 @@ func TestWebsiteService_CreateWebsite_IPNSTarget(t *testing.T) {
 	}, TestOptions)
 }
 
+func TestWebsiteService_CreateWebsite_IPNSTargetWithPlainCID_AutoConvert(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		testCID := util.GenerateTestCID(t, "ipns-auto-convert-content")
+		domain := "ipns-autoconvert.com"
+
+		// Create a website with IPNS target type but a regular CID as the hash.
+		// This simulates the user flow where someone provides a CID and selects IPNS.
+		c := cid.MustParse(testCID.String())
+		version := uint8(c.Version())
+		codec := uint8(c.Type())
+		website := &pluginDb.Website{
+			UserID:          testUserID1,
+			Domain:          domain,
+			TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
+			TargetMultihash: c.Hash(),
+			CIDVersion:      &version,
+			CIDType:         &codec,
+			SSLStatus:       string(pluginDb.SSLStatusPending),
+		}
+
+		// Set up IPNS key mocks for auto-conversion
+		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
+
+		// Act
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+
+		// Assert
+		require.NoError(tb, err)
+		assert.NotNil(tb, createdWebsite)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType)
+		assert.Nil(tb, createdWebsite.CIDVersion, "CIDVersion should be nil after IPNS conversion")
+		assert.NotNil(tb, createdWebsite.IPNSKeyID, "IPNSKeyID should be set after auto-conversion")
+		// TargetHash should now be a peer ID, not the original CID
+		_, peerErr := peer.Decode(createdWebsite.TargetHash())
+		assert.NoError(tb, peerErr, "TargetHash should be a valid peer ID after auto-conversion")
+	}, TestOptions)
+}
+
 func TestWebsiteService_CreateWebsite_InvalidDomain(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
