@@ -622,22 +622,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 						if publishHash == "" {
 							publishHash = website.TargetHash()
 						}
-
-						// Publish the new CID to the IPNS key
-						ttl := 24 * time.Hour
-						err = s.ipnsKeySvc.PublishCID(ctx, ipnsKey.PeerID().String(), publishHash, ttl)
-						if err != nil {
-							s.Logger().Error("Failed to republish new CID to IPNS key",
-								zap.Error(err),
-								zap.String("domain", website.Domain),
-								zap.String("peer_id", ipnsKey.PeerID().String()),
-								zap.String("cid", publishHash))
-						} else {
-							s.Logger().Info("Republished new CID to IPNS key",
-								zap.String("domain", website.Domain),
-								zap.String("peer_id", ipnsKey.PeerID().String()),
-								zap.String("cid", publishHash))
-						}
+						go s.publishCIDAsync(ctx, ipnsKey.PeerID().String(), publishHash, website.Domain)
 					}
 				}
 
@@ -1371,23 +1356,34 @@ func (s *WebsiteServiceDefault) ensureIPNSKey(ctx context.Context, userID uint, 
 	}
 
 	if s.ipnsKeySvc != nil && publishCID != "" {
-		ttl := 24 * time.Hour
-		err = s.ipnsKeySvc.PublishCID(ctx, ipnsKey.PeerID().String(), publishCID, ttl)
-		if err != nil {
-			s.Logger().Error("Failed to publish CID to IPNS key",
-				zap.Error(err),
-				zap.String("domain", domain),
-				zap.String("peer_id", ipnsKey.PeerID().String()),
-				zap.String("cid", publishCID))
-		} else {
-			s.Logger().Info("Published CID to IPNS key",
-				zap.String("domain", domain),
-				zap.String("peer_id", ipnsKey.PeerID().String()),
-				zap.String("cid", publishCID))
-		}
+		go s.publishCIDAsync(ctx, ipnsKey.PeerID().String(), publishCID, domain)
 	}
 
 	return ipnsKey, nil
+}
+
+func (s *WebsiteServiceDefault) publishCIDAsync(ctx context.Context, peerID, cid, domain string) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.Logger().Error("Recovered from panic in publishCIDAsync",
+				zap.Any("panic", r),
+				zap.String("domain", domain),
+				zap.String("peer_id", peerID),
+				zap.String("cid", cid))
+		}
+	}()
+	if err := s.ipnsKeySvc.PublishCID(core.DetachContext(ctx), peerID, cid, 24*time.Hour); err != nil {
+		s.Logger().Error("Failed to publish CID to IPNS key (async)",
+			zap.Error(err),
+			zap.String("domain", domain),
+			zap.String("peer_id", peerID),
+			zap.String("cid", cid))
+	} else {
+		s.Logger().Info("Published CID to IPNS key (async)",
+			zap.String("domain", domain),
+			zap.String("peer_id", peerID),
+			zap.String("cid", cid))
+	}
 }
 
 // setIPNSTargetUpdates populates the updates map with IPNS target fields
