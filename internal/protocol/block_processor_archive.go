@@ -20,6 +20,7 @@ type StreamingBlockstore interface {
 	blockstore.Blockstore
 	GetBlockStream(ctx context.Context) <-chan *BlockEntry
 	MarkBlockProcessed(blockKey string)
+	MarkBlockPersisted(c cid.Cid)
 	MarkDone(c cid.Cid)
 	WaitDone(ctx context.Context, c cid.Cid) bool
 	Done(c cid.Cid)
@@ -103,6 +104,11 @@ func (ap *ArchiveBlockProcessor) Next() (blocks.Block, error) {
 	case err := <-ap.errorChan:
 		return nil, err
 	}
+}
+
+// GetStreamingBlockstore returns the underlying StreamingBlockstore for callback wiring
+func (ap *ArchiveBlockProcessor) GetStreamingBlockstore() StreamingBlockstore {
+	return ap.blockstore
 }
 
 // Roots implements BlockProcessor interface

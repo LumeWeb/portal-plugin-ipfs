@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/ipfs/boxo/blockservice"
 	"github.com/ipfs/boxo/blockstore"
+	"github.com/ipfs/boxo/exchange/offline"
+	"github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/boxo/datastore/dshelp"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
@@ -27,6 +30,7 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models/data_models"
 	"go.lumeweb.com/portal/service"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
 	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -428,7 +432,49 @@ func KeyToCIDBinary(key ds.Key) string {
 	return key.String() // Fallback to string key if not a valid CID
 }
 
-// createFileProcessorForTUS creates a file processor for TUS uploads (archives treated as single files)
+func createArchiveProcessorForTUS(uploadFile io.ReadCloser, format contentArchive.Format, proto ProtoNode, logger *core.Logger) (BlockProcessor, error) {
+	doneTracker := NewDoneTracker()
+	bstore := proto.GetNode().GetBlockstore()
+
+	bs := NewStreamingBlockstoreWithDefaults(logger, bstore, doneTracker, DEFAULT_BLOCK_QUEUE_SIZE)
+
+	archiveDagService := merkledag.NewDAGService(
+		blockservice.New(bs, offline.Exchange(bs)),
+	)
+
+	seekableUpload := pluginUpload.NewUniversalReader(uploadFile)
+
+	_, err := seekableUpload.Seek(0, io.SeekStart)
+	if err != nil {
+		if closeErr := bs.Close(); closeErr != nil && logger != nil {
+			logger.Error("Failed to cleanup StreamingBlockstore after seek error", zap.Error(closeErr))
+		}
+		return nil, fmt.Errorf("failed to seek to start of archive: %w", err)
+	}
+
+	extractor, err := contentArchive.NewArchiveExtractor(seekableUpload, format)
+	if err != nil {
+		if closeErr := bs.Close(); closeErr != nil && logger != nil {
+			logger.Error("Failed to cleanup StreamingBlockstore after extractor error", zap.Error(closeErr))
+		}
+		return nil, fmt.Errorf("failed to create archive extractor: %w", err)
+	}
+
+	nodeGenerator := contentUnixFS.NewUnixFSNodeGenerator(
+		contentUnixFS.WithUnixFSNodeDAGService(archiveDagService),
+		contentUnixFS.WithUnixFSNodeBlockstore(bs),
+	)
+
+	streamProcessor := pluginUpload.NewStreamingProcessor(
+		nodeGenerator,
+		archiveDagService,
+		bs,
+		logger,
+	)
+
+	return NewArchiveBlockProcessor(proto.Context(), bs, extractor, streamProcessor, logger, doneTracker)
+}
+
 func createFileProcessorForTUS(uploadFile io.ReadCloser, proto ProtoNode, logger *core.Logger) (BlockProcessor, error) {
 	doneTracker := NewDoneTracker()
 	bstore := proto.GetNode().GetBlockstore()

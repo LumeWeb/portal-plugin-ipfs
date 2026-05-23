@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/ipfs/boxo/blockservice"
+	"github.com/ipfs/boxo/exchange/offline"
+	"github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/mholt/archives"
@@ -244,8 +247,10 @@ func (h *PostUploadOperationHandler) createProcessor(uploadFile io.ReadCloser, f
 	logger := h.Logger()
 	doneTracker := NewDoneTracker()
 	bstore := h.Protocol().(ProtoNode).GetNode().GetBlockstore()
-	dagService := h.Protocol().(ProtoNode).GetNode().DagService()
 	bs := NewStreamingBlockstoreWithDefaults(logger, bstore, doneTracker, DEFAULT_BLOCK_QUEUE_SIZE)
+	dagService := merkledag.NewDAGService(
+		blockservice.New(bs, offline.Exchange(bs)),
+	)
 
 	if format.IsArchiveFormat() {
 		processor, err := h.createArchiveProcessor(uploadFile, format, bs, dagService, logger, doneTracker)

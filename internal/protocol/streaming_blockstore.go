@@ -286,14 +286,12 @@ func (s *DefaultStreamingBlockstore) Get(ctx context.Context, c cid.Cid) (blocks
 
 	// If we have a passthrough blockstore, use it
 	if s.passthrough != nil {
-		// If we know it was processed, check if the other side is done before trying passthrough
 		if wasProcessed {
 			if s.WaitDone(ctx, c) {
 				if s.logger != nil {
 					s.logger.Debug("Retrieving from passthrough store",
 						zap.String("cid", c.String()))
 				}
-				// Add SkipQuotaCheckOption for passthrough operations
 				passthroughCtx := pc.SkipQuotaCheckOption(ctx, pc.IsQuotaCheckSkipped(ctx))
 				return s.passthrough.Get(passthroughCtx, c)
 			}
@@ -384,9 +382,20 @@ func (s *DefaultStreamingBlockstore) GetSize(ctx context.Context, c cid.Cid) (in
 	}
 	s.pendingMutex.RUnlock()
 
+	// Check if it was processed
+	s.processedMutex.RLock()
+	_, wasProcessed := s.processedBlocks[cidKey]
+	s.processedMutex.RUnlock()
+
 	// Check passthrough
 	if s.passthrough != nil {
-		// Add SkipQuotaCheckOption for passthrough operations
+		if wasProcessed {
+			if s.WaitDone(ctx, c) {
+				passthroughCtx := pc.SkipQuotaCheckOption(ctx, pc.IsQuotaCheckSkipped(ctx))
+				return s.passthrough.GetSize(passthroughCtx, c)
+			}
+		}
+
 		passthroughCtx := pc.SkipQuotaCheckOption(ctx, pc.IsQuotaCheckSkipped(ctx))
 		return s.passthrough.GetSize(passthroughCtx, c)
 	}
@@ -582,17 +591,24 @@ func (s *DefaultStreamingBlockstore) MarkBlockProcessed(blockKey string) {
 	pendingAfter := s.pendingCountAtomic.Load()
 	processedAfter := s.processedCountAtomic.Load()
 
-	// Mark as done in DoneTracker
-	if cidObj, err := cid.Decode(blockKey); err == nil {
-		s.Done(cidObj)
-	}
-
 	if s.logger != nil {
 		s.logger.Debug("Block marked processed",
 			zap.String("blockKey", blockKey),
 			zap.Int("pendingAfter", int(pendingAfter)),
 			zap.Int("processedAfter", int(processedAfter)))
 	}
+}
+
+// MarkBlockPersisted signals that a block has been persisted to the
+// passthrough blockstore and is safe to read from there.
+func (s *DefaultStreamingBlockstore) MarkBlockPersisted(c cid.Cid) {
+	key := KeyFromCID(c)
+
+	s.seenFilterMutex.Lock()
+	s.seenFilter.Add([]byte(key.String()))
+	s.seenFilterMutex.Unlock()
+
+	s.Done(c)
 }
 
 // MarkDone marks a CID as done and updates bloom filter
