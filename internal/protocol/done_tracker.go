@@ -60,27 +60,18 @@ func NewDoneTracker() *DefaultDoneTracker {
 // This method is thread-safe
 func (dt *DefaultDoneTracker) Done(c cid.Cid) {
 	dt.mu.Lock()
-	defer dt.mu.Unlock()
 
 	cidKey := string(c.Bytes())
 	waiter, exists := dt.waiters[cidKey]
 	if !exists {
-		// Add to permanent completed record
 		dt.completed[cidKey] = true
-
-		// Create a done marker entry to indicate this CID has been marked as done
-		// This allows subsequent WaitDone calls to immediately return true
-		waiter = &cidWaiter{
-			cid:     c,
-			done:    true,
-			waiters: []chan struct{}{},
-		}
-		dt.waiters[cidKey] = waiter
+		dt.mu.Unlock()
 		return
 	}
 
 	// If already done, nothing to do
 	if waiter.done {
+		dt.mu.Unlock()
 		return
 	}
 
@@ -88,18 +79,20 @@ func (dt *DefaultDoneTracker) Done(c cid.Cid) {
 	waiter.done = true
 	waitersToClose := make([]chan struct{}, len(waiter.waiters))
 	copy(waitersToClose, waiter.waiters)
-	waiter.waiters = waiter.waiters[:0] // Clear the slice
+	waiter.waiters = waiter.waiters[:0]
 
 	// Add to permanent completed record
 	dt.completed[cidKey] = true
 
-	// Delete the waiter from the map since it's fully processed
-	// Note: The CID remains in the completed map for permanent tracking
+	// Delete the waiter from the map since it's fully processed.
+	// The CID remains in the completed map for permanent tracking.
 	delete(dt.waiters, cidKey)
 
-	// Release lock before closing channels to avoid deadlock
+	// Close channels after releasing the lock to avoid deadlock.
+	// We must NOT unlock-relock here because Reset() could clear the
+	// maps between the unlock and relock, while concurrent goroutines
+	// add entries back — leaving stale state after reset.
 	dt.mu.Unlock()
-	defer dt.mu.Lock()
 
 	for _, ch := range waitersToClose {
 		close(ch)

@@ -648,7 +648,11 @@ func TestDoneTracker_RaceConditionIsDoneVsDone(t *testing.T) {
 	}
 }
 
-// TestDoneTracker_RaceConditionResetVsOperations tests race condition between Reset and other operations
+// TestDoneTracker_RaceConditionResetVsOperations tests that concurrent Reset
+// and other operations don't cause panics, deadlocks, or data corruption.
+// We don't assert Count()==0 after Reset because concurrent in-flight
+// WaitDone/Done calls can add entries after Reset() returns — that's
+// expected behavior for a concurrent data structure.
 func TestDoneTracker_RaceConditionResetVsOperations(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping race condition test in short mode")
@@ -697,8 +701,14 @@ func TestDoneTracker_RaceConditionResetVsOperations(t *testing.T) {
 
 		wg.Wait()
 
-		// After reset, tracker should be clean
-		assert.Equal(t, 0, dt.Count(), "Count should be 0 after reset")
+		// Verify the tracker is in a consistent state (no panics, no deadlocks).
+		// We can't assert Count()==0 because Done/WaitDone calls that ran after
+		// Reset() may have added entries back.
+		_ = dt.Count()
+		_ = dt.GetDoneCIDs()
+		for _, c := range cids {
+			dt.IsDone(c)
+		}
 	}
 }
 

@@ -770,6 +770,73 @@ func TestMetadataStore_BatchPin_ExistingChildFromAnotherUpload(t *testing.T) {
 	}, ipfsTestConfig)
 }
 
+// TestMetadataStore_Pin_PlaceholderPromotedWithUnixFSMetadata tests that when
+// a block is first created as a placeholder by ensureChildBlocksFromSet (Ready=false)
+// and then later pinned as a parent with links, the linked blocks get the correct
+// parent_id (not 0).
+//
+// On MySQL, GORM's ON DUPLICATE KEY UPDATE does not populate the auto-increment ID
+// in the model struct, so parentBlock.ID remains 0 after the upsert. Without the
+// fallback query, linked blocks would have parent_id = 0, and UnixFS nodes would
+// have block_id = 0 (failing FK constraint). This test guards against that regression.
+func TestMetadataStore_Pin_PlaceholderPromotedWithUnixFSMetadata(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		metadataStore := store.NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protocol.ProtoNode))
+
+		grandchildData := "grandchild block"
+		grandchildCid := generateCid(t, grandchildData)
+
+		// Pin a top-level parent that links to "middle" — this creates
+		// "middle" as a placeholder (Ready=false) in ipfs_blocks.
+		topData := "top parent"
+		middleData := "middle block"
+		middleCid := generateCid(t, middleData)
+
+		topBlock := createPinnedBlock(tb, ctx, topData)
+		topBlock.Links = []cid.Cid{middleCid}
+		err := metadataStore.Pin(context.Background(), topBlock)
+		require.NoError(tb, err)
+
+		// Verify: middle exists as a placeholder
+		var middleBlock pluginDb.IPFSBlock
+		err = ctx.DB().Where("cid = ?", middleCid.Bytes()).First(&middleBlock).Error
+		require.NoError(tb, err)
+		require.False(tb, middleBlock.Ready, "middle should be a placeholder")
+		middleBlockID := middleBlock.ID
+		require.NotZero(tb, middleBlockID, "placeholder should have a valid ID")
+
+		// Pin the middle block as a parent — it links to grandchild.
+		// This hits the ON CONFLICT DO UPDATE path in pinPreparedBlockInTx
+		// because the row already exists. On MySQL, parentBlock.ID would be 0
+		// without the fallback query, causing FK violations and wrong parent_ids.
+		middlePinned := createPinnedBlock(tb, ctx, middleData)
+		middlePinned.Links = []cid.Cid{grandchildCid}
+		err = metadataStore.Pin(context.Background(), middlePinned)
+		require.NoError(tb, err)
+
+		// Verify: middle is now Ready=true
+		err = ctx.DB().Where("cid = ?", middleCid.Bytes()).First(&middleBlock).Error
+		require.NoError(tb, err)
+		assert.True(tb, middleBlock.Ready, "middle should be promoted to Ready=true")
+
+		// Verify: linked block from middle → grandchild has correct parent_id (not 0)
+		grandchildPinned := createPinnedBlock(tb, ctx, grandchildData)
+		err = metadataStore.Pin(context.Background(), grandchildPinned)
+		require.NoError(tb, err)
+
+		var grandchildBlockDb pluginDb.IPFSBlock
+		err = ctx.DB().Where("cid = ?", grandchildCid.Bytes()).First(&grandchildBlockDb).Error
+		require.NoError(tb, err)
+
+		var middleToGrandchild pluginDb.IPFSLinkedBlock
+		err = ctx.DB().Where("parent_id = ? AND child_id = ?", middleBlock.ID, grandchildBlockDb.ID).First(&middleToGrandchild).Error
+		require.NoError(tb, err, "middle→grandchild linked block should exist")
+		assert.NotZero(tb, middleToGrandchild.ParentID, "parent_id must not be 0")
+		assert.Equal(tb, middleBlockID, middleToGrandchild.ParentID, "parent_id must match middle block's original ID")
+		assert.Equal(tb, grandchildBlockDb.ID, middleToGrandchild.ChildID, "child_id must match grandchild block")
+	}, ipfsTestConfig)
+}
+
 // TestMetadataStore_BatchPin_OrphanAdoption tests that when a child block has
 // an IPFSLinkedBlock with parent_id IS NULL, pinning a parent that links to it
 // updates the parent_id (orphan adoption).
