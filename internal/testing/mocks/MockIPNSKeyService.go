@@ -1298,46 +1298,6 @@ func (_c *MockIPNSKeyService_PublishWithKey_Call) RunAndReturn(run func(ctx cont
 	return _c
 }
 
-// RepublishAllKeysOnBoot provides a mock function for the type MockIPNSKeyService
-func (_mock *MockIPNSKeyService) RepublishAllKeysOnBoot(ctx context.Context) {
-	_mock.Called(ctx)
-	return
-}
-
-// MockIPNSKeyService_RepublishAllKeysOnBoot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RepublishAllKeysOnBoot'
-type MockIPNSKeyService_RepublishAllKeysOnBoot_Call struct {
-	*mock.Call
-}
-
-// RepublishAllKeysOnBoot is a helper method to define mock.On call
-//   - ctx context.Context
-func (_e *MockIPNSKeyService_Expecter) RepublishAllKeysOnBoot(ctx interface{}) *MockIPNSKeyService_RepublishAllKeysOnBoot_Call {
-	return &MockIPNSKeyService_RepublishAllKeysOnBoot_Call{Call: _e.mock.On("RepublishAllKeysOnBoot", ctx)}
-}
-
-func (_c *MockIPNSKeyService_RepublishAllKeysOnBoot_Call) Run(run func(ctx context.Context)) *MockIPNSKeyService_RepublishAllKeysOnBoot_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 context.Context
-		if args[0] != nil {
-			arg0 = args[0].(context.Context)
-		}
-		run(
-			arg0,
-		)
-	})
-	return _c
-}
-
-func (_c *MockIPNSKeyService_RepublishAllKeysOnBoot_Call) Return() *MockIPNSKeyService_RepublishAllKeysOnBoot_Call {
-	_c.Call.Return()
-	return _c
-}
-
-func (_c *MockIPNSKeyService_RepublishAllKeysOnBoot_Call) RunAndReturn(run func(ctx context.Context)) *MockIPNSKeyService_RepublishAllKeysOnBoot_Call {
-	_c.Run(run)
-	return _c
-}
-
 // SetConfig provides a mock function for the type MockIPNSKeyService
 func (_mock *MockIPNSKeyService) SetConfig(cfg config.Manager) {
 	_mock.Called(cfg)
@@ -1495,56 +1455,5 @@ func (_c *MockIPNSKeyService_SetLogger_Call) Return() *MockIPNSKeyService_SetLog
 
 func (_c *MockIPNSKeyService_SetLogger_Call) RunAndReturn(run func(logger *core.Logger)) *MockIPNSKeyService_SetLogger_Call {
 	_c.Run(run)
-	return _c
-}
-
-// SyncToBoxoKeystore provides a mock function for the type MockIPNSKeyService
-func (_mock *MockIPNSKeyService) SyncToBoxoKeystore(ctx context.Context) error {
-	ret := _mock.Called(ctx)
-
-	if len(ret) == 0 {
-		panic("no return value specified for SyncToBoxoKeystore")
-	}
-
-	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context) error); ok {
-		r0 = returnFunc(ctx)
-	} else {
-		r0 = ret.Error(0)
-	}
-	return r0
-}
-
-// MockIPNSKeyService_SyncToBoxoKeystore_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SyncToBoxoKeystore'
-type MockIPNSKeyService_SyncToBoxoKeystore_Call struct {
-	*mock.Call
-}
-
-// SyncToBoxoKeystore is a helper method to define mock.On call
-//   - ctx context.Context
-func (_e *MockIPNSKeyService_Expecter) SyncToBoxoKeystore(ctx interface{}) *MockIPNSKeyService_SyncToBoxoKeystore_Call {
-	return &MockIPNSKeyService_SyncToBoxoKeystore_Call{Call: _e.mock.On("SyncToBoxoKeystore", ctx)}
-}
-
-func (_c *MockIPNSKeyService_SyncToBoxoKeystore_Call) Run(run func(ctx context.Context)) *MockIPNSKeyService_SyncToBoxoKeystore_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 context.Context
-		if args[0] != nil {
-			arg0 = args[0].(context.Context)
-		}
-		run(
-			arg0,
-		)
-	})
-	return _c
-}
-
-func (_c *MockIPNSKeyService_SyncToBoxoKeystore_Call) Return(err error) *MockIPNSKeyService_SyncToBoxoKeystore_Call {
-	_c.Call.Return(err)
-	return _c
-}
-
-func (_c *MockIPNSKeyService_SyncToBoxoKeystore_Call) RunAndReturn(run func(ctx context.Context) error) *MockIPNSKeyService_SyncToBoxoKeystore_Call {
-	_c.Call.Return(run)
 	return _c
 }

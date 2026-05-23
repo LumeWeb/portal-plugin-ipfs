@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/ipfs/boxo/keystore"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/stretchr/testify/assert"
@@ -21,7 +20,6 @@ import (
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	portalDb "go.lumeweb.com/portal/db"
-	"go.uber.org/zap/zaptest"
 	"gorm.io/gorm"
 )
 
@@ -579,32 +577,6 @@ func TestIPNSKeyService_GetPrivateKeyByPeerID_NotFound(t *testing.T) {
 	}, TestOptions)
 }
 
-func TestIPNSKeyService_SyncToBoxoKeystore(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Arrange
-		keyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
-		require.NotNil(tb, keyService)
-
-		userID := uint(1)
-
-		// Create multiple keys
-		_, err := keyService.CreateKey(context.Background(), userID, "sync-key1", KeyType_Ed25519)
-		require.NoError(tb, err)
-		_, err = keyService.CreateKey(context.Background(), userID, "sync-key2", KeyType_Ed25519)
-		require.NoError(tb, err)
-
-		// Act - Sync keys to boxo keystore
-		err = keyService.SyncToBoxoKeystore(context.Background())
-
-		// Assert
-		// The sync operation may fail if protocol doesn't implement IPNSBoxoServices
-		// This is expected in test environment
-		if err != nil {
-			assert.Contains(tb, err.Error(), "IPFS protocol does not implement IPNSBoxoServices")
-		}
-	}, TestOptions)
-}
-
 func TestIPNSKeyService_UniquePeerIDPerUser(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
@@ -661,77 +633,6 @@ func TestIPNSKeyService_UniquePeerID_DifferentUsers(t *testing.T) {
 	}, TestOptions)
 }
 
-// SafeRepublisherKeystore tests
-
-func TestSafeRepublisherKeystore_RejectsNilKeys(t *testing.T) {
-	inner := keystore.NewMemKeystore()
-	logger := &core.Logger{Logger: zaptest.NewLogger(t)}
-	safeKS := NewSafeRepublisherKeystore(inner, logger)
-
-	// Attempt to put a nil key
-	err := safeKS.Put("test-key", nil)
-	assert.Error(t, err, "Should reject nil key")
-	assert.Contains(t, err.Error(), "cannot put nil key")
-}
-
-func TestSafeRepublisherKeystore_AcceptsValidKeys(t *testing.T) {
-	inner := keystore.NewMemKeystore()
-	logger := &core.Logger{Logger: zaptest.NewLogger(t)}
-	safeKS := NewSafeRepublisherKeystore(inner, logger)
-
-	// Generate a valid key
-	privKey, _, err := crypto.GenerateKeyPair(crypto.Ed25519, 2048)
-	require.NoError(t, err)
-
-	// Put the valid key
-	err = safeKS.Put("valid-key", privKey)
-	assert.NoError(t, err, "Should accept valid key")
-
-	// Verify key can be retrieved
-	retrieved, err := safeKS.Get("valid-key")
-	assert.NoError(t, err)
-	assert.NotNil(t, retrieved, "Retrieved key should not be nil")
-}
-
-func TestSafeRepublisherKeystore_GetValidatesNonNil(t *testing.T) {
-	// This test verifies the defensive check in Get() catches any edge cases
-	// where nil keys might exist in the underlying keystore
-	inner := keystore.NewMemKeystore()
-	logger := &core.Logger{Logger: zaptest.NewLogger(t)}
-	safeKS := NewSafeRepublisherKeystore(inner, logger)
-
-	// Manually insert a nil key into the inner keystore (simulating corruption)
-	// We need to use the inner keystore directly to bypass the safe wrapper
-	_ = inner.Put("corrupted-key", nil)
-
-	// Attempt to retrieve the corrupted key
-	_, err := safeKS.Get("corrupted-key")
-	assert.Error(t, err, "Should return error for nil key")
-	assert.Contains(t, err.Error(), "is nil in keystore")
-}
-
-func TestSafeRepublisherKeystore_ListFiltersNilKeys(t *testing.T) {
-	inner := keystore.NewMemKeystore()
-	logger := &core.Logger{Logger: zaptest.NewLogger(t)}
-	safeKS := NewSafeRepublisherKeystore(inner, logger)
-
-	// Add a valid key
-	privKey, _, err := crypto.GenerateKeyPair(crypto.Ed25519, 2048)
-	require.NoError(t, err)
-	err = safeKS.Put("valid-key", privKey)
-	require.NoError(t, err)
-
-	// Manually insert a nil key into the inner keystore (simulating corruption)
-	_ = inner.Put("corrupted-key", nil)
-
-	// List keys - should filter out the corrupted one
-	names, err := safeKS.List()
-	assert.NoError(t, err)
-	assert.Len(t, names, 1, "Should only list the valid key")
-	assert.Contains(t, names, "valid-key", "Should contain valid key")
-	assert.NotContains(t, names, "corrupted-key", "Should not contain corrupted key")
-}
-
 func TestIPNSKeyService_PublishWithKey_UpdatesLastPublishedCID(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		keyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
@@ -769,66 +670,6 @@ func TestIPNSKeyService_PublishWithKey_UpdatesLastPublishedCID(t *testing.T) {
 		updatedKey, err := keyService.GetKeyByID(context.Background(), userID, createdKey.ID)
 		require.NoError(tb, err)
 		assert.Equal(tb, testCID, updatedKey.LastPublishedCID)
-	}, TestOptions)
-}
-
-func TestIPNSKeyService_RepublishAllKeysOnBoot_NoKeysWithCID(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		keyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
-		require.NotNil(tb, keyService)
-
-		userID := uint(1)
-		_, err := keyService.CreateKey(context.Background(), userID, "no-cid-key", KeyType_Ed25519)
-		require.NoError(tb, err)
-
-		keyService.RepublishAllKeysOnBoot(context.Background())
-	}, TestOptions)
-}
-
-func TestIPNSKeyService_RepublishAllKeysOnBoot_PublishesKeysWithCID(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		keyService := core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
-		require.NotNil(tb, keyService)
-
-		userID := uint(1)
-
-		key1, err := keyService.CreateKey(context.Background(), userID, "boot-repub1", KeyType_Ed25519)
-		require.NoError(tb, err)
-
-		key2, err := keyService.CreateKey(context.Background(), userID, "boot-repub2", KeyType_Ed25519)
-		require.NoError(tb, err)
-
-		testCID := "bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3ffq2ab4"
-
-		proto := core.GetProtocol(internal.ProtocolName)
-		ipnsAccess := proto.(pluginCore.IPNSBoxoServices)
-		mockPublisher := ipnsAccess.GetIPNSNode().GetPublisher().(*mocks.MockIPNSPublisher)
-
-		mockPublisher.EXPECT().Publish(mock.Anything, mock.Anything, mock.Anything).Return(nil).Twice()
-
-		privKey1, _, err := keyService.GetPrivateKeyByPeerID(context.Background(), key1.PeerID().String())
-		require.NoError(tb, err)
-		err = keyService.PublishWithKey(context.Background(), privKey1, testCID, 0)
-		require.NoError(tb, err)
-
-		privKey2, _, err := keyService.GetPrivateKeyByPeerID(context.Background(), key2.PeerID().String())
-		require.NoError(tb, err)
-		err = keyService.PublishWithKey(context.Background(), privKey2, testCID, 0)
-		require.NoError(tb, err)
-
-		var dbKey1, dbKey2 pluginDb.IPFSIPNSKey
-		portalDb.RetryableTransaction(context.Background(), ctx.DB(), func(tx *gorm.DB) *gorm.DB {
-			return tx.Where("id = ?", key1.ID).First(&dbKey1)
-		})
-		portalDb.RetryableTransaction(context.Background(), ctx.DB(), func(tx *gorm.DB) *gorm.DB {
-			return tx.Where("id = ?", key2.ID).First(&dbKey2)
-		})
-		require.NotEmpty(tb, dbKey1.LastPublishedCID)
-		require.NotEmpty(tb, dbKey2.LastPublishedCID)
-
-		mockPublisher.EXPECT().Publish(mock.Anything, mock.Anything, mock.Anything).Return(nil).Twice()
-
-		keyService.RepublishAllKeysOnBoot(context.Background())
 	}, TestOptions)
 }
 
