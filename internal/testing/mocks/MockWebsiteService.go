@@ -1199,6 +1199,39 @@ func (_c *MockWebsiteService_UpdateWebsite_Call) RunAndReturn(run func(ctx conte
 	return _c
 }
 
+// WaitForPublishes provides a mock function for the type MockWebsiteService
+func (_mock *MockWebsiteService) WaitForPublishes() {
+	_mock.Called()
+	return
+}
+
+// MockWebsiteService_WaitForPublishes_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'WaitForPublishes'
+type MockWebsiteService_WaitForPublishes_Call struct {
+	*mock.Call
+}
+
+// WaitForPublishes is a helper method to define mock.On call
+func (_e *MockWebsiteService_Expecter) WaitForPublishes() *MockWebsiteService_WaitForPublishes_Call {
+	return &MockWebsiteService_WaitForPublishes_Call{Call: _e.mock.On("WaitForPublishes")}
+}
+
+func (_c *MockWebsiteService_WaitForPublishes_Call) Run(run func()) *MockWebsiteService_WaitForPublishes_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockWebsiteService_WaitForPublishes_Call) Return() *MockWebsiteService_WaitForPublishes_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockWebsiteService_WaitForPublishes_Call) RunAndReturn(run func()) *MockWebsiteService_WaitForPublishes_Call {
+	_c.Run(run)
+	return _c
+}
+
 // ValidateDNS provides a mock function for the type MockWebsiteService
 func (_mock *MockWebsiteService) ValidateDNS(ctx context.Context, userID uint, websiteID uint) (core0.ValidateDNSResult, error) {
 	ret := _mock.Called(ctx, userID, websiteID)

@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal/core"
@@ -26,16 +27,28 @@ func (h *PublishOperationHandler) ValidateRequest(ctx context.Context, req *mode
 }
 
 func (h *PublishOperationHandler) Execute(ctx context.Context, req *models.Request) error {
-	// Initialize progress tracker with manual mode for simple milestones
 	tracker, err := InitializeManualProgressTracker(h, req.ID, core.OpTypePublish, 10)
 	if err != nil {
 		return err
 	}
 
-	// Trigger the reprovider to announce the content
-	h.Protocol().(*Protocol).GetNode().TriggerReprovider()
+	node := h.Protocol().(*Protocol).GetNode()
 
-	// Complete
+	if len(req.Hash) > 0 {
+		c, cErr := internal.CIDFromHash(req.Hash, req.CIDType)
+		if cErr == nil {
+			go func() {
+				provideCtx, cancel := context.WithTimeout(core.DetachContext(ctx), 30*time.Second)
+				defer cancel()
+				if err := node.ProvideCID(provideCtx, c); err != nil {
+					h.Logger().Warn("direct DHT provide failed", zap.Error(err), zap.Stringer("cid", c))
+				}
+			}()
+		}
+	}
+
+	node.TriggerReprovider()
+
 	if err := tracker.SetProgress(100); err != nil {
 		h.Logger().Warn("Failed to update progress", zap.Error(err))
 	}

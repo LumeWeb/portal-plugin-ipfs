@@ -42,6 +42,7 @@ import (
 	"github.com/ipfs/boxo/namesys"
 	blocks "github.com/ipfs/go-block-format"
 	format "github.com/ipfs/go-ipld-format"
+	"github.com/avast/retry-go/v5"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p-kad-dht/fullrt"
@@ -91,6 +92,7 @@ type IPFSNode interface {
 	AddPeer(addr peer.AddrInfo)
 	Pin(ctx context.Context, root cid.Cid, recursive bool) error
 	TriggerReprovider()
+	ProvideCID(ctx context.Context, c cid.Cid) error
 	GetPublisher() pluginCore.IPNSPublisher
 	GetKeystore() keystore.Keystore
 	GetDatastore() datastore.Datastore
@@ -101,18 +103,32 @@ type IPFSNode interface {
 	Port() int
 }
 
-// NopExchange wraps an exchange.Interface and disables NotifyNewBlocks.
-// This prevents the node from announcing new blocks to the network,
-// because we want to selectively control when blocks are announced,
-// thus we make NotifyNewBlocks a no-op.
-type NopExchange struct {
-	exchange.Interface
+// BlockReadyChecker checks if a block is ready to be announced to the network.
+// This gates bitswap NotifyNewBlocks on the Ready column in the metadata store.
+type BlockReadyChecker interface {
+	BlockExists(ctx context.Context, c cid.Cid) error
 }
 
-func (n *NopExchange) NotifyNewBlocks(ctx context.Context, blocks ...blocks.Block) error {
-	ctx, span := core.TraceMethod(ctx, "NopExchange.NotifyNewBlocks")
-	defer span.End()
+// ReadyAwareExchange wraps an exchange.Interface and gates NotifyNewBlocks
+// on the block's Ready status. Only blocks that have been confirmed as ready
+// (via the metadata store's Ready column) are forwarded to the underlying
+// exchange. This prevents announcing blocks that are still being uploaded
+// while allowing immediate bitswap announcements for confirmed blocks.
+type ReadyAwareExchange struct {
+	exchange.Interface
+	readyChecker BlockReadyChecker
+}
 
+func (r *ReadyAwareExchange) NotifyNewBlocks(ctx context.Context, blks ...blocks.Block) error {
+	var readyBlocks []blocks.Block
+	for _, b := range blks {
+		if r.readyChecker.BlockExists(ctx, b.Cid()) == nil {
+			readyBlocks = append(readyBlocks, b)
+		}
+	}
+	if len(readyBlocks) > 0 {
+		return r.Interface.NotifyNewBlocks(ctx, readyBlocks...)
+	}
 	return nil
 }
 
@@ -125,12 +141,13 @@ type NodeFactory struct {
 	datastore       datastore.Batching
 	blockstore      blockstore.Blockstore
 	peerTracker     *BlockRequestTracker
+	readyChecker    BlockReadyChecker
 	bootstrapPeers  []peer.AddrInfo
 	bootstrapMutex  sync.RWMutex
 }
 
 // NewNodeFactory creates a new node factory with the given shared components
-func NewNodeFactory(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.ReprovideStore, ds datastore.Batching, bs blockstore.Blockstore, peerTracker *BlockRequestTracker) *NodeFactory {
+func NewNodeFactory(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.ReprovideStore, ds datastore.Batching, bs blockstore.Blockstore, peerTracker *BlockRequestTracker, readyChecker BlockReadyChecker) *NodeFactory {
 	factory := &NodeFactory{
 		ctx:            ctx,
 		cfg:            cfg,
@@ -138,6 +155,7 @@ func NewNodeFactory(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.
 		datastore:      ds,
 		blockstore:     bs,
 		peerTracker:    peerTracker,
+		readyChecker:   readyChecker,
 		bootstrapPeers: make([]peer.AddrInfo, 0),
 		bootstrapMutex: sync.RWMutex{},
 	}
@@ -176,7 +194,7 @@ func (f *NodeFactory) GetBootstrapPeers() []peer.AddrInfo {
 
 // CreateNode creates a new IPFS node instance using the factory's configuration
 func (f *NodeFactory) CreateNode() (*Node, error) {
-	return NewNode(f.ctx, f.cfg, f.reprovideStore, f.datastore, f.blockstore, f.peerTracker, f)
+	return NewNode(f.ctx, f.cfg, f.reprovideStore, f.datastore, f.blockstore, f.peerTracker, f.readyChecker, f)
 }
 
 // A Node is a minimal IPFS node
@@ -375,7 +393,7 @@ func (n *Node) Pin(ctx context.Context, root cid.Cid, recursive bool) error {
 }
 
 // NewNode creates a new IPFS node
-func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.ReprovideStore, ds datastore.Batching, bs blockstore.Blockstore, peerTracker *BlockRequestTracker, factory *NodeFactory) (*Node, error) {
+func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.ReprovideStore, ds datastore.Batching, bs blockstore.Blockstore, peerTracker *BlockRequestTracker, readyChecker BlockReadyChecker, factory *NodeFactory) (*Node, error) {
 	hasher := hkdf.New(sha256.New, ctx.Config().Config().Core.Identity.PrivateKey(), ctx.Config().Config().Core.NodeID.Bytes(), []byte(internal.ProtocolName))
 	derivedSeed := make([]byte, 32)
 
@@ -553,8 +571,21 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		if dhtErr != nil {
 			return nil, fmt.Errorf("failed to create companion DHT: %w", dhtErr)
 		}
-		if err := companion.Bootstrap(ctx); err != nil {
-			ctx.Logger().Warn("failed to bootstrap companion DHT", zap.Error(err))
+		err := retry.New(
+			retry.Attempts(5),
+			retry.Delay(5*time.Second),
+			retry.DelayType(retry.BackOffDelay),
+			retry.OnRetry(func(n uint, err error) {
+				ctx.Logger().Warn("failed to bootstrap companion DHT, retrying",
+					zap.Error(err),
+					zap.Uint("attempt", n+1))
+			}),
+		).Do(func() error {
+			return companion.Bootstrap(ctx)
+		})
+		if err != nil {
+			ctx.Logger().Error("failed to bootstrap companion DHT after retries",
+				zap.Error(err))
 		}
 		ipfsNode.companionDHT = companion
 
@@ -605,10 +636,9 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	bitswapNet := bsnet.NewFromIpfsHost(node)
 	_bitswap := bitswap.New(ctx, bitswapNet, routingImpl, bs, bitswapOpts...)
 
-	// Wrap the bitswap exchange with NopExchange to disable automatic block announcements
-	nopExchange := &NopExchange{_bitswap}
+	readyExchange := &ReadyAwareExchange{Interface: _bitswap, readyChecker: readyChecker}
 
-	blockServ := blockservice.New(bs, nopExchange)
+	blockServ := blockservice.New(bs, readyExchange)
 	dagService := merkledag.NewDAGService(blockServ)
 
 	for _, p := range cfg.Peers {
@@ -680,6 +710,13 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 }
 func (n *Node) TriggerReprovider() {
 	n.reprovider.Trigger()
+}
+
+func (n *Node) ProvideCID(ctx context.Context, c cid.Cid) error {
+	if n.companionDHT != nil {
+		return n.companionDHT.Provide(ctx, c, true)
+	}
+	return n.routing.Provide(ctx, c, true)
 }
 
 func AnnouncementAddresses(announceWeb bool, domain string, hostAddrs []multiaddr.Multiaddr, configPort int) ([]multiaddr.Multiaddr, error) {

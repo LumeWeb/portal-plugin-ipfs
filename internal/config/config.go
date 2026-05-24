@@ -81,7 +81,7 @@ func (b BlockStore) Defaults() map[string]any {
 func (I IPFSProvider) Defaults() map[string]any {
 	return map[string]any{
 		"BatchSize": 5000,
-		"Interval":  18 * time.Hour,
+		"Interval":  4 * time.Hour,
 		"Timeout":   30 * time.Minute,
 	}
 }

@@ -242,7 +242,7 @@ func NewReprovider(provider pluginCore.Provider, store pluginCore.ReprovideStore
 		store:                store,
 		log:                  log,
 		triggerProvide:       make(chan struct{}, 1),
-		triggerDelayDuration: 30 * time.Second,
+		triggerDelayDuration: 2 * time.Second,
 		reprovideSleep:       time.Duration(0),
 		cancelTrigger:        make(chan struct{}),
 	}
