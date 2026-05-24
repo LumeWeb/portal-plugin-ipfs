@@ -33,6 +33,8 @@ func TestMain(m *testing.M) {
 		coreTesting.WithServiceFactory(core.WORKFLOW_SERVICE, service.NewWorkflowCoordinator),
 		coreTesting.WithProtocol(internal.ProtocolName, protocol.NewProtocol),
 		coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{}),
+		coreTesting.WithConfig("plugin.ipfs.protocol.port", 0),
+		coreTesting.WithConfig("plugin.ipfs.protocol.ws_port", 0),
 		coreTesting.WithSQLitePluginMigrations(
 			internal.ProtocolName, migrations.GetSQLite(),
 		))

@@ -464,7 +464,10 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		return nil, fmt.Errorf("failed to create connection manager: %w", err)
 	}
 
-	trustedProxies := parseTrustedProxies(cfg.TrustedProxies)
+	trustedProxies, err := parseTrustedProxies(cfg.TrustedProxies)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse trusted proxies: %w", err)
+	}
 
 	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(cfg.ListenAddrs()...),
@@ -540,13 +543,18 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	// Use LAN DHT when all bootstrap peers are local (for e2e testing without public swarm)
 	useLANMode := allPeersLocal(factory.GetBootstrapPeers())
 
-	// Create node with minimal fields
+	// When cfg.Port is 0 (OS-assigned), extract the real port from the host's listen addresses.
+	port := cfg.Port
+	if port == 0 {
+		port = resolvePortFromAddrs(node.Addrs())
+	}
+
 	ipfsNode := &Node{
 		host:        node,
 		log:         ctx.Logger(),
 		ctx:         ctx,
 		announceWeb: cfg.AnnounceWeb,
-		port:        cfg.Port,
+		port:        port,
 	}
 
 	// Build common DHT options using factory's GetBootstrapPeers()
@@ -966,27 +974,45 @@ func netIPToAddr(ip net.IP) netip.Addr {
 	return netip.AddrFrom16([16]byte(ip.To16()))
 }
 
-func parseTrustedProxies(cidrs []string) []*net.IPNet {
-	var nets []*net.IPNet
-	for _, s := range cidrs {
-		_, ipNet, err := net.ParseCIDR(s)
-		if err != nil {
+func parseTrustedProxies(entries []string) ([]string, error) {
+	var resolved []string
+	for _, s := range entries {
+		ip := net.ParseIP(s)
+		if ip != nil {
+			resolved = append(resolved, ip.String())
 			continue
 		}
-		nets = append(nets, ipNet)
+
+		ips, err := net.LookupIP(s)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve trusted proxy hostname %q: %w", s, err)
+		}
+		for _, ip := range ips {
+			if v4 := ip.To4(); v4 != nil {
+				resolved = append(resolved, v4.String())
+			} else {
+				resolved = append(resolved, ip.String())
+			}
+		}
 	}
-	return nets
+	return resolved, nil
 }
 
-func parseGatewayPeers(peerStrs []string) []peer.ID {
-	var peers []peer.ID
-	for _, s := range peerStrs {
-		p, err := peer.Decode(s)
+func resolvePortFromAddrs(addrs []multiaddr.Multiaddr) int {
+	for _, addr := range addrs {
+		multiaddr.ForEach(addr, func(c multiaddr.Component) bool {
+			return true
+		})
+		port, err := addr.ValueForProtocol(multiaddr.P_TCP)
 		if err != nil {
-			continue
+			port, err = addr.ValueForProtocol(multiaddr.P_UDP)
 		}
-		peers = append(peers, p)
+		if err == nil {
+			if p, err := strconv.Atoi(port); err == nil && p > 0 {
+				return p
+			}
+		}
 	}
-	return peers
+	return 0
 }
 

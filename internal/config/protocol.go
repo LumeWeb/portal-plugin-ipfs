@@ -21,6 +21,7 @@ const (
 )
 
 var _ config.Defaults = (*ProtocolConfig)(nil)
+var _ config.Defaults = (*BitswapConfig)(nil)
 
 type ProtocolConfig struct {
 	Port                    int           `config:"port"`
@@ -48,18 +49,21 @@ type BitswapConfig struct {
 	PerPeerWantBurst                int     `config:"per_peer_want_burst"`
 }
 
+func (b BitswapConfig) Defaults() map[string]any {
+	return map[string]any{
+		"GlobalWantRateLimit":  DefaultBitswapGlobalWantRateLimit,
+		"GlobalWantBurst":     DefaultBitswapGlobalWantBurst,
+		"PerPeerWantRateLimit": DefaultBitswapPerPeerWantRateLimit,
+		"PerPeerWantBurst":     DefaultBitswapPerPeerWantBurst,
+	}
+}
+
 func (c ProtocolConfig) Defaults() map[string]any {
 	return map[string]any{
 		"Port":           DefaultPort,
 		"WSPort":         DefaultWSPort,
 		"BootstrapPeers": BootstrapPeers,
 		"DHTMode":        "fullrt",
-		"Bitswap": map[string]any{
-			"GlobalWantRateLimit":  DefaultBitswapGlobalWantRateLimit,
-			"GlobalWantBurst":     DefaultBitswapGlobalWantBurst,
-			"PerPeerWantRateLimit": DefaultBitswapPerPeerWantRateLimit,
-			"PerPeerWantBurst":     DefaultBitswapPerPeerWantBurst,
-		},
 	}
 }
 
@@ -78,14 +82,7 @@ func (l ProtocolConfig) Schema() z.ZogSchema {
 
 func (c ProtocolConfig) ListenAddrs() []string {
 	port := c.Port
-	if port == 0 {
-		port = DefaultPort
-	}
-
 	wsPort := c.WSPort
-	if wsPort == 0 {
-		wsPort = DefaultWSPort
-	}
 
 	base := []string{
 		fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", port),
