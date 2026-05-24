@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"math"
+	"net"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -29,6 +29,7 @@ import (
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/hkdf"
+	"golang.org/x/time/rate"
 
 	"github.com/ipfs/boxo/bitswap"
 	tracerpkg "github.com/ipfs/boxo/bitswap/tracer"
@@ -48,18 +49,18 @@ import (
 	"github.com/libp2p/go-libp2p-kad-dht/fullrt"
 	libp2pCoreConnmgr "github.com/libp2p/go-libp2p/core/connmgr"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	pubsubrouter "github.com/libp2p/go-libp2p-pubsub-router"
 	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
-	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	webrtc "github.com/libp2p/go-libp2p/p2p/transport/webrtc"
 	ws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
-	"github.com/libp2p/go-libp2p/x/rate"
+	libp2pRate "github.com/libp2p/go-libp2p/x/rate"
 )
 
 const (
@@ -418,31 +419,41 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	}
 	limiter := rcmgr.NewFixedLimiter(limits)
 
+	// Build list of IP ranges that bypass rate limiting and connection limits.
+	// Private/Docker networks are always whitelisted (nginx and internal services
+	// connect through these). Loopback is always unlimited.
+	// Gateways (parsed from multiaddrs) add additional edge gateway ranges.
+	gatewayNets := []*net.IPNet{
+		mustParseCIDR("127.0.0.0/8"),
+		mustParseCIDR("::1/128"),
+		mustParseCIDR("172.16.0.0/12"),
+		mustParseCIDR("10.0.0.0/8"),
+		mustParseCIDR("192.168.0.0/16"),
+		mustParseCIDR("fc00::/7"),
+	}
+	gatewayIPs, gatewayPeerIDs := parseGatewayMultiaddrs(cfg.Gateways)
+	gatewayNets = append(gatewayNets, gatewayIPs...)
+
+	prefixLimits := make([]libp2pRate.PrefixLimit, 0, len(gatewayNets))
+	connLimits4 := make([]rcmgr.NetworkPrefixLimit, 0)
+	connLimits6 := make([]rcmgr.NetworkPrefixLimit, 0)
+
+	for _, cidr := range gatewayNets {
+		prefix := netIPNetToPrefix(cidr)
+		prefixLimits = append(prefixLimits, libp2pRate.PrefixLimit{Prefix: prefix, Limit: libp2pRate.Limit{}})
+		if cidr.IP.To4() != nil {
+			connLimits4 = append(connLimits4, rcmgr.NetworkPrefixLimit{Network: prefix, ConnCount: 1024})
+		} else {
+			connLimits6 = append(connLimits6, rcmgr.NetworkPrefixLimit{Network: prefix, ConnCount: 1024})
+		}
+	}
+
 	rm, err := rcmgr.NewResourceManager(limiter,
-		rcmgr.WithConnRateLimiters(&rate.Limiter{
-			NetworkPrefixLimits: []rate.PrefixLimit{
-				{Prefix: netip.MustParsePrefix("127.0.0.0/8"), Limit: rate.Limit{}},
-				{Prefix: netip.MustParsePrefix("::1/128"), Limit: rate.Limit{}},
-				{Prefix: netip.MustParsePrefix("172.16.0.0/12"), Limit: rate.Limit{}},
-				{Prefix: netip.MustParsePrefix("10.0.0.0/8"), Limit: rate.Limit{}},
-				{Prefix: netip.MustParsePrefix("192.168.0.0/16"), Limit: rate.Limit{}},
-				{Prefix: netip.MustParsePrefix("fc00::/7"), Limit: rate.Limit{}},
-			},
-			GlobalLimit: rate.Limit{},
+		rcmgr.WithConnRateLimiters(&libp2pRate.Limiter{
+			NetworkPrefixLimits: prefixLimits,
+			GlobalLimit:         libp2pRate.Limit{},
 		}),
-		rcmgr.WithNetworkPrefixLimit(
-			[]rcmgr.NetworkPrefixLimit{
-				{Network: netip.MustParsePrefix("127.0.0.0/8"), ConnCount: math.MaxInt},
-				{Network: netip.MustParsePrefix("::1/128"), ConnCount: math.MaxInt},
-				{Network: netip.MustParsePrefix("172.16.0.0/12"), ConnCount: math.MaxInt},
-				{Network: netip.MustParsePrefix("10.0.0.0/8"), ConnCount: math.MaxInt},
-				{Network: netip.MustParsePrefix("192.168.0.0/16"), ConnCount: math.MaxInt},
-			},
-			[]rcmgr.NetworkPrefixLimit{
-				{Network: netip.MustParsePrefix("::1/128"), ConnCount: math.MaxInt},
-				{Network: netip.MustParsePrefix("fc00::/7"), ConnCount: math.MaxInt},
-			},
-		),
+		rcmgr.WithNetworkPrefixLimit(connLimits4, connLimits6),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource manager: %w", err)
@@ -453,6 +464,8 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		return nil, fmt.Errorf("failed to create connection manager: %w", err)
 	}
 
+	trustedProxies := parseTrustedProxies(cfg.TrustedProxies)
+
 	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(cfg.ListenAddrs()...),
 		libp2p.ConnectionManager(cmgr),
@@ -462,14 +475,15 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		libp2p.ResourceManager(rm),
 		libp2p.DefaultPeerstore,
 		libp2p.UserAgent("lumeweb-ipfs/" + pluginBuild.GetInfo().Short()),
-		libp2p.Transport(tcp.NewTCPTransport),
-		libp2p.Transport(ws.New),
-		libp2p.ShareTCPListener(),
+		libp2p.Transport(newProxyTCPTransport(trustedProxies)),
 		libp2p.Transport(quic.NewTransport),
 		libp2p.Transport(webtransport.New),
 		libp2p.Transport(webrtc.New),
+		libp2p.Transport(ws.New),
 		libp2p.PrometheusRegisterer(prometheus.WrapRegistererWithPrefix("libp2p_", core.PluginMetricsRegistry(internal.ProtocolName))),
-		libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+	}
+
+	opts = append(opts, libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 			ctx.Logger().Debug("ipfs AddrsFactory invoked",
 				zap.Int("host_addr_count", len(addrs)),
 				zap.Int("config_port", cfg.Port),
@@ -511,8 +525,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 			return lo.Filter(announceAddresses, func(addr multiaddr.Multiaddr, _ int) bool {
 				return addr != nil
 			})
-		}),
-	}
+	}))
 
 	node, err := libp2p.New(opts...)
 	if err != nil {
@@ -624,14 +637,33 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		bitswap.MaxOutstandingBytesPerPeer(1 << 20),
 	}
 
+	if cfg.Bitswap.MaxQueuedWantlistEntriesPerPeer > 0 {
+		bitswapOpts = append(bitswapOpts, bitswap.MaxQueuedWantlistEntriesPerPeer(cfg.Bitswap.MaxQueuedWantlistEntriesPerPeer))
+	}
+
 	bs = &blockstore.ValidatingBlockstore{Blockstore: bs}
 
-	// Create tracer to track peer-to-peer block requests for probabilistic attribution
 	bitswapTracer := NewBitswapTracer(peerTracker, node)
 	bitswapOpts = append(bitswapOpts, bitswap.WithTracer(tracerpkg.Tracer(bitswapTracer)))
 
-	// Setup disconnect listeners to clean up peer requests when peers disconnect
 	bitswapTracer.SetupDisconnectListeners()
+
+	if cfg.Bitswap.GlobalWantRateLimit > 0 || len(gatewayPeerIDs) > 0 {
+		wantFilter := NewWantBlockFilter(node, WantBlockFilterConfig{
+			GatewayPeers: gatewayPeerIDs,
+			GlobalRate:   rate.Limit(cfg.Bitswap.GlobalWantRateLimit),
+			GlobalBurst:  cfg.Bitswap.GlobalWantBurst,
+			PerPeerRate:  rate.Limit(cfg.Bitswap.PerPeerWantRateLimit),
+			PerPeerBurst: cfg.Bitswap.PerPeerWantBurst,
+		})
+		bitswapOpts = append(bitswapOpts, bitswap.WithPeerBlockRequestFilter(wantFilter.PeerBlockRequestFilter()))
+
+		node.Network().Notify(&network.NotifyBundle{
+			DisconnectedF: func(_ network.Network, conn network.Conn) {
+				wantFilter.RemovePeerLimiter(conn.RemotePeer())
+			},
+		})
+	}
 
 	bitswapNet := bsnet.NewFromIpfsHost(node)
 	_bitswap := bitswap.New(ctx, bitswapNet, routingImpl, bs, bitswapOpts...)
@@ -878,4 +910,83 @@ func allPeersLocal(peers []peer.AddrInfo) bool {
 	return true
 }
 
+func mustParsePrefix(s string) netip.Prefix {
+	return netip.MustParsePrefix(s)
+}
+
+func mustParseCIDR(s string) *net.IPNet {
+	_, ipNet, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(fmt.Sprintf("invalid CIDR %q: %v", s, err))
+	}
+	return ipNet
+}
+
+func parseGatewayMultiaddrs(addrs []string) (ipNets []*net.IPNet, peerIDs []peer.ID) {
+	for _, s := range addrs {
+		ma, err := multiaddr.NewMultiaddr(s)
+		if err != nil {
+			continue
+		}
+
+		for _, c := range ma {
+			switch c.Protocol().Code {
+			case multiaddr.P_IP4, multiaddr.P_IP6:
+				ip := net.ParseIP(c.Value())
+				if ip != nil {
+					bits := 128
+					if ip.To4() != nil {
+						bits = 32
+					}
+					_, ipNet, _ := net.ParseCIDR(fmt.Sprintf("%s/%d", ip.String(), bits))
+					if ipNet != nil {
+						ipNets = append(ipNets, ipNet)
+					}
+				}
+			case multiaddr.P_P2P:
+				p, err := peer.Decode(c.Value())
+				if err == nil {
+					peerIDs = append(peerIDs, p)
+				}
+			}
+		}
+	}
+	return ipNets, peerIDs
+}
+
+func netIPNetToPrefix(n *net.IPNet) netip.Prefix {
+	ones, _ := n.Mask.Size()
+	return netip.PrefixFrom(netIPToAddr(n.IP), ones)
+}
+
+func netIPToAddr(ip net.IP) netip.Addr {
+	if v4 := ip.To4(); v4 != nil {
+		return netip.AddrFrom4([4]byte(v4))
+	}
+	return netip.AddrFrom16([16]byte(ip.To16()))
+}
+
+func parseTrustedProxies(cidrs []string) []*net.IPNet {
+	var nets []*net.IPNet
+	for _, s := range cidrs {
+		_, ipNet, err := net.ParseCIDR(s)
+		if err != nil {
+			continue
+		}
+		nets = append(nets, ipNet)
+	}
+	return nets
+}
+
+func parseGatewayPeers(peerStrs []string) []peer.ID {
+	var peers []peer.ID
+	for _, s := range peerStrs {
+		p, err := peer.Decode(s)
+		if err != nil {
+			continue
+		}
+		peers = append(peers, p)
+	}
+	return peers
+}
 
