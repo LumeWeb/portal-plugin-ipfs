@@ -62,6 +62,25 @@ func TestAPI_RoutingGetIPNS(t *testing.T) {
 			assert.Equal(t, http.StatusBadRequest, rec.Code)
 		}, TestOptions)
 	})
+
+	t.Run("raw_peer_id", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+
+			protoMock := core.GetProtocol(internal.ProtocolName).(*protocol.MockProtoNode)
+			mockIPFSNode := protoMock.GetNode().(*mocks.MockIPFSNode)
+			mockPublisher := mockIPFSNode.GetPublisher().(*mocks.MockIPNSPublisher)
+
+			mockRecord := createMockIPNSRecord(t, TestCID)
+			mockPublisher.EXPECT().GetPublished(mock.Anything, mock.AnythingOfType("ipns.Name"), false).Return(mockRecord, nil)
+
+			rec := helper.makeRequest(http.MethodGet, fmt.Sprintf("/routing/v1/ipns/%s", TestPeerID), nil)
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+			assert.Contains(t, rec.Header().Get("Content-Type"), "ipns-record")
+			assert.NotEmpty(t, rec.Body.Bytes())
+		}, TestOptions)
+	})
 }
 
 func TestAPI_RoutingFindProviders(t *testing.T) {

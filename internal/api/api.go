@@ -955,15 +955,16 @@ See also:.*`),
 
 	routingV1Routes := router.DefineRoutes(
 		router.NewRoute(http.MethodGet, "/routing/v1/ipns/:name", routingWrapped,
+			router.WithMiddlewares(normalizeIPNSNameMiddleware),
 			router.WithSwagger(
 				router.WithSummary("Get IPNS record"),
 				router.WithDescription(`Returns the signed IPNS record for the given peer ID.
 
-Implements the IPFS Delegated Routing V1 HTTP API (IPIP-337). The response is a raw IPNS record in binary format (application/vnd.ipfs.ipns-record).
+Implements the IPFS Delegated Routing V1 HTTP API (IPIP-337). The response is a raw IPNS record in binary format (application/vnd.ipfs.ipns-record). Accepts both CIDv1 (bafzaajaiaejc...) and raw peer ID (12D3KooW...) formats.
 
 See also: https://specs.ipfs.tech/ipips/ipip-337/`),
 				router.WithTags("Routing"),
-				router.WithPathParam("name", "Peer ID of the IPNS key", ""),
+				router.WithPathParam("name", "Peer ID of the IPNS key (CIDv1 or raw peer ID format)", ""),
 				router.WithSuccessResponse(http.StatusOK, "IPNS record", router.WithContent("application/vnd.ipfs.ipns-record", "Raw IPNS record bytes")),
 			),
 		),
