@@ -298,6 +298,12 @@ func TestIsValidIPNSTarget_CIDNotLibp2pKey(t *testing.T) {
 	require.False(t, isValidIPNSTarget(nonLibp2pKeyCID), "CID without libp2p-key codec should return false")
 }
 
+func TestIsValidIPNSTarget_CIDv0(t *testing.T) {
+	// CIDv0 (Qm...) accidentally passes peer.Decode since both use base58btc
+	// multihash encoding, but it's a content hash, not a peer ID.
+	require.False(t, isValidIPNSTarget("QmWLqGsc1X914yZjFgqZ16uzPV69AZjrc4ioMemMhoHWee"), "CIDv0 should not be valid IPNS target")
+}
+
 func TestIsValidIPNSTarget_MultipleValidFormats(t *testing.T) {
 	// Test all valid formats
 	validTargets := []string{

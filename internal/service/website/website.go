@@ -1306,21 +1306,15 @@ func (s *WebsiteServiceDefault) validateDomain(domain string) error {
 // isValidIPNSTarget checks if a target hash is a valid IPNS target
 // Returns true if the peer ID or CIDv1 with libp2p-key codec is valid
 func isValidIPNSTarget(targetHash string) bool {
-	// Try peer ID decode first (IPNS uses libp2p peer IDs in base36)
-	_, err := peer.Decode(targetHash)
-	if err != nil {
-		// FALLBACK: Try CID decode (supports CIDv1 with libp2p-key codec)
-		c, err := cid.Decode(targetHash)
-		if err != nil {
-			return false
-		}
-		// Validate that CID uses libp2p-key codec (0x72) for IPNS
-		if c.Type() != cid.Libp2pKey {
-			return false
-		}
-		return true
+	// Check CID first — CIDv0 accidentally passes peer.Decode since both
+	// use base58btc multihash encoding, but a content hash is not a peer ID.
+	c, cidErr := cid.Decode(targetHash)
+	if cidErr == nil {
+		return c.Version() == 1 && c.Type() == cid.Libp2pKey
 	}
-	return true
+
+	_, err := peer.Decode(targetHash)
+	return err == nil
 }
 
 // ensureIPNSKey creates or reuses an IPNS key for a domain, and publishes the given CID to it.

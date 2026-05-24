@@ -11,6 +11,7 @@ import (
 	"github.com/ipfs/go-cid"
 	ic "github.com/libp2p/go-libp2p/core/crypto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.uber.org/zap"
 )
 
@@ -126,8 +127,10 @@ func (r *Republisher) republishKey(ctx context.Context, key pluginDb.IPFSIPNSKey
 		return fmt.Errorf("parse CID %s: %w", key.LastPublishedCID, err)
 	}
 
+	normalizedCid := encoding.NormalizeCid(targetCid)
+
 	eol := time.Now().Add(r.recordLifetime)
-	err = r.publisher.Publish(ctx, privKey, path.FromCid(targetCid), namesys.PublishWithEOL(eol))
+	err = r.publisher.Publish(ctx, privKey, path.FromCid(normalizedCid), namesys.PublishWithEOL(eol))
 	if err != nil {
 		return fmt.Errorf("publish: %w", err)
 	}
