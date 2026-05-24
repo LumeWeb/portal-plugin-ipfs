@@ -543,6 +543,26 @@ func TestWebsiteRequest_ToModel_IPNS_WithPlainCID_AutoConvert(t *testing.T) {
 	assert.NotNil(t, model.TargetMultihash, "TargetMultihash should be set from the CID")
 }
 
+func TestWebsiteRequest_ToModel_IPNS_WithCIDv0_AutoConvert(t *testing.T) {
+	targetType := db.WebsiteTargetTypeIPNS
+	// CIDv0 (Qm...) accidentally passes peer.Decode since both use base58btc
+	// multihash encoding, but it's a content hash — should trigger auto-conversion.
+	req := WebsiteRequest{
+		Domain:     "example.com",
+		TargetType: targetType,
+		TargetHash: "QmWLqGsc1X914yZjFgqZ16uzPV69AZjrc4ioMemMhoHWee",
+	}
+
+	model, err := req.ToModel()
+	require.NoError(t, err)
+	assert.Equal(t, string(db.WebsiteTargetTypeIPNS), model.TargetType)
+	assert.NotNil(t, model.CIDVersion, "CIDVersion should be set for auto-conversion")
+	assert.NotNil(t, model.CIDType, "CIDType should be set for auto-conversion")
+	assert.NotNil(t, model.TargetMultihash, "TargetMultihash should be set from the CID")
+	// CIDv0 is normalized to v1, so CIDVersion should be 1, not 0
+	assert.Equal(t, uint8(1), *model.CIDVersion, "CIDv0 should be normalized to v1")
+}
+
 func TestWebsiteRequest_ToModel_IPNS_WithInvalidHash_Rejected(t *testing.T) {
 	targetType := db.WebsiteTargetTypeIPNS
 	req := WebsiteRequest{

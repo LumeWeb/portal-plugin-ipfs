@@ -20,21 +20,27 @@ func NewIPNSTargetFromPeerID(pid peer.ID) (IPNSTarget, error) {
 	return IPNSTarget(mh), nil
 }
 
-// NewIPNSTargetFromString creates an IPNSTarget from a peer ID string or CIDv1 with libp2p-key codec
+// NewIPNSTargetFromString creates an IPNSTarget from a peer ID string or CIDv1 with libp2p-key codec.
+// CIDv0 strings are rejected because they accidentally pass peer.Decode (both use base58btc
+// multihash encoding), but a content hash is not a peer ID. Such CIDs should be handled
+// by the caller's auto-conversion path instead.
 func NewIPNSTargetFromString(s string) (IPNSTarget, error) {
-	// First try as peer ID string (base36)
+	// Check if it's a CID first.
+	// CIDv0 accidentally passes peer.Decode since both use base58btc multihash,
+	// but a content hash is not a peer ID — let the caller handle auto-conversion.
+	c, cidErr := cid.Decode(s)
+	if cidErr == nil {
+		if c.Version() == 1 && c.Type() == cid.Libp2pKey {
+			return IPNSTarget(c.Hash()), nil
+		}
+		// Any other CID (v0, v1 with dag-pb/raw/dag-cbor, etc.) is not a peer ID.
+		return IPNSTarget{}, fmt.Errorf("not a peer ID: CID must be libp2p-key codec for IPNS target")
+	}
+
+	// Not a CID — try as peer ID string (base36 or base58btc)
 	pid, err := peer.Decode(s)
 	if err == nil {
 		return IPNSTarget(mh.Multihash(pid)), nil
-	}
-
-	// Then try as CID (might be CIDv1 with libp2p-key)
-	c, err := cid.Decode(s)
-	if err == nil {
-		if c.Type() == cid.Libp2pKey {
-			return IPNSTarget(c.Hash()), nil
-		}
-		return IPNSTarget{}, fmt.Errorf("CID must be libp2p-key codec for IPNS target")
 	}
 
 	return IPNSTarget{}, fmt.Errorf("invalid IPNS target: %w", err)
