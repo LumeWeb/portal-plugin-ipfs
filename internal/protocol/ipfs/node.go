@@ -934,7 +934,7 @@ func parseGatewayMultiaddrs(addrs []string) (ipNets []*net.IPNet, peerIDs []peer
 			case multiaddr.P_IP4, multiaddr.P_IP6:
 				ip := net.ParseIP(c.Value())
 				if ip != nil {
-					bits := len(ip)
+					bits := 128
 					if ip.To4() != nil {
 						bits = 32
 					}
