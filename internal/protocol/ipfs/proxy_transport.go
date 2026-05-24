@@ -16,10 +16,10 @@ type proxyTCPTransport struct {
 	inner          *tcp.TcpTransport
 	upgrader       transport.Upgrader
 	rcmgr          network.ResourceManager
-	trustedProxies []*net.IPNet
+	trustedProxies []string
 }
 
-func newProxyTCPTransport(trustedProxies []*net.IPNet) interface{} {
+func newProxyTCPTransport(trustedProxies []string) interface{} {
 	return func(upgrader transport.Upgrader, rcmgr network.ResourceManager) (*proxyTCPTransport, error) {
 		if rcmgr == nil {
 			rcmgr = &network.NullResourceManager{}

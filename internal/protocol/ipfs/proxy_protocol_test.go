@@ -254,15 +254,13 @@ func TestProxyProtocolV2Local(t *testing.T) {
 }
 
 func TestProxyProtocolTrustedProxies(t *testing.T) {
-	_, trustedNet, _ := net.ParseCIDR("127.0.0.0/8")
-
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
 
-	proxyLn := newProxyProtocolListener(ln, []*net.IPNet{trustedNet})
+	proxyLn := newProxyProtocolListener(ln, []string{"127.0.0.0/8"})
 
 	go func() {
 		conn, err := net.Dial("tcp", ln.Addr().String())
@@ -290,15 +288,13 @@ func TestProxyProtocolTrustedProxies(t *testing.T) {
 }
 
 func TestProxyProtocolUntrustedProxy(t *testing.T) {
-	_, trustedNet, _ := net.ParseCIDR("10.0.0.0/8")
-
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
 
-	proxyLn := newProxyProtocolListener(ln, []*net.IPNet{trustedNet})
+	proxyLn := newProxyProtocolListener(ln, []string{"10.0.0.0/8"})
 
 	go func() {
 		conn, err := net.Dial("tcp", ln.Addr().String())

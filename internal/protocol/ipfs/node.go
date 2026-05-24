@@ -966,27 +966,27 @@ func netIPToAddr(ip net.IP) netip.Addr {
 	return netip.AddrFrom16([16]byte(ip.To16()))
 }
 
-func parseTrustedProxies(cidrs []string) []*net.IPNet {
-	var nets []*net.IPNet
-	for _, s := range cidrs {
-		_, ipNet, err := net.ParseCIDR(s)
-		if err != nil {
+func parseTrustedProxies(entries []string) []string {
+	var resolved []string
+	for _, s := range entries {
+		ip := net.ParseIP(s)
+		if ip != nil {
+			resolved = append(resolved, ip.String())
 			continue
 		}
-		nets = append(nets, ipNet)
-	}
-	return nets
-}
 
-func parseGatewayPeers(peerStrs []string) []peer.ID {
-	var peers []peer.ID
-	for _, s := range peerStrs {
-		p, err := peer.Decode(s)
+		ips, err := net.LookupIP(s)
 		if err != nil {
 			continue
 		}
-		peers = append(peers, p)
+		for _, ip := range ips {
+			if v4 := ip.To4(); v4 != nil {
+				resolved = append(resolved, v4.String())
+			} else {
+				resolved = append(resolved, ip.String())
+			}
+		}
 	}
-	return peers
+	return resolved
 }
 
