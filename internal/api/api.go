@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 
+	routingServer "github.com/ipfs/boxo/routing/http/server"
 	"github.com/ipld/go-car/v2"
 	"github.com/labstack/echo/v4"
 	"github.com/tus/tusd/v2/pkg/handler"
@@ -944,6 +945,45 @@ See also:.*`),
 
 	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), publicInfoRoutes, router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register public info routes: %w", err)
+	}
+
+	// Mount boxo Delegated Routing V1 HTTP server (IPIP-337).
+	// Individual routes are registered with portal-router for swagger docs,
+	// but all delegate to the boxo server handler for spec-compliant responses.
+	routingHandler := routingServer.Handler(&pinnerDelegatedRouter{api: a})
+	routingWrapped := echo.WrapHandler(routingHandler)
+
+	routingV1Routes := router.DefineRoutes(
+		router.NewRoute(http.MethodGet, "/routing/v1/ipns/:name", routingWrapped,
+			router.WithSwagger(
+				router.WithSummary("Get IPNS record"),
+				router.WithDescription(`Returns the signed IPNS record for the given peer ID.
+
+Implements the IPFS Delegated Routing V1 HTTP API (IPIP-337). The response is a raw IPNS record in binary format (application/vnd.ipfs.ipns-record).
+
+See also: https://specs.ipfs.tech/ipips/ipip-337/`),
+				router.WithTags("Routing"),
+				router.WithPathParam("name", "Peer ID of the IPNS key", ""),
+				router.WithSuccessResponse(http.StatusOK, "IPNS record", router.WithContent("application/vnd.ipfs.ipns-record", "Raw IPNS record bytes")),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/routing/v1/providers/:cid", routingWrapped,
+			router.WithSwagger(
+				router.WithSummary("Find providers for a CID"),
+				router.WithDescription(`Returns provider records for the given CID.
+
+Implements the IPFS Delegated Routing V1 HTTP API (IPIP-337). Supports both JSON and streaming NDJSON response formats via content negotiation (Accept header).
+
+See also: https://specs.ipfs.tech/ipips/ipip-337/`),
+				router.WithTags("Routing"),
+				router.WithPathParam("cid", "Content identifier", ""),
+				router.WithSuccessResponse(http.StatusOK, "Provider records", router.WithContent("application/x-ndjson", "NDJSON stream of provider records")),
+			),
+		),
+	)
+
+	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), routingV1Routes, router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register routing routes: %w", err)
 	}
 
 	// SSL status routes
