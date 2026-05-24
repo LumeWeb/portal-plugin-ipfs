@@ -73,6 +73,7 @@ require (
 	github.com/multiformats/go-varint v0.1.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pion/transport/v4 v4.0.1 // indirect
+	github.com/pires/go-proxyproto v0.12.0 // indirect
 	github.com/slok/go-http-metrics v0.13.0 // indirect
 	github.com/woodsbury/decimal128 v1.4.0 // indirect
 	go.opentelemetry.io/contrib/processors/minsev v0.16.0 // indirect
