@@ -17,6 +17,8 @@ func GetStandardTestOptions() []coreTesting.TestContextBuilderOption {
 		serviceTesting.PresetE2E(),
 		coreTesting.WithConfig("core.mail.host", "localhost"),
 		coreTesting.WithConfig("core.mail.port", 25),
+		coreTesting.WithConfig("plugin.ipfs.protocol.port", 0),
+		coreTesting.WithConfig("plugin.ipfs.protocol.ws_port", 0),
 		coreTesting.WithPlugins(plugin.GetPluginInfoWithTemplates(nil)),
 	}
 }
