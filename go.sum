@@ -1224,6 +1224,8 @@ go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260523103250-09f073f62ebd h1:Z
 go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260523103250-09f073f62ebd/go.mod h1:ZikXTSOxS/Cks5JeX0EOaZ4yvwh+hcHcqPzIzQuJNKQ=
 go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260525071404-2ac05e322008 h1:UwIneO2D9kOwAYaWoDnQiiADAP5uK+3NW+S8CqfTPo0=
 go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260525071404-2ac05e322008/go.mod h1:ZikXTSOxS/Cks5JeX0EOaZ4yvwh+hcHcqPzIzQuJNKQ=
+go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260526111238-0db362e390c5 h1:xz+0OqSex+8umDNsEo/1K7DuM4KKnWT3kfbtJkFc2Lc=
+go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260526111238-0db362e390c5/go.mod h1:ZikXTSOxS/Cks5JeX0EOaZ4yvwh+hcHcqPzIzQuJNKQ=
 go.opencensus.io v0.21.0/go.mod h1:mSImk1erAIZhrmZN+AvHh14ztQfjbGwt4TtuofqLduU=
 go.opencensus.io v0.22.0/go.mod h1:+kGneAE2xo2IficOXnaByMWTGM9T73dGwxeWcUqIpI8=
 go.opencensus.io v0.22.1/go.mod h1:Ap50jQcDJrx6rB6VgeeFPtuPIf3wMRvRfrfYDO6+BmA=
