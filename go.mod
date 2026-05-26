@@ -1,4 +1,4 @@
-module go.lumeweb.com/portal-plugin-ipfs
+module go.lumeweb.com/portal-plugin-ipfs // v0.2.0
 
 go 1.26.0
 
