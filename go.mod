@@ -12,7 +12,7 @@ require (
 	github.com/gammazero/workerpool v1.2.1
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/uuid v1.6.0
-	github.com/ipfs/boxo v0.39.0
+	github.com/ipfs/boxo v0.40.0
 	github.com/ipfs/go-block-format v0.2.3
 	github.com/ipfs/go-cid v0.6.1
 	github.com/ipfs/go-datastore v0.9.1
