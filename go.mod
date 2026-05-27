@@ -46,7 +46,7 @@ require (
 	go.lumeweb.com/ipfs-content v0.1.17
 	go.lumeweb.com/portal v0.5.0
 	go.lumeweb.com/portal-middleware v0.3.7
-	go.lumeweb.com/portal-plugin-core v0.0.0-20260109024150-b4ac33cb7c47
+	go.lumeweb.com/portal-plugin-core v0.1.0
 	go.lumeweb.com/portal-plugin-dashboard v0.3.0
 	go.lumeweb.com/portal-plugin-quota v0.0.0-20260516113050-24bb8f0448e4
 	go.lumeweb.com/portal-router v0.6.16
