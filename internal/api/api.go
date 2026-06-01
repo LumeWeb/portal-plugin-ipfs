@@ -350,7 +350,7 @@ Supports single file uploads with automatic content verification. The uploaded f
 See also:.*`),
 				router.WithTags("Content"),
 				router.WithFileUpload("File to upload", true),
-				router.WithSuccessResponse(http.StatusOK, "File uploaded successfully"),
+				router.WithSuccessResponse(http.StatusOK, "File uploaded successfully", router.WithJSONContent(dto.PostUploadResponse{})),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/upload/result/:identifier", a.handleUploadResult,

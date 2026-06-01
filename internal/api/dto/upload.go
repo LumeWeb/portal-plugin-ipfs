@@ -35,7 +35,7 @@ func (u *UploadRequest) GetArchiveMode() string {
 }
 
 type PostUploadResponse struct {
-	CID string
+	CID string `json:"CID"`
 }
 
 func (p *PostUploadResponse) FromModel(_ *PostUploadResponse) error {
