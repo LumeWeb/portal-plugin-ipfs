@@ -24,7 +24,7 @@ require (
 	github.com/ipfs/go-unixfsnode v1.10.4
 	github.com/ipld/go-car/v2 v2.17.0
 	github.com/ipld/go-codec-dagpb v1.7.0
-	github.com/ipld/go-ipld-prime v0.23.0
+	github.com/ipld/go-ipld-prime v0.24.0
 	github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260601093823-bc7bf1be8a05
 	github.com/labstack/echo/v4 v4.15.2
 	github.com/libp2p/go-libp2p v0.48.0
@@ -279,7 +279,7 @@ require (
 	github.com/pion/webrtc/v4 v4.1.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/polydawn/refmt v0.89.1-0.20231129105047-37766d95467a // indirect
+	github.com/polydawn/refmt v0.90.0 // indirect
 	github.com/pquerna/otp v1.5.0 // indirect
 	github.com/pressly/goose/v3 v3.27.1 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
