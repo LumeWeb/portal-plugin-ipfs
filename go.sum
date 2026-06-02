@@ -590,6 +590,8 @@ github.com/ipld/go-codec-dagpb v1.7.0 h1:hpuvQjCSVSLnTnHXn+QAMR0mLmb1gA6wl10LExo
 github.com/ipld/go-codec-dagpb v1.7.0/go.mod h1:rD3Zg+zub9ZnxcLwfol/OTQRVjaLzXypgy4UqHQvilM=
 github.com/ipld/go-ipld-prime v0.23.0 h1:csqdPZH60BsTC+AZrv7fpa27v+09I/oTqyHYYYE27eE=
 github.com/ipld/go-ipld-prime v0.23.0/go.mod h1:46YCFSFNFBJHPjB0pfMuv7Ly7df2eChpkpyPo5SE0bA=
+github.com/ipld/go-ipld-prime v0.24.0 h1:6th8Z6Peh5bCWuRAVZcDO1sHzZdVF6F2cCCDG3681tg=
+github.com/ipld/go-ipld-prime v0.24.0/go.mod h1:DYZxr/5caLNFbcuU6zLOgwSW7CgUEoC4wJiZMEU8Zhs=
 github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260428045957-b6ff5a2d5c06 h1:DWXtHn9dUGGMXwxfQnvZ/ddL0XADGALCnEaFKScsLBg=
 github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260428045957-b6ff5a2d5c06/go.mod h1:ADlyc3jBD5uyRcU0sik1wxWlrJkuSVADrTojFJehJgM=
 github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260601093823-bc7bf1be8a05 h1:zRwK5xDzWLhOLDh6ZljGGOFPA0Rt42O0nrX755xv9zM=
@@ -970,6 +972,8 @@ github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRI
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/polydawn/refmt v0.89.1-0.20231129105047-37766d95467a h1:cgqrm0F3zwf9IPzca7xN4w+Zy6MC9ZkPvAC8QEWa/iQ=
 github.com/polydawn/refmt v0.89.1-0.20231129105047-37766d95467a/go.mod h1:ocZfO/tLSHqfScRDNTJbAJR1by4D1lewauX9OwTaPuY=
+github.com/polydawn/refmt v0.90.0 h1:58BfEsP+G4uIRD9ApJTFsag+Mw+QQlZuH9uI/lPmjfY=
+github.com/polydawn/refmt v0.90.0/go.mod h1:XAlDMOunevTYDsZtOKQd8itHXFMsX/QtDkPHaj6ZLxk=
 github.com/posener/complete v1.1.1/go.mod h1:em0nMJCgc9GFtwrmVmEMR/ZL6WyhyjMBndrE9hABlRI=
 github.com/pquerna/otp v1.5.0 h1:NMMR+WrmaqXU4EzdGJEE1aUUI0AMRzsp96fFFWNPwxs=
 github.com/pquerna/otp v1.5.0/go.mod h1:dkJfzwRKNiegxyNb54X/3fLwhCynbMspSyWKnvi1AEg=
