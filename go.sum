@@ -596,6 +596,8 @@ github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260428045957-b6ff5a2d5c
 github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260428045957-b6ff5a2d5c06/go.mod h1:ADlyc3jBD5uyRcU0sik1wxWlrJkuSVADrTojFJehJgM=
 github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260601093823-bc7bf1be8a05 h1:zRwK5xDzWLhOLDh6ZljGGOFPA0Rt42O0nrX755xv9zM=
 github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260601093823-bc7bf1be8a05/go.mod h1:ADlyc3jBD5uyRcU0sik1wxWlrJkuSVADrTojFJehJgM=
+github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260602005003-ac2cb1a40572 h1:gEsM8eFjEH4QQsrQAa7gnNq80y3Xs5hVu8hU5o7b8jM=
+github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260602005003-ac2cb1a40572/go.mod h1:ADlyc3jBD5uyRcU0sik1wxWlrJkuSVADrTojFJehJgM=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=
