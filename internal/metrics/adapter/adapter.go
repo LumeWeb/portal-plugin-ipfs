@@ -1,6 +1,8 @@
 package adapter
 
 import (
+	"strings"
+
 	"github.com/ipfs/go-metrics-interface"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -10,6 +12,14 @@ import (
 // Call this once during plugin initialization before creating any IPFS components.
 func InjectPrometheusAdapter(reg prometheus.Registerer) error {
 	return metrics.InjectImpl(func(name, helptext string) metrics.Creator {
+		// go-metrics-interface uses context scopes to prefix metric names via
+		// CtxGetScope(ctx)+"."+name (see ctor.go:NewCtx). When no scope is set
+		// on the context, CtxGetScope returns "<no-scope>", which after
+		// dot-to-underscore conversion becomes "_no_scope__" — polluting every
+		// metric name from boxo components that don't receive a scoped context.
+		// Strip the prefix here since we can't fix boxo's internal context wiring.
+		name = strings.TrimPrefix(name, "_no_scope__")
+
 		return &prometheusCreator{
 			reg:      reg,
 			name:     name,
