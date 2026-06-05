@@ -76,3 +76,8 @@ func (a *API) getGatewayWebsiteStatus(c echo.Context) error {
 
 	return httputil.EncodeResponse(ctx, website, &dto.GatewayWebsiteStatusResponse{})
 }
+
+func (a *API) handlePing(c echo.Context) error {
+	ctx := httputil.Context(c)
+	return httputil.EncodeResponse(ctx, &dto.PingModel{Status: "ok"}, &dto.PingResponse{})
+}
