@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal/core"
@@ -285,7 +286,6 @@ func TestAPI_GetGatewayWebsiteStatus_NotFound(t *testing.T) {
 
 func TestAPI_GetGatewayWebsite_ServiceError(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Arrange
 		helper := newMockHelper(t, ctx)
 		domain := "error.example.com"
 		
@@ -295,11 +295,49 @@ func TestAPI_GetGatewayWebsite_ServiceError(t *testing.T) {
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/websites/"+domain, nil)
 		req.Header.Set("X-Gateway-Secret", "test-secret")
 
-		// Act
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
 
-		// Assert
 		assert.Equal(t, http.StatusInternalServerError, rec.Code, "Should return 500 Internal Server Error on service error")
+	}, TestOptions)
+}
+
+func TestAPI_Ping_Success(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		req := ctx.NewAPIRequest(http.MethodGet, "/internal/ping", nil)
+		req.Header.Set("X-Gateway-Secret", "test-secret")
+
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+
+		var response dto.PingResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, "ok", response.Status)
+	}, TestOptions)
+}
+
+func TestAPI_Ping_MissingSecret(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		req := ctx.NewAPIRequest(http.MethodGet, "/internal/ping", nil)
+
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	}, TestOptions)
+}
+
+func TestAPI_Ping_InvalidSecret(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		req := ctx.NewAPIRequest(http.MethodGet, "/internal/ping", nil)
+		req.Header.Set("X-Gateway-Secret", "wrong-secret")
+
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	}, TestOptions)
 }

@@ -894,6 +894,21 @@ See also:.*`),
 		a.Logger().Info("Gateway middleware initialized with configured secret")
 	}
 	gatewayAuthMw := pluginMw.GatewayAuth(apiConfig, a.Logger())
+	pingRoutes := router.DefineRoutes(
+		router.NewRoute(http.MethodGet, "/internal/ping", a.handlePing,
+			router.WithSwagger(
+				router.WithSummary("Health check"),
+				router.WithDescription("Returns service liveness status. Requires X-Gateway-Secret header for authentication."),
+				router.WithTags("Gateway"),
+				router.WithSuccessResponse(http.StatusOK, "Service is alive", router.WithJSONContent(dto.PingResponse{})),
+			),
+		),
+	)
+
+	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), pingRoutes, router.WithMiddlewares(gatewayAuthMw), router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register ping routes: %w", err)
+	}
+
 	gatewayRoutes := router.DefineRoutes(
 		router.NewRoute(http.MethodGet, "/internal/websites/:domain", a.getGatewayWebsite,
 			router.WithSwagger(
