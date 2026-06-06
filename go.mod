@@ -51,7 +51,7 @@ require (
 	go.lumeweb.com/portal-plugin-quota v0.1.0
 	go.lumeweb.com/portal-router v0.6.16
 	go.lumeweb.com/queryutil v0.3.16
-	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260606140504-280cab62aeb6
+	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260606162242-33afbf9a3873
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.52.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -322,9 +322,9 @@ require (
 	go.lumeweb.com/configmanager v0.3.28 // indirect
 	go.lumeweb.com/event/v2 v2.1.0 // indirect
 	go.lumeweb.com/gswagger v0.20.12 // indirect
-	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20260606140504-280cab62aeb6 // indirect
-	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20260606140504-280cab62aeb6 // indirect
-	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20260606140504-280cab62aeb6 // indirect
+	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20260606162242-33afbf9a3873 // indirect
+	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20260606162242-33afbf9a3873 // indirect
+	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20260606162242-33afbf9a3873 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/bridges/otelzap v0.18.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.68.0 // indirect
