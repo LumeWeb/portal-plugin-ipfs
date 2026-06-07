@@ -232,3 +232,10 @@ func (a *API) deletePin(c echo.Context) error {
 
 	return ctx.NoContent(http.StatusAccepted)
 }
+
+// handlePinOptions is a fallback handler for OPTIONS requests to pin routes.
+// CORS middleware should handle preflight responses before this handler is reached.
+// If reached, it serves as a safety net returning 204 No Content.
+func (a *API) handlePinOptions(c echo.Context) error {
+	return c.NoContent(http.StatusNoContent)
+}

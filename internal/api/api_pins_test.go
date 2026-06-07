@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/google/uuid"
@@ -115,5 +116,38 @@ func TestAPI_listPins_pathIsolation(t *testing.T) {
 		// Verify API group path does NOT work (ensures route isolation)
 		rec2 := helper.makeAuthenticatedRequest(http.MethodGet, "/api/pins", token, nil)
 		assert.Equal(t, http.StatusNotFound, rec2.Code)
+	}, TestOptions)
+}
+
+func TestAPI_pins_CORS_preflight(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		_, _, _, pinID := helper.SetupAuthenticatedTest()
+
+		preflightTests := []struct {
+			name string
+			path string
+		}{
+			{"pins list", "/pins"},
+			{"pin detail", fmt.Sprintf("/pins/%s", pinID.String())},
+		}
+
+		for _, tt := range preflightTests {
+			t.Run(tt.name, func(t *testing.T) {
+				req := ctx.NewAPIRequest(http.MethodOptions, tt.path, nil)
+				req.Header.Set("Origin", "https://example.com")
+				req.Header.Set("Access-Control-Request-Method", "POST")
+				// Headers must be sorted lexicographically per Fetch spec
+				req.Header.Set("Access-Control-Request-Headers", "authorization,content-type")
+
+				rec := httptest.NewRecorder()
+				ctx.Router().ServeHTTP(rec, req)
+
+				assert.Equal(t, http.StatusNoContent, rec.Code)
+				assert.NotEmpty(t, rec.Header().Get("Access-Control-Allow-Origin"))
+				assert.Contains(t, rec.Header().Get("Access-Control-Allow-Methods"), "POST")
+				assert.NotEmpty(t, rec.Header().Get("Access-Control-Allow-Headers"))
+			})
+		}
 	}, TestOptions)
 }
