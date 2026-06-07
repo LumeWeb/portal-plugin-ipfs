@@ -274,6 +274,29 @@ See also:.*`),
 				router.WithSuccessResponse(http.StatusAccepted, "Successful response"),
 			),
 		),
+		router.NewRoute(http.MethodOptions, "/pins", a.handlePinOptions,
+			router.WithSwagger(
+				router.WithSummary("Pins OPTIONS"),
+				router.WithDescription(`CORS preflight handler for pins endpoints.
+
+Handles OPTIONS requests for pins endpoints. Most CORS preflight requests are handled by middleware, this serves as a fallback.
+
+See also:.*`),
+				router.WithTags("Pinning"),
+			),
+		),
+		router.NewRoute(http.MethodOptions, "/pins/:requestid", a.handlePinOptions,
+			router.WithSwagger(
+				router.WithSummary("Pin detail OPTIONS"),
+				router.WithDescription(`CORS preflight handler for pin detail endpoints.
+
+Handles OPTIONS requests for pin detail endpoints. Most CORS preflight requests are handled by middleware, this serves as a fallback.
+
+See also:.*`),
+				router.WithTags("Pinning"),
+				router.WithPathParam("requestid", "Unique identifier for the pin operation. Example: bafkreiexample", ""),
+			),
+		),
 	)
 
 	fileManagerListProvider := queryutil.NewSchemaProvider().ForType(&dto.FileManagerListRequest{})
