@@ -10,8 +10,11 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/core"
 
 	"github.com/ipfs/go-cid"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.uber.org/zap"
 )
@@ -529,4 +532,60 @@ func TestReprovider_performProvide_MinAnnouncement_NotAllAnnounced(t *testing.T)
 	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
 
 	assert.Less(t, time.Until(testCIDs[2].LastAnnouncement.Add(interval)), sleepDuration)
+}
+
+func TestBasicDHTProvider_ProvideMany(t *testing.T) {
+	t.Run("ready_always_true", func(t *testing.T) {
+		provider := newBasicDHTProvider(&stubContentRouting{})
+		assert.True(t, provider.Ready())
+	})
+
+	t.Run("provide_many_calls_provide_for_each_key", func(t *testing.T) {
+		c1 := cid.NewCidV1(cid.Raw, mustMultihash(t, "key1"))
+		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "key2"))
+
+		scr := &stubContentRouting{}
+		provider := newBasicDHTProvider(scr)
+
+		keys := []multihash.Multihash{c1.Hash(), c2.Hash()}
+		err := provider.ProvideMany(context.Background(), keys)
+		assert.NoError(t, err)
+		assert.Equal(t, 2, scr.provideCount)
+	})
+
+	t.Run("provide_many_stops_on_first_error", func(t *testing.T) {
+		c1 := cid.NewCidV1(cid.Raw, mustMultihash(t, "key1"))
+		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "key2"))
+
+		testErr := errors.New("provide failed")
+		scr := &stubContentRouting{err: testErr}
+		provider := newBasicDHTProvider(scr)
+
+		keys := []multihash.Multihash{c1.Hash(), c2.Hash()}
+		err := provider.ProvideMany(context.Background(), keys)
+		assert.ErrorIs(t, err, testErr)
+		assert.Equal(t, 1, scr.provideCount) // stopped after first error
+	})
+}
+
+// stubContentRouting is a minimal routing.ContentRouting stub for testing.
+type stubContentRouting struct {
+	provideCount int
+	err          error
+}
+
+func (s *stubContentRouting) Provide(_ context.Context, _ cid.Cid, _ bool) error {
+	s.provideCount++
+	return s.err
+}
+
+func (s *stubContentRouting) FindProvidersAsync(_ context.Context, _ cid.Cid, _ int) <-chan peer.AddrInfo {
+	return nil
+}
+
+func mustMultihash(t *testing.T, data string) multihash.Multihash {
+	t.Helper()
+	h, err := multihash.Sum([]byte(data), multihash.SHA2_256, -1)
+	require.NoError(t, err)
+	return h
 }

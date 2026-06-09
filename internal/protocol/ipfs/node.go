@@ -693,7 +693,15 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	var rp *Reprovider
 	var reproviderCancel context.CancelFunc
 	if hasProvider {
-		rp = NewReprovider(dhtProvider, rs, ctx.Logger().Named("reprovider"))
+		// When a companion (server-mode) DHT exists alongside FullRT, use the
+		// companion for providing. FullRT is client-only and does not reliably
+		// put provider records into the DHT network. This matches the behavior
+		// of ProvideCID which also routes through the companion when available.
+		reproviderProvider := dhtProvider
+		if ipfsNode.companionDHT != nil {
+			reproviderProvider = newBasicDHTProvider(ipfsNode.companionDHT)
+		}
+		rp = NewReprovider(reproviderProvider, rs, ctx.Logger().Named("reprovider"))
 		reproviderCtx, cancel := context.WithCancel(ctx)
 		reproviderCancel = cancel
 		go rp.Run(reproviderCtx, cfg.Provider.Interval, cfg.Provider.Timeout, cfg.Provider.BatchSize)
