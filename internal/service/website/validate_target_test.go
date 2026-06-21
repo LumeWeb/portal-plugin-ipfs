@@ -3,12 +3,15 @@ package website
 import (
 	"testing"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal/core"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	"gorm.io/gorm"
 )
 
 const (
@@ -167,105 +170,139 @@ func TestValidateTarget_IPNS_MultiplePeerIDFormats(t *testing.T) {
 	}, TestOptions)
 }
 
-func TestValidateIPNSTarget_ValidPeerID(t *testing.T) {
+func TestValidateIPFSTarget_PinnedCID(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
+		svc := websiteService.(*WebsiteServiceDefault)
 
-		// Use a valid peer ID
-		peerIDString := TestPeerID1
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		require.NotNil(tb, mockPinSvc)
 
-		// Act & Assert
-		valid, err := websiteService.(*WebsiteServiceDefault).validateIPNSTarget(ctx, peerIDString)
-		require.NoError(tb, err, "Valid peer ID should pass validation")
-		require.True(tb, valid, "Valid peer ID should return true")
+		testCID := util.GenerateTestCID(t, "pinned-content")
+		testUserID := uint(1)
+
+		// Mock: pin exists and is pinned
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, testCID, testUserID).
+			Return(&pluginDb.IPFSPin{
+				UserID: testUserID,
+				CID:    testCID.Bytes(),
+				Status: pluginDb.PinningStatusPinned,
+			}, nil).Once()
+
+		// Act & Assert — should succeed because the CID is pinned
+		err := svc.validateIPFSTarget(ctx, testUserID, testCID.String())
+		require.NoError(tb, err, "Pinned CID should pass validation")
 	}, TestOptions)
 }
 
-func TestValidateIPNSTarget_CIDv1Libp2pKey(t *testing.T) {
+func TestValidateIPFSTarget_UnpinnedCID(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
+		svc := websiteService.(*WebsiteServiceDefault)
 
-		// Use a valid CIDv1 with libp2p-key codec
-		cidv1Key := TestCIDv1Libp2pKey
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		require.NotNil(tb, mockPinSvc)
 
-		// Act & Assert
-		valid, err := websiteService.(*WebsiteServiceDefault).validateIPNSTarget(ctx, cidv1Key)
-		require.NoError(tb, err, "Valid CIDv1 with libp2p-key codec should pass validation")
-		require.True(tb, valid, "Valid CIDv1 should return true")
+		testCID := util.GenerateTestCID(t, "unpinned-content")
+		testUserID := uint(1)
+
+		// Mock: no pin record found
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, testCID, testUserID).
+			Return(nil, gorm.ErrRecordNotFound).Once()
+
+		// Act & Assert — should fail because the CID is not pinned
+		err := svc.validateIPFSTarget(ctx, testUserID, testCID.String())
+		require.Error(tb, err, "Unpinned CID should fail validation")
+		require.ErrorIs(tb, err, ErrCIDNotPinned)
 	}, TestOptions)
 }
 
-func TestValidateIPNSTarget_InvalidPeerID(t *testing.T) {
+func TestValidateIPFSTarget_QueuedPin(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
+		svc := websiteService.(*WebsiteServiceDefault)
 
-		// Invalid peer ID string
-		invalidPeerID := "not-valid-peer-id"
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		require.NotNil(tb, mockPinSvc)
 
-		// Act & Assert
-		valid, err := websiteService.(*WebsiteServiceDefault).validateIPNSTarget(ctx, invalidPeerID)
-		require.Error(tb, err, "Invalid peer ID should fail validation")
-		require.False(tb, valid, "Invalid peer ID should return false")
+		testCID := util.GenerateTestCID(t, "queued-content")
+		testUserID := uint(1)
+
+		// Mock: pin exists but is still queued
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, testCID, testUserID).
+			Return(&pluginDb.IPFSPin{
+				UserID: testUserID,
+				CID:    testCID.Bytes(),
+				Status: pluginDb.PinningStatusQueued,
+			}, nil).Once()
+
+		// Act & Assert — should fail because the pin is still queued, not pinned
+		err := svc.validateIPFSTarget(ctx, testUserID, testCID.String())
+		require.Error(tb, err, "Queued (not yet pinned) CID should fail validation")
+		require.ErrorIs(tb, err, ErrCIDNotPinned)
 	}, TestOptions)
 }
 
-func TestValidateIPNSTarget_InvalidCID(t *testing.T) {
+func TestValidateIPFSTarget_InvalidCID(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
+		svc := websiteService.(*WebsiteServiceDefault)
 
-		// Invalid CID format
-		invalidCID := "invalid-cid-format"
-
-		// Act & Assert
-		valid, err := websiteService.(*WebsiteServiceDefault).validateIPNSTarget(ctx, invalidCID)
-		require.Error(tb, err, "Invalid CID should fail validation")
-		require.False(tb, valid, "Invalid CID should return false")
+		// Act & Assert — invalid CID string should return an error
+		err := svc.validateIPFSTarget(ctx, 1, "not-a-valid-cid")
+		require.Error(tb, err, "Invalid CID string should fail validation")
 	}, TestOptions)
 }
 
-func TestValidateIPNSTarget_CIDNotLibp2pKey(t *testing.T) {
+func TestValidateIPNSKeyResolution_KeyExists(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
+		svc := websiteService.(*WebsiteServiceDefault)
 
-		// Valid CID but not libp2p-key codec
-		nonLibp2pKeyCID := "bafkreiem6tcea4zz7g2z4w4ocjp7t3ve5s7uoixxxdh2ikvmq3retdhsy"
+		mockIPNSKeySvc := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, mockIPNSKeySvc)
 
-		// Act & Assert
-		valid, err := websiteService.(*WebsiteServiceDefault).validateIPNSTarget(ctx, nonLibp2pKeyCID)
-		require.Error(tb, err, "CID without libp2p-key codec should fail validation")
-		require.False(tb, valid, "CID without libp2p-key codec should return false")
+		testUserID := uint(1)
+		peerIDStr := TestPeerID1
+
+		// Mock: key exists and belongs to the user
+		mockIPNSKeySvc.EXPECT().GetPrivateKeyByPeerID(mock.Anything, peerIDStr).
+			Return(nil, testUserID, nil).Once()
+
+		// Act & Assert — should succeed because the key exists and belongs to the user
+		err := svc.validateIPNSKeyResolution(ctx, testUserID, peerIDStr)
+		require.NoError(tb, err, "Valid IPNS key belonging to the user should pass validation")
 	}, TestOptions)
 }
 
-func TestValidateIPNSTarget_MultipleValidFormats(t *testing.T) {
+func TestValidateIPNSKeyResolution_KeyNotFound(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, websiteService)
+		svc := websiteService.(*WebsiteServiceDefault)
 
-		// Test multiple valid peer ID formats and CIDv1 libp2p-key formats
-		validTargets := []string{
-			TestPeerID1,        // ed25519 peer ID
-			TestPeerID2,        // Another valid ed25519 peer ID
-			TestCIDv1Libp2pKey, // CIDv1 libp2p-key
-		}
+		mockIPNSKeySvc := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, mockIPNSKeySvc)
 
-		// Act & Assert
-		for _, target := range validTargets {
-			valid, err := websiteService.(*WebsiteServiceDefault).validateIPNSTarget(ctx, target)
-			require.NoError(tb, err, "Target %s should pass validation", target)
-			require.True(tb, valid, "Target %s should return true", target)
-		}
+		// Act & Assert — should fail because no key exists for this peer ID
+		peerIDStr := TestPeerID1
+		mockIPNSKeySvc.EXPECT().GetPrivateKeyByPeerID(mock.Anything, peerIDStr).
+			Return(nil, uint(0), gorm.ErrRecordNotFound).Once()
+
+		err := svc.validateIPNSKeyResolution(ctx, 1, peerIDStr)
+		require.Error(tb, err, "Non-existent IPNS key should fail validation")
+		require.ErrorIs(tb, err, ErrIPNSKeyNotFound)
 	}, TestOptions)
 }
 
