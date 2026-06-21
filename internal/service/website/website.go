@@ -1451,6 +1451,8 @@ func (s *WebsiteServiceDefault) validateIPFSTarget(ctx context.Context, userID u
 		return fmt.Errorf("%w: %v", ErrInvalidCID, err)
 	}
 
+	c = encoding.NormalizeCid(c)
+
 	pin, err := s.pinSvc.GetPinByCIDAndUser(ctx, c, userID)
 	if err != nil || pin == nil {
 		return ErrCIDNotPinned
