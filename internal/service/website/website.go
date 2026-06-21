@@ -60,6 +60,8 @@ var (
 	ErrInvalidIPNS   = errors.New("invalid IPNS name")
 	ErrInvalidTarget = errors.New("invalid target")
 	ErrInvalidDomain = errors.New("invalid domain")
+	ErrCIDNotPinned  = errors.New("CID is not pinned")
+	ErrIPNSKeyNotFound = errors.New("IPNS key not found")
 )
 
 // WebsiteServiceDefault implements the WebsiteService interface
@@ -499,6 +501,12 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 						publishCID := targetHashStr
 						var publishHash string
 
+						// Verify the CID is pinned before publishing to IPNS
+						if err := s.validateIPFSTarget(ctx, userID, publishCID); err != nil {
+							_ = tx.AddError(fmt.Errorf("CID validation failed: %w", err))
+							return tx
+						}
+
 						ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, website.Domain, publishCID)
 						if err != nil {
 							_ = tx.AddError(err)
@@ -528,6 +536,14 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 							return tx
 						}
 
+						// For IPNS targets, verify the key exists and belongs to the user
+						if targetType == string(pluginDb.WebsiteTargetTypeIPNS) {
+							if err := s.validateIPNSKeyResolution(ctx, userID, targetHashStr); err != nil {
+								_ = tx.AddError(fmt.Errorf("IPNS key validation failed: %w", err))
+								return tx
+							}
+						}
+
 						// Check if target hash changed
 						if targetHashStr != oldTargetHash {
 							targetHashChanged = true
@@ -541,6 +557,13 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 								_ = tx.AddError(fmt.Errorf("failed to decode CID: %w", err))
 								return tx
 							}
+
+							// Verify the CID is pinned before accepting the update
+							if err := s.validateIPFSTarget(ctx, userID, targetHashStr); err != nil {
+								_ = tx.AddError(fmt.Errorf("CID validation failed: %w", err))
+								return tx
+							}
+
 							normalizedCid := encoding.NormalizeCid(c)
 							updates["target_multihash"] = normalizedCid.Hash()
 							version := uint8(normalizedCid.Version())
@@ -568,6 +591,12 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 					if requestedType == pluginDb.WebsiteTargetTypeIPNS && oldTargetType == pluginDb.WebsiteTargetTypeIPFS {
 						// IPFS → IPNS: auto-create key, publish current CID
 						publishCID := oldTargetHash
+
+						// Verify the CID is pinned before publishing to IPNS
+						if err := s.validateIPFSTarget(ctx, userID, publishCID); err != nil {
+							_ = tx.AddError(fmt.Errorf("CID validation failed: %w", err))
+							return tx
+						}
 
 						ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, website.Domain, publishCID)
 						if err != nil {
@@ -1233,33 +1262,23 @@ func (s *WebsiteServiceDefault) CheckStatus(ctx context.Context, website *plugin
 			switch pluginDb.WebsiteTargetType(website.TargetType) {
 			case pluginDb.WebsiteTargetTypeIPFS:
 				// For IPFS targets, check if the CID is pinned
-				valid, err := s.validateIPFSTarget(ctx, website.TargetHash())
-				if err != nil {
+				if err := s.validateIPFSTarget(ctx, website.UserID, website.TargetHash()); err != nil {
 					s.Logger().Error("Failed to validate IPFS target",
 						zap.Error(err),
 						zap.String("target_hash", website.TargetHash()))
 					return pluginDb.WebsiteStatusBroken, fmt.Errorf("failed to validate IPFS target: %w", err)
 				}
-				if valid {
-					newStatus = pluginDb.WebsiteStatusActive
-				} else {
-					newStatus = pluginDb.WebsiteStatusBroken
-				}
+				newStatus = pluginDb.WebsiteStatusActive
 
 			case pluginDb.WebsiteTargetTypeIPNS:
-				// For IPNS targets, check if the key exists
-				valid, err := s.validateIPNSTarget(ctx, website.TargetHash())
-				if err != nil {
+				// For IPNS targets, check if the key exists and belongs to the owner
+				if err := s.validateIPNSKeyResolution(ctx, website.UserID, website.TargetHash()); err != nil {
 					s.Logger().Error("Failed to validate IPNS target",
 						zap.Error(err),
 						zap.String("target_hash", website.TargetHash()))
 					return pluginDb.WebsiteStatusBroken, fmt.Errorf("failed to validate IPNS target: %w", err)
 				}
-				if valid {
-					newStatus = pluginDb.WebsiteStatusActive
-				} else {
-					newStatus = pluginDb.WebsiteStatusBroken
-				}
+				newStatus = pluginDb.WebsiteStatusActive
 
 			default:
 				return pluginDb.WebsiteStatusBroken, fmt.Errorf("unknown target type: %s", website.TargetType)
@@ -1425,33 +1444,40 @@ func (s *WebsiteServiceDefault) validateTarget(targetType string, targetHash str
 	return nil
 }
 
-// validateIPFSTarget checks if an IPFS CID is pinned
-func (s *WebsiteServiceDefault) validateIPFSTarget(ctx context.Context, targetHash string) (bool, error) {
+// validateIPFSTarget checks if an IPFS CID is pinned and returns an error if not.
+func (s *WebsiteServiceDefault) validateIPFSTarget(ctx context.Context, userID uint, targetHash string) error {
 	c, err := cid.Decode(targetHash)
 	if err != nil {
-		return false, err
+		return fmt.Errorf("%w: %v", ErrInvalidCID, err)
 	}
 
-	// Check if the CID is pinned by any user
-	// For Phase 1, we'll just check if it's a valid CID
-	// In production, we would check the pin status
-	_, err = s.pinSvc.GetPinByCIDAndUser(ctx, c, 0)
-	if err != nil {
-		return false, nil // Not pinned
+	c = encoding.NormalizeCid(c)
+
+	pin, err := s.pinSvc.GetPinByCIDAndUser(ctx, c, userID)
+	if err != nil || pin == nil {
+		return ErrCIDNotPinned
 	}
 
-	return true, nil
+	if pin.Status != pluginDb.PinningStatusPinned {
+		return ErrCIDNotPinned
+	}
+
+	return nil
 }
 
-// validateIPNSTarget checks if an IPNS key exists
-func (s *WebsiteServiceDefault) validateIPNSTarget(ctx context.Context, targetHash string) (bool, error) {
-	// For Phase 1, we'll just check if the IPNS name is valid
-	// In production, we would check if the key exists in the database
-	if !isValidIPNSTarget(targetHash) {
-		return false, fmt.Errorf("invalid IPNS target")
+// validateIPNSKeyResolution checks that the IPNS key for the given peer ID
+// exists and belongs to the website owner.
+func (s *WebsiteServiceDefault) validateIPNSKeyResolution(ctx context.Context, userID uint, peerID string) error {
+	_, keyUserID, err := s.ipnsKeySvc.GetPrivateKeyByPeerID(ctx, peerID)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrIPNSKeyNotFound, err)
 	}
 
-	return true, nil
+	if keyUserID != userID {
+		return fmt.Errorf("%w: key belongs to user %d, not %d", ErrIPNSKeyNotFound, keyUserID, userID)
+	}
+
+	return nil
 }
 
 // generateValidationToken generates a random validation token
