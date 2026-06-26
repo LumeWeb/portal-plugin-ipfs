@@ -9,6 +9,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/block"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/dns"
 	filemanager "go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
@@ -28,6 +29,7 @@ func GetCollectors() []prometheus.Collector {
 	collectors = append(collectors, block.GetCollectors()...)
 	collectors = append(collectors, filemanager.GetCollectors()...)
 	collectors = append(collectors, website.GetCollectors()...)
+	collectors = append(collectors, ipfs.GetMetricsCollectors()...)
 
 	return collectors
 }

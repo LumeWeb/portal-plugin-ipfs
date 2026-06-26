@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -204,7 +205,8 @@ type Node struct {
 	ctx              core.Context
 	host             host.Host
 	routing          DHTRouting
-	companionDHT     *dht.IpfsDHT
+	companionDHT       *dht.IpfsDHT
+	companionDHTHealthy atomic.Bool
 	reprovider       *Reprovider
 	blockService     blockservice.BlockService
 	dagService       format.DAGService
@@ -579,8 +581,9 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 			return nil, fmt.Errorf("failed to create basic dht: %w", dhtErr)
 		}
 		routingImpl = basicDHT
-		// Wrap basic DHT to implement pluginCore.Provider
-		dhtProvider = newBasicDHTProvider(basicDHT)
+		// Wrap basic DHT to implement pluginCore.Provider.
+		// Basic mode uses the primary DHT directly; no health gating needed.
+		dhtProvider = newBasicDHTProvider(basicDHT, nil, 0)
 		hasProvider = true
 	case config.DHTModeFullRT, "":
 		// FullRT is a client-only DHT — it does not register protocol handlers
@@ -597,16 +600,26 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 			retry.Delay(5*time.Second),
 			retry.DelayType(retry.BackOffDelay),
 			retry.OnRetry(func(n uint, err error) {
+				CompanionDHTBootstrapAttemptsTotal.Inc()
 				ctx.Logger().Warn("failed to bootstrap companion DHT, retrying",
 					zap.Error(err),
 					zap.Uint("attempt", n+1))
 			}),
 		).Do(func() error {
+			CompanionDHTBootstrapAttemptsTotal.Inc()
 			return companion.Bootstrap(ctx)
 		})
 		if err != nil {
-			ctx.Logger().Error("failed to bootstrap companion DHT after retries",
+			CompanionDHTBootstrapFailuresTotal.Inc()
+			ctx.Logger().Error("failed to bootstrap companion DHT after retries, marking unhealthy",
 				zap.Error(err))
+			// Do NOT close the companion -- it may recover if bootstrap peers come back.
+			// The reprovider's Ready() check will gate on companionDHTHealthy.
+			// Recovery goroutine is started after fullrt.NewFullRT succeeds to avoid
+			// use-after-close if NewFullRT fails and calls companion.Close().
+		} else {
+			ipfsNode.companionDHTHealthy.Store(true)
+			CompanionDHTHealthy.Set(1)
 		}
 		ipfsNode.companionDHT = companion
 
@@ -627,6 +640,31 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		routingImpl = frt
 		dhtProvider = frt
 		hasProvider = true
+
+		// Start recovery goroutine now that fullrt.NewFullRT succeeded.
+		// The companion DHT is alive for the lifetime of the node.
+		if !ipfsNode.companionDHTHealthy.Load() {
+			go func() {
+				recoverTicker := time.NewTicker(2 * time.Minute)
+				defer recoverTicker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-recoverTicker.C:
+						CompanionDHTBootstrapAttemptsTotal.Inc()
+						if err := companion.Bootstrap(ctx); err == nil {
+							ipfsNode.companionDHTHealthy.Store(true)
+							CompanionDHTHealthy.Set(1)
+							ctx.Logger().Info("companion DHT recovered via background bootstrap")
+							return
+						} else {
+							CompanionDHTBootstrapFailuresTotal.Inc()
+						}
+					}
+				}
+			}()
+		}
 	}
 
 	// Log configured bootstrap servers for debugging
@@ -699,12 +737,49 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		// of ProvideCID which also routes through the companion when available.
 		reproviderProvider := dhtProvider
 		if ipfsNode.companionDHT != nil {
-			reproviderProvider = newBasicDHTProvider(ipfsNode.companionDHT)
+			reproviderProvider = newBasicDHTProvider(ipfsNode.companionDHT, func() bool {
+				if ipfsNode.companionDHT == nil {
+					return false
+				}
+				if !ipfsNode.companionDHTHealthy.Load() {
+					return false
+				}
+				return ipfsNode.companionDHT.RoutingTable().Size() > 0
+			}, cfg.Provider.PerCIDTimeout)
 		}
 		rp = NewReprovider(reproviderProvider, rs, ctx.Logger().Named("reprovider"))
 		reproviderCtx, cancel := context.WithCancel(ctx)
 		reproviderCancel = cancel
 		go rp.Run(reproviderCtx, cfg.Provider.Interval, cfg.Provider.Timeout, cfg.Provider.BatchSize)
+
+		// Periodic DHT metrics goroutine -- updates gauges every 30 seconds
+		// to surface DHT health degradation even when the reprovider is idle.
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if ipfsNode.companionDHT != nil {
+						CompanionDHTRoutingTableSize.Set(float64(ipfsNode.companionDHT.RoutingTable().Size()))
+
+						peerCount := 0
+						for range ipfsNode.host.Network().Conns() {
+							peerCount++
+						}
+						CompanionDHTConnectedPeers.Set(float64(peerCount))
+
+						if ipfsNode.companionDHTHealthy.Load() {
+							CompanionDHTHealthy.Set(1)
+						} else {
+							CompanionDHTHealthy.Set(0)
+						}
+					}
+				}
+			}
+		}()
 	}
 
 	// Create boxo keystore for IPNS key management
