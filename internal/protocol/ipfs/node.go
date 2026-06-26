@@ -615,27 +615,8 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 				zap.Error(err))
 			// Do NOT close the companion -- it may recover if bootstrap peers come back.
 			// The reprovider's Ready() check will gate on companionDHTHealthy.
-			// Start a background recovery goroutine that keeps trying to bootstrap.
-			go func() {
-				recoverTicker := time.NewTicker(2 * time.Minute)
-				defer recoverTicker.Stop()
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-recoverTicker.C:
-						CompanionDHTBootstrapAttemptsTotal.Inc()
-						if err := companion.Bootstrap(ctx); err == nil {
-							ipfsNode.companionDHTHealthy.Store(true)
-							CompanionDHTHealthy.Set(1)
-							ctx.Logger().Info("companion DHT recovered via background bootstrap")
-							return
-						} else {
-							CompanionDHTBootstrapFailuresTotal.Inc()
-						}
-					}
-				}
-			}()
+			// Recovery goroutine is started after fullrt.NewFullRT succeeds to avoid
+			// use-after-close if NewFullRT fails and calls companion.Close().
 		} else {
 			ipfsNode.companionDHTHealthy.Store(true)
 			CompanionDHTHealthy.Set(1)
@@ -659,6 +640,31 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		routingImpl = frt
 		dhtProvider = frt
 		hasProvider = true
+
+		// Start recovery goroutine now that fullrt.NewFullRT succeeded.
+		// The companion DHT is alive for the lifetime of the node.
+		if !ipfsNode.companionDHTHealthy.Load() {
+			go func() {
+				recoverTicker := time.NewTicker(2 * time.Minute)
+				defer recoverTicker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-recoverTicker.C:
+						CompanionDHTBootstrapAttemptsTotal.Inc()
+						if err := companion.Bootstrap(ctx); err == nil {
+							ipfsNode.companionDHTHealthy.Store(true)
+							CompanionDHTHealthy.Set(1)
+							ctx.Logger().Info("companion DHT recovered via background bootstrap")
+							return
+						} else {
+							CompanionDHTBootstrapFailuresTotal.Inc()
+						}
+					}
+				}
+			}()
+		}
 	}
 
 	// Log configured bootstrap servers for debugging
