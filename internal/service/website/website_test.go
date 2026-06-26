@@ -1281,6 +1281,7 @@ func TestWebsiteService_UpdateWebsite_DNSRecordsUpdatedWhenTargetChanges(t *test
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
 
 		testCID := util.GenerateTestCID(t, "test data")
 		domain := "dns-update-test.com"
@@ -1294,6 +1295,11 @@ func TestWebsiteService_UpdateWebsite_DNSRecordsUpdatedWhenTargetChanges(t *test
 
 		// Act - Update target to a new CID
 		newCID := util.GenerateTestCID(t, "new data for update")
+
+		// Mock: new CID must be pinned for validation to pass
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, newCID, testUserID1).
+			Return(&pluginDb.IPFSPin{UserID: testUserID1, CID: newCID.Bytes(), Status: pluginDb.PinningStatusPinned}, nil).Once()
+
 		updates := map[string]interface{}{
 			"target_hash": newCID.String(),
 		}
@@ -1922,6 +1928,12 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS(t *testing.T) {
 		// Update to IPNS by changing target_hash to a peer ID
 		// targetType will be auto-detected as IPNS
 		testPeerID := "12D3KooWCqvCZqaG6LmG4mtoWZZwrvYB911DK8qqwE9gc25s4Hft"
+
+		// Mock: IPNS key must exist and belong to the user
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		mockIPNSKey.EXPECT().GetPrivateKeyByPeerID(mock.Anything, testPeerID).
+			Return(nil, testUserID1, nil).Once()
+
 		updates := map[string]interface{}{
 			"target_hash": testPeerID,
 		}
@@ -2334,6 +2346,12 @@ func TestWebsiteService_UpdateWebsite_ConvertIPNSToIPFS_UpdatesDNSRecords(t *tes
 
 		// Act - Update from IPNS to IPFS
 		newCID := util.GenerateTestCID(t, "new ipfs content")
+
+		// Mock: new CID must be pinned for validation to pass
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, newCID, testUserID1).
+			Return(&pluginDb.IPFSPin{UserID: testUserID1, CID: newCID.Bytes(), Status: pluginDb.PinningStatusPinned}, nil).Once()
+
 		updates := map[string]interface{}{
 			"target_hash": newCID.String(),
 			"target_type": string(pluginDb.WebsiteTargetTypeIPFS),
@@ -2398,6 +2416,11 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPNS_NoDNSUpdate(t *testing.T) {
 
 		// Act - Update to a new IPNS peer ID (staying as IPNS)
 		testPeerID := "12D3KooWCqvCZqaG6LmG4mtoWZZwrvYB911DK8qqwE9gc25s4Hft"
+
+		// Mock: IPNS key must exist and belong to the user
+		mockIPNSKey.EXPECT().GetPrivateKeyByPeerID(mock.Anything, testPeerID).
+			Return(nil, testUserID1, nil).Once()
+
 		updates := map[string]interface{}{
 			"target_hash": testPeerID,
 		}
@@ -2455,6 +2478,12 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 
 		// First, switch back to IPFS to set up the IPFS→IPNS scenario
 		newCID := util.GenerateTestCID(t, "intermediate ipfs content")
+
+		// Mock: CID must be pinned for validation to pass
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, newCID, testUserID1).
+			Return(&pluginDb.IPFSPin{UserID: testUserID1, CID: newCID.Bytes(), Status: pluginDb.PinningStatusPinned}, nil).Once()
+
 		ipfsUpdates := map[string]interface{}{
 			"target_hash": newCID.String(),
 			"target_type": string(pluginDb.WebsiteTargetTypeIPFS),
@@ -2476,6 +2505,11 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 
 		// Act - Update from IPFS to IPNS
 		testPeerID := "12D3KooWCqvCZqaG6LmG4mtoWZZwrvYB911DK8qqwE9gc25s4Hft"
+
+		// Mock: IPNS key must exist and belong to the user
+		mockIPNSKey.EXPECT().GetPrivateKeyByPeerID(mock.Anything, testPeerID).
+			Return(nil, testUserID1, nil).Once()
+
 		ipnsUpdates := map[string]interface{}{
 			"target_hash": testPeerID,
 		}
@@ -2520,6 +2554,11 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone(t *testing.T) {
 
 		testIPNSKey := setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
+		// Mock: existing CID must be pinned for validation to pass
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, testCID, testUserID1).
+			Return(&pluginDb.IPFSPin{UserID: testUserID1, CID: testCID.Bytes(), Status: pluginDb.PinningStatusPinned}, nil).Once()
+
 		updates := map[string]interface{}{
 			"target_type": string(pluginDb.WebsiteTargetTypeIPNS),
 		}
@@ -2554,6 +2593,11 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone_DNSRecordsUpdated(t *t
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPFS), createdWebsite.TargetType)
 
 		testIPNSKey := setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
+
+		// Mock: existing CID must be pinned for validation to pass
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, testCID, testUserID1).
+			Return(&pluginDb.IPFSPin{UserID: testUserID1, CID: testCID.Bytes(), Status: pluginDb.PinningStatusPinned}, nil).Once()
 
 		updates := map[string]interface{}{
 			"target_type": string(pluginDb.WebsiteTargetTypeIPNS),
@@ -2595,6 +2639,12 @@ func TestWebsiteService_UpdateWebsite_IPNSTargetTypeWithCID(t *testing.T) {
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPFS), createdWebsite.TargetType)
 
 		newCID := util.GenerateTestCID(t, "new data for ipns")
+
+		// Mock: CID must be pinned for validation to pass
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, newCID, testUserID1).
+			Return(&pluginDb.IPFSPin{UserID: testUserID1, CID: newCID.Bytes(), Status: pluginDb.PinningStatusPinned}, nil).Once()
+
 		testIPNSKey := setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, newCID)
 
 		updates := map[string]interface{}{

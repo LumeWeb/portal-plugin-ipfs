@@ -1,0 +1,219 @@
+package ipfs
+
+import (
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+const (
+	// Reprovider metrics
+	MetricReprovideAttempts             = "reprovide_attempts_total"
+	MetricReprovideSuccesses            = "reprovide_successes_total"
+	MetricReprovideFailures             = "reprovide_failures_total"
+	MetricReprovideCIDsTotal            = "reprovide_cids_total"
+	MetricReprovideCIDFailures          = "reprovide_cid_failures_total"
+	MetricReprovideDuration             = "reprovide_duration_seconds"
+	MetricReprovideBatchSize            = "reprovide_batch_size"
+	MetricReprovideCircuitOpen          = "reprovide_circuit_open"
+	MetricReprovideConsecutiveFailures = "reprovide_consecutive_failures"
+	MetricReprovideProviderReady        = "reprovide_provider_ready"
+
+	// DHT metrics
+	MetricCompanionDHTHealthy           = "companion_dht_healthy"
+	MetricCompanionDHTRoutingTable      = "companion_dht_routing_table_size"
+	MetricCompanionDHTBootstrapAttempts = "companion_dht_bootstrap_attempts_total"
+	MetricCompanionDHTBootstrapFailures = "companion_dht_bootstrap_failures_total"
+	MetricCompanionDHTConnectedPeers    = "companion_dht_connected_peers"
+)
+
+const (
+	subSystemReprovider = "ipfs.reprovider"
+	subSystemDHT        = "ipfs.dht"
+)
+
+const (
+	LabelResultSuccess  = "success"
+	LabelResultFailure  = "failure"
+	LabelTriggerScheduled = "scheduled"
+	LabelTriggerManual    = "manual"
+)
+
+var (
+	// Reprovider counters
+	ReprovideAttemptsTotal  *prometheus.CounterVec
+	ReprovideSuccessesTotal prometheus.Counter
+	ReprovideFailuresTotal  prometheus.Counter
+	ReprovideCIDsTotal      *prometheus.CounterVec
+	ReprovideCIDFailures    *prometheus.CounterVec
+
+	// Reprovider histograms
+	ReprovideDuration  *prometheus.HistogramVec
+	ReprovideBatchSize *prometheus.HistogramVec
+
+	// Reprovider gauges
+	ReprovideCircuitOpen          prometheus.Gauge
+	ReprovideConsecutiveFailures  prometheus.Gauge
+	ReprovideProviderReady        prometheus.Gauge
+
+	// DHT gauges
+	CompanionDHTHealthy                prometheus.Gauge
+	CompanionDHTRoutingTableSize       prometheus.Gauge
+	CompanionDHTBootstrapAttemptsTotal prometheus.Counter
+	CompanionDHTBootstrapFailuresTotal prometheus.Counter
+	CompanionDHTConnectedPeers         prometheus.Gauge
+)
+
+func init() {
+	// Counters
+	ReprovideAttemptsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideAttempts,
+			Help:      "Total number of performProvide invocations",
+		},
+		[]string{"trigger"},
+	)
+
+	ReprovideSuccessesTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideSuccesses,
+			Help:      "Total number of successful reprovide cycles",
+		},
+	)
+
+	ReprovideFailuresTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideFailures,
+			Help:      "Total number of failed reprovide cycles",
+		},
+	)
+
+	ReprovideCIDsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideCIDsTotal,
+			Help:      "Total CIDs processed by the reprovider",
+		},
+		[]string{"result"},
+	)
+
+	ReprovideCIDFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideCIDFailures,
+			Help:      "Total per-CID provide failures with error classification",
+		},
+		[]string{"error_type"},
+	)
+
+	// Histograms
+	provideDurationBuckets := []float64{0.1, 0.5, 1, 5, 10, 30, 60, 120, 300}
+	batchSizeBuckets := []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000}
+
+	ReprovideDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideDuration,
+			Help:      "Wall-clock duration of performProvide in seconds",
+			Buckets:   provideDurationBuckets,
+		},
+		[]string{},
+	)
+
+	ReprovideBatchSize = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideBatchSize,
+			Help:      "Number of eligible CIDs in each reprovide batch",
+			Buckets:   batchSizeBuckets,
+		},
+		[]string{},
+	)
+
+	// Gauges
+	ReprovideCircuitOpen = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideCircuitOpen,
+			Help:      "1 when circuit breaker is open, 0 when closed",
+		},
+	)
+
+	ReprovideConsecutiveFailures = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideConsecutiveFailures,
+			Help:      "Current consecutive failure count for the reprovider",
+		},
+	)
+
+	ReprovideProviderReady = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideProviderReady,
+			Help:      "1 when the provider reports Ready, 0 otherwise",
+		},
+	)
+
+	// DHT gauges
+	CompanionDHTHealthy = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemDHT,
+			Name:      MetricCompanionDHTHealthy,
+			Help:      "1 when companion DHT is healthy (bootstrapped), 0 otherwise",
+		},
+	)
+
+	CompanionDHTRoutingTableSize = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemDHT,
+			Name:      MetricCompanionDHTRoutingTable,
+			Help:      "Number of entries in the companion DHT routing table",
+		},
+	)
+
+	CompanionDHTBootstrapAttemptsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Subsystem: subSystemDHT,
+			Name:      MetricCompanionDHTBootstrapAttempts,
+			Help:      "Total companion DHT bootstrap attempts (initial + recovery retries)",
+		},
+	)
+
+	CompanionDHTBootstrapFailuresTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Subsystem: subSystemDHT,
+			Name:      MetricCompanionDHTBootstrapFailures,
+			Help:      "Total companion DHT bootstrap failures",
+		},
+	)
+
+	CompanionDHTConnectedPeers = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemDHT,
+			Name:      MetricCompanionDHTConnectedPeers,
+			Help:      "Number of peers connected to the companion DHT host",
+		},
+	)
+}
+
+func GetMetricsCollectors() []prometheus.Collector {
+	return []prometheus.Collector{
+		ReprovideAttemptsTotal,
+		ReprovideSuccessesTotal,
+		ReprovideFailuresTotal,
+		ReprovideCIDsTotal,
+		ReprovideCIDFailures,
+		ReprovideDuration,
+		ReprovideBatchSize,
+		ReprovideCircuitOpen,
+		ReprovideConsecutiveFailures,
+		ReprovideProviderReady,
+		CompanionDHTHealthy,
+		CompanionDHTRoutingTableSize,
+		CompanionDHTBootstrapAttemptsTotal,
+		CompanionDHTBootstrapFailuresTotal,
+		CompanionDHTConnectedPeers,
+	}
+}

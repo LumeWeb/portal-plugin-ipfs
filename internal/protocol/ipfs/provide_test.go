@@ -43,7 +43,7 @@ func runReproviderAndWait(ctx context.Context, cancel context.CancelFunc, reprov
 
 func TestReprovider_Run(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	interval := 1 * time.Second
 	timeout := 500 * time.Millisecond
 	batchSize := 10
@@ -66,7 +66,7 @@ func TestReprovider_Run(t *testing.T) {
 
 func TestReprovider_Run_ProviderNotReady(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	interval := 1 * time.Second
 	timeout := 500 * time.Millisecond
 	batchSize := 10
@@ -88,7 +88,7 @@ func TestReprovider_Run_ProviderNotReady(t *testing.T) {
 
 func TestReprovider_Run_ProvideCIDsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	interval := 1 * time.Second
 	timeout := 500 * time.Millisecond
 	batchSize := 10
@@ -106,7 +106,7 @@ func TestReprovider_Run_ProvideCIDsError(t *testing.T) {
 
 func TestReprovider_Run_ProvideManyError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	interval := 1 * time.Second
 	timeout := 500 * time.Millisecond
 	batchSize := 10
@@ -131,7 +131,7 @@ func TestReprovider_Run_ProvideManyError(t *testing.T) {
 
 func TestReprovider_Run_SetLastAnnouncementError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	interval := 1 * time.Second
 	timeout := 500 * time.Millisecond
 	batchSize := 10
@@ -193,7 +193,7 @@ func TestReprovider_Trigger(t *testing.T) {
 
 	// Wait for the reprovider to run once
 	time.Sleep(2 * interval)
-	
+
 	// Clean up the goroutine
 	cancel()
 	time.Sleep(100 * time.Millisecond)
@@ -236,7 +236,7 @@ func TestReprovider_performProvide_NoCIDs(t *testing.T) {
 	// Mock store returning no CIDs
 	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return([]core.PinnedCID{}, nil).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
+	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
 
 	assert.Equal(t, 10*time.Minute, sleepDuration)
 }
@@ -265,7 +265,7 @@ func TestReprovider_performProvide_ProvideCIDsError(t *testing.T) {
 	// Mock store returning error
 	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(nil, errors.New("test error")).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
+	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
 
 	assert.Equal(t, time.Minute, sleepDuration)
 }
@@ -296,7 +296,7 @@ func TestReprovider_performProvide_WaitingForNextInterval(t *testing.T) {
 	testCIDs := []core.PinnedCID{{CID: cid.Cid{}, LastAnnouncement: futureTime}}
 	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
+	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
 
 	assert.Less(t, time.Until(futureTime), sleepDuration)
 }
@@ -335,7 +335,7 @@ func TestReprovider_performProvide_Success(t *testing.T) {
 	// Mock store SetLastAnnouncement
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
+	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
 
 	assert.Equal(t, interval, sleepDuration)
 }
@@ -375,8 +375,7 @@ func TestReprovider_performProvide_Success_NotAllAnnounced(t *testing.T) {
 	// Mock store SetLastAnnouncement
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
-
+	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
 	assert.Less(t, time.Until(testCIDs[2].LastAnnouncement.Add(interval)), sleepDuration)
 }
 
@@ -411,7 +410,7 @@ func TestReprovider_performProvide_ProvideManyError(t *testing.T) {
 	// Mock provider ProvideMany returning error
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
+	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
 
 	assert.Equal(t, time.Minute, sleepDuration)
 }
@@ -450,7 +449,7 @@ func TestReprovider_performProvide_SetLastAnnouncementError(t *testing.T) {
 	// Mock store SetLastAnnouncement returning error
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
+	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
 
 	assert.Equal(t, time.Minute, sleepDuration)
 }
@@ -489,7 +488,7 @@ func TestReprovider_performProvide_MinAnnouncement(t *testing.T) {
 	// Mock store SetLastAnnouncement
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
+	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
 
 	assert.Equal(t, interval, sleepDuration)
 }
@@ -529,14 +528,24 @@ func TestReprovider_performProvide_MinAnnouncement_NotAllAnnounced(t *testing.T)
 	// Mock store SetLastAnnouncement
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize)
+	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
 
 	assert.Less(t, time.Until(testCIDs[2].LastAnnouncement.Add(interval)), sleepDuration)
 }
 
 func TestBasicDHTProvider_ProvideMany(t *testing.T) {
-	t.Run("ready_always_true", func(t *testing.T) {
-		provider := newBasicDHTProvider(&stubContentRouting{})
+	t.Run("ready_returns_false_when_fn_returns_false", func(t *testing.T) {
+		provider := newBasicDHTProvider(&stubContentRouting{}, func() bool { return false }, 0)
+		assert.False(t, provider.Ready())
+	})
+
+	t.Run("ready_returns_true_when_fn_returns_true", func(t *testing.T) {
+		provider := newBasicDHTProvider(&stubContentRouting{}, func() bool { return true }, 0)
+		assert.True(t, provider.Ready())
+	})
+
+	t.Run("ready_defaults_to_true_when_fn_is_nil", func(t *testing.T) {
+		provider := newBasicDHTProvider(&stubContentRouting{}, nil, 0)
 		assert.True(t, provider.Ready())
 	})
 
@@ -545,7 +554,7 @@ func TestBasicDHTProvider_ProvideMany(t *testing.T) {
 		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "key2"))
 
 		scr := &stubContentRouting{}
-		provider := newBasicDHTProvider(scr)
+		provider := newBasicDHTProvider(scr, nil, 0)
 
 		keys := []multihash.Multihash{c1.Hash(), c2.Hash()}
 		err := provider.ProvideMany(context.Background(), keys)
@@ -553,19 +562,95 @@ func TestBasicDHTProvider_ProvideMany(t *testing.T) {
 		assert.Equal(t, 2, scr.provideCount)
 	})
 
-	t.Run("provide_many_stops_on_first_error", func(t *testing.T) {
+	t.Run("provide_many_continues_past_errors", func(t *testing.T) {
 		c1 := cid.NewCidV1(cid.Raw, mustMultihash(t, "key1"))
 		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "key2"))
 
 		testErr := errors.New("provide failed")
 		scr := &stubContentRouting{err: testErr}
-		provider := newBasicDHTProvider(scr)
+		provider := newBasicDHTProvider(scr, nil, 0)
 
 		keys := []multihash.Multihash{c1.Hash(), c2.Hash()}
 		err := provider.ProvideMany(context.Background(), keys)
-		assert.ErrorIs(t, err, testErr)
-		assert.Equal(t, 1, scr.provideCount) // stopped after first error
+		assert.Error(t, err)
+		assert.Equal(t, 2, scr.provideCount) // both CIDs attempted, not just the first
 	})
+}
+
+func TestReprovider_CircuitBreaker_Open(t *testing.T) {
+	ctx := context.Background()
+
+	mockProvider := mocks.NewMockProvider(t)
+	mockStore := mocks.NewMockReprovideStore(t)
+	logger, _ := zap.NewDevelopment()
+
+	reprovider := &Reprovider{
+		provider:             mockProvider,
+		store:                mockStore,
+		log:                  logger,
+		triggerProvide:       make(chan struct{}, 1),
+		triggerDelayDuration: 100 * time.Millisecond,
+		reprovideSleep:       0,
+		mu:                   sync.Mutex{},
+	}
+
+	// Set circuit breaker to open state with a future timestamp
+	futureTime := time.Now().Add(15 * time.Minute)
+	reprovider.circuitOpenUntil.Store(futureTime.UnixNano())
+	ReprovideCircuitOpen.Set(1)
+
+	sleepDuration := reprovider.performProvide(ctx, time.Second, 500*time.Millisecond, 10, LabelTriggerScheduled)
+
+	// Should return the time until the circuit opens, without calling store or provider
+	assert.InDelta(t, 15*time.Minute, sleepDuration, float64(time.Second))
+	mockProvider.AssertNotCalled(t, "ProvideMany")
+	mockStore.AssertNotCalled(t, "ProvideCIDs")
+}
+
+func TestReprovider_CircuitBreaker_OpenAfter3Failures(t *testing.T) {
+	ctx := context.Background()
+
+	mockProvider := mocks.NewMockProvider(t)
+	mockStore := mocks.NewMockReprovideStore(t)
+	logger, _ := zap.NewDevelopment()
+
+	interval := 1 * time.Second
+	timeout := 500 * time.Millisecond
+	batchSize := 10
+
+	reprovider := &Reprovider{
+		provider:             mockProvider,
+		store:                mockStore,
+		log:                  logger,
+		triggerProvide:       make(chan struct{}, 1),
+		triggerDelayDuration: 100 * time.Millisecond,
+		reprovideSleep:       0,
+		mu:                   sync.Mutex{},
+	}
+
+	testCIDs := []core.PinnedCID{
+		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
+		{CID: cid.Cid{}, LastAnnouncement: time.Now().Add(-2 * interval)},
+	}
+
+	// Simulate 3 consecutive failures
+	for i := 0; i < 3; i++ {
+		mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Once()
+		mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
+
+		sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
+
+		if i < 2 {
+			// First two failures: return time.Minute, circuit not yet open
+			assert.Equal(t, time.Minute, sleepDuration, "attempt %d", i)
+		} else {
+			// Third failure: circuit opens, return 15 minutes cooldown
+			assert.Equal(t, 15*time.Minute, sleepDuration, "attempt %d", i)
+		}
+	}
+
+	// Circuit breaker should now be open
+	assert.True(t, reprovider.circuitOpenUntil.Load() > 0)
 }
 
 // stubContentRouting is a minimal routing.ContentRouting stub for testing.

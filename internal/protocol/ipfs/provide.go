@@ -2,6 +2,9 @@ package ipfs
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,27 +19,75 @@ import (
 	"go.uber.org/zap"
 )
 
-// basicDHTProvider is a wrapper around basic DHT that implements pluginCore.Provider
-// For basic DHT which doesn't implement ProvideMany natively, we provide it by iterating
+// basicDHTProvider is a wrapper around basic DHT that implements pluginCore.Provider.
+// For basic DHT which doesn't implement ProvideMany natively, we provide it by iterating.
 type basicDHTProvider struct {
-	dht routing.ContentRouting
+	dht           routing.ContentRouting
+	ready         func() bool
+	perCIDTimeout time.Duration
 }
 
 func (b *basicDHTProvider) Ready() bool {
+	if b.ready != nil {
+		return b.ready()
+	}
 	return true
 }
 
 func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Multihash) error {
+	var failed int
+	var lastErr error
+
 	for _, k := range keys {
-		if err := b.dht.Provide(ctx, cid.NewCidV1(cid.Raw, k), true); err != nil {
-			return err
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
+
+		provideCtx := ctx
+		var cancel context.CancelFunc
+		if b.perCIDTimeout > 0 {
+			provideCtx, cancel = context.WithTimeout(ctx, b.perCIDTimeout)
+		}
+
+		err := b.dht.Provide(provideCtx, cid.NewCidV1(cid.Raw, k), true)
+		if cancel != nil {
+			cancel()
+		}
+
+		if err != nil {
+			failed++
+			lastErr = err
+
+			errorType := classifyProvideError(err)
+			ReprovideCIDFailures.WithLabelValues(errorType).Inc()
+			ReprovideCIDsTotal.WithLabelValues(LabelResultFailure).Inc()
+			continue
+		}
+		ReprovideCIDsTotal.WithLabelValues(LabelResultSuccess).Inc()
+	}
+
+	if failed > 0 {
+		return fmt.Errorf("provideMany: %d/%d CIDs failed, last error: %w", failed, len(keys), lastErr)
 	}
 	return nil
 }
 
-func newBasicDHTProvider(dht routing.ContentRouting) pluginCore.Provider {
-	return &basicDHTProvider{dht: dht}
+func newBasicDHTProvider(dht routing.ContentRouting, ready func() bool, perCIDTimeout time.Duration) pluginCore.Provider {
+	return &basicDHTProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout}
+}
+
+func classifyProvideError(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "context_cancelled"
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "routing") || strings.Contains(msg, "no peers") {
+		return "routing"
+	}
+	return "other"
 }
 
 // A Reprovider periodically announces CIDs to the IPFS network.
@@ -56,6 +107,10 @@ type Reprovider struct {
 
 	// cancelledFlag is an atomic flag to track cancellation state
 	cancelledFlag atomic.Bool
+
+	// Circuit breaker
+	consecutiveFailures atomic.Uint32
+	circuitOpenUntil    atomic.Int64 // unix nano timestamp
 }
 
 // Trigger triggers the reprovider loop to run immediately.
@@ -74,8 +129,10 @@ func (r *Reprovider) Run(ctx context.Context, interval, timeout time.Duration, b
 
 	for {
 		if r.provider.Ready() {
+			ReprovideProviderReady.Set(1)
 			break
 		}
+		ReprovideProviderReady.Set(0)
 		select {
 		case <-ctx.Done():
 			return
@@ -101,7 +158,7 @@ func (r *Reprovider) Run(ctx context.Context, interval, timeout time.Duration, b
 			return
 		case <-time.After(sleepDuration):
 			r.log.Debug("reprovide sleep expired")
-			nextSleep := r.performProvide(ctx, interval, timeout, batchSize)
+			nextSleep := r.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
 			r.mu.Lock()
 			r.reprovideSleep = nextSleep
 			r.mu.Unlock()
@@ -113,8 +170,6 @@ func (r *Reprovider) handleTriggers(ctx context.Context, interval, timeout time.
 	ctx, span := core.TraceMethod(ctx, "Reprovider.handleTriggers")
 	defer span.End()
 
-	// Use a channel instead of AfterFunc for cleaner cancellation
-	// When a trigger comes, we wait for the delay then check if cancelled
 	for {
 		select {
 		case <-ctx.Done():
@@ -123,7 +178,6 @@ func (r *Reprovider) handleTriggers(ctx context.Context, interval, timeout time.
 			return
 
 		case <-r.triggerProvide:
-			// Wait for delay with cancellation support
 			delayTimer := time.NewTimer(r.triggerDelayDuration)
 
 			select {
@@ -134,22 +188,19 @@ func (r *Reprovider) handleTriggers(ctx context.Context, interval, timeout time.
 				return
 
 			case <-delayTimer.C:
-				// Timer fired, but context might have been cancelled during wait
 				select {
 				case <-ctx.Done():
 					r.cancelledFlag.Store(true)
 					close(r.cancelTrigger)
 					return
 				default:
-					// Context still valid, proceed
 				}
 
-				// Double-check cancelled flag before calling performProvide
 				if r.cancelledFlag.Load() {
 					return
 				}
 
-				r.performProvide(ctx, interval, timeout, batchSize)
+				r.performProvide(ctx, interval, timeout, batchSize, LabelTriggerManual)
 			}
 
 			r.log.Debug("reprovide triggered")
@@ -157,14 +208,28 @@ func (r *Reprovider) handleTriggers(ctx context.Context, interval, timeout time.
 	}
 }
 
-func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.Duration, batchSize int) time.Duration {
+func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.Duration, batchSize int, trigger string) time.Duration {
 	ctx, span := core.TraceMethod(ctx, "Reprovider.performProvide")
 	defer span.End()
 
-	// Check cancellation flag at start of performProvide
-	// This prevents running after context is cancelled
+	ReprovideAttemptsTotal.WithLabelValues(trigger).Inc()
+
 	if r.cancelledFlag.Load() {
 		return 10 * time.Minute
+	}
+
+	// Circuit breaker: if open, skip until cooldown expires
+	if openUntil := r.circuitOpenUntil.Load(); openUntil > 0 {
+		now := time.Now().UnixNano()
+		if now < openUntil {
+			retryAfter := time.Unix(0, openUntil)
+			r.log.Debug("circuit breaker open, skipping provide",
+				zap.Time("retry_after", retryAfter))
+			return time.Until(retryAfter)
+		}
+		// Cooldown expired -- half-open state, try again
+		r.circuitOpenUntil.Store(0)
+		ReprovideCircuitOpen.Set(0)
 	}
 
 	doProvide := func(ctx context.Context, keys []multihash.Multihash) error {
@@ -178,8 +243,6 @@ func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.
 
 	reprovideSleep := 10 * time.Minute // Default sleep time if no CIDs to provide
 
-	start := time.Now()
-
 	// Check cancellation again before calling mocks to prevent race
 	if r.cancelledFlag.Load() {
 		return reprovideSleep
@@ -188,7 +251,9 @@ func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.
 	cids, err := r.store.ProvideCIDs(ctx, batchSize)
 	if err != nil {
 		r.log.Error("failed to fetch CIDs to provide", zap.Error(err))
-		return time.Minute // Return a shorter sleep time on error
+		ReprovideFailuresTotal.Inc()
+		r.recordFailure()
+		return time.Minute
 	}
 
 	if len(cids) == 0 {
@@ -215,24 +280,62 @@ func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.
 		return c.CID.Hash()
 	})
 
+	ReprovideBatchSize.WithLabelValues().Observe(float64(len(keys)))
+
+	start := time.Now()
+
 	if err := doProvide(ctx, keys); err != nil {
-		r.log.Error("failed to provide CIDs", zap.Error(err))
-		return time.Minute // Return a shorter sleep time on error
+		ReprovideDuration.WithLabelValues().Observe(time.Since(start).Seconds())
+		ReprovideFailuresTotal.Inc()
+		failures := r.recordFailure()
+		r.log.Error("failed to provide CIDs",
+			zap.Error(err),
+			zap.Uint32("consecutive_failures", failures))
+
+		if failures >= 3 {
+			cooldown := 15 * time.Minute
+			r.circuitOpenUntil.Store(time.Now().Add(cooldown).UnixNano())
+			ReprovideCircuitOpen.Set(1)
+			r.log.Error("circuit breaker opened",
+				zap.Uint32("failures", failures),
+				zap.Duration("cooldown", cooldown))
+			return cooldown
+		}
+		return time.Minute
 	}
+
+	ReprovideDuration.WithLabelValues().Observe(time.Since(start).Seconds())
 
 	if err := r.store.SetLastAnnouncement(ctx, announced, time.Now()); err != nil {
 		r.log.Error("failed to update last announcement time", zap.Error(err))
-		return time.Minute // Return a shorter sleep time on error
+		return time.Minute
 	}
 
-	r.log.Debug("provided CIDs", zap.Int("count", len(announced)), zap.Duration("elapsed", time.Since(start)))
+	ReprovideSuccessesTotal.Inc()
+	r.recordSuccess()
 
-	// If we've provided all CIDs, wait for the full interval before checking again
+	r.log.Debug("provided CIDs",
+		zap.Int("count", len(announced)),
+		zap.Duration("elapsed", time.Since(start)))
+
 	if len(announced) < len(cids) {
 		return time.Until(cids[len(announced)].LastAnnouncement.Add(interval))
 	}
 
 	return interval
+}
+
+// recordFailure increments the consecutive failure counter and returns the new value.
+func (r *Reprovider) recordFailure() uint32 {
+	v := r.consecutiveFailures.Add(1)
+	ReprovideConsecutiveFailures.Set(float64(v))
+	return v
+}
+
+// recordSuccess resets the consecutive failure counter.
+func (r *Reprovider) recordSuccess() {
+	r.consecutiveFailures.Store(0)
+	ReprovideConsecutiveFailures.Set(0)
 }
 
 // NewReprovider creates a new reprovider.
