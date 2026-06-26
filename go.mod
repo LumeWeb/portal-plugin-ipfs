@@ -49,7 +49,7 @@ require (
 	go.lumeweb.com/portal-plugin-core v0.1.0
 	go.lumeweb.com/portal-plugin-dashboard v0.3.0
 	go.lumeweb.com/portal-plugin-quota v0.1.0
-	go.lumeweb.com/portal-router v0.7.0
+	go.lumeweb.com/portal-router v0.7.1
 	go.lumeweb.com/queryutil v0.3.16
 	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260625021256-737bedbd18cd
 	go.uber.org/zap v1.28.0
