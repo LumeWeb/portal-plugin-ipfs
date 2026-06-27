@@ -6,16 +6,16 @@ import (
 
 const (
 	// Reprovider metrics
-	MetricReprovideAttempts             = "reprovide_attempts_total"
-	MetricReprovideSuccesses            = "reprovide_successes_total"
-	MetricReprovideFailures             = "reprovide_failures_total"
-	MetricReprovideCIDsTotal            = "reprovide_cids_total"
-	MetricReprovideCIDFailures          = "reprovide_cid_failures_total"
-	MetricReprovideDuration             = "reprovide_duration_seconds"
-	MetricReprovideBatchSize            = "reprovide_batch_size"
-	MetricReprovideCircuitOpen          = "reprovide_circuit_open"
+	MetricReprovideAttempts            = "reprovide_attempts_total"
+	MetricReprovideSuccesses           = "reprovide_successes_total"
+	MetricReprovideFailures            = "reprovide_failures_total"
+	MetricReprovideCIDsTotal           = "reprovide_cids_total"
+	MetricReprovideCIDFailures         = "reprovide_cid_failures_total"
+	MetricReprovideDuration            = "reprovide_duration_seconds"
+	MetricReprovideBatchSize           = "reprovide_batch_size"
+	MetricReprovideCircuitOpen         = "reprovide_circuit_open"
 	MetricReprovideConsecutiveFailures = "reprovide_consecutive_failures"
-	MetricReprovideProviderReady        = "reprovide_provider_ready"
+	MetricReprovideProviderReady       = "reprovide_provider_ready"
 
 	// DHT metrics
 	MetricCompanionDHTHealthy           = "companion_dht_healthy"
@@ -23,18 +23,29 @@ const (
 	MetricCompanionDHTBootstrapAttempts = "companion_dht_bootstrap_attempts_total"
 	MetricCompanionDHTBootstrapFailures = "companion_dht_bootstrap_failures_total"
 	MetricCompanionDHTConnectedPeers    = "companion_dht_connected_peers"
+
+	// WantBlockFilter metrics
+	MetricWantBlockRequests     = "want_block_requests_total"
+	MetricWantBlockGatewayPeers = "want_block_gateway_peers"
+	MetricWantBlockPeerLimiters = "want_block_peer_limiters"
 )
 
 const (
 	subSystemReprovider = "ipfs.reprovider"
 	subSystemDHT        = "ipfs.dht"
+	subSystemBitswap    = "ipfs.bitswap"
 )
 
 const (
-	LabelResultSuccess  = "success"
-	LabelResultFailure  = "failure"
+	LabelResultSuccess    = "success"
+	LabelResultFailure    = "failure"
 	LabelTriggerScheduled = "scheduled"
 	LabelTriggerManual    = "manual"
+
+	LabelWantAllowed           = "allowed"
+	LabelWantDeniedGlobalRate  = "denied_global_rate"
+	LabelWantDeniedPerPeerRate = "denied_per_peer_rate"
+	LabelWantAllowedGateway    = "allowed_gateway"
 )
 
 var (
@@ -50,9 +61,9 @@ var (
 	ReprovideBatchSize *prometheus.HistogramVec
 
 	// Reprovider gauges
-	ReprovideCircuitOpen          prometheus.Gauge
-	ReprovideConsecutiveFailures  prometheus.Gauge
-	ReprovideProviderReady        prometheus.Gauge
+	ReprovideCircuitOpen         prometheus.Gauge
+	ReprovideConsecutiveFailures prometheus.Gauge
+	ReprovideProviderReady       prometheus.Gauge
 
 	// DHT gauges
 	CompanionDHTHealthy                prometheus.Gauge
@@ -60,6 +71,11 @@ var (
 	CompanionDHTBootstrapAttemptsTotal prometheus.Counter
 	CompanionDHTBootstrapFailuresTotal prometheus.Counter
 	CompanionDHTConnectedPeers         prometheus.Gauge
+
+	// WantBlockFilter metrics
+	WantBlockRequestsTotal *prometheus.CounterVec
+	WantBlockGatewayPeers  prometheus.Gauge
+	WantBlockPeerLimiters  prometheus.Gauge
 )
 
 func init() {
@@ -196,6 +212,32 @@ func init() {
 			Help:      "Number of peers connected to the companion DHT host",
 		},
 	)
+
+	// WantBlockFilter metrics
+	WantBlockRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Subsystem: subSystemBitswap,
+			Name:      MetricWantBlockRequests,
+			Help:      "Total want-block requests by outcome (allowed, allowed_gateway, denied_global_rate, denied_per_peer_rate)",
+		},
+		[]string{"result"},
+	)
+
+	WantBlockGatewayPeers = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemBitswap,
+			Name:      MetricWantBlockGatewayPeers,
+			Help:      "Number of gateway peers whitelisted in the want-block filter",
+		},
+	)
+
+	WantBlockPeerLimiters = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemBitswap,
+			Name:      MetricWantBlockPeerLimiters,
+			Help:      "Number of active per-peer rate limiters in the want-block filter",
+		},
+	)
 }
 
 func GetMetricsCollectors() []prometheus.Collector {
@@ -215,5 +257,8 @@ func GetMetricsCollectors() []prometheus.Collector {
 		CompanionDHTBootstrapAttemptsTotal,
 		CompanionDHTBootstrapFailuresTotal,
 		CompanionDHTConnectedPeers,
+		WantBlockRequestsTotal,
+		WantBlockGatewayPeers,
+		WantBlockPeerLimiters,
 	}
 }

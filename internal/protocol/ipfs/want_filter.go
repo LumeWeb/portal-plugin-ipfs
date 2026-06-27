@@ -59,7 +59,7 @@ func NewWantBlockFilter(h host.Host, cfg WantBlockFilterConfig) *WantBlockFilter
 		perPeerBurst = config.DefaultBitswapPerPeerWantBurst
 	}
 
-	return &WantBlockFilter{
+	f := &WantBlockFilter{
 		host:         h,
 		gatewayPeers: gatewayPeers,
 		limiter:      rate.NewLimiter(globalRate, globalBurst),
@@ -67,6 +67,9 @@ func NewWantBlockFilter(h host.Host, cfg WantBlockFilterConfig) *WantBlockFilter
 		perPeerRate:  perPeerRate,
 		perPeerBurst: perPeerBurst,
 	}
+	WantBlockGatewayPeers.Set(float64(len(gatewayPeers)))
+	WantBlockPeerLimiters.Set(0)
+	return f
 }
 
 // Allow is called by bitswap for each wantlist entry from a peer.
@@ -78,15 +81,23 @@ func (f *WantBlockFilter) Allow(p peer.ID, c cid.Cid) bool {
 	f.mu.RUnlock()
 
 	if isGateway {
+		WantBlockRequestsTotal.WithLabelValues(LabelWantAllowedGateway).Inc()
 		return true
 	}
 
 	if !f.limiter.Allow() {
+		WantBlockRequestsTotal.WithLabelValues(LabelWantDeniedGlobalRate).Inc()
 		return false
 	}
 
 	peerLimiter := f.getPeerLimiter(p)
-	return peerLimiter.Allow()
+	if !peerLimiter.Allow() {
+		WantBlockRequestsTotal.WithLabelValues(LabelWantDeniedPerPeerRate).Inc()
+		return false
+	}
+
+	WantBlockRequestsTotal.WithLabelValues(LabelWantAllowed).Inc()
+	return true
 }
 
 func (f *WantBlockFilter) getPeerLimiter(p peer.ID) *rate.Limiter {
@@ -108,6 +119,7 @@ func (f *WantBlockFilter) getPeerLimiter(p peer.ID) *rate.Limiter {
 
 	limiter = rate.NewLimiter(f.perPeerRate, f.perPeerBurst)
 	f.peerLimiters[p] = limiter
+	WantBlockPeerLimiters.Set(float64(len(f.peerLimiters)))
 	return limiter
 }
 
@@ -115,18 +127,21 @@ func (f *WantBlockFilter) AddGatewayPeer(p peer.ID) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.gatewayPeers[p] = struct{}{}
+	WantBlockGatewayPeers.Set(float64(len(f.gatewayPeers)))
 }
 
 func (f *WantBlockFilter) RemoveGatewayPeer(p peer.ID) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.gatewayPeers, p)
+	WantBlockGatewayPeers.Set(float64(len(f.gatewayPeers)))
 }
 
 func (f *WantBlockFilter) RemovePeerLimiter(p peer.ID) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.peerLimiters, p)
+	WantBlockPeerLimiters.Set(float64(len(f.peerLimiters)))
 }
 
 // PeerBlockRequestFilter returns a function compatible with
