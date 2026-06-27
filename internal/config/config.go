@@ -50,6 +50,16 @@ type (
 		Interval       time.Duration `config:"interval"`
 		PerCIDTimeout  time.Duration `config:"per_cid_timeout"`
 		ProvideWorkers int           `config:"provide_workers"`
+		// TriggerDelay is the debounce delay before processing a manual trigger.
+		TriggerDelay   time.Duration `config:"trigger_delay"`
+		// NotReadySleep is how long to wait when the DHT provider is not ready.
+		NotReadySleep  time.Duration `config:"not_ready_sleep"`
+		// EmptySleep is how long to wait when there are no CIDs to provide.
+		EmptySleep     time.Duration `config:"empty_sleep"`
+		// ErrorSleep is how long to wait after a provide error.
+		ErrorSleep     time.Duration `config:"error_sleep"`
+		// BacklogSleep is how long to wait between batches while draining a backlog.
+		BacklogSleep   time.Duration `config:"backlog_sleep"`
 	}
 
 	// IPNS configures IPNS record publishing and republishing
@@ -85,6 +95,11 @@ func (I IPFSProvider) Defaults() map[string]any {
 		"Interval":       4 * time.Hour,
 		"PerCIDTimeout":  15 * time.Second,
 		"ProvideWorkers": 32,
+		"TriggerDelay":   2 * time.Second,
+		"NotReadySleep":  30 * time.Second,
+		"EmptySleep":     10 * time.Minute,
+		"ErrorSleep":     time.Minute,
+		"BacklogSleep":   time.Minute,
 	}
 }
 

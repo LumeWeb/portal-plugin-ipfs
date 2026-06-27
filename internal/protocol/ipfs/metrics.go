@@ -14,14 +14,7 @@ const (
 	MetricReprovideDuration            = "reprovide_duration_seconds"
 	MetricReprovideCIDDuration         = "reprovide_cid_duration_seconds"
 	MetricReprovideBatchSize           = "reprovide_batch_size"
-	MetricReprovideCircuitOpen         = "reprovide_circuit_open"
-	MetricReprovideConsecutiveFailures = "reprovide_consecutive_failures"
 	MetricReprovideProviderReady       = "reprovide_provider_ready"
-
-	// Boot-cycle metrics (per boot reprovide cycle)
-	MetricReprovideBootCycleAttempted = "reprovide_boot_cycle_attempted"
-	MetricReprovideBootCycleSucceeded = "reprovide_boot_cycle_succeeded"
-	MetricReprovideBootCycleFailed    = "reprovide_boot_cycle_failed"
 
 	// Global pinned-state gauges
 	MetricReprovidePinnedTotal    = "reprovide_pinned_total"
@@ -79,14 +72,7 @@ var (
 	ReprovideBatchSize   *prometheus.HistogramVec
 
 	// Reprovider gauges
-	ReprovideCircuitOpen         prometheus.Gauge
-	ReprovideConsecutiveFailures prometheus.Gauge
 	ReprovideProviderReady       prometheus.Gauge
-
-	// Boot-cycle gauges (reset each cycle)
-	ReprovideBootCycleAttempted prometheus.Gauge
-	ReprovideBootCycleSucceeded prometheus.Gauge
-	ReprovideBootCycleFailed    prometheus.Gauge
 
 	// Global pinned-state gauges
 	ReprovidePinnedTotal    prometheus.Gauge
@@ -189,53 +175,11 @@ func init() {
 		[]string{},
 	)
 
-	// Gauges
-	ReprovideCircuitOpen = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Subsystem: subSystemReprovider,
-			Name:      MetricReprovideCircuitOpen,
-			Help:      "1 when circuit breaker is open, 0 when closed",
-		},
-	)
-
-	ReprovideConsecutiveFailures = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Subsystem: subSystemReprovider,
-			Name:      MetricReprovideConsecutiveFailures,
-			Help:      "Current consecutive failure count for the reprovider",
-		},
-	)
-
 	ReprovideProviderReady = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Subsystem: subSystemReprovider,
 			Name:      MetricReprovideProviderReady,
 			Help:      "1 when the provider reports Ready, 0 otherwise",
-		},
-	)
-
-	// Boot-cycle gauges
-	ReprovideBootCycleAttempted = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Subsystem: subSystemReprovider,
-			Name:      MetricReprovideBootCycleAttempted,
-			Help:      "CIDs attempted in the current boot reprovide cycle",
-		},
-	)
-
-	ReprovideBootCycleSucceeded = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Subsystem: subSystemReprovider,
-			Name:      MetricReprovideBootCycleSucceeded,
-			Help:      "CIDs successfully provided in the current boot reprovide cycle",
-		},
-	)
-
-	ReprovideBootCycleFailed = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Subsystem: subSystemReprovider,
-			Name:      MetricReprovideBootCycleFailed,
-			Help:      "CIDs that failed in the current boot reprovide cycle and haven't succeeded on retry",
 		},
 	)
 
@@ -359,12 +303,7 @@ func GetMetricsCollectors() []prometheus.Collector {
 		ReprovideDuration,
 		ReprovideCIDDuration,
 		ReprovideBatchSize,
-		ReprovideCircuitOpen,
-		ReprovideConsecutiveFailures,
 		ReprovideProviderReady,
-		ReprovideBootCycleAttempted,
-		ReprovideBootCycleSucceeded,
-		ReprovideBootCycleFailed,
 		ReprovidePinnedTotal,
 		ReprovideAnnouncedTotal,
 		ReprovidePendingTotal,
