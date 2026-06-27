@@ -586,6 +586,13 @@ func (r *Reprovider) performProvide(ctx context.Context, interval time.Duration,
 		zap.Int("count", len(announced)),
 		zap.Duration("elapsed", time.Since(start)))
 
+	// If the batch was full, there are likely more pending CIDs.
+	// Return a short sleep to drain the backlog quickly instead of waiting
+	// the full interval between batches.
+	if len(cids) >= batchSize {
+		return time.Minute
+	}
+
 	return interval
 }
 
