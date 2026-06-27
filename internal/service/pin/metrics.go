@@ -12,9 +12,16 @@ const (
 	MetricReplacePin        = "replace_pin_total"
 	MetricDeletePin         = "delete_pin_total"
 	MetricUpdatePinStatus   = "update_pin_status_total"
-	MetricValidateDAG       = "validate_dag_completion_total"
-	MetricGetPinByCID       = "get_pin_by_cid_total"
-	MetricDuration          = "duration_seconds"
+	MetricValidateDAG             = "validate_dag_completion_total"
+	MetricGetPinByCID             = "get_pin_by_cid_total"
+	MetricAddPinDuration          = "add_pin_duration_seconds"
+	MetricGetPinByRequestIDDuration = "get_pin_by_request_id_duration_seconds"
+	MetricListPinsDuration        = "list_pins_duration_seconds"
+	MetricReplacePinDuration      = "replace_pin_duration_seconds"
+	MetricDeletePinDuration       = "delete_pin_duration_seconds"
+	MetricUpdatePinStatusDuration = "update_pin_status_duration_seconds"
+	MetricValidateDAGDuration     = "validate_dag_completion_duration_seconds"
+	MetricGetPinByCIDDuration     = "get_pin_by_cid_duration_seconds"
 )
 
 const (
@@ -119,7 +126,7 @@ func init() {
 	// Histograms
 	AddPinDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricAddPinDuration,
 			Subsystem: pluginCore.PIN_SERVICE,
 			Help:      "Duration of AddPin operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -129,7 +136,7 @@ func init() {
 
 	GetPinByRequestIDDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricGetPinByRequestIDDuration,
 			Subsystem: pluginCore.PIN_SERVICE,
 			Help:      "Duration of GetPinByRequestID operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -139,7 +146,7 @@ func init() {
 
 	ListPinsDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricListPinsDuration,
 			Subsystem: pluginCore.PIN_SERVICE,
 			Help:      "Duration of ListPins operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -149,7 +156,7 @@ func init() {
 
 	ReplacePinDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricReplacePinDuration,
 			Subsystem: pluginCore.PIN_SERVICE,
 			Help:      "Duration of ReplacePin operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -159,7 +166,7 @@ func init() {
 
 	DeletePinDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricDeletePinDuration,
 			Subsystem: pluginCore.PIN_SERVICE,
 			Help:      "Duration of DeletePin operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -169,7 +176,7 @@ func init() {
 
 	UpdatePinStatusDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricUpdatePinStatusDuration,
 			Subsystem: pluginCore.PIN_SERVICE,
 			Help:      "Duration of UpdatePinStatus operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -179,7 +186,7 @@ func init() {
 
 	ValidateDAGDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricValidateDAGDuration,
 			Subsystem: pluginCore.PIN_SERVICE,
 			Help:      "Duration of ValidateDAGCompletion operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -189,7 +196,7 @@ func init() {
 
 	GetPinByCIDDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricGetPinByCIDDuration,
 			Subsystem: pluginCore.PIN_SERVICE,
 			Help:      "Duration of GetPinByCID operations in seconds",
 			Buckets:   prometheus.DefBuckets,

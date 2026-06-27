@@ -12,9 +12,16 @@ const (
 	MetricListWebsites       = "list_websites_total"
 	MetricUpdateWebsite      = "update_website_total"
 	MetricDeleteWebsite      = "delete_website_total"
-	MetricValidateDNS        = "validate_dns_total"
-	MetricCheckStatus        = "check_status_total"
-	MetricDuration           = "duration_seconds"
+	MetricValidateDNS               = "validate_dns_total"
+	MetricCheckStatus               = "check_status_total"
+	MetricCreateWebsiteDuration     = "create_website_duration_seconds"
+	MetricGetWebsiteDuration        = "get_website_duration_seconds"
+	MetricGetWebsiteByDomainDuration = "get_website_by_domain_duration_seconds"
+	MetricListWebsitesDuration       = "list_websites_duration_seconds"
+	MetricUpdateWebsiteDuration     = "update_website_duration_seconds"
+	MetricDeleteWebsiteDuration     = "delete_website_duration_seconds"
+	MetricValidateDNSDuration       = "validate_dns_duration_seconds"
+	MetricCheckStatusDuration       = "check_status_duration_seconds"
 )
 
 const (
@@ -119,7 +126,7 @@ func init() {
 	// Histograms
 	CreateWebsiteDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricCreateWebsiteDuration,
 			Subsystem: pluginCore.WEBSITE_SERVICE,
 			Help:      "Duration of CreateWebsite operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -129,7 +136,7 @@ func init() {
 
 	GetWebsiteDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricGetWebsiteDuration,
 			Subsystem: pluginCore.WEBSITE_SERVICE,
 			Help:      "Duration of GetWebsite operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -139,7 +146,7 @@ func init() {
 
 	GetWebsiteByDomainDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricGetWebsiteByDomainDuration,
 			Subsystem: pluginCore.WEBSITE_SERVICE,
 			Help:      "Duration of GetWebsiteByDomain operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -149,7 +156,7 @@ func init() {
 
 	ListWebsitesDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricListWebsitesDuration,
 			Subsystem: pluginCore.WEBSITE_SERVICE,
 			Help:      "Duration of ListWebsites operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -159,7 +166,7 @@ func init() {
 
 	UpdateWebsiteDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricUpdateWebsiteDuration,
 			Subsystem: pluginCore.WEBSITE_SERVICE,
 			Help:      "Duration of UpdateWebsite operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -169,7 +176,7 @@ func init() {
 
 	DeleteWebsiteDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricDeleteWebsiteDuration,
 			Subsystem: pluginCore.WEBSITE_SERVICE,
 			Help:      "Duration of DeleteWebsite operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -179,7 +186,7 @@ func init() {
 
 	ValidateDNSDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricValidateDNSDuration,
 			Subsystem: pluginCore.WEBSITE_SERVICE,
 			Help:      "Duration of ValidateDNS operations in seconds",
 			Buckets:   prometheus.DefBuckets,
@@ -189,7 +196,7 @@ func init() {
 
 	CheckStatusDuration = *prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:      MetricDuration,
+			Name:      MetricCheckStatusDuration,
 			Subsystem: pluginCore.WEBSITE_SERVICE,
 			Help:      "Duration of CheckStatus operations in seconds",
 			Buckets:   prometheus.DefBuckets,
