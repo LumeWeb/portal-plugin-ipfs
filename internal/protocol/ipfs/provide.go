@@ -12,6 +12,8 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal/core"
 
+	"github.com/avast/retry-go/v5"
+	"github.com/gammazero/workerpool"
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/multiformats/go-multihash"
@@ -22,9 +24,10 @@ import (
 // basicDHTProvider is a wrapper around basic DHT that implements pluginCore.Provider.
 // For basic DHT which doesn't implement ProvideMany natively, we provide it by iterating.
 type basicDHTProvider struct {
-	dht           routing.ContentRouting
-	ready         func() bool
-	perCIDTimeout time.Duration
+	dht            routing.ContentRouting
+	ready          func() bool
+	perCIDTimeout  time.Duration
+	provideWorkers int
 }
 
 func (b *basicDHTProvider) Ready() bool {
@@ -35,45 +38,77 @@ func (b *basicDHTProvider) Ready() bool {
 }
 
 func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Multihash) error {
-	var failed int
+	workers := b.provideWorkers
+	if workers <= 0 {
+		workers = 1
+	}
+
+	var failed atomic.Int64
+	var mu sync.Mutex
 	var lastErr error
+
+	wp := workerpool.New(workers)
 
 	for _, k := range keys {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			break
 		}
 
-		provideCtx := ctx
-		var cancel context.CancelFunc
-		if b.perCIDTimeout > 0 {
-			provideCtx, cancel = context.WithTimeout(ctx, b.perCIDTimeout)
-		}
+		k := k
+		wp.Submit(func() {
+			err := retry.New(
+				retry.Attempts(3),
+				retry.Delay(1*time.Second),
+				retry.DelayType(retry.BackOffDelay),
+				retry.Context(ctx),
+				retry.RetryIf(func(err error) bool {
+					// Don't retry on timeout or cancellation — likely to fail again
+					// and just burn another per-CID timeout.
+					return !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled)
+				}),
+			).Do(func() error {
+				provideCtx := ctx
+				var cancel context.CancelFunc
+				if b.perCIDTimeout > 0 {
+					provideCtx, cancel = context.WithTimeout(ctx, b.perCIDTimeout)
+				}
 
-		err := b.dht.Provide(provideCtx, cid.NewCidV1(cid.Raw, k), true)
-		if cancel != nil {
-			cancel()
-		}
+				err := b.dht.Provide(provideCtx, cid.NewCidV1(cid.Raw, k), true)
+				if cancel != nil {
+					cancel()
+				}
+				return err
+			})
 
-		if err != nil {
-			failed++
-			lastErr = err
+			if err != nil {
+				failed.Add(1)
+				mu.Lock()
+				lastErr = err
+				mu.Unlock()
 
-			errorType := classifyProvideError(err)
-			ReprovideCIDFailures.WithLabelValues(errorType).Inc()
-			ReprovideCIDsTotal.WithLabelValues(LabelResultFailure).Inc()
-			continue
-		}
-		ReprovideCIDsTotal.WithLabelValues(LabelResultSuccess).Inc()
+				errorType := classifyProvideError(err)
+				ReprovideCIDFailures.WithLabelValues(errorType).Inc()
+				ReprovideCIDsTotal.WithLabelValues(LabelResultFailure).Inc()
+				return
+			}
+			ReprovideCIDsTotal.WithLabelValues(LabelResultSuccess).Inc()
+		})
 	}
 
-	if failed > 0 {
-		return fmt.Errorf("provideMany: %d/%d CIDs failed, last error: %w", failed, len(keys), lastErr)
+	wp.StopWait()
+
+	f := int(failed.Load())
+	if f > 0 {
+		mu.Lock()
+		le := lastErr
+		mu.Unlock()
+		return fmt.Errorf("provideMany: %d/%d CIDs failed, last error: %w", f, len(keys), le)
 	}
 	return nil
 }
 
-func newBasicDHTProvider(dht routing.ContentRouting, ready func() bool, perCIDTimeout time.Duration) pluginCore.Provider {
-	return &basicDHTProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout}
+func newBasicDHTProvider(dht routing.ContentRouting, ready func() bool, perCIDTimeout time.Duration, provideWorkers int) pluginCore.Provider {
+	return &basicDHTProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout, provideWorkers: provideWorkers}
 }
 
 func classifyProvideError(err error) string {
@@ -236,8 +271,6 @@ func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.
 		ctx, span := core.TraceMethod(ctx, "anonymous")
 		defer span.End()
 
-		ctx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
 		return r.provider.ProvideMany(ctx, keys)
 	}
 

@@ -3,7 +3,9 @@ package ipfs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -535,17 +537,17 @@ func TestReprovider_performProvide_MinAnnouncement_NotAllAnnounced(t *testing.T)
 
 func TestBasicDHTProvider_ProvideMany(t *testing.T) {
 	t.Run("ready_returns_false_when_fn_returns_false", func(t *testing.T) {
-		provider := newBasicDHTProvider(&stubContentRouting{}, func() bool { return false }, 0)
+		provider := newBasicDHTProvider(&stubContentRouting{}, func() bool { return false }, 0, 0)
 		assert.False(t, provider.Ready())
 	})
 
 	t.Run("ready_returns_true_when_fn_returns_true", func(t *testing.T) {
-		provider := newBasicDHTProvider(&stubContentRouting{}, func() bool { return true }, 0)
+		provider := newBasicDHTProvider(&stubContentRouting{}, func() bool { return true }, 0, 0)
 		assert.True(t, provider.Ready())
 	})
 
 	t.Run("ready_defaults_to_true_when_fn_is_nil", func(t *testing.T) {
-		provider := newBasicDHTProvider(&stubContentRouting{}, nil, 0)
+		provider := newBasicDHTProvider(&stubContentRouting{}, nil, 0, 0)
 		assert.True(t, provider.Ready())
 	})
 
@@ -554,12 +556,12 @@ func TestBasicDHTProvider_ProvideMany(t *testing.T) {
 		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "key2"))
 
 		scr := &stubContentRouting{}
-		provider := newBasicDHTProvider(scr, nil, 0)
+		provider := newBasicDHTProvider(scr, nil, 0, 0)
 
 		keys := []multihash.Multihash{c1.Hash(), c2.Hash()}
 		err := provider.ProvideMany(context.Background(), keys)
 		assert.NoError(t, err)
-		assert.Equal(t, 2, scr.provideCount)
+		assert.Equal(t, 2, scr.getProvideCount())
 	})
 
 	t.Run("provide_many_continues_past_errors", func(t *testing.T) {
@@ -568,12 +570,82 @@ func TestBasicDHTProvider_ProvideMany(t *testing.T) {
 
 		testErr := errors.New("provide failed")
 		scr := &stubContentRouting{err: testErr}
-		provider := newBasicDHTProvider(scr, nil, 0)
+		provider := newBasicDHTProvider(scr, nil, 0, 0)
 
 		keys := []multihash.Multihash{c1.Hash(), c2.Hash()}
 		err := provider.ProvideMany(context.Background(), keys)
 		assert.Error(t, err)
-		assert.Equal(t, 2, scr.provideCount) // both CIDs attempted, not just the first
+		// 2 CIDs × 3 attempts each (retries on non-timeout errors)
+		assert.Equal(t, 6, scr.getProvideCount())
+	})
+
+	t.Run("provide_many_retries_transient_then_succeeds", func(t *testing.T) {
+		key := mustMultihash(t, "retry-key")
+
+		var attempts atomic.Int32
+		scr := &stubContentRouting{
+			provideFn: func() error {
+				if attempts.Add(1) < 3 {
+					return errors.New("transient routing error")
+				}
+				return nil
+			},
+		}
+		provider := newBasicDHTProvider(scr, nil, 0, 0)
+
+		err := provider.ProvideMany(context.Background(), []multihash.Multihash{key})
+		assert.NoError(t, err)
+		assert.Equal(t, int32(3), attempts.Load())
+	})
+
+	t.Run("provide_many_does_not_retry_timeout", func(t *testing.T) {
+		key := mustMultihash(t, "timeout-key")
+
+		var attempts atomic.Int32
+		scr := &stubContentRouting{
+			provideFn: func() error {
+				attempts.Add(1)
+				return context.DeadlineExceeded
+			},
+		}
+		provider := newBasicDHTProvider(scr, nil, 0, 0)
+
+		err := provider.ProvideMany(context.Background(), []multihash.Multihash{key})
+		assert.Error(t, err)
+		assert.Equal(t, int32(1), attempts.Load()) // no retry on timeout
+	})
+
+	t.Run("provide_many_runs_in_parallel", func(t *testing.T) {
+		// Generate 100 CIDs and verify they're all provided with 16 workers.
+		keys := make([]multihash.Multihash, 100)
+		for i := 0; i < 100; i++ {
+			keys[i] = mustMultihash(t, fmt.Sprintf("parallel-key-%d", i))
+		}
+
+		scr := &stubContentRouting{}
+		provider := newBasicDHTProvider(scr, nil, 0, 16)
+
+		err := provider.ProvideMany(context.Background(), keys)
+		assert.NoError(t, err)
+		assert.Equal(t, 100, scr.getProvideCount())
+	})
+
+	t.Run("provide_many_respects_context_cancellation", func(t *testing.T) {
+		// With 1 worker and a blocked provide, context cancel should stop dispatching.
+		keys := make([]multihash.Multihash, 50)
+		for i := 0; i < 50; i++ {
+			keys[i] = mustMultihash(t, fmt.Sprintf("cancel-key-%d", i))
+		}
+
+		scr := &stubContentRouting{}
+		provider := newBasicDHTProvider(scr, nil, 0, 1)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // cancel immediately
+
+		_ = provider.ProvideMany(ctx, keys)
+		// With ctx already cancelled, the loop should break before submitting all tasks.
+		assert.Less(t, scr.getProvideCount(), 50)
 	})
 }
 
@@ -655,13 +727,26 @@ func TestReprovider_CircuitBreaker_OpenAfter3Failures(t *testing.T) {
 
 // stubContentRouting is a minimal routing.ContentRouting stub for testing.
 type stubContentRouting struct {
+	mu           sync.Mutex
 	provideCount int
 	err          error
+	provideFn    func() error // if set, called instead of returning err
 }
 
 func (s *stubContentRouting) Provide(_ context.Context, _ cid.Cid, _ bool) error {
+	s.mu.Lock()
 	s.provideCount++
+	s.mu.Unlock()
+	if s.provideFn != nil {
+		return s.provideFn()
+	}
 	return s.err
+}
+
+func (s *stubContentRouting) getProvideCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.provideCount
 }
 
 func (s *stubContentRouting) FindProvidersAsync(_ context.Context, _ cid.Cid, _ int) <-chan peer.AddrInfo {

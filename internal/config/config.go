@@ -50,6 +50,7 @@ type (
 		Interval      time.Duration `config:"interval"`
 		Timeout       time.Duration `config:"timeout"`
 		PerCIDTimeout time.Duration `config:"per_cid_timeout"`
+		ProvideWorkers int          `config:"provide_workers"`
 	}
 
 	// IPNS configures IPNS record publishing and republishing
@@ -81,10 +82,11 @@ func (b BlockStore) Defaults() map[string]any {
 
 func (I IPFSProvider) Defaults() map[string]any {
 	return map[string]any{
-		"BatchSize":     5000,
-		"Interval":      4 * time.Hour,
-		"Timeout":       30 * time.Minute,
-		"PerCIDTimeout": 10 * time.Second,
+		"BatchSize":      500,
+		"Interval":       4 * time.Hour,
+		"Timeout":        30 * time.Minute,
+		"PerCIDTimeout":  10 * time.Second,
+		"ProvideWorkers": 32,
 	}
 }
 
