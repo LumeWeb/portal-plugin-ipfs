@@ -440,11 +440,8 @@ func (r *Reprovider) performProvide(ctx context.Context, interval time.Duration,
 		ReprovideDuration.WithLabelValues().Observe(time.Since(start).Seconds())
 		ReprovideFailuresTotal.Inc()
 		failures := r.recordFailure()
-		r.log.Error("failed to provide CIDs",
-			zap.Error(err),
-			zap.Uint32("consecutive_failures", failures))
 
-		// Track per-CID failures in boot cycle
+		// Extract per-CID failure info
 		var failedKeys []multihash.Multihash
 		var pme *provideManyError
 		if errors.As(err, &pme) {
@@ -453,12 +450,47 @@ func (r *Reprovider) performProvide(ctx context.Context, interval time.Duration,
 			// Unknown error: mark all attempted keys as failed
 			failedKeys = keys
 		}
+
+		// Mark successfully-provided CIDs even on partial failure.
+		// Without this, CIDs that succeeded are never marked as announced,
+		// causing the reprovider to re-broadcast them on every cycle.
+		failedSet := make(map[string]struct{}, len(failedKeys))
+		for _, fk := range failedKeys {
+			failedSet[string(fk)] = struct{}{}
+		}
+		succeededCIDs := lo.Filter(announced, func(c cid.Cid, _ int) bool {
+			_, failed := failedSet[string(c.Hash())]
+			return !failed
+		})
+		if len(succeededCIDs) > 0 {
+			if err := r.store.SetLastAnnouncement(ctx, succeededCIDs, time.Now()); err != nil {
+				r.log.Warn("failed to update last announcement for partial success",
+					zap.Int("count", len(succeededCIDs)),
+					zap.Error(err))
+			}
+		}
+
+		r.log.Error("failed to provide CIDs",
+			zap.Error(err),
+			zap.Int("succeeded", len(succeededCIDs)),
+			zap.Int("failed", len(failedKeys)),
+			zap.Uint32("consecutive_failures", failures))
+
+		// Track per-CID failures in boot cycle
 		r.bootCycle.markFailed(failedKeys)
+		// Track per-CID successes in boot cycle (remove from failed set)
+		succeededKeys := lo.Filter(keys, func(k multihash.Multihash, _ int) bool {
+			_, failed := failedSet[string(k)]
+			return !failed
+		})
+		if len(succeededKeys) > 0 {
+			r.bootCycle.markSucceeded(succeededKeys)
+		}
 
 		// Update boot-cycle gauges
-		attempted, succeeded, failedCount := r.bootCycle.snapshot()
+		attempted, succeededCount, failedCount := r.bootCycle.snapshot()
 		ReprovideBootCycleAttempted.Set(float64(attempted))
-		ReprovideBootCycleSucceeded.Set(float64(succeeded))
+		ReprovideBootCycleSucceeded.Set(float64(succeededCount))
 		ReprovideBootCycleFailed.Set(float64(failedCount))
 
 		if failures >= 3 {
