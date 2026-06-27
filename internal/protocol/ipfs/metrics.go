@@ -12,6 +12,7 @@ const (
 	MetricReprovideCIDsTotal           = "reprovide_cids_total"
 	MetricReprovideCIDFailures         = "reprovide_cid_failures_total"
 	MetricReprovideDuration            = "reprovide_duration_seconds"
+	MetricReprovideCIDDuration         = "reprovide_cid_duration_seconds"
 	MetricReprovideBatchSize           = "reprovide_batch_size"
 	MetricReprovideCircuitOpen         = "reprovide_circuit_open"
 	MetricReprovideConsecutiveFailures = "reprovide_consecutive_failures"
@@ -46,6 +47,10 @@ const (
 	LabelWantDeniedGlobalRate  = "denied_global_rate"
 	LabelWantDeniedPerPeerRate = "denied_per_peer_rate"
 	LabelWantAllowedGateway    = "allowed_gateway"
+
+	LabelCIDResultSuccess = "success"
+	LabelCIDResultTimeout = "timeout"
+	LabelCIDResultOther   = "other"
 )
 
 var (
@@ -57,8 +62,9 @@ var (
 	ReprovideCIDFailures    *prometheus.CounterVec
 
 	// Reprovider histograms
-	ReprovideDuration  *prometheus.HistogramVec
-	ReprovideBatchSize *prometheus.HistogramVec
+	ReprovideDuration    *prometheus.HistogramVec
+	ReprovideCIDDuration *prometheus.HistogramVec
+	ReprovideBatchSize   *prometheus.HistogramVec
 
 	// Reprovider gauges
 	ReprovideCircuitOpen         prometheus.Gauge
@@ -135,6 +141,16 @@ func init() {
 			Buckets:   provideDurationBuckets,
 		},
 		[]string{},
+	)
+
+	ReprovideCIDDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideCIDDuration,
+			Help:      "Per-CID DHT Provide() call duration in seconds, by result",
+			Buckets:   provideDurationBuckets,
+		},
+		[]string{"result"},
 	)
 
 	ReprovideBatchSize = prometheus.NewHistogramVec(
@@ -248,6 +264,7 @@ func GetMetricsCollectors() []prometheus.Collector {
 		ReprovideCIDsTotal,
 		ReprovideCIDFailures,
 		ReprovideDuration,
+		ReprovideCIDDuration,
 		ReprovideBatchSize,
 		ReprovideCircuitOpen,
 		ReprovideConsecutiveFailures,
