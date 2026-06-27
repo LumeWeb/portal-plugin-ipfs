@@ -815,7 +815,7 @@ func TestReprovider_BootCycle_PartialFailure(t *testing.T) {
 		{CID: c2, LastAnnouncement: time.Now().Add(-2 * interval)},
 	}
 
-	// Simulate partial failure: provideManyError with 1 failed key
+	// Simulate partial failure: provideManyError with 1 failed key (c1), 1 succeeded (c2)
 	failedKey := c1.Hash()
 	pme := &provideManyError{
 		failed:     1,
@@ -827,17 +827,112 @@ func TestReprovider_BootCycle_PartialFailure(t *testing.T) {
 	mockStore.EXPECT().CountPinned(mock.Anything, mock.Anything).Return(core.PinnedCIDStats{Total: 2, Pending: 2}, nil).Once()
 	mockStore.EXPECT().ProvideCIDs(mock.Anything, mock.Anything, batchSize).Return(testCIDs, nil).Once()
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(pme).Once()
+	// SetLastAnnouncement should be called for c2 (the succeeded CID)
+	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.MatchedBy(func(cids []cid.Cid) bool {
+		return len(cids) == 1 && cids[0].Equals(c2)
+	}), mock.Anything).Return(nil).Once()
 
 	reprovider.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
 
-	// 2 attempted, 0 succeeded (whole batch failed), 2 in failed set
-	// (provideManyError only reports 1 specific failure, but the whole batch is marked failed
-	// because we don't know which succeeded individually)
+	// 2 attempted, 1 succeeded (c2 marked as succeeded, removed from failed set), 1 failed (c1)
 	attempted, succeeded, failedCount := reprovider.bootCycle.snapshot()
 	assert.Equal(t, int64(2), attempted)
-	assert.Equal(t, int64(0), succeeded)
-	// Both keys are in failed set: c1 from FailedKeys, c2 from the markFailed(all keys when batch fails)
-	// Actually: provideManyError returns failedKeys=[c1], so only c1 is marked failed.
-	// Wait -- the code does errors.As check, and if it IS provideManyError, it marks only FailedKeys.
-	assert.Equal(t, int64(1), failedCount, "only the specific failed CID should be tracked")
+	assert.Equal(t, int64(1), succeeded)
+	assert.Equal(t, int64(1), failedCount, "only the failed CID should remain in the failed set")
+}
+
+func TestReprovider_performProvide_PartialFailure_AllFail(t *testing.T) {
+	ctx := context.Background()
+
+	mockProvider := mocks.NewMockProvider(t)
+	mockStore := mocks.NewMockReprovideStore(t)
+	logger, _ := zap.NewDevelopment()
+
+	interval := 1 * time.Second
+	batchSize := 10
+
+	reprovider := &Reprovider{
+		provider:             mockProvider,
+		store:                mockStore,
+		log:                  logger,
+		triggerProvide:       make(chan struct{}, 1),
+		triggerDelayDuration: 100 * time.Millisecond,
+		reprovideSleep:       0,
+		mu:                   sync.Mutex{},
+	}
+
+	c1 := cid.NewCidV1(cid.Raw, mustMultihash(t, "allfail-key1"))
+	c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "allfail-key2"))
+
+	testCIDs := []core.PinnedCID{
+		{CID: c1, LastAnnouncement: time.Now().Add(-2 * interval)},
+		{CID: c2, LastAnnouncement: time.Now().Add(-2 * interval)},
+	}
+
+	// All keys fail
+	pme := &provideManyError{
+		failed:     2,
+		total:      2,
+		err:        errors.New("timeout"),
+		failedKeys: []multihash.Multihash{c1.Hash(), c2.Hash()},
+	}
+
+	mockStore.EXPECT().CountPinned(mock.Anything, mock.Anything).Return(core.PinnedCIDStats{}, nil).Maybe()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, mock.Anything, batchSize).Return(testCIDs, nil).Once()
+	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(pme).Once()
+	// SetLastAnnouncement should NOT be called (no successes)
+	mockStore.AssertNotCalled(t, "SetLastAnnouncement")
+
+	sleepDuration := reprovider.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
+
+	assert.Equal(t, time.Minute, sleepDuration)
+	mockStore.AssertNotCalled(t, "SetLastAnnouncement")
+}
+
+func TestReprovider_performProvide_PartialFailure_SetLastAnnouncementError(t *testing.T) {
+	ctx := context.Background()
+
+	mockProvider := mocks.NewMockProvider(t)
+	mockStore := mocks.NewMockReprovideStore(t)
+	logger, _ := zap.NewDevelopment()
+
+	interval := 1 * time.Second
+	batchSize := 10
+
+	reprovider := &Reprovider{
+		provider:             mockProvider,
+		store:                mockStore,
+		log:                  logger,
+		triggerProvide:       make(chan struct{}, 1),
+		triggerDelayDuration: 100 * time.Millisecond,
+		reprovideSleep:       0,
+		mu:                   sync.Mutex{},
+	}
+
+	c1 := cid.NewCidV1(cid.Raw, mustMultihash(t, "pme-err-key1"))
+	c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "pme-err-key2"))
+
+	testCIDs := []core.PinnedCID{
+		{CID: c1, LastAnnouncement: time.Now().Add(-2 * interval)},
+		{CID: c2, LastAnnouncement: time.Now().Add(-2 * interval)},
+	}
+
+	// 1 of 2 fails
+	pme := &provideManyError{
+		failed:     1,
+		total:      2,
+		err:        errors.New("timeout"),
+		failedKeys: []multihash.Multihash{c1.Hash()},
+	}
+
+	mockStore.EXPECT().CountPinned(mock.Anything, mock.Anything).Return(core.PinnedCIDStats{}, nil).Maybe()
+	mockStore.EXPECT().ProvideCIDs(mock.Anything, mock.Anything, batchSize).Return(testCIDs, nil).Once()
+	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(pme).Once()
+	// SetLastAnnouncement fails (e.g. DB error) — should not block error handling
+	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("db error")).Once()
+
+	sleepDuration := reprovider.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
+
+	// Should still return time.Minute (failure path), not crash
+	assert.Equal(t, time.Minute, sleepDuration)
 }
