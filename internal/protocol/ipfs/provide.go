@@ -62,7 +62,7 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 				retry.DelayType(retry.BackOffDelay),
 				retry.Context(ctx),
 				retry.RetryIf(func(err error) bool {
-					// Don't retry on timeout or cancellation — likely to fail again
+					// Don't retry on timeout or cancellation: likely to fail again
 					// and just burn another per-CID timeout.
 					return !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled)
 				}),
@@ -73,9 +73,17 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 					provideCtx, cancel = context.WithTimeout(ctx, b.perCIDTimeout)
 				}
 
+				cidStart := time.Now()
 				err := b.dht.Provide(provideCtx, cid.NewCidV1(cid.Raw, k), true)
+				cidElapsed := time.Since(cidStart).Seconds()
 				if cancel != nil {
 					cancel()
+				}
+
+				if err != nil {
+					ReprovideCIDDuration.WithLabelValues(classifyProvideError(err)).Observe(cidElapsed)
+				} else {
+					ReprovideCIDDuration.WithLabelValues(LabelCIDResultSuccess).Observe(cidElapsed)
 				}
 				return err
 			})
