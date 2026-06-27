@@ -158,7 +158,7 @@ func (r *Reprovider) Trigger() {
 
 // Run starts the reprovider loop, which periodically announces CIDs that
 // have not been announced in the last interval.
-func (r *Reprovider) Run(ctx context.Context, interval, timeout time.Duration, batchSize int) {
+func (r *Reprovider) Run(ctx context.Context, interval time.Duration, batchSize int) {
 	ctx, span := core.TraceMethod(ctx, "Reprovider.Run")
 	defer span.End()
 
@@ -178,7 +178,7 @@ func (r *Reprovider) Run(ctx context.Context, interval, timeout time.Duration, b
 	}
 
 	go func() {
-		r.handleTriggers(ctx, interval, timeout, batchSize)
+		r.handleTriggers(ctx, interval, batchSize)
 	}()
 
 	for {
@@ -193,7 +193,7 @@ func (r *Reprovider) Run(ctx context.Context, interval, timeout time.Duration, b
 			return
 		case <-time.After(sleepDuration):
 			r.log.Debug("reprovide sleep expired")
-			nextSleep := r.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
+			nextSleep := r.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
 			r.mu.Lock()
 			r.reprovideSleep = nextSleep
 			r.mu.Unlock()
@@ -201,7 +201,7 @@ func (r *Reprovider) Run(ctx context.Context, interval, timeout time.Duration, b
 	}
 }
 
-func (r *Reprovider) handleTriggers(ctx context.Context, interval, timeout time.Duration, batchSize int) {
+func (r *Reprovider) handleTriggers(ctx context.Context, interval time.Duration, batchSize int) {
 	ctx, span := core.TraceMethod(ctx, "Reprovider.handleTriggers")
 	defer span.End()
 
@@ -235,7 +235,7 @@ func (r *Reprovider) handleTriggers(ctx context.Context, interval, timeout time.
 					return
 				}
 
-				r.performProvide(ctx, interval, timeout, batchSize, LabelTriggerManual)
+				r.performProvide(ctx, interval, batchSize, LabelTriggerManual)
 			}
 
 			r.log.Debug("reprovide triggered")
@@ -243,7 +243,7 @@ func (r *Reprovider) handleTriggers(ctx context.Context, interval, timeout time.
 	}
 }
 
-func (r *Reprovider) performProvide(ctx context.Context, interval, timeout time.Duration, batchSize int, trigger string) time.Duration {
+func (r *Reprovider) performProvide(ctx context.Context, interval time.Duration, batchSize int, trigger string) time.Duration {
 	ctx, span := core.TraceMethod(ctx, "Reprovider.performProvide")
 	defer span.End()
 

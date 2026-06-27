@@ -46,11 +46,10 @@ type (
 
 	// IPFSProvider contains the configuration for the IPFS provider
 	IPFSProvider struct {
-		BatchSize     int           `config:"batch_size"`
-		Interval      time.Duration `config:"interval"`
-		Timeout       time.Duration `config:"timeout"`
-		PerCIDTimeout time.Duration `config:"per_cid_timeout"`
-		ProvideWorkers int          `config:"provide_workers"`
+		BatchSize      int           `config:"batch_size"`
+		Interval       time.Duration `config:"interval"`
+		PerCIDTimeout  time.Duration `config:"per_cid_timeout"`
+		ProvideWorkers int           `config:"provide_workers"`
 	}
 
 	// IPNS configures IPNS record publishing and republishing
@@ -84,8 +83,7 @@ func (I IPFSProvider) Defaults() map[string]any {
 	return map[string]any{
 		"BatchSize":      500,
 		"Interval":       4 * time.Hour,
-		"Timeout":        30 * time.Minute,
-		"PerCIDTimeout":  10 * time.Second,
+		"PerCIDTimeout":  15 * time.Second,
 		"ProvideWorkers": 32,
 	}
 }
