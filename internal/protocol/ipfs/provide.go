@@ -409,8 +409,14 @@ func (r *Reprovider) performProvide(ctx context.Context, interval time.Duration,
 		r.log.Info("starting boot reprovide cycle")
 	}
 
-	// Update global pinned-state gauges
-	since := time.Now().Add(-interval)
+	// Update global pinned-state gauges.
+	// Use a buffer slightly larger than the interval to avoid a timestamp
+	// precision race: SetLastAnnouncement sets last_announcement = T at the
+	// end of the previous cycle, and the next cycle's since = now - interval
+	// is computed a few milliseconds later, making since > T. Without the
+	// buffer, CIDs announced in the previous cycle fall just outside the
+	// window and are counted as pending (and re-provided) every time.
+	since := time.Now().Add(-interval - time.Minute)
 	if stats, err := r.store.CountPinned(ctx, since); err != nil {
 		r.log.Warn("failed to count pinned CIDs", zap.Error(err))
 	} else {
@@ -452,8 +458,9 @@ func (r *Reprovider) performProvide(ctx context.Context, interval time.Duration,
 	}
 
 	// Only fetch CIDs whose last_announcement is older than the interval.
-	// This avoids re-broadcasting CIDs that are already fresh in the DHT.
-	cutoff := time.Now().Add(-interval)
+	// Use the same buffer as CountPinned to avoid re-broadcasting CIDs that
+	// were announced in the previous cycle.
+	cutoff := time.Now().Add(-interval - time.Minute)
 	cids, err := r.store.ProvideCIDs(ctx, cutoff, batchSize)
 	if err != nil {
 		r.log.Error("failed to fetch CIDs to provide", zap.Error(err))
