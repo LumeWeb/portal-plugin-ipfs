@@ -44,7 +44,8 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 	}
 
 	var failed atomic.Int64
-	var lastErr atomic.Value // stores error
+	var mu sync.Mutex
+	var lastErr error
 
 	wp := workerpool.New(workers)
 
@@ -81,7 +82,9 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 
 			if err != nil {
 				failed.Add(1)
-				lastErr.Store(err)
+				mu.Lock()
+				lastErr = err
+				mu.Unlock()
 
 				errorType := classifyProvideError(err)
 				ReprovideCIDFailures.WithLabelValues(errorType).Inc()
@@ -96,10 +99,9 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 
 	f := int(failed.Load())
 	if f > 0 {
-		var le error
-		if v := lastErr.Load(); v != nil {
-			le = v.(error)
-		}
+		mu.Lock()
+		le := lastErr
+		mu.Unlock()
 		return fmt.Errorf("provideMany: %d/%d CIDs failed, last error: %w", f, len(keys), le)
 	}
 	return nil
