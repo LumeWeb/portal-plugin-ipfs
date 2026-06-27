@@ -21,6 +21,59 @@ import (
 	"go.uber.org/zap"
 )
 
+// provideManyProvider is the minimal interface we need from a DHT that natively
+// implements batched ProvideMany (e.g. FullRT). Using an interface here keeps
+// provide.go free of fullrt imports.
+type provideManyProvider interface {
+	ProvideMany(ctx context.Context, keys []multihash.Multihash) error
+}
+
+// fullrtProvider delegates to FullRT.ProvideMany, which does keyspace-region
+// batching internally: one GetClosestPeers lookup per key (local trie, no
+// network round-trips), then groups keys by target peer so each peer receives
+// multiple ADD_PROVIDER messages over a single connection. This eliminates the
+// per-CID GCP bottleneck that basicDHTProvider has.
+type fullrtProvider struct {
+	dht   provideManyProvider
+	ready func() bool
+}
+
+func (f *fullrtProvider) Ready() bool {
+	if f.ready != nil {
+		return f.ready()
+	}
+	return true
+}
+
+func (f *fullrtProvider) ProvideMany(ctx context.Context, keys []multihash.Multihash) error {
+	start := time.Now()
+
+	err := f.dht.ProvideMany(ctx, keys)
+
+	elapsed := time.Since(start).Seconds()
+	if err != nil {
+		ReprovideCIDDuration.WithLabelValues(classifyProvideError(err)).Observe(elapsed)
+		// FullRT.ProvideMany returns a single error, not per-CID. Treat all
+		// keys as failed so the reprovider can retry them next cycle.
+		ReprovideCIDsTotal.WithLabelValues(LabelResultFailure).Add(float64(len(keys)))
+		ReprovideCIDFailures.WithLabelValues(classifyProvideError(err)).Add(float64(len(keys)))
+		return &provideManyError{
+			failed:     len(keys),
+			total:      len(keys),
+			err:        err,
+			failedKeys: keys,
+		}
+	}
+
+	ReprovideCIDDuration.WithLabelValues(LabelCIDResultSuccess).Observe(elapsed)
+	ReprovideCIDsTotal.WithLabelValues(LabelResultSuccess).Add(float64(len(keys)))
+	return nil
+}
+
+func newFullrtProvider(dht provideManyProvider, ready func() bool) pluginCore.Provider {
+	return &fullrtProvider{dht: dht, ready: ready}
+}
+
 // basicDHTProvider is a wrapper around basic DHT that implements pluginCore.Provider.
 // For basic DHT which doesn't implement ProvideMany natively, we provide it by iterating.
 type basicDHTProvider struct {

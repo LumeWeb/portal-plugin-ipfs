@@ -618,6 +618,132 @@ func TestBasicDHTProvider_ProvideMany(t *testing.T) {
 	})
 }
 
+// stubProvideMany is a minimal provideManyProvider stub for testing fullrtProvider.
+type stubProvideMany struct {
+	mu       sync.Mutex
+	calls    int
+	keys     []multihash.Multihash
+	err      error
+	provideFn func(keys []multihash.Multihash) error
+}
+
+func (s *stubProvideMany) ProvideMany(_ context.Context, keys []multihash.Multihash) error {
+	s.mu.Lock()
+	s.calls++
+	s.keys = keys
+	fn := s.provideFn
+	s.mu.Unlock()
+	if fn != nil {
+		return fn(keys)
+	}
+	return s.err
+}
+
+func (s *stubProvideMany) getCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+func TestFullrtProvider_ProvideMany(t *testing.T) {
+	t.Run("ready_returns_false_when_fn_returns_false", func(t *testing.T) {
+		provider := newFullrtProvider(&stubProvideMany{}, func() bool { return false })
+		assert.False(t, provider.Ready())
+	})
+
+	t.Run("ready_returns_true_when_fn_returns_true", func(t *testing.T) {
+		provider := newFullrtProvider(&stubProvideMany{}, func() bool { return true })
+		assert.True(t, provider.Ready())
+	})
+
+	t.Run("ready_defaults_to_true_when_fn_is_nil", func(t *testing.T) {
+		provider := newFullrtProvider(&stubProvideMany{}, nil)
+		assert.True(t, provider.Ready())
+	})
+
+	t.Run("provide_many_delegates_all_keys", func(t *testing.T) {
+		c1 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-key1"))
+		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-key2"))
+
+		stub := &stubProvideMany{}
+		provider := newFullrtProvider(stub, nil)
+
+		keys := []multihash.Multihash{c1.Hash(), c2.Hash()}
+		err := provider.ProvideMany(context.Background(), keys)
+		assert.NoError(t, err)
+		assert.Equal(t, 1, stub.getCalls())
+		assert.Equal(t, keys, stub.keys)
+	})
+
+	t.Run("provide_many_returns_provideManyError_on_failure", func(t *testing.T) {
+		c1 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-err1"))
+		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-err2"))
+
+		testErr := errors.New("fullrtbulk send failed")
+		stub := &stubProvideMany{err: testErr}
+		provider := newFullrtProvider(stub, nil)
+
+		keys := []multihash.Multihash{c1.Hash(), c2.Hash()}
+		err := provider.ProvideMany(context.Background(), keys)
+
+		require.Error(t, err)
+
+		var pme *provideManyError
+		require.ErrorAs(t, err, &pme)
+		assert.Equal(t, 2, pme.failed)
+		assert.Equal(t, 2, pme.total)
+		assert.Equal(t, testErr, pme.err)
+		assert.Equal(t, keys, pme.failedKeys)
+	})
+
+	t.Run("provide_many_returns_all_keys_as_failed_on_error", func(t *testing.T) {
+		c1 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-fail1"))
+		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-fail2"))
+		c3 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-fail3"))
+
+		stub := &stubProvideMany{err: errors.New("network error")}
+		provider := newFullrtProvider(stub, nil)
+
+		keys := []multihash.Multihash{c1.Hash(), c2.Hash(), c3.Hash()}
+		err := provider.ProvideMany(context.Background(), keys)
+
+		var pme *provideManyError
+		require.ErrorAs(t, err, &pme)
+		// All 3 keys should be in failedKeys for retry
+		assert.Equal(t, 3, len(pme.failedKeys))
+	})
+
+	t.Run("provide_many_with_empty_keys_returns_nil", func(t *testing.T) {
+		stub := &stubProvideMany{}
+		provider := newFullrtProvider(stub, nil)
+
+		err := provider.ProvideMany(context.Background(), []multihash.Multihash{})
+		assert.NoError(t, err)
+		assert.Equal(t, 1, stub.getCalls())
+	})
+
+	t.Run("provide_many_respects_context_cancellation", func(t *testing.T) {
+		key := mustMultihash(t, "frt-cancel-key")
+
+		stub := &stubProvideMany{
+			provideFn: func(_ []multihash.Multihash) error {
+				return context.Canceled
+			},
+		}
+		provider := newFullrtProvider(stub, nil)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := provider.ProvideMany(ctx, []multihash.Multihash{key})
+		require.Error(t, err)
+
+		var pme *provideManyError
+		require.ErrorAs(t, err, &pme)
+		assert.Equal(t, 1, pme.failed)
+	})
+}
+
 func TestReprovider_CircuitBreaker_Open(t *testing.T) {
 	ctx := context.Background()
 

@@ -34,6 +34,8 @@ const (
 	MetricCompanionDHTBootstrapAttempts = "companion_dht_bootstrap_attempts_total"
 	MetricCompanionDHTBootstrapFailures = "companion_dht_bootstrap_failures_total"
 	MetricCompanionDHTConnectedPeers    = "companion_dht_connected_peers"
+	MetricFullRTReady                   = "fullrt_ready"
+	MetricFullRTRoutingTableSize        = "fullrt_routing_table_size"
 
 	// WantBlockFilter metrics
 	MetricWantBlockRequests     = "want_block_requests_total"
@@ -97,6 +99,10 @@ var (
 	CompanionDHTBootstrapAttemptsTotal prometheus.Counter
 	CompanionDHTBootstrapFailuresTotal prometheus.Counter
 	CompanionDHTConnectedPeers         prometheus.Gauge
+
+	// FullRT gauges
+	FullRTReady            prometheus.Gauge
+	FullRTRoutingTableSize prometheus.Gauge
 
 	// WantBlockFilter metrics
 	WantBlockRequestsTotal *prometheus.CounterVec
@@ -299,6 +305,23 @@ func init() {
 		},
 	)
 
+	// FullRT gauges
+	FullRTReady = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemDHT,
+			Name:      MetricFullRTReady,
+			Help:      "1 when FullRT reports Ready (initial crawl complete), 0 otherwise",
+		},
+	)
+
+	FullRTRoutingTableSize = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemDHT,
+			Name:      MetricFullRTRoutingTableSize,
+			Help:      "Number of peers in FullRT's cached routing table",
+		},
+	)
+
 	// WantBlockFilter metrics
 	WantBlockRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -350,6 +373,8 @@ func GetMetricsCollectors() []prometheus.Collector {
 		CompanionDHTBootstrapAttemptsTotal,
 		CompanionDHTBootstrapFailuresTotal,
 		CompanionDHTConnectedPeers,
+		FullRTReady,
+		FullRTRoutingTableSize,
 		WantBlockRequestsTotal,
 		WantBlockGatewayPeers,
 		WantBlockPeerLimiters,

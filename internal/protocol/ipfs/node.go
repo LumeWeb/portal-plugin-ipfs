@@ -204,10 +204,11 @@ type Node struct {
 	log              *core.Logger
 	ctx              core.Context
 	host             host.Host
-	routing          DHTRouting
-	companionDHT       *dht.IpfsDHT
+	routing             DHTRouting
+	companionDHT        *dht.IpfsDHT
 	companionDHTHealthy atomic.Bool
-	reprovider       *Reprovider
+	fullRT              *fullrt.FullRT
+	reprovider          *Reprovider
 	blockService     blockservice.BlockService
 	dagService       format.DAGService
 	bitswap          *bitswap.Bitswap
@@ -586,11 +587,16 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		dhtProvider = newBasicDHTProvider(basicDHT, nil, 0, 0)
 		hasProvider = true
 	case config.DHTModeFullRT, "":
-		// FullRT is a client-only DHT — it does not register protocol handlers
-		// and cannot respond to inbound DHT queries. Per its own docs, a
-		// companion IpfsDHT in server mode must be run alongside it so that
-		// other peers (including the website gateway) can query this node
-		// for IPNS records and content routing.
+		// FullRT is an accelerated DHT client that crawls the full network
+		// periodically and caches all DHT peers locally. GetClosestPeers is a
+		// local trie lookup (microseconds) instead of an iterative network
+		// query (~10s). ProvideMany groups keys by keyspace region and sends
+		// bulk ADD_PROVIDER messages over shared connections.
+		//
+		// FullRT does not register protocol handlers — it cannot respond to
+		// inbound DHT queries (FIND_NODE, GET_PROVIDER, PUT_VALUE). A
+		// companion IpfsDHT in server mode runs alongside it to handle
+		// inbound queries and keep this node's multiaddrs discoverable.
 		companion, dhtErr := dht.New(ctx, node, dhtOpts...)
 		if dhtErr != nil {
 			return nil, fmt.Errorf("failed to create companion DHT: %w", dhtErr)
@@ -639,6 +645,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		}
 		routingImpl = frt
 		dhtProvider = frt
+		ipfsNode.fullRT = frt
 		hasProvider = true
 
 		// Start recovery goroutine now that fullrt.NewFullRT succeeded.
@@ -731,12 +738,21 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	var rp *Reprovider
 	var reproviderCancel context.CancelFunc
 	if hasProvider {
-		// When a companion (server-mode) DHT exists alongside FullRT, use the
-		// companion for providing. FullRT is client-only and does not reliably
-		// put provider records into the DHT network. This matches the behavior
-		// of ProvideCID which also routes through the companion when available.
-		reproviderProvider := dhtProvider
-		if ipfsNode.companionDHT != nil {
+		// When FullRT is active, delegate provides to FullRT.ProvideMany.
+		// FullRT caches all DHT peers and does keyspace-region batching
+		// internally (local GetClosestPeers + bulk ADD_PROVIDER per peer),
+		// eliminating the per-CID GCP bottleneck of the basic DHT.
+		// The companion stays for inbound DHT server duties and IPNS writes.
+		var reproviderProvider pluginCore.Provider
+		if ipfsNode.fullRT != nil {
+			reproviderProvider = newFullrtProvider(ipfsNode.fullRT, func() bool {
+				return ipfsNode.fullRT.Ready()
+			})
+		} else {
+			reproviderProvider = dhtProvider
+		}
+		if ipfsNode.companionDHT != nil && ipfsNode.fullRT == nil {
+			// Basic DHT mode with companion: gate on companion health
 			reproviderProvider = newBasicDHTProvider(ipfsNode.companionDHT, func() bool {
 				if ipfsNode.companionDHT == nil {
 					return false
@@ -762,22 +778,30 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					if ipfsNode.companionDHT != nil {
-						CompanionDHTRoutingTableSize.Set(float64(ipfsNode.companionDHT.RoutingTable().Size()))
+						if ipfsNode.companionDHT != nil {
+							CompanionDHTRoutingTableSize.Set(float64(ipfsNode.companionDHT.RoutingTable().Size()))
 
-						peerCount := 0
-						for range ipfsNode.host.Network().Conns() {
-							peerCount++
-						}
-						CompanionDHTConnectedPeers.Set(float64(peerCount))
+							peerCount := 0
+							for range ipfsNode.host.Network().Conns() {
+								peerCount++
+							}
+							CompanionDHTConnectedPeers.Set(float64(peerCount))
 
-						if ipfsNode.companionDHTHealthy.Load() {
-							CompanionDHTHealthy.Set(1)
-						} else {
-							CompanionDHTHealthy.Set(0)
+							if ipfsNode.companionDHTHealthy.Load() {
+								CompanionDHTHealthy.Set(1)
+							} else {
+								CompanionDHTHealthy.Set(0)
+							}
 						}
-					}
-				}
+						if ipfsNode.fullRT != nil {
+							if ipfsNode.fullRT.Ready() {
+								FullRTReady.Set(1)
+							} else {
+								FullRTReady.Set(0)
+							}
+							FullRTRoutingTableSize.Set(float64(len(ipfsNode.fullRT.Stat())))
+						}
+						}
 			}
 		}()
 	}
@@ -836,6 +860,9 @@ func (n *Node) TriggerReprovider() {
 }
 
 func (n *Node) ProvideCID(ctx context.Context, c cid.Cid) error {
+	if n.fullRT != nil {
+		return n.fullRT.Provide(ctx, c, true)
+	}
 	if n.companionDHT != nil {
 		return n.companionDHT.Provide(ctx, c, true)
 	}
