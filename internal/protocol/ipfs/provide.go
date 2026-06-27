@@ -12,6 +12,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal/core"
 
+	"github.com/avast/retry-go/v5"
 	"github.com/gammazero/workerpool"
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/routing"
@@ -54,16 +55,29 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 
 		k := k
 		wp.Submit(func() {
-			provideCtx := ctx
-			var cancel context.CancelFunc
-			if b.perCIDTimeout > 0 {
-				provideCtx, cancel = context.WithTimeout(ctx, b.perCIDTimeout)
-			}
+			err := retry.New(
+				retry.Attempts(3),
+				retry.Delay(1*time.Second),
+				retry.DelayType(retry.BackOffDelay),
+				retry.Context(ctx),
+				retry.RetryIf(func(err error) bool {
+					// Don't retry on timeout or cancellation — likely to fail again
+					// and just burn another per-CID timeout.
+					return !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled)
+				}),
+			).Do(func() error {
+				provideCtx := ctx
+				var cancel context.CancelFunc
+				if b.perCIDTimeout > 0 {
+					provideCtx, cancel = context.WithTimeout(ctx, b.perCIDTimeout)
+				}
 
-			err := b.dht.Provide(provideCtx, cid.NewCidV1(cid.Raw, k), true)
-			if cancel != nil {
-				cancel()
-			}
+				err := b.dht.Provide(provideCtx, cid.NewCidV1(cid.Raw, k), true)
+				if cancel != nil {
+					cancel()
+				}
+				return err
+			})
 
 			if err != nil {
 				failed.Add(1)
