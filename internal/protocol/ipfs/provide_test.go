@@ -30,12 +30,12 @@ func newTestReprovider(t *testing.T) (*Reprovider, *mocks.MockProvider, *mocks.M
 }
 
 // runReproviderAndWait runs the reprovider in a goroutine and waits for it to complete
-func runReproviderAndWait(ctx context.Context, cancel context.CancelFunc, reprovider *Reprovider, interval, timeout time.Duration, batchSize int, waitDuration time.Duration) {
+func runReproviderAndWait(ctx context.Context, cancel context.CancelFunc, reprovider *Reprovider, interval time.Duration, batchSize int, waitDuration time.Duration) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		reprovider.Run(ctx, interval, timeout, batchSize)
+		reprovider.Run(ctx, interval, batchSize)
 	}()
 
 	time.Sleep(waitDuration)
@@ -47,7 +47,6 @@ func TestReprovider_Run(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider, mockProvider, mockStore := newTestReprovider(t)
@@ -63,14 +62,13 @@ func TestReprovider_Run(t *testing.T) {
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	runReproviderAndWait(ctx, cancel, reprovider, interval, timeout, batchSize, 2*interval)
+	runReproviderAndWait(ctx, cancel, reprovider, interval, batchSize, 2*interval)
 }
 
 func TestReprovider_Run_ProviderNotReady(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider, mockProvider, mockStore := newTestReprovider(t)
@@ -85,14 +83,13 @@ func TestReprovider_Run_ProviderNotReady(t *testing.T) {
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	// Wait longer to account for the 30-second sleep in the Run function
-	runReproviderAndWait(ctx, cancel, reprovider, interval, timeout, batchSize, 2*interval+30*time.Second)
+	runReproviderAndWait(ctx, cancel, reprovider, interval, batchSize, 2*interval+30*time.Second)
 }
 
 func TestReprovider_Run_ProvideCIDsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider, mockProvider, mockStore := newTestReprovider(t)
@@ -103,14 +100,13 @@ func TestReprovider_Run_ProvideCIDsError(t *testing.T) {
 	// Mock store returning error
 	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(nil, errors.New("test error")).Once()
 
-	runReproviderAndWait(ctx, cancel, reprovider, interval, timeout, batchSize, 2*interval)
+	runReproviderAndWait(ctx, cancel, reprovider, interval, batchSize, 2*interval)
 }
 
 func TestReprovider_Run_ProvideManyError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider, mockProvider, mockStore := newTestReprovider(t)
@@ -128,14 +124,13 @@ func TestReprovider_Run_ProvideManyError(t *testing.T) {
 	// Mock provider ProvideMany returning error
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
 
-	runReproviderAndWait(ctx, cancel, reprovider, interval, timeout, batchSize, 2*interval)
+	runReproviderAndWait(ctx, cancel, reprovider, interval, batchSize, 2*interval)
 }
 
 func TestReprovider_Run_SetLastAnnouncementError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider, mockProvider, mockStore := newTestReprovider(t)
@@ -156,7 +151,7 @@ func TestReprovider_Run_SetLastAnnouncementError(t *testing.T) {
 	// Mock store SetLastAnnouncement returning error
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
 
-	runReproviderAndWait(ctx, cancel, reprovider, interval, timeout, batchSize, 2*interval)
+	runReproviderAndWait(ctx, cancel, reprovider, interval, batchSize, 2*interval)
 }
 
 func TestReprovider_Trigger(t *testing.T) {
@@ -167,7 +162,6 @@ func TestReprovider_Trigger(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider := NewReprovider(mockProvider, mockStore, logger)
@@ -188,7 +182,7 @@ func TestReprovider_Trigger(t *testing.T) {
 	// Mock store SetLastAnnouncement
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	go reprovider.Run(ctx, interval, timeout, batchSize)
+	go reprovider.Run(ctx, interval, batchSize)
 
 	// Trigger the reprovider
 	reprovider.Trigger()
@@ -222,7 +216,6 @@ func TestReprovider_performProvide_NoCIDs(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider := &Reprovider{
@@ -238,7 +231,7 @@ func TestReprovider_performProvide_NoCIDs(t *testing.T) {
 	// Mock store returning no CIDs
 	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return([]core.PinnedCID{}, nil).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
+	sleepDuration := reprovider.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
 
 	assert.Equal(t, 10*time.Minute, sleepDuration)
 }
@@ -251,7 +244,6 @@ func TestReprovider_performProvide_ProvideCIDsError(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider := &Reprovider{
@@ -267,7 +259,7 @@ func TestReprovider_performProvide_ProvideCIDsError(t *testing.T) {
 	// Mock store returning error
 	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(nil, errors.New("test error")).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
+	sleepDuration := reprovider.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
 
 	assert.Equal(t, time.Minute, sleepDuration)
 }
@@ -280,7 +272,6 @@ func TestReprovider_performProvide_WaitingForNextInterval(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider := &Reprovider{
@@ -298,7 +289,7 @@ func TestReprovider_performProvide_WaitingForNextInterval(t *testing.T) {
 	testCIDs := []core.PinnedCID{{CID: cid.Cid{}, LastAnnouncement: futureTime}}
 	mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
+	sleepDuration := reprovider.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
 
 	assert.Less(t, time.Until(futureTime), sleepDuration)
 }
@@ -311,7 +302,6 @@ func TestReprovider_performProvide_Success(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider := &Reprovider{
@@ -337,7 +327,7 @@ func TestReprovider_performProvide_Success(t *testing.T) {
 	// Mock store SetLastAnnouncement
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
+	sleepDuration := reprovider.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
 
 	assert.Equal(t, interval, sleepDuration)
 }
@@ -350,7 +340,6 @@ func TestReprovider_performProvide_Success_NotAllAnnounced(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider := &Reprovider{
@@ -377,7 +366,7 @@ func TestReprovider_performProvide_Success_NotAllAnnounced(t *testing.T) {
 	// Mock store SetLastAnnouncement
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
+	sleepDuration := reprovider.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
 	assert.Less(t, time.Until(testCIDs[2].LastAnnouncement.Add(interval)), sleepDuration)
 }
 
@@ -389,7 +378,6 @@ func TestReprovider_performProvide_ProvideManyError(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider := &Reprovider{
@@ -412,7 +400,7 @@ func TestReprovider_performProvide_ProvideManyError(t *testing.T) {
 	// Mock provider ProvideMany returning error
 	mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
+	sleepDuration := reprovider.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
 
 	assert.Equal(t, time.Minute, sleepDuration)
 }
@@ -425,7 +413,6 @@ func TestReprovider_performProvide_SetLastAnnouncementError(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider := &Reprovider{
@@ -451,7 +438,7 @@ func TestReprovider_performProvide_SetLastAnnouncementError(t *testing.T) {
 	// Mock store SetLastAnnouncement returning error
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
+	sleepDuration := reprovider.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
 
 	assert.Equal(t, time.Minute, sleepDuration)
 }
@@ -464,7 +451,6 @@ func TestReprovider_performProvide_MinAnnouncement(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider := &Reprovider{
@@ -490,7 +476,7 @@ func TestReprovider_performProvide_MinAnnouncement(t *testing.T) {
 	// Mock store SetLastAnnouncement
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
+	sleepDuration := reprovider.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
 
 	assert.Equal(t, interval, sleepDuration)
 }
@@ -503,7 +489,6 @@ func TestReprovider_performProvide_MinAnnouncement_NotAllAnnounced(t *testing.T)
 	logger, _ := zap.NewDevelopment()
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider := &Reprovider{
@@ -530,7 +515,7 @@ func TestReprovider_performProvide_MinAnnouncement_NotAllAnnounced(t *testing.T)
 	// Mock store SetLastAnnouncement
 	mockStore.EXPECT().SetLastAnnouncement(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
-	sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
+	sleepDuration := reprovider.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
 
 	assert.Less(t, time.Until(testCIDs[2].LastAnnouncement.Add(interval)), sleepDuration)
 }
@@ -671,7 +656,7 @@ func TestReprovider_CircuitBreaker_Open(t *testing.T) {
 	reprovider.circuitOpenUntil.Store(futureTime.UnixNano())
 	ReprovideCircuitOpen.Set(1)
 
-	sleepDuration := reprovider.performProvide(ctx, time.Second, 500*time.Millisecond, 10, LabelTriggerScheduled)
+	sleepDuration := reprovider.performProvide(ctx, time.Second, 10, LabelTriggerScheduled)
 
 	// Should return the time until the circuit opens, without calling store or provider
 	assert.InDelta(t, 15*time.Minute, sleepDuration, float64(time.Second))
@@ -687,7 +672,6 @@ func TestReprovider_CircuitBreaker_OpenAfter3Failures(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	interval := 1 * time.Second
-	timeout := 500 * time.Millisecond
 	batchSize := 10
 
 	reprovider := &Reprovider{
@@ -710,7 +694,7 @@ func TestReprovider_CircuitBreaker_OpenAfter3Failures(t *testing.T) {
 		mockStore.EXPECT().ProvideCIDs(mock.Anything, batchSize).Return(testCIDs, nil).Once()
 		mockProvider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Return(errors.New("test error")).Once()
 
-		sleepDuration := reprovider.performProvide(ctx, interval, timeout, batchSize, LabelTriggerScheduled)
+		sleepDuration := reprovider.performProvide(ctx, interval, batchSize, LabelTriggerScheduled)
 
 		if i < 2 {
 			// First two failures: return time.Minute, circuit not yet open

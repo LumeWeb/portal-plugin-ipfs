@@ -750,7 +750,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		rp = NewReprovider(reproviderProvider, rs, ctx.Logger().Named("reprovider"))
 		reproviderCtx, cancel := context.WithCancel(ctx)
 		reproviderCancel = cancel
-		go rp.Run(reproviderCtx, cfg.Provider.Interval, cfg.Provider.Timeout, cfg.Provider.BatchSize)
+		go rp.Run(reproviderCtx, cfg.Provider.Interval, cfg.Provider.BatchSize)
 
 		// Periodic DHT metrics goroutine -- updates gauges every 30 seconds
 		// to surface DHT health degradation even when the reprovider is idle.
