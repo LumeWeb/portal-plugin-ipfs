@@ -176,7 +176,7 @@ func TestMetadataStore_ProvideCIDs(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Act
-		cids, err := metadataStore.ProvideCIDs(context.Background(), 2)
+		cids, err := metadataStore.ProvideCIDs(context.Background(), time.Now(), 2)
 
 		// Assert
 		require.NoError(tb, err)
@@ -357,7 +357,7 @@ func TestMetadataStore_ReaddLinkedBlockAfterDeletion(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		metadataStore := store.NewMetadataStore(ctx, core.GetProtocol(internal.ProtocolName).(protocol.ProtoNode))
-		
+
 		parentData := "parent data"
 		childData := "child data"
 		parentCid := generateCid(t, parentData)

@@ -18,6 +18,16 @@ const (
 	MetricReprovideConsecutiveFailures = "reprovide_consecutive_failures"
 	MetricReprovideProviderReady       = "reprovide_provider_ready"
 
+	// Boot-cycle metrics (per boot reprovide cycle)
+	MetricReprovideBootCycleAttempted = "reprovide_boot_cycle_attempted"
+	MetricReprovideBootCycleSucceeded = "reprovide_boot_cycle_succeeded"
+	MetricReprovideBootCycleFailed    = "reprovide_boot_cycle_failed"
+
+	// Global pinned-state gauges
+	MetricReprovidePinnedTotal    = "reprovide_pinned_total"
+	MetricReprovideAnnouncedTotal = "reprovide_announced_total"
+	MetricReprovidePendingTotal   = "reprovide_pending_total"
+
 	// DHT metrics
 	MetricCompanionDHTHealthy           = "companion_dht_healthy"
 	MetricCompanionDHTRoutingTable      = "companion_dht_routing_table_size"
@@ -70,6 +80,16 @@ var (
 	ReprovideCircuitOpen         prometheus.Gauge
 	ReprovideConsecutiveFailures prometheus.Gauge
 	ReprovideProviderReady       prometheus.Gauge
+
+	// Boot-cycle gauges (reset each cycle)
+	ReprovideBootCycleAttempted prometheus.Gauge
+	ReprovideBootCycleSucceeded prometheus.Gauge
+	ReprovideBootCycleFailed    prometheus.Gauge
+
+	// Global pinned-state gauges
+	ReprovidePinnedTotal    prometheus.Gauge
+	ReprovideAnnouncedTotal prometheus.Gauge
+	ReprovidePendingTotal   prometheus.Gauge
 
 	// DHT gauges
 	CompanionDHTHealthy                prometheus.Gauge
@@ -188,6 +208,56 @@ func init() {
 		},
 	)
 
+	// Boot-cycle gauges
+	ReprovideBootCycleAttempted = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideBootCycleAttempted,
+			Help:      "CIDs attempted in the current boot reprovide cycle",
+		},
+	)
+
+	ReprovideBootCycleSucceeded = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideBootCycleSucceeded,
+			Help:      "CIDs successfully provided in the current boot reprovide cycle",
+		},
+	)
+
+	ReprovideBootCycleFailed = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideBootCycleFailed,
+			Help:      "CIDs that failed in the current boot reprovide cycle and haven't succeeded on retry",
+		},
+	)
+
+	// Global pinned-state gauges
+	ReprovidePinnedTotal = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovidePinnedTotal,
+			Help:      "Total ready pinned CIDs in the database",
+		},
+	)
+
+	ReprovideAnnouncedTotal = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideAnnouncedTotal,
+			Help:      "Pinned CIDs announced within the current reprovide interval",
+		},
+	)
+
+	ReprovidePendingTotal = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovidePendingTotal,
+			Help:      "Pinned CIDs not yet announced in the current interval (pending or failed)",
+		},
+	)
+
 	// DHT gauges
 	CompanionDHTHealthy = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -269,6 +339,12 @@ func GetMetricsCollectors() []prometheus.Collector {
 		ReprovideCircuitOpen,
 		ReprovideConsecutiveFailures,
 		ReprovideProviderReady,
+		ReprovideBootCycleAttempted,
+		ReprovideBootCycleSucceeded,
+		ReprovideBootCycleFailed,
+		ReprovidePinnedTotal,
+		ReprovideAnnouncedTotal,
+		ReprovidePendingTotal,
 		CompanionDHTHealthy,
 		CompanionDHTRoutingTableSize,
 		CompanionDHTBootstrapAttemptsTotal,

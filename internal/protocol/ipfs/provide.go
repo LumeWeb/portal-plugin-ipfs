@@ -46,6 +46,7 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 	var failed atomic.Int64
 	var mu sync.Mutex
 	var lastErr error
+	failedKeys := make(map[string]struct{})
 
 	wp := workerpool.New(workers)
 
@@ -92,6 +93,7 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 				failed.Add(1)
 				mu.Lock()
 				lastErr = err
+				failedKeys[string(k)] = struct{}{}
 				mu.Unlock()
 
 				errorType := classifyProvideError(err)
@@ -109,10 +111,41 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 	if f > 0 {
 		mu.Lock()
 		le := lastErr
+		fk := make([]multihash.Multihash, 0, len(failedKeys))
+		for ks := range failedKeys {
+			fk = append(fk, multihash.Multihash(ks))
+		}
 		mu.Unlock()
-		return fmt.Errorf("provideMany: %d/%d CIDs failed, last error: %w", f, len(keys), le)
+		return &provideManyError{
+			failed:     f,
+			total:      len(keys),
+			err:        le,
+			failedKeys: fk,
+		}
 	}
 	return nil
+}
+
+// provideManyError is returned by ProvideMany when some CIDs fail.
+// It carries the set of failed multihashes so callers can track per-CID state.
+type provideManyError struct {
+	failed     int
+	total      int
+	err        error
+	failedKeys []multihash.Multihash
+}
+
+func (e *provideManyError) Error() string {
+	return fmt.Sprintf("provideMany: %d/%d CIDs failed, last error: %v", e.failed, e.total, e.err)
+}
+
+func (e *provideManyError) Unwrap() error {
+	return e.err
+}
+
+// FailedKeys returns the multihashes that failed to provide.
+func (e *provideManyError) FailedKeys() []multihash.Multihash {
+	return e.failedKeys
 }
 
 func newBasicDHTProvider(dht routing.ContentRouting, ready func() bool, perCIDTimeout time.Duration, provideWorkers int) pluginCore.Provider {
@@ -154,6 +187,63 @@ type Reprovider struct {
 	// Circuit breaker
 	consecutiveFailures atomic.Uint32
 	circuitOpenUntil    atomic.Int64 // unix nano timestamp
+
+	// Boot-cycle tracking: tracks per-CID success/failure during the initial
+	// reprovide sweep after boot. When a CID fails then later succeeds on retry,
+	// it is removed from the failed set.
+	bootCycle bootCycle
+}
+
+type bootCycle struct {
+	mu        sync.Mutex
+	started   bool
+	attempted int64
+	succeeded int64
+	failed    map[string]struct{} // multihash string -> failed
+}
+
+func (bc *bootCycle) markAttempted(n int) {
+	bc.mu.Lock()
+	bc.attempted += int64(n)
+	bc.mu.Unlock()
+}
+
+func (bc *bootCycle) markSucceeded(keys []multihash.Multihash) {
+	bc.mu.Lock()
+	bc.succeeded += int64(len(keys))
+	for _, k := range keys {
+		delete(bc.failed, string(k))
+	}
+	bc.mu.Unlock()
+}
+
+func (bc *bootCycle) markFailed(keys []multihash.Multihash) {
+	bc.mu.Lock()
+	for _, k := range keys {
+		bc.failed[string(k)] = struct{}{}
+	}
+	bc.mu.Unlock()
+}
+
+func (bc *bootCycle) reset() {
+	bc.mu.Lock()
+	bc.attempted = 0
+	bc.succeeded = 0
+	bc.failed = make(map[string]struct{})
+	bc.started = true
+	bc.mu.Unlock()
+}
+
+func (bc *bootCycle) snapshot() (attempted, succeeded, failedCount int64) {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	return bc.attempted, bc.succeeded, int64(len(bc.failed))
+}
+
+func (bc *bootCycle) isStarted() bool {
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
+	return bc.started
 }
 
 // Trigger triggers the reprovider loop to run immediately.
@@ -257,6 +347,25 @@ func (r *Reprovider) performProvide(ctx context.Context, interval time.Duration,
 
 	ReprovideAttemptsTotal.WithLabelValues(trigger).Inc()
 
+	// Start boot cycle on first performProvide after boot
+	if !r.bootCycle.isStarted() {
+		r.bootCycle.reset()
+		ReprovideBootCycleAttempted.Set(0)
+		ReprovideBootCycleSucceeded.Set(0)
+		ReprovideBootCycleFailed.Set(0)
+		r.log.Info("starting boot reprovide cycle")
+	}
+
+	// Update global pinned-state gauges
+	since := time.Now().Add(-interval)
+	if stats, err := r.store.CountPinned(ctx, since); err != nil {
+		r.log.Warn("failed to count pinned CIDs", zap.Error(err))
+	} else {
+		ReprovidePinnedTotal.Set(float64(stats.Total))
+		ReprovideAnnouncedTotal.Set(float64(stats.Announced))
+		ReprovidePendingTotal.Set(float64(stats.Pending))
+	}
+
 	if r.cancelledFlag.Load() {
 		return 10 * time.Minute
 	}
@@ -289,7 +398,10 @@ func (r *Reprovider) performProvide(ctx context.Context, interval time.Duration,
 		return reprovideSleep
 	}
 
-	cids, err := r.store.ProvideCIDs(ctx, batchSize)
+	// Only fetch CIDs whose last_announcement is older than the interval.
+	// This avoids re-broadcasting CIDs that are already fresh in the DHT.
+	cutoff := time.Now().Add(-interval)
+	cids, err := r.store.ProvideCIDs(ctx, cutoff, batchSize)
 	if err != nil {
 		r.log.Error("failed to fetch CIDs to provide", zap.Error(err))
 		ReprovideFailuresTotal.Inc()
@@ -299,29 +411,28 @@ func (r *Reprovider) performProvide(ctx context.Context, interval time.Duration,
 
 	if len(cids) == 0 {
 		r.log.Debug("no CIDs to provide")
+		// Boot cycle complete: all CIDs have been processed
+		attempted, succeeded, failedCount := r.bootCycle.snapshot()
+		if attempted > 0 {
+			r.log.Info("boot reprovide cycle complete",
+				zap.Int64("attempted", attempted),
+				zap.Int64("succeeded", succeeded),
+				zap.Int64("failed", failedCount))
+		}
 		return reprovideSleep
 	}
 
-	rem := time.Until(cids[0].LastAnnouncement.Add(interval))
-	if rem > 0 {
-		r.log.Debug("waiting for next provide interval")
-		return rem
-	}
-
-	buffer := interval / 10
-	minAnnouncement := time.Now().Add(-(interval - buffer))
-	eligibleCIDs := lo.Filter(cids, func(c pluginCore.PinnedCID, _ int) bool {
-		return !c.LastAnnouncement.After(minAnnouncement)
-	})
-
-	announced := lo.Map(eligibleCIDs, func(c pluginCore.PinnedCID, _ int) cid.Cid {
+	announced := lo.Map(cids, func(c pluginCore.PinnedCID, _ int) cid.Cid {
 		return c.CID
 	})
-	keys := lo.Map(eligibleCIDs, func(c pluginCore.PinnedCID, _ int) multihash.Multihash {
+	keys := lo.Map(cids, func(c pluginCore.PinnedCID, _ int) multihash.Multihash {
 		return c.CID.Hash()
 	})
 
 	ReprovideBatchSize.WithLabelValues().Observe(float64(len(keys)))
+
+	// Track boot-cycle attempted
+	r.bootCycle.markAttempted(len(keys))
 
 	start := time.Now()
 
@@ -332,6 +443,23 @@ func (r *Reprovider) performProvide(ctx context.Context, interval time.Duration,
 		r.log.Error("failed to provide CIDs",
 			zap.Error(err),
 			zap.Uint32("consecutive_failures", failures))
+
+		// Track per-CID failures in boot cycle
+		var failedKeys []multihash.Multihash
+		var pme *provideManyError
+		if errors.As(err, &pme) {
+			failedKeys = pme.FailedKeys()
+		} else {
+			// Unknown error: mark all attempted keys as failed
+			failedKeys = keys
+		}
+		r.bootCycle.markFailed(failedKeys)
+
+		// Update boot-cycle gauges
+		attempted, succeeded, failedCount := r.bootCycle.snapshot()
+		ReprovideBootCycleAttempted.Set(float64(attempted))
+		ReprovideBootCycleSucceeded.Set(float64(succeeded))
+		ReprovideBootCycleFailed.Set(float64(failedCount))
 
 		if failures >= 3 {
 			cooldown := 15 * time.Minute
@@ -347,6 +475,13 @@ func (r *Reprovider) performProvide(ctx context.Context, interval time.Duration,
 
 	ReprovideDuration.WithLabelValues().Observe(time.Since(start).Seconds())
 
+	// Track boot-cycle succeeded: remove from failed set if previously failed
+	r.bootCycle.markSucceeded(keys)
+	attempted, succeeded, failedCount := r.bootCycle.snapshot()
+	ReprovideBootCycleAttempted.Set(float64(attempted))
+	ReprovideBootCycleSucceeded.Set(float64(succeeded))
+	ReprovideBootCycleFailed.Set(float64(failedCount))
+
 	if err := r.store.SetLastAnnouncement(ctx, announced, time.Now()); err != nil {
 		r.log.Error("failed to update last announcement time", zap.Error(err))
 		return time.Minute
@@ -358,10 +493,6 @@ func (r *Reprovider) performProvide(ctx context.Context, interval time.Duration,
 	r.log.Debug("provided CIDs",
 		zap.Int("count", len(announced)),
 		zap.Duration("elapsed", time.Since(start)))
-
-	if len(announced) < len(cids) {
-		return time.Until(cids[len(announced)].LastAnnouncement.Add(interval))
-	}
 
 	return interval
 }

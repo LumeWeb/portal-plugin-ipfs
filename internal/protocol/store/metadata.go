@@ -562,13 +562,14 @@ WHERE b.ready = true
 	return siblings, nil
 }
 
-func (s *MetadataStoreDefault) ProvideCIDs(ctx context.Context, limit int) (cids []pluginCore.PinnedCID, err error) {
+func (s *MetadataStoreDefault) ProvideCIDs(ctx context.Context, since time.Time, limit int) (cids []pluginCore.PinnedCID, err error) {
 	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.ProvideCIDs")
 	defer core.EndSpanWithErr(span, err)
 
 	var _blocks []pluginDb.IPFSBlock
 	if err = db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
-		return tx.Where("ready = ?", true).Order("last_announcement ASC").Limit(limit).Find(&_blocks)
+		return tx.Where("ready = ? AND (last_announcement IS NULL OR last_announcement < ?)", true, since).
+			Order("last_announcement ASC").Limit(limit).Find(&_blocks)
 	}); err != nil {
 		return nil, fmt.Errorf("failed to query: %w", err)
 	}
@@ -591,6 +592,26 @@ func (s *MetadataStoreDefault) ProvideCIDs(ctx context.Context, limit int) (cids
 		})
 	}
 	return cids, nil
+}
+
+func (s *MetadataStoreDefault) CountPinned(ctx context.Context, since time.Time) (stats pluginCore.PinnedCIDStats, err error) {
+	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.CountPinned")
+	defer core.EndSpanWithErr(span, err)
+
+	if err = db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return tx.Model(&pluginDb.IPFSBlock{}).Where("ready = ?", true).Count(&stats.Total)
+	}); err != nil {
+		return stats, fmt.Errorf("failed to count pinned: %w", err)
+	}
+
+	if err = db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		return tx.Model(&pluginDb.IPFSBlock{}).Where("ready = ? AND last_announcement >= ?", true, since).Count(&stats.Announced)
+	}); err != nil {
+		return stats, fmt.Errorf("failed to count announced: %w", err)
+	}
+
+	stats.Pending = stats.Total - stats.Announced
+	return stats, nil
 }
 
 func (s *MetadataStoreDefault) SetLastAnnouncement(ctx context.Context, cids []cid.Cid, t time.Time) error {
