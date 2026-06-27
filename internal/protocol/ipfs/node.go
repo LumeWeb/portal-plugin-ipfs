@@ -583,7 +583,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		routingImpl = basicDHT
 		// Wrap basic DHT to implement pluginCore.Provider.
 		// Basic mode uses the primary DHT directly; no health gating needed.
-		dhtProvider = newBasicDHTProvider(basicDHT, nil, 0)
+		dhtProvider = newBasicDHTProvider(basicDHT, nil, 0, 0)
 		hasProvider = true
 	case config.DHTModeFullRT, "":
 		// FullRT is a client-only DHT — it does not register protocol handlers
@@ -745,7 +745,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 					return false
 				}
 				return ipfsNode.companionDHT.RoutingTable().Size() > 0
-			}, cfg.Provider.PerCIDTimeout)
+			}, cfg.Provider.PerCIDTimeout, cfg.Provider.ProvideWorkers)
 		}
 		rp = NewReprovider(reproviderProvider, rs, ctx.Logger().Named("reprovider"))
 		reproviderCtx, cancel := context.WithCancel(ctx)
