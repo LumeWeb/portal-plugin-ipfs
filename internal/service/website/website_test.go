@@ -2500,6 +2500,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 		).Return(nil).Once()
 
 		ipfsWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, ipfsUpdates)
+		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPFS), ipfsWebsite.TargetType)
 
@@ -2528,6 +2529,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 		).Return(nil).Once()
 
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, ipfsWebsite.ID, ipnsUpdates)
+		websiteService.WaitForPublishes()
 
 		// Assert
 		require.NoError(tb, err)

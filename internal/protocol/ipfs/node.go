@@ -539,7 +539,6 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	}
 
 	var routingImpl DHTRouting
-	var dhtProvider pluginCore.Provider
 	var hasProvider bool
 
 	// Detect if we should use LAN DHT mode
@@ -582,9 +581,6 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 			return nil, fmt.Errorf("failed to create basic dht: %w", dhtErr)
 		}
 		routingImpl = basicDHT
-		// Wrap basic DHT to implement pluginCore.Provider.
-		// Basic mode uses the primary DHT directly; no health gating needed.
-		dhtProvider = newBasicDHTProvider(basicDHT, nil, 0, 0)
 		hasProvider = true
 	case config.DHTModeFullRT, "":
 		// FullRT is an accelerated DHT client that crawls the full network
@@ -644,7 +640,6 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 			return nil, fmt.Errorf("failed to create fullrt: %w", dhtErr)
 		}
 		routingImpl = frt
-		dhtProvider = frt
 		ipfsNode.fullRT = frt
 		hasProvider = true
 
@@ -738,35 +733,35 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	var rp *Reprovider
 	var reproviderCancel context.CancelFunc
 	if hasProvider {
-		// When FullRT is active, delegate provides to FullRT.ProvideMany.
-		// FullRT caches all DHT peers and does keyspace-region batching
-		// internally (local GetClosestPeers + bulk ADD_PROVIDER per peer),
-		// eliminating the per-CID GCP bottleneck of the basic DHT.
-		// The companion stays for inbound DHT server duties and IPNS writes.
-		var reproviderProvider pluginCore.Provider
+		// NewDHTProvider abstracts the fullrt vs basic DHT choice:
+		// - FullRT mode: delegates to FullRT.ProvideMany (keyspace-region batching)
+		// - Basic mode: iterates with per-CID timeout over the primary DHT
+		// - FullRT mode without fullRT ready: falls back to companion DHT
+		// The ready function gates on FullRT readiness or companion health.
+		var dhtForProvide routing.ContentRouting
+		var readyFn func() bool
+
 		if ipfsNode.fullRT != nil {
-			reproviderProvider = newFullrtProvider(ipfsNode.fullRT, func() bool {
-				return ipfsNode.fullRT.Ready()
-			})
-		} else {
-			reproviderProvider = dhtProvider
-		}
-		if ipfsNode.companionDHT != nil && ipfsNode.fullRT == nil {
-			// Basic DHT mode with companion: gate on companion health
-			reproviderProvider = newBasicDHTProvider(ipfsNode.companionDHT, func() bool {
-				if ipfsNode.companionDHT == nil {
-					return false
-				}
+			readyFn = func() bool { return ipfsNode.fullRT.Ready() }
+		} else if ipfsNode.companionDHT != nil {
+			dhtForProvide = ipfsNode.companionDHT
+			readyFn = func() bool {
 				if !ipfsNode.companionDHTHealthy.Load() {
 					return false
 				}
 				return ipfsNode.companionDHT.RoutingTable().Size() > 0
-			}, cfg.Provider.PerCIDTimeout, cfg.Provider.ProvideWorkers)
+			}
+		} else {
+			// Basic mode: use the primary DHT directly, no health gating
+			dhtForProvide = routingImpl
+			readyFn = nil
 		}
-		rp = NewReprovider(reproviderProvider, rs, ctx.Logger().Named("reprovider"))
+
+		reproviderProvider := NewDHTProvider(ipfsNode.fullRT, dhtForProvide, readyFn, cfg.Provider)
+		rp = NewReprovider(reproviderProvider, rs, ctx.Logger().Named("reprovider"), cfg.Provider)
 		reproviderCtx, cancel := context.WithCancel(ctx)
 		reproviderCancel = cancel
-		go rp.Run(reproviderCtx, cfg.Provider.Interval, cfg.Provider.BatchSize)
+		go rp.Run(reproviderCtx)
 
 		// Periodic DHT metrics goroutine -- updates gauges every 30 seconds
 		// to surface DHT health degradation even when the reprovider is idle.
