@@ -435,17 +435,17 @@ func TestReprovider_performProvide_BacklogDrain(t *testing.T) {
 
 func TestBasicDHTProvider_ProvideMany(t *testing.T) {
 	t.Run("ready_returns_false_when_fn_returns_false", func(t *testing.T) {
-		provider := newBasicDHTProvider(&stubContentRouting{}, func() bool { return false }, 0)
+		provider := newBasicDHTProvider(&stubContentRouting{}, func() bool { return false }, 0, 0)
 		assert.False(t, provider.Ready())
 	})
 
 	t.Run("ready_returns_true_when_fn_returns_true", func(t *testing.T) {
-		provider := newBasicDHTProvider(&stubContentRouting{}, func() bool { return true }, 0)
+		provider := newBasicDHTProvider(&stubContentRouting{}, func() bool { return true }, 0, 0)
 		assert.True(t, provider.Ready())
 	})
 
 	t.Run("ready_defaults_to_true_when_fn_is_nil", func(t *testing.T) {
-		provider := newBasicDHTProvider(&stubContentRouting{}, nil, 0)
+		provider := newBasicDHTProvider(&stubContentRouting{}, nil, 0, 0)
 		assert.True(t, provider.Ready())
 	})
 
@@ -454,7 +454,7 @@ func TestBasicDHTProvider_ProvideMany(t *testing.T) {
 		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "key2"))
 
 		scr := &stubContentRouting{}
-		provider := newBasicDHTProvider(scr, nil, 0)
+		provider := newBasicDHTProvider(scr, nil, 0, 0)
 
 		keys := []multihash.Multihash{c1.Hash(), c2.Hash()}
 		err := provider.ProvideMany(context.Background(), keys)
@@ -468,7 +468,7 @@ func TestBasicDHTProvider_ProvideMany(t *testing.T) {
 
 		testErr := errors.New("provide failed")
 		scr := &stubContentRouting{err: testErr}
-		provider := newBasicDHTProvider(scr, nil, 0)
+		provider := newBasicDHTProvider(scr, nil, 0, 0)
 
 		keys := []multihash.Multihash{c1.Hash(), c2.Hash()}
 		err := provider.ProvideMany(context.Background(), keys)
@@ -484,7 +484,7 @@ func TestBasicDHTProvider_ProvideMany(t *testing.T) {
 		}
 
 		scr := &stubContentRouting{}
-		provider := newBasicDHTProvider(scr, nil, 0)
+		provider := newBasicDHTProvider(scr, nil, 0, 0)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // cancel immediately

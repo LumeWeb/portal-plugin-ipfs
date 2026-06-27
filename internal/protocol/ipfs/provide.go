@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/multiformats/go-multihash"
 	"github.com/samber/lo"
+	"golang.org/x/sync/errgroup"
 	"go.uber.org/zap"
 
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
@@ -75,9 +77,10 @@ func newFullrtProvider(dht provideManyProvider, ready func() bool) pluginCore.Pr
 // natively. It iterates over keys with a per-CID timeout. Used in basic DHT
 // mode (mainly for testing) and as a fallback when FullRT is unavailable.
 type basicDHTProvider struct {
-	dht           routing.ContentRouting
-	ready         func() bool
-	perCIDTimeout time.Duration
+	dht            routing.ContentRouting
+	ready          func() bool
+	perCIDTimeout  time.Duration
+	provideWorkers int
 }
 
 func (b *basicDHTProvider) Ready() bool {
@@ -88,36 +91,55 @@ func (b *basicDHTProvider) Ready() bool {
 }
 
 func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Multihash) error {
-	var failed []multihash.Multihash
+	var (
+		mu     sync.Mutex
+		failed []multihash.Multihash
+	)
+
+	workers := b.provideWorkers
+	if workers <= 0 {
+		workers = len(keys)
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(workers)
 
 	for _, k := range keys {
-		if ctx.Err() != nil {
+		if gctx.Err() != nil {
 			break
 		}
 
-		provideCtx := ctx
-		var cancel context.CancelFunc
-		if b.perCIDTimeout > 0 {
-			provideCtx, cancel = context.WithTimeout(ctx, b.perCIDTimeout)
-		}
+		k := k
+		g.Go(func() error {
+			provideCtx := gctx
+			var cancel context.CancelFunc
+			if b.perCIDTimeout > 0 {
+				provideCtx, cancel = context.WithTimeout(gctx, b.perCIDTimeout)
+			}
 
-		cidStart := time.Now()
-		err := b.dht.Provide(provideCtx, cid.NewCidV1(cid.Raw, k), true)
-		cidElapsed := time.Since(cidStart).Seconds()
-		if cancel != nil {
-			cancel()
-		}
+			cidStart := time.Now()
+			err := b.dht.Provide(provideCtx, cid.NewCidV1(cid.Raw, k), true)
+			cidElapsed := time.Since(cidStart).Seconds()
+			if cancel != nil {
+				cancel()
+			}
 
-		if err != nil {
-			ReprovideCIDDuration.WithLabelValues(classifyProvideError(err)).Observe(cidElapsed)
-			ReprovideCIDFailures.WithLabelValues(classifyProvideError(err)).Inc()
-			ReprovideCIDsTotal.WithLabelValues(LabelResultFailure).Inc()
-			failed = append(failed, k)
-		} else {
-			ReprovideCIDDuration.WithLabelValues(LabelCIDResultSuccess).Observe(cidElapsed)
-			ReprovideCIDsTotal.WithLabelValues(LabelResultSuccess).Inc()
-		}
+			if err != nil {
+				ReprovideCIDDuration.WithLabelValues(classifyProvideError(err)).Observe(cidElapsed)
+				ReprovideCIDFailures.WithLabelValues(classifyProvideError(err)).Inc()
+				ReprovideCIDsTotal.WithLabelValues(LabelResultFailure).Inc()
+				mu.Lock()
+				failed = append(failed, k)
+				mu.Unlock()
+			} else {
+				ReprovideCIDDuration.WithLabelValues(LabelCIDResultSuccess).Observe(cidElapsed)
+				ReprovideCIDsTotal.WithLabelValues(LabelResultSuccess).Inc()
+			}
+			return nil
+		})
 	}
+
+	_ = g.Wait()
 
 	if len(failed) > 0 {
 		return &provideManyError{
@@ -127,11 +149,12 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 			failedKeys: failed,
 		}
 	}
+
 	return nil
 }
 
-func newBasicDHTProvider(dht routing.ContentRouting, ready func() bool, perCIDTimeout time.Duration) pluginCore.Provider {
-	return &basicDHTProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout}
+func newBasicDHTProvider(dht routing.ContentRouting, ready func() bool, perCIDTimeout time.Duration, provideWorkers int) pluginCore.Provider {
+	return &basicDHTProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout, provideWorkers: provideWorkers}
 }
 
 // NewDHTProvider is the facade factory for DHT providers. It abstracts the
@@ -148,7 +171,7 @@ func NewDHTProvider(fullrt provideManyProvider, dht routing.ContentRouting, read
 	if fullrt != nil {
 		return newFullrtProvider(fullrt, ready)
 	}
-	return newBasicDHTProvider(dht, ready, cfg.PerCIDTimeout)
+	return newBasicDHTProvider(dht, ready, cfg.PerCIDTimeout, cfg.ProvideWorkers)
 }
 
 // provideManyError is returned by ProvideMany when some CIDs fail.
