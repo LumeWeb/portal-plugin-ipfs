@@ -7,31 +7,38 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
 
 // WantBlockFilter implements bitswap.PeerBlockRequestFilter with gateway
 // peer whitelisting and per-peer rate limiting. Gateway peers (identified
-// by peer ID extracted from multiaddrs) get unlimited access. All other
-// peers are rate-limited to prevent want-block overload from aggressive
-// DHT peers.
+// by peer ID extracted from multiaddrs) and the local node's own peer ID
+// get unlimited access. All other peers are rate-limited to prevent
+// want-block overload from aggressive DHT peers.
 type WantBlockFilter struct {
 	mu           sync.RWMutex
 	host         host.Host
+	selfPeer     peer.ID
+	log          *zap.Logger
 	gatewayPeers map[peer.ID]struct{}
 	limiter      *rate.Limiter
 	peerLimiters map[peer.ID]*rate.Limiter
 	perPeerRate  rate.Limit
 	perPeerBurst int
+	deniedPeers  *topNDeniedPeersCollector
 }
 
 // WantBlockFilterConfig holds the configuration for creating a WantBlockFilter.
 type WantBlockFilterConfig struct {
-	GatewayPeers []peer.ID
-	GlobalRate   rate.Limit
-	GlobalBurst  int
-	PerPeerRate  rate.Limit
-	PerPeerBurst int
+	SelfPeer             peer.ID
+	Logger               *zap.Logger
+	GatewayPeers         []peer.ID
+	GlobalRate           rate.Limit
+	GlobalBurst          int
+	PerPeerRate          rate.Limit
+	PerPeerBurst         int
+	DeniedPeersCollector *topNDeniedPeersCollector
 }
 
 // NewWantBlockFilter creates a new WantBlockFilter with the given configuration.
@@ -59,13 +66,26 @@ func NewWantBlockFilter(h host.Host, cfg WantBlockFilterConfig) *WantBlockFilter
 		perPeerBurst = config.DefaultBitswapPerPeerWantBurst
 	}
 
+	logger := cfg.Logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	deniedPeers := cfg.DeniedPeersCollector
+	if deniedPeers == nil {
+		deniedPeers = newTopNDeniedPeersCollector(10)
+	}
+
 	f := &WantBlockFilter{
 		host:         h,
+		selfPeer:     cfg.SelfPeer,
+		log:          logger.Named("wantblock_filter"),
 		gatewayPeers: gatewayPeers,
 		limiter:      rate.NewLimiter(globalRate, globalBurst),
 		peerLimiters: make(map[peer.ID]*rate.Limiter),
 		perPeerRate:  perPeerRate,
 		perPeerBurst: perPeerBurst,
+		deniedPeers:  deniedPeers,
 	}
 	WantBlockGatewayPeers.Set(float64(len(gatewayPeers)))
 	WantBlockPeerLimiters.Set(0)
@@ -74,8 +94,15 @@ func NewWantBlockFilter(h host.Host, cfg WantBlockFilterConfig) *WantBlockFilter
 
 // Allow is called by bitswap for each wantlist entry from a peer.
 // It returns true if the request should be fulfilled.
-// Gateway peers always pass. Other peers are subject to global and per-peer rate limits.
+// Gateway peers and the local node always pass. Other peers are subject
+// to global and per-peer rate limits.
 func (f *WantBlockFilter) Allow(p peer.ID, c cid.Cid) bool {
+	// Self peer — always allow without question.
+	if p == f.selfPeer {
+		WantBlockRequestsTotal.WithLabelValues(LabelWantAllowedSelf).Inc()
+		return true
+	}
+
 	f.mu.RLock()
 	_, isGateway := f.gatewayPeers[p]
 	f.mu.RUnlock()
@@ -87,12 +114,22 @@ func (f *WantBlockFilter) Allow(p peer.ID, c cid.Cid) bool {
 
 	if !f.limiter.Allow() {
 		WantBlockRequestsTotal.WithLabelValues(LabelWantDeniedGlobalRate).Inc()
+		f.deniedPeers.increment(p.String())
+		f.log.Debug("want-block denied by global rate limit",
+			zap.Stringer("peer", p),
+			zap.Stringer("cid", c),
+		)
 		return false
 	}
 
 	peerLimiter := f.getPeerLimiter(p)
 	if !peerLimiter.Allow() {
 		WantBlockRequestsTotal.WithLabelValues(LabelWantDeniedPerPeerRate).Inc()
+		f.deniedPeers.increment(p.String())
+		f.log.Debug("want-block denied by per-peer rate limit",
+			zap.Stringer("peer", p),
+			zap.Stringer("cid", c),
+		)
 		return false
 	}
 
@@ -142,6 +179,7 @@ func (f *WantBlockFilter) RemovePeerLimiter(p peer.ID) {
 	defer f.mu.Unlock()
 	delete(f.peerLimiters, p)
 	WantBlockPeerLimiters.Set(float64(len(f.peerLimiters)))
+	f.deniedPeers.RemovePeer(p.String())
 }
 
 // PeerBlockRequestFilter returns a function compatible with

@@ -32,9 +32,10 @@ import (
 	"golang.org/x/crypto/hkdf"
 	"golang.org/x/time/rate"
 
+	"github.com/avast/retry-go/v5"
 	"github.com/ipfs/boxo/bitswap"
-	tracerpkg "github.com/ipfs/boxo/bitswap/tracer"
 	"github.com/ipfs/boxo/bitswap/network/bsnet"
+	tracerpkg "github.com/ipfs/boxo/bitswap/tracer"
 	"github.com/ipfs/boxo/blockservice"
 	"github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/boxo/exchange"
@@ -44,23 +45,22 @@ import (
 	"github.com/ipfs/boxo/namesys"
 	blocks "github.com/ipfs/go-block-format"
 	format "github.com/ipfs/go-ipld-format"
-	"github.com/avast/retry-go/v5"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p-kad-dht/fullrt"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	pubsubrouter "github.com/libp2p/go-libp2p-pubsub-router"
 	libp2pCoreConnmgr "github.com/libp2p/go-libp2p/core/connmgr"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	pubsubrouter "github.com/libp2p/go-libp2p-pubsub-router"
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
+	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 	webrtc "github.com/libp2p/go-libp2p/p2p/transport/webrtc"
 	ws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
-	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
-	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	libp2pRate "github.com/libp2p/go-libp2p/x/rate"
 )
 
@@ -77,7 +77,6 @@ type DHTRouting interface {
 	routing.ContentRouting
 	routing.PeerRouting
 }
-
 
 // IPFSNode defines the interface for IPFS node operations
 type IPFSNode interface {
@@ -137,30 +136,35 @@ func (r *ReadyAwareExchange) NotifyNewBlocks(ctx context.Context, blks ...blocks
 // NodeFactory manages the creation and recreation of IPFS nodes
 // It stores shared components that persist across node restarts
 type NodeFactory struct {
-	ctx             core.Context
-	cfg             *config.ProtocolConfig
-	reprovideStore  pluginCore.ReprovideStore
-	datastore       datastore.Batching
-	blockstore      blockstore.Blockstore
-	peerTracker     *BlockRequestTracker
-	readyChecker    BlockReadyChecker
-	bootstrapPeers  []peer.AddrInfo
-	bootstrapMutex  sync.RWMutex
+	ctx            core.Context
+	cfg            *config.ProtocolConfig
+	reprovideStore pluginCore.ReprovideStore
+	datastore      datastore.Batching
+	blockstore     blockstore.Blockstore
+	peerTracker    *BlockRequestTracker
+	readyChecker   BlockReadyChecker
+	bootstrapPeers []peer.AddrInfo
+	bootstrapMutex sync.RWMutex
+
+	deniedPeersCollector *topNDeniedPeersCollector
 }
 
 // NewNodeFactory creates a new node factory with the given shared components
 func NewNodeFactory(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.ReprovideStore, ds datastore.Batching, bs blockstore.Blockstore, peerTracker *BlockRequestTracker, readyChecker BlockReadyChecker) *NodeFactory {
 	factory := &NodeFactory{
-		ctx:            ctx,
-		cfg:            cfg,
-		reprovideStore: rs,
-		datastore:      ds,
-		blockstore:     bs,
-		peerTracker:    peerTracker,
-		readyChecker:   readyChecker,
-		bootstrapPeers: make([]peer.AddrInfo, 0),
-		bootstrapMutex: sync.RWMutex{},
+		ctx:                  ctx,
+		cfg:                  cfg,
+		reprovideStore:       rs,
+		datastore:            ds,
+		blockstore:           bs,
+		peerTracker:          peerTracker,
+		readyChecker:         readyChecker,
+		bootstrapPeers:       make([]peer.AddrInfo, 0),
+		bootstrapMutex:       sync.RWMutex{},
+		deniedPeersCollector: newTopNDeniedPeersCollector(10),
 	}
+
+	core.PluginMetricsRegistry(internal.ProtocolName).MustRegister(factory.deniedPeersCollector)
 
 	// Add initial bootstrap peers from config
 	for _, bp := range cfg.BootstrapPeers {
@@ -188,7 +192,7 @@ func (f *NodeFactory) ClearBootstrapPeers() {
 func (f *NodeFactory) GetBootstrapPeers() []peer.AddrInfo {
 	f.bootstrapMutex.RLock()
 	defer f.bootstrapMutex.RUnlock()
-	
+
 	peers := make([]peer.AddrInfo, len(f.bootstrapPeers))
 	copy(peers, f.bootstrapPeers)
 	return peers
@@ -201,25 +205,25 @@ func (f *NodeFactory) CreateNode() (*Node, error) {
 
 // A Node is a minimal IPFS node
 type Node struct {
-	log              *core.Logger
-	ctx              core.Context
-	host             host.Host
+	log                 *core.Logger
+	ctx                 core.Context
+	host                host.Host
 	routing             DHTRouting
 	companionDHT        *dht.IpfsDHT
 	companionDHTHealthy atomic.Bool
 	fullRT              *fullrt.FullRT
 	reprovider          *Reprovider
-	blockService     blockservice.BlockService
-	dagService       format.DAGService
-	bitswap          *bitswap.Bitswap
-	reproviderCancel context.CancelFunc
-	datastore        datastore.Datastore
-	keystore         keystore.Keystore
-	publisher        *namesys.IPNSPublisher
-	pubsub           *pubsub.PubSub
-	pubsubValueStore *pubsubrouter.PubsubValueStore
-	announceWeb      bool
-	port             int
+	blockService        blockservice.BlockService
+	dagService          format.DAGService
+	bitswap             *bitswap.Bitswap
+	reproviderCancel    context.CancelFunc
+	datastore           datastore.Datastore
+	keystore            keystore.Keystore
+	publisher           *namesys.IPNSPublisher
+	pubsub              *pubsub.PubSub
+	pubsubValueStore    *pubsubrouter.PubsubValueStore
+	announceWeb         bool
+	port                int
 }
 
 // Close closes the node
@@ -490,47 +494,47 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	}
 
 	opts = append(opts, libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
-			ctx.Logger().Debug("ipfs AddrsFactory invoked",
-				zap.Int("host_addr_count", len(addrs)),
-				zap.Int("config_port", cfg.Port),
-				zap.Strings("host_addrs", lo.Map(lo.Filter(addrs, func(a multiaddr.Multiaddr, _ int) bool { return a != nil }), func(a multiaddr.Multiaddr, _ int) string {
-					return a.String()
-				})),
-			)
-			var domain string
-			if cfg.AnnounceWeb {
-				httpSvc := core.GetService[core.HTTPService](ctx, core.HTTP_SERVICE)
-				if httpSvc != nil {
-					domain = httpSvc.APISubdomain(internal.ProtocolName, false)
-				}
+		ctx.Logger().Debug("ipfs AddrsFactory invoked",
+			zap.Int("host_addr_count", len(addrs)),
+			zap.Int("config_port", cfg.Port),
+			zap.Strings("host_addrs", lo.Map(lo.Filter(addrs, func(a multiaddr.Multiaddr, _ int) bool { return a != nil }), func(a multiaddr.Multiaddr, _ int) string {
+				return a.String()
+			})),
+		)
+		var domain string
+		if cfg.AnnounceWeb {
+			httpSvc := core.GetService[core.HTTPService](ctx, core.HTTP_SERVICE)
+			if httpSvc != nil {
+				domain = httpSvc.APISubdomain(internal.ProtocolName, false)
 			}
-			announceAddresses, err := AnnouncementAddresses(cfg.AnnounceWeb, domain, addrs, cfg.Port)
-			ctx.Logger().Debug("ipfs announcement addresses resolved",
-				zap.Bool("announce_web", cfg.AnnounceWeb),
-				zap.String("domain", domain),
-				zap.Int("config_port", cfg.Port),
-				zap.Int("announce_addr_count", len(announceAddresses)),
-				zap.Strings("announce_addrs", lo.Map(announceAddresses, func(a multiaddr.Multiaddr, _ int) string {
-					return a.String()
-				})),
-				zap.Error(err),
-			)
-			if err != nil {
-				ctx.Logger().Error("failed to get announcement addresses", zap.Error(err))
-				return lo.Filter(addrs, func(addr multiaddr.Multiaddr, _ int) bool {
-					return addr != nil
-				})
-			}
-
-			if len(announceAddresses) == 0 {
-				return lo.Filter(addrs, func(addr multiaddr.Multiaddr, _ int) bool {
-					return addr != nil
-				})
-			}
-
-			return lo.Filter(announceAddresses, func(addr multiaddr.Multiaddr, _ int) bool {
+		}
+		announceAddresses, err := AnnouncementAddresses(cfg.AnnounceWeb, domain, addrs, cfg.Port)
+		ctx.Logger().Debug("ipfs announcement addresses resolved",
+			zap.Bool("announce_web", cfg.AnnounceWeb),
+			zap.String("domain", domain),
+			zap.Int("config_port", cfg.Port),
+			zap.Int("announce_addr_count", len(announceAddresses)),
+			zap.Strings("announce_addrs", lo.Map(announceAddresses, func(a multiaddr.Multiaddr, _ int) string {
+				return a.String()
+			})),
+			zap.Error(err),
+		)
+		if err != nil {
+			ctx.Logger().Error("failed to get announcement addresses", zap.Error(err))
+			return lo.Filter(addrs, func(addr multiaddr.Multiaddr, _ int) bool {
 				return addr != nil
 			})
+		}
+
+		if len(announceAddresses) == 0 {
+			return lo.Filter(addrs, func(addr multiaddr.Multiaddr, _ int) bool {
+				return addr != nil
+			})
+		}
+
+		return lo.Filter(announceAddresses, func(addr multiaddr.Multiaddr, _ int) bool {
+			return addr != nil
+		})
 	}))
 
 	node, err := libp2p.New(opts...)
@@ -698,11 +702,14 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 
 	if cfg.Bitswap.GlobalWantRateLimit > 0 || len(gatewayPeerIDs) > 0 {
 		wantFilter := NewWantBlockFilter(node, WantBlockFilterConfig{
-			GatewayPeers: gatewayPeerIDs,
-			GlobalRate:   rate.Limit(cfg.Bitswap.GlobalWantRateLimit),
-			GlobalBurst:  cfg.Bitswap.GlobalWantBurst,
-			PerPeerRate:  rate.Limit(cfg.Bitswap.PerPeerWantRateLimit),
-			PerPeerBurst: cfg.Bitswap.PerPeerWantBurst,
+			SelfPeer:             node.ID(),
+			Logger:               ctx.Logger().Named("wantblock_filter"),
+			GatewayPeers:         gatewayPeerIDs,
+			GlobalRate:           rate.Limit(cfg.Bitswap.GlobalWantRateLimit),
+			GlobalBurst:          cfg.Bitswap.GlobalWantBurst,
+			PerPeerRate:          rate.Limit(cfg.Bitswap.PerPeerWantRateLimit),
+			PerPeerBurst:         cfg.Bitswap.PerPeerWantBurst,
+			DeniedPeersCollector: factory.deniedPeersCollector,
 		})
 		bitswapOpts = append(bitswapOpts, bitswap.WithPeerBlockRequestFilter(wantFilter.PeerBlockRequestFilter()))
 
@@ -773,30 +780,30 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-						if ipfsNode.companionDHT != nil {
-							CompanionDHTRoutingTableSize.Set(float64(ipfsNode.companionDHT.RoutingTable().Size()))
+					if ipfsNode.companionDHT != nil {
+						CompanionDHTRoutingTableSize.Set(float64(ipfsNode.companionDHT.RoutingTable().Size()))
 
-							peerCount := 0
-							for range ipfsNode.host.Network().Conns() {
-								peerCount++
-							}
-							CompanionDHTConnectedPeers.Set(float64(peerCount))
+						peerCount := 0
+						for range ipfsNode.host.Network().Conns() {
+							peerCount++
+						}
+						CompanionDHTConnectedPeers.Set(float64(peerCount))
 
-							if ipfsNode.companionDHTHealthy.Load() {
-								CompanionDHTHealthy.Set(1)
-							} else {
-								CompanionDHTHealthy.Set(0)
-							}
+						if ipfsNode.companionDHTHealthy.Load() {
+							CompanionDHTHealthy.Set(1)
+						} else {
+							CompanionDHTHealthy.Set(0)
 						}
-						if ipfsNode.fullRT != nil {
-							if ipfsNode.fullRT.Ready() {
-								FullRTReady.Set(1)
-							} else {
-								FullRTReady.Set(0)
-							}
-							FullRTRoutingTableSize.Set(float64(len(ipfsNode.fullRT.Stat())))
+					}
+					if ipfsNode.fullRT != nil {
+						if ipfsNode.fullRT.Ready() {
+							FullRTReady.Set(1)
+						} else {
+							FullRTReady.Set(0)
 						}
-						}
+						FullRTRoutingTableSize.Set(float64(len(ipfsNode.fullRT.Stat())))
+					}
+				}
 			}
 		}()
 	}
@@ -1120,4 +1127,3 @@ func resolvePortFromAddrs(addrs []multiaddr.Multiaddr) int {
 	}
 	return 0
 }
-

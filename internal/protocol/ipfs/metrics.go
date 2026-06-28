@@ -6,15 +6,15 @@ import (
 
 const (
 	// Reprovider metrics
-	MetricReprovideAttempts            = "reprovide_attempts_total"
-	MetricReprovideSuccesses           = "reprovide_successes_total"
-	MetricReprovideFailures            = "reprovide_failures_total"
-	MetricReprovideCIDsTotal           = "reprovide_cids_total"
-	MetricReprovideCIDFailures         = "reprovide_cid_failures_total"
-	MetricReprovideDuration            = "reprovide_duration_seconds"
-	MetricReprovideCIDDuration         = "reprovide_cid_duration_seconds"
-	MetricReprovideBatchSize           = "reprovide_batch_size"
-	MetricReprovideProviderReady       = "reprovide_provider_ready"
+	MetricReprovideAttempts      = "reprovide_attempts_total"
+	MetricReprovideSuccesses     = "reprovide_successes_total"
+	MetricReprovideFailures      = "reprovide_failures_total"
+	MetricReprovideCIDsTotal     = "reprovide_cids_total"
+	MetricReprovideCIDFailures   = "reprovide_cid_failures_total"
+	MetricReprovideDuration      = "reprovide_duration_seconds"
+	MetricReprovideCIDDuration   = "reprovide_cid_duration_seconds"
+	MetricReprovideBatchSize     = "reprovide_batch_size"
+	MetricReprovideProviderReady = "reprovide_provider_ready"
 
 	// Global pinned-state gauges
 	MetricReprovidePinnedTotal    = "reprovide_pinned_total"
@@ -31,9 +31,10 @@ const (
 	MetricFullRTRoutingTableSize        = "fullrt_routing_table_size"
 
 	// WantBlockFilter metrics
-	MetricWantBlockRequests     = "want_block_requests_total"
-	MetricWantBlockGatewayPeers = "want_block_gateway_peers"
-	MetricWantBlockPeerLimiters = "want_block_peer_limiters"
+	MetricWantBlockRequests       = "want_block_requests_total"
+	MetricWantBlockGatewayPeers   = "want_block_gateway_peers"
+	MetricWantBlockPeerLimiters   = "want_block_peer_limiters"
+	MetricWantBlockTopDeniedPeers = "want_block_top_denied_peers"
 )
 
 const (
@@ -52,6 +53,7 @@ const (
 	LabelWantDeniedGlobalRate  = "denied_global_rate"
 	LabelWantDeniedPerPeerRate = "denied_per_peer_rate"
 	LabelWantAllowedGateway    = "allowed_gateway"
+	LabelWantAllowedSelf       = "allowed_self"
 
 	LabelCIDResultSuccess = "success"
 	LabelCIDResultTimeout = "timeout"
@@ -72,7 +74,7 @@ var (
 	ReprovideBatchSize   *prometheus.HistogramVec
 
 	// Reprovider gauges
-	ReprovideProviderReady       prometheus.Gauge
+	ReprovideProviderReady prometheus.Gauge
 
 	// Global pinned-state gauges
 	ReprovidePinnedTotal    prometheus.Gauge
@@ -271,7 +273,7 @@ func init() {
 		prometheus.CounterOpts{
 			Subsystem: subSystemBitswap,
 			Name:      MetricWantBlockRequests,
-			Help:      "Total want-block requests by outcome (allowed, allowed_gateway, denied_global_rate, denied_per_peer_rate)",
+			Help:      "Total want-block requests by outcome (allowed, allowed_gateway, allowed_self, denied_global_rate, denied_per_peer_rate)",
 		},
 		[]string{"result"},
 	)
