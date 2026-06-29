@@ -16,23 +16,19 @@ type topNDeniedPeersCollector struct {
 	mu     sync.RWMutex
 	counts map[string]*int64 // peer ID -> denial count (atomic)
 	topN   int
-	metric *prometheus.GaugeVec
-	label  string
+	desc   *prometheus.Desc
 }
 
 func newTopNDeniedPeersCollector(topN int) *topNDeniedPeersCollector {
 	c := &topNDeniedPeersCollector{
 		counts: make(map[string]*int64),
 		topN:   topN,
-		metric: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Subsystem: subSystemBitswap,
-				Name:      MetricWantBlockTopDeniedPeers,
-				Help:      "Top N most-denied peers by want-block request count, refreshed on each scrape",
-			},
+		desc: prometheus.NewDesc(
+			prometheus.BuildFQName("", subSystemBitswap, MetricWantBlockTopDeniedPeers),
+			"Top N most-denied peers by want-block request count, refreshed on each scrape",
 			[]string{"peer"},
+			nil,
 		),
-		label: "peer",
 	}
 	return c
 }
@@ -65,7 +61,8 @@ func (c *topNDeniedPeersCollector) RemovePeer(peerID string) {
 }
 
 // Collect implements prometheus.Collector. It computes the top N most-denied
-// peers and emits them as gauge values. The gauge is reset each scrape.
+// peers and emits them as const gauge metrics. Each scrape emits fresh
+// metrics with no shared mutable state between scrapes.
 func (c *topNDeniedPeersCollector) Collect(ch chan<- prometheus.Metric) {
 	c.mu.RLock()
 	type entry struct {
@@ -86,17 +83,12 @@ func (c *topNDeniedPeersCollector) Collect(ch chan<- prometheus.Metric) {
 		entries = entries[:c.topN]
 	}
 
-	// Reset the gauge vec so stale peers from last scrape are cleared.
-	c.metric.Reset()
-
 	for _, e := range entries {
-		c.metric.WithLabelValues(e.peer).Set(float64(e.count))
+		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.GaugeValue, float64(e.count), e.peer)
 	}
-
-	c.metric.Collect(ch)
 }
 
 // Describe implements prometheus.Collector.
 func (c *topNDeniedPeersCollector) Describe(ch chan<- *prometheus.Desc) {
-	c.metric.Describe(ch)
+	ch <- c.desc
 }
