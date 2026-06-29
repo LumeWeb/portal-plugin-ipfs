@@ -51,7 +51,7 @@ require (
 	go.lumeweb.com/portal-plugin-quota v0.1.0
 	go.lumeweb.com/portal-router v0.7.1
 	go.lumeweb.com/queryutil v0.3.16
-	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260628025935-506bed8b75fb
+	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260628225508-932192c2e246
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.53.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -282,7 +282,7 @@ require (
 	github.com/polydawn/refmt v0.90.0 // indirect
 	github.com/pquerna/otp v1.5.0 // indirect
 	github.com/pressly/goose/v3 v3.27.1 // indirect
-	github.com/prometheus/client_model v0.6.2 // indirect
+	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
