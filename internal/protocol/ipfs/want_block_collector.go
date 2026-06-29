@@ -24,7 +24,7 @@ func newTopNDeniedPeersCollector(topN int) *topNDeniedPeersCollector {
 		counts: make(map[string]*int64),
 		topN:   topN,
 		desc: prometheus.NewDesc(
-			prometheus.BuildFQName("ipfs", "bitswap", MetricWantBlockTopDeniedPeers),
+			prometheus.BuildFQName("", subSystemBitswap, MetricWantBlockTopDeniedPeers),
 			"Top N most-denied peers by want-block request count, refreshed on each scrape",
 			[]string{"peer"},
 			nil,
