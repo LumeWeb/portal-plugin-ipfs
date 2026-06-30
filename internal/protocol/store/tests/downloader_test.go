@@ -479,6 +479,59 @@ func TestBlockDownloader_QueueRelated_BlockChildrenError(t *testing.T) {
 	}, ipfsTestConfig)
 }
 
+// TestBlockDownloader_QueueRelated_CanceledContext is a regression test ensuring
+// queueRelated does not inherit the caller's context. doDownloadTask launches
+// queueRelated asynchronously after a high-priority block download completes.
+// If queueRelated uses task.ctx and the caller cancels after Get returns,
+// BlockSiblings/BlockChildren receive context.Canceled and DAG traversal stops.
+func TestBlockDownloader_QueueRelated_CanceledContext(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		mockStore := mocks.NewMockMetadataStore(t)
+		mockStorage := core.GetService[*coreTesting.MockStorageService](ctx, core.STORAGE_SERVICE)
+
+		bd, err := downloader.NewBlockDownloader(ctx, mockStore, 1)
+		require.NoError(tb, err)
+
+		mh, err := multihash.Sum([]byte("test data"), multihash.SHA2_256, -1)
+		require.NoError(tb, err)
+		testCid := cid.NewCidV1(cid.Raw, mh)
+
+		mockStore.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
+
+		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			Return(&mockReadCloser{Reader: strings.NewReader("test data")}, nil).Once()
+
+		siblingsCtxCh := make(chan context.Context, 1)
+		mockStore.EXPECT().BlockSiblings(mock.Anything, testCid, 64).
+			RunAndReturn(func(ctx context.Context, c cid.Cid, max int) ([]cid.Cid, error) {
+				select {
+				case siblingsCtxCh <- ctx:
+				default:
+				}
+				return []cid.Cid{}, nil
+			}).Maybe()
+
+		mockStore.EXPECT().BlockChildren(mock.Anything, testCid, mock.Anything).
+			Return([]cid.Cid{}, nil).Maybe()
+
+		callerCtx, callerCancel := context.WithCancel(context.Background())
+
+		block, err := bd.Get(callerCtx, testCid)
+		require.NoError(tb, err)
+		require.NotNil(tb, block)
+		require.Equal(tb, []byte("test data"), block.RawData())
+
+		callerCancel()
+
+		select {
+		case siblingsCtx := <-siblingsCtxCh:
+			require.NoError(tb, siblingsCtx.Err(), "queueRelated should not use a canceled context")
+		case <-time.After(2 * time.Second):
+			t.Fatal("BlockSiblings was not called within timeout")
+		}
+	}, ipfsTestConfig)
+}
+
 func TestBlockDownloader_Get_ContextDone(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Create a mock MetadataStore

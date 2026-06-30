@@ -256,7 +256,7 @@ func (bd *BlockDownloaderDefault) doDownloadTask(task *blockResponse, log *zap.L
 	close(task.ch)
 
 	if err == nil && task.priority >= downloadPriorityHigh {
-		go bd.queueRelated(task.ctx, task.cid)
+		go bd.queueRelated(core.DetachContext(task.ctx), task.cid)
 	}
 }
 
