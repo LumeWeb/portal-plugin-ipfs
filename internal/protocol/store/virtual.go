@@ -9,6 +9,7 @@ import (
 	"github.com/ipfs/go-datastore"
 	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal/core"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type MockBlockstore interface {
@@ -26,7 +27,7 @@ type Flusher interface {
 
 // VirtualBlockStore is a wrapper around a CachedBlockstore that can bypass the cache
 type VirtualBlockStore struct {
-	cachedBS  blockstore.Blockstore
+	cachedBS blockstore.Blockstore
 	directBS blockstore.Blockstore
 	flusher  Flusher
 }
@@ -55,7 +56,8 @@ func (v *VirtualBlockStore) Flush(ctx context.Context) error {
 
 // DeleteBlock removes a given block from the blockstore
 func (v *VirtualBlockStore) DeleteBlock(ctx context.Context, c cid.Cid) error {
-	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.DeleteBlock")
+	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.DeleteBlock",
+		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
 	if pc.IsVirtualReadEnabled(ctx) {
@@ -66,7 +68,8 @@ func (v *VirtualBlockStore) DeleteBlock(ctx context.Context, c cid.Cid) error {
 
 // Has returns whether or not a given block is in the blockstore
 func (v *VirtualBlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
-	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.Has")
+	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.Has",
+		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
 	if pc.IsVirtualReadEnabled(ctx) {
@@ -77,7 +80,8 @@ func (v *VirtualBlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
 
 // Get returns a block by CID
 func (v *VirtualBlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
-	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.Get")
+	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.Get",
+		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
 	if pc.IsVirtualReadEnabled(ctx) {
@@ -88,7 +92,8 @@ func (v *VirtualBlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, e
 
 // GetSize returns the CIDs mapped BlockSize
 func (v *VirtualBlockStore) GetSize(ctx context.Context, c cid.Cid) (int, error) {
-	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.GetSize")
+	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.GetSize",
+		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
 	if pc.IsVirtualReadEnabled(ctx) {
@@ -99,7 +104,8 @@ func (v *VirtualBlockStore) GetSize(ctx context.Context, c cid.Cid) (int, error)
 
 // Put puts a given block to the underlying datastore
 func (v *VirtualBlockStore) Put(ctx context.Context, b blocks.Block) error {
-	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.Put")
+	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.Put",
+		core.WithAttributes(attribute.String("cid", b.Cid().String())))
 	defer span.End()
 
 	if pc.IsVirtualReadEnabled(ctx) {
@@ -110,7 +116,8 @@ func (v *VirtualBlockStore) Put(ctx context.Context, b blocks.Block) error {
 
 // PutMany puts a slice of blocks at the same time using batching
 func (v *VirtualBlockStore) PutMany(ctx context.Context, bs []blocks.Block) error {
-	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.PutMany")
+	ctx, span := core.TraceMethod(ctx, "VirtualBlockStore.PutMany",
+		core.WithAttributes(attribute.Int("block_count", len(bs))))
 	defer span.End()
 
 	if pc.IsVirtualReadEnabled(ctx) {
