@@ -17,6 +17,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal/core"
+	"go.opentelemetry.io/otel/attribute"
 
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -120,7 +121,8 @@ func (h *priorityQueue) Pop() any {
 var _ heap.Interface = &priorityQueue{}
 
 func (br *blockResponse) block(ctx context.Context, c cid.Cid) (blocks.Block, error) {
-	ctx, span := core.TraceMethod(ctx, "blockResponse.block")
+	ctx, span := core.TraceMethod(ctx, "blockResponse.block",
+		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
 	select {
@@ -142,7 +144,8 @@ func (br *blockResponse) block(ctx context.Context, c cid.Cid) (blocks.Block, er
 }
 
 func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.Cid, clientIP string) ([]byte, error) {
-	ctx, span := core.TraceMethod(ctx, "BlockDownloaderDefault.downloadBlockData")
+	ctx, span := core.TraceMethod(ctx, "BlockDownloaderDefault.downloadBlockData",
+		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
 	blockBuf := bytes.NewBuffer(make([]byte, 0, 2<<20))
@@ -186,7 +189,8 @@ func (bd *BlockDownloaderDefault) downloadBlockData(ctx context.Context, c cid.C
 }
 
 func (bd *BlockDownloaderDefault) queueRelated(ctx context.Context, c cid.Cid) {
-	ctx, span := core.TraceMethod(ctx, "BlockDownloaderDefault.queueRelated")
+	ctx, span := core.TraceMethod(ctx, "BlockDownloaderDefault.queueRelated",
+		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
 	log := bd.log.Named("queueRelated").With(zap.Stringer("cid", c))
@@ -238,14 +242,18 @@ func (bd *BlockDownloaderDefault) doDownloadTask(task *blockResponse, log *zap.L
 	start := time.Now()
 	log = log.Named("doDownloadTask").With(zap.Stringer("cid", task.cid), zap.Stringer("priority", task.priority))
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	// Use DetachContext to preserve trace context while preventing cancellation
+	// from the original request. This connects the download spans (including
+	// the renterd HTTP call) to the parent trace, making the full download
+	// chain visible in Tempo.
+	ctx, cancel := context.WithTimeout(core.DetachContext(task.ctx), time.Minute)
 	defer cancel()
 
 	buf, err := bd.downloadBlockData(ctx, task.cid, task.clientIP)
-	
+
 	task.mu.Lock()
 	defer task.mu.Unlock()
-	
+
 	if err != nil {
 		log.Error("failed to download block", zap.Error(err))
 		task.err = err
@@ -285,7 +293,8 @@ func (bd *BlockDownloaderDefault) downloadWorker(n int) {
 }
 
 func (bd *BlockDownloaderDefault) queueBlock(ctx context.Context, c cid.Cid, priority downloadPriority, clientIP string) (*blockResponse, bool) {
-	ctx, span := core.TraceMethod(ctx, "BlockDownloaderDefault.queueBlock")
+	ctx, span := core.TraceMethod(ctx, "BlockDownloaderDefault.queueBlock",
+		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
 	resp, ok := bd.inflight[cidKey(c)]
@@ -323,7 +332,8 @@ func (bd *BlockDownloaderDefault) queueBlock(ctx context.Context, c cid.Cid, pri
 
 // Get returns a block by CID.
 func (bd *BlockDownloaderDefault) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
-	ctx, span := core.TraceMethod(ctx, "BlockDownloaderDefault.Get")
+	ctx, span := core.TraceMethod(ctx, "BlockDownloaderDefault.Get",
+		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
 	// Check context before doing any work

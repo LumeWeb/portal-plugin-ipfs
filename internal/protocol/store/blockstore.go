@@ -11,16 +11,17 @@ import (
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/multiformats/go-multicodec"
 	"github.com/multiformats/go-multihash"
+	"go.opentelemetry.io/otel/attribute"
 
-	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/service"
 	"go.uber.org/zap"
-	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 )
 
 type (
@@ -31,11 +32,11 @@ type (
 
 		bucket string
 
-		metadata    pluginCore.MetadataStore
-		downloader  pluginCore.BlockDownloader
-		storage     core.StorageService
-		upload      core.UploadService
-		tracker     *ipfs.BlockRequestTracker
+		metadata   pluginCore.MetadataStore
+		downloader pluginCore.BlockDownloader
+		storage    core.StorageService
+		upload     core.UploadService
+		tracker    *ipfs.BlockRequestTracker
 
 		proto   core.StorageProtocol
 		batcher *metadataBatcher
@@ -44,7 +45,8 @@ type (
 
 // DeleteBlock removes a given block from the blockstore.
 func (bs *BlockStore) DeleteBlock(ctx context.Context, c cid.Cid) error {
-	ctx, span := core.TraceMethod(ctx, "BlockStore.DeleteBlock")
+	ctx, span := core.TraceMethod(ctx, "BlockStore.DeleteBlock",
+		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
 	key := cidKey(c)
@@ -70,7 +72,8 @@ func (bs *BlockStore) DeleteBlock(ctx context.Context, c cid.Cid) error {
 
 // Has returns whether or not a given block is in the blockstore.
 func (bs *BlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
-	ctx, span := core.TraceMethod(ctx, "BlockStore.Has")
+	ctx, span := core.TraceMethod(ctx, "BlockStore.Has",
+		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
 	log := bs.log.Named("Has").With(zap.Stringer("cid", c))
@@ -95,7 +98,8 @@ func (bs *BlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
 
 // Get returns a block by CID
 func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
-	ctx, span := core.TraceMethod(ctx, "BlockStore.Get")
+	ctx, span := core.TraceMethod(ctx, "BlockStore.Get",
+		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
 	if pc.IsVirtualReadEnabled(ctx) {
@@ -170,8 +174,8 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 						zap.Stringer("cid", c))
 				}
 			}
-			
-				// Emit download event regardless of attribution IP availability
+
+			// Emit download event regardless of attribution IP availability
 			// as long as quotas are not disabled
 			if attributionIP == "" {
 				bs.log.Debug("No attribution IP available, emitting download event without IP",
@@ -189,7 +193,8 @@ func (bs *BlockStore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) 
 
 // GetSize returns the CIDs mapped BlockSize
 func (bs *BlockStore) GetSize(ctx context.Context, c cid.Cid) (int, error) {
-	ctx, span := core.TraceMethod(ctx, "BlockStore.GetSize")
+	ctx, span := core.TraceMethod(ctx, "BlockStore.GetSize",
+		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
 	key := cidKey(c)
@@ -220,7 +225,8 @@ func (bs *BlockStore) GetSize(ctx context.Context, c cid.Cid) (int, error) {
 
 // Put puts a given block to the underlying datastore
 func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
-	ctx, span := core.TraceMethod(ctx, "BlockStore.Put")
+	ctx, span := core.TraceMethod(ctx, "BlockStore.Put",
+		core.WithAttributes(attribute.String("cid", b.Cid().String())))
 	defer span.End()
 
 	key := cidKey(b.Cid())
@@ -276,7 +282,8 @@ func (bs *BlockStore) Put(ctx context.Context, b blocks.Block) error {
 // PutMany puts a slice of blocks at the same time using batching
 // capabilities of the underlying datastore whenever possible.
 func (bs *BlockStore) PutMany(ctx context.Context, blocks []blocks.Block) error {
-	ctx, span := core.TraceMethod(ctx, "BlockStore.PutMany")
+	ctx, span := core.TraceMethod(ctx, "BlockStore.PutMany",
+		core.WithAttributes(attribute.Int("block_count", len(blocks))))
 	defer span.End()
 
 	log := bs.log.Named("PutMany").With(zap.Int("blocks", len(blocks)))
@@ -383,7 +390,8 @@ func NewBlockStore(ctx core.Context, downloader pluginCore.BlockDownloader, meta
 }
 
 func blockLinks(ctx context.Context, b blocks.Block) []*format.Link {
-	ctx, span := core.TraceMethod(ctx, "blockLinks")
+	ctx, span := core.TraceMethod(ctx, "blockLinks",
+		core.WithAttributes(attribute.String("cid", b.Cid().String())))
 	defer span.End()
 
 	pn, err := encoding.DecodeBlock(ctx, b)
