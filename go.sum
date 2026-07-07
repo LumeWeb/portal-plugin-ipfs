@@ -1120,6 +1120,8 @@ go.lumeweb.com/portal-router v0.7.2 h1:x6P7hkYqGx20aZ8IU0eC2sXpVHsorfHvO4js82JUN
 go.lumeweb.com/portal-router v0.7.2/go.mod h1:hl51sHDKcgw8yxJ6RraYBOI1Vnufq33FhKwfKiqCkVg=
 go.lumeweb.com/portal-router v0.7.3 h1:33g481b2cjfKSk3FpuwNyv1G2Ksps9FnflOOYUfLVmU=
 go.lumeweb.com/portal-router v0.7.3/go.mod h1:hl51sHDKcgw8yxJ6RraYBOI1Vnufq33FhKwfKiqCkVg=
+go.lumeweb.com/portal-router v0.7.4 h1:CwLAAs0hCTPD0Fyowj1UpWSn9cjh9jp56TX7oOeW8ok=
+go.lumeweb.com/portal-router v0.7.4/go.mod h1:hl51sHDKcgw8yxJ6RraYBOI1Vnufq33FhKwfKiqCkVg=
 go.lumeweb.com/queryutil v0.3.17 h1:rbMj1ZpG1KL1UUvMYS9+JYdjOcUW6YAfXjy0J2XPWYI=
 go.lumeweb.com/queryutil v0.3.17/go.mod h1:6bcNItUrPwjGAz9pBFPxO509apXcWU8VD1lc+vur/IA=
 go.lumeweb.com/web/go/portal-dashboard v0.0.0-20260707061228-b351ce1bbdfd h1:i0g09OYyfI71OOGXVNP6Ajc1rDu+dsqwgnjKdFRYDBk=
