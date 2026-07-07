@@ -488,6 +488,8 @@ github.com/ipfs/go-cid v0.0.3/go.mod h1:GHWU/WuQdMPmIosc4Yn1bcCT7dSeX4lBafM7iqUP
 github.com/ipfs/go-cid v0.0.4/go.mod h1:4LLaPOQwmk5z9LBgQnpkivrx8BJjUyGwTXCd5Xfj6+M=
 github.com/ipfs/go-cid v0.6.1 h1:T5TnNb08+ueovG76Z5gx1L4Y7QOaGTXHg1F6raWFxIc=
 github.com/ipfs/go-cid v0.6.1/go.mod h1:zrY0SwOhjrrIdfPQ/kf+k1sXyJ0QE7cMxfCployLBs0=
+github.com/ipfs/go-cid v0.6.2 h1:VuGwJd+KJTaMJ4S4d5EEf9SXc17YUblS5axCbocn9YE=
+github.com/ipfs/go-cid v0.6.2/go.mod h1:Xhwg8NzHeK9xPCEZkCw4idzPiuNMpX3fARuI5Iwj1Lo=
 github.com/ipfs/go-cidutil v0.1.1 h1:COuby6H8C2ml0alvHYX3WdbFM4F07YtbY0UlT5j+sgI=
 github.com/ipfs/go-cidutil v0.1.1/go.mod h1:SCoUftGEUgoXe5Hjeyw5CiLZF8cwYn/TbtpFQXJCP6k=
 github.com/ipfs/go-datastore v0.1.0/go.mod h1:d4KVXhMt913cLBEI/PXAy6ko+W7e9AhyAKBGh803qeE=
