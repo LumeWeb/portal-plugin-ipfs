@@ -29,7 +29,7 @@ require (
 	github.com/labstack/echo/v4 v4.15.4
 	github.com/libp2p/go-libp2p v0.48.0
 	github.com/libp2p/go-libp2p-kad-dht v0.41.0
-	github.com/libp2p/go-libp2p-pubsub v0.16.0
+	github.com/libp2p/go-libp2p-pubsub v0.17.0
 	github.com/libp2p/go-libp2p-pubsub-router v0.6.0
 	github.com/mholt/archives v0.1.5
 	github.com/mitchellh/copystructure v1.2.0
