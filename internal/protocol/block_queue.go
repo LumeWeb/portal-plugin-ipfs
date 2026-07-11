@@ -73,8 +73,10 @@ type BlockQueue struct {
 }
 
 // NewBlockQueue creates a new BlockQueue instance.
-func NewBlockQueue(coreCtx core.Context, proto ProtoNode, logger *core.Logger) *BlockQueue {
-	ctx, cancel := context.WithTimeout(coreCtx.GetContext(), 30*time.Minute)
+// requestCtx carries the trace context from the upload request so that
+// processBlock spans are children of the upload trace, not root spans.
+func NewBlockQueue(coreCtx core.Context, requestCtx context.Context, proto ProtoNode, logger *core.Logger) *BlockQueue {
+	ctx, cancel := context.WithTimeout(requestCtx, 30*time.Minute)
 
 	workers := resolveWorkerCount(coreCtx)
 
@@ -181,7 +183,9 @@ func (bp *BlockQueue) recordError(err error) {
 // ProcessBlocks processes blocks using a BlockProcessor to provide blocks
 // and BlockQueue to process them. After all blocks are processed, it flushes
 // any buffered metadata through the provided Flusher.
-func ProcessBlocks(ctx core.Context, processor BlockProcessor, flusher store.Flusher) ([]cid.Cid, []cid.Cid, error) {
+// requestCtx carries the trace context from the upload request so that
+// block processing spans chain to the upload trace.
+func ProcessBlocks(ctx core.Context, requestCtx context.Context, processor BlockProcessor, flusher store.Flusher) ([]cid.Cid, []cid.Cid, error) {
 	protoInterface := core.GetProtocol(internal.ProtocolName)
 	if protoInterface == nil {
 		return nil, nil, fmt.Errorf("protocol %s not found", internal.ProtocolName)
@@ -192,7 +196,7 @@ func ProcessBlocks(ctx core.Context, processor BlockProcessor, flusher store.Flu
 	}
 	logger := ctx.Logger()
 
-	bp := NewBlockQueue(ctx, proto, logger)
+	bp := NewBlockQueue(ctx, requestCtx, proto, logger)
 	if bp == nil {
 		return nil, nil, fmt.Errorf("failed to create block queue")
 	}

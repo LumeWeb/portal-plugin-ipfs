@@ -7,18 +7,18 @@ import (
 
 	"github.com/ipfs/go-cid"
 	"github.com/samber/lo"
-	"go.lumeweb.com/portal/db/models"
-	"go.lumeweb.com/portal/core"
 	contentArchive "go.lumeweb.com/ipfs-content/archive"
+	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal/db/models"
 	"go.uber.org/zap"
 
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	uploadCommon "go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
-	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 )
 
 // handleTUSUpload is the main handler for TUS upload operations
@@ -167,7 +167,6 @@ func calculateDAGSize(ctx context.Context, format contentArchive.Format, reader 
 	return uploadCommon.GetUploadDataSize(ctx, reader, format, logger)
 }
 
-
 // validateUploadQuotas validates upload and storage quotas for the given size
 func validateUploadQuotas(coreCtx core.Context, userID uint, dagSize uint64) error {
 	if dagSize == 0 {
@@ -205,7 +204,7 @@ func createUploadProcessor(format contentArchive.Format, reader io.ReadCloser, p
 
 // processUploadAndCreateReservations processes the upload and creates block reservations
 func processUploadAndCreateReservations(ctx context.Context, helper core.OperationHelper, processor BlockProcessor, proto ProtoNode, userID uint) ([]cid.Cid, []cid.Cid, map[cid.Cid]*quota.BlockReservations, error) {
-	allCids, rootCids, err := ProcessBlocks(helper.Context(), processor, proto.GetBlockstoreFlusher())
+	allCids, rootCids, err := ProcessBlocks(helper.Context(), ctx, processor, proto.GetBlockstoreFlusher())
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to process upload: %w", err)
 	}
