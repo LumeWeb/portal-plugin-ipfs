@@ -12,18 +12,18 @@ import (
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/mholt/archives"
 	"github.com/samber/lo"
+	contentArchive "go.lumeweb.com/ipfs-content/archive"
+	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
-	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	pluginErrors "go.lumeweb.com/portal-plugin-ipfs/internal/errors"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/upload/common"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/models"
-	contentArchive "go.lumeweb.com/ipfs-content/archive"
-	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 	"go.uber.org/zap"
 )
 
@@ -138,7 +138,7 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		h.Logger().Warn("Failed to update progress", zap.Error(err))
 	}
 
-	allCids, rootCids, err := ProcessBlocks(h.Context(), processor, h.Protocol().(ProtoNode).GetBlockstoreFlusher())
+	allCids, rootCids, err := ProcessBlocks(h.Context(), ctx, processor, h.Protocol().(ProtoNode).GetBlockstoreFlusher())
 	if err != nil {
 		return fmt.Errorf("failed to process CIDs from upload: %w", err)
 	}
