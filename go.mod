@@ -42,7 +42,7 @@ require (
 	github.com/samber/lo v1.53.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tus/tusd/v2 v2.10.0
-	go.lumeweb.com/httputil v0.5.4
+	go.lumeweb.com/httputil v0.5.5
 	go.lumeweb.com/ipfs-content v0.1.17
 	go.lumeweb.com/portal v0.5.0
 	go.lumeweb.com/portal-middleware v0.3.7
@@ -321,7 +321,7 @@ require (
 	go.etcd.io/etcd/client/v3 v3.6.11 // indirect
 	go.lumeweb.com/configmanager v0.3.28 // indirect
 	go.lumeweb.com/event/v2 v2.1.0 // indirect
-	go.lumeweb.com/gswagger v0.20.12 // indirect
+	go.lumeweb.com/gswagger v0.20.12
 	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20260708225528-03f364bd0861 // indirect
 	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20260707061228-b351ce1bbdfd // indirect
 	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20260708225528-03f364bd0861 // indirect
