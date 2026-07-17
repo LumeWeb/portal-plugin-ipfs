@@ -1,14 +1,12 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
-	"strings"
 
-	"go.lumeweb.com/portal-plugin-ipfs/internal/errors"
 	router "go.lumeweb.com/portal-router"
 	swagger "go.lumeweb.com/gswagger"
 	core "go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/errors"
 )
 
 // Error keys
@@ -53,66 +51,6 @@ const (
 	ErrKeyInvalidCID    core.ErrorType = "INVALID_CID"
 	ErrKeyInvalidTarget core.ErrorType = "INVALID_TARGET"
 )
-
-var _ router.ResponseError = (*IPFSError)(nil)
-
-// ErrorDetails represents the structured error response format
-type ErrorDetails struct {
-	Reason  string `json:"reason"`
-	Details string `json:"details,omitempty"`
-}
-
-// ErrorWrapper wraps ErrorDetails for custom JSON marshaling
-type ErrorWrapper struct {
-	Error ErrorDetails `json:"error"`
-}
-
-// IPFSError represents an IPFS-specific error that can be marshaled to JSON
-type IPFSError struct {
-	coreErr *core.Error
-}
-
-// MarshalJSON implements json.Marshaler interface
-func (e *IPFSError) MarshalJSON() ([]byte, error) {
-	if e == nil || e.coreErr == nil {
-		return json.Marshal(ErrorWrapper{Error: ErrorDetails{Reason: "Unknown"}})
-	}
-	reason := string(e.coreErr.Key)
-
-	// First strip "ErrKey" prefix if present
-	if strings.HasPrefix(reason, "ErrKey") {
-		reason = reason[6:] // Strip "ErrKey" prefix
-	}
-
-	// Then strip "Err" prefix if present
-	if strings.HasPrefix(reason, "Err") {
-		reason = reason[3:] // Strip "Err" prefix
-	}
-
-	details := ErrorDetails{
-		Reason:  reason,
-		Details: e.coreErr.Message,
-	}
-
-	wrapper := ErrorWrapper{Error: details}
-	return json.Marshal(wrapper)
-}
-
-func (e *IPFSError) Error() string {
-	return e.coreErr.Error()
-}
-
-func (e *IPFSError) HttpStatus() int {
-	return e.coreErr.HttpStatus()
-}
-
-// Unwrap exposes the underlying core.Error for errors.Is/As.
-func (e *IPFSError) Unwrap() error {
-	if e == nil {
-		return nil
-	}
-	return e.coreErr
-}
 
 func init() {
 	core.MustRegisterNamespace(Namespace)
@@ -178,14 +116,10 @@ func init() {
 	})
 }
 
-func NewError(key core.ErrorType, err error, args ...any) *IPFSError {
-	return &IPFSError{core.NewError(Namespace, key, err, args...)}
+func NewError(key core.ErrorType, err error, args ...any) *core.Error {
+	return core.NewError(Namespace, key, err, args...)
 }
 
-// DefineErrorResponse creates a Swagger error response definition using the
-// actual JSON shape produced by IPFSError.MarshalJSON (ErrorWrapper), not the
-// default portal-router ErrorResponse which uses a plain string for "error".
-// This ensures generated SDK clients correctly unmarshal error responses.
 func DefineErrorResponse(status int, description string) map[int]swagger.ContentValue {
-	return router.DefineResponse(status, description, router.WithJSONContent(ErrorWrapper{}))
+	return router.DefineSwaggerErrorResponse(status, description)
 }

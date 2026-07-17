@@ -16,12 +16,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// handleIPFSError is a DRY helper for handling IPFSError with proper context
+// handleIPFSError handles core.Error with proper context
 func (a *API) handleIPFSError(err error, c echo.Context) (error, bool) {
 	if err == nil {
 		return nil, false
 	}
-	if apiErr, ok := errors.AsType[*IPFSError](err); ok {
+	if apiErr, ok := errors.AsType[*core.Error](err); ok {
 		ctx := httputil.Context(c)
 		return ctx.Error(apiErr, apiErr.HttpStatus()), true
 	}
