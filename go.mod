@@ -16,7 +16,7 @@ require (
 	github.com/ipfs/go-block-format v0.2.4
 	github.com/ipfs/go-cid v0.6.2
 	github.com/ipfs/go-datastore v0.9.2
-	github.com/ipfs/go-ds-leveldb v0.5.2
+	github.com/ipfs/go-ds-leveldb v0.5.3
 	github.com/ipfs/go-ipld-format v0.6.4
 	github.com/ipfs/go-ipld-legacy v0.3.0
 	github.com/ipfs/go-log/v2 v2.9.2
