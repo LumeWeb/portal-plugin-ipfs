@@ -44,12 +44,12 @@ require (
 	github.com/tus/tusd/v2 v2.10.0
 	go.lumeweb.com/httputil v0.5.5
 	go.lumeweb.com/ipfs-content v0.1.17
-	go.lumeweb.com/portal v0.5.1
+	go.lumeweb.com/portal v0.5.2-0.20260717144043-901049bcdd77
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.1.0
 	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260708232039-b4aebacb9791
 	go.lumeweb.com/portal-plugin-quota v0.1.0
-	go.lumeweb.com/portal-router v0.7.4
+	go.lumeweb.com/portal-router v0.7.5
 	go.lumeweb.com/queryutil v0.3.17
 	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260716063728-6b8f8f8c3089
 	go.uber.org/zap v1.28.0
@@ -79,7 +79,6 @@ require (
 	github.com/slok/go-http-metrics v0.13.0 // indirect
 	github.com/woodsbury/decimal128 v1.4.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.69.0 // indirect
-	go.opentelemetry.io/contrib/processors/minsev v0.16.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.20.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.44.0 // indirect
 	go.sia.tech/indexd v0.4.0 // indirect
@@ -176,7 +175,6 @@ require (
 	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/gorilla/sessions v1.4.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/gotd/contrib v0.21.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/hashicorp/go-version v1.8.0 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
@@ -247,7 +245,6 @@ require (
 	github.com/minio/sha256-simd v1.0.1 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
-	github.com/montanaflynn/stats v0.9.0 // indirect
 	github.com/mr-tron/base58 v1.3.0 // indirect
 	github.com/mrjones/oauth v0.0.0-20190623134757-126b35219450 // indirect
 	github.com/multiformats/go-base32 v0.1.0 // indirect
@@ -297,7 +294,6 @@ require (
 	github.com/quic-go/webtransport-go v0.11.1 // indirect
 	github.com/redis/go-redis/v9 v9.21.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/rivo/uniseg v0.4.4 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/rs/cors v1.11.1 // indirect
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
@@ -312,7 +308,6 @@ require (
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/syndtr/goleveldb v1.0.1-0.20220721030215-126854af5e6d // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
-	github.com/uptrace/uptrace-go v1.43.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/whyrusleeping/base32 v0.0.0-20170828182744-c30ac30633cc // indirect
@@ -334,18 +329,12 @@ require (
 	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20260708225528-03f364bd0861 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/bridges/otelzap v0.19.0 // indirect
-	go.opentelemetry.io/contrib/instrumentation/runtime v0.68.0 // indirect
 	go.opentelemetry.io/otel v1.44.0
-	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.19.0 // indirect
-	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.43.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.44.0 // indirect
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.44.0 // indirect
-	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.44.0 // indirect
 	go.opentelemetry.io/otel/log v0.20.0 // indirect
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.44.0 // indirect
 	go.opentelemetry.io/otel/sdk/log v0.20.0 // indirect
-	go.opentelemetry.io/otel/sdk/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	go.shabbyrobe.org/gocovmerge v0.0.0-20230507111327-fa4f82cfbf4d // indirect
@@ -353,7 +342,6 @@ require (
 	go.sia.tech/coreutils v0.23.5 // indirect
 	go.sia.tech/jape v0.14.1 // indirect
 	go.sia.tech/mux v1.5.3 // indirect
-	go.sia.tech/renterd/v2 v2.9.1 // indirect
 	go.uber.org/dig v1.19.0 // indirect
 	go.uber.org/fx v1.24.0 // indirect
 	go.uber.org/mock v0.6.0 // indirect
@@ -387,7 +375,6 @@ require (
 	gorm.io/driver/sqlserver v1.6.3 // indirect
 	gorm.io/plugin/dbresolver v1.6.2 // indirect
 	gorm.io/plugin/opentelemetry v0.1.16 // indirect
-	gorm.io/plugin/prometheus v0.1.0 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 	lukechampine.com/frand v1.5.1 // indirect
 	modernc.org/libc v1.73.4 // indirect

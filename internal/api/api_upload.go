@@ -15,9 +15,9 @@ import (
 	"go.lumeweb.com/portal/core"
 )
 
-// mapUploadError maps various error types to appropriate IPFS API errors
+// mapUploadError maps various error types to appropriate core.Error instances
 // This handles core quota errors, upload-specific errors, and provides fallbacks
-func mapUploadError(err error) *IPFSError {
+func mapUploadError(err error) *core.Error {
 	if err == nil {
 		return nil
 	}
