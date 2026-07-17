@@ -7,6 +7,7 @@ import (
 
 	"go.lumeweb.com/portal-plugin-ipfs/internal/errors"
 	router "go.lumeweb.com/portal-router"
+	swagger "go.lumeweb.com/gswagger"
 	core "go.lumeweb.com/portal/core"
 )
 
@@ -179,4 +180,12 @@ func init() {
 
 func NewError(key core.ErrorType, err error, args ...any) *IPFSError {
 	return &IPFSError{core.NewError(Namespace, key, err, args...)}
+}
+
+// DefineErrorResponse creates a Swagger error response definition using the
+// actual JSON shape produced by IPFSError.MarshalJSON (ErrorWrapper), not the
+// default portal-router ErrorResponse which uses a plain string for "error".
+// This ensures generated SDK clients correctly unmarshal error responses.
+func DefineErrorResponse(status int, description string) map[int]swagger.ContentValue {
+	return router.DefineResponse(status, description, router.WithJSONContent(ErrorWrapper{}))
 }
