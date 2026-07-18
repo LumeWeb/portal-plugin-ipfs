@@ -41,7 +41,12 @@ func buildFullName(name, domain string) string {
 	// Normalize both name and domain (strip trailing dots for comparison)
 	nameNoDot := strings.TrimSuffix(name, ".")
 	domainNoDot := strings.TrimSuffix(domain, ".")
-	
+
+	// If name is the zone apex shorthand (@ or empty string), return canonical domain
+	if nameNoDot == "@" || nameNoDot == "" {
+		return domainNoDot + "."
+	}
+
 	// If name is the zone apex (equals domain), return canonical domain
 	if nameNoDot == domainNoDot {
 		return domainNoDot + "."
@@ -59,7 +64,13 @@ func buildFullName(name, domain string) string {
 }
 
 // stripDomain removes the domain suffix from a full DNS name
+// Returns empty string if the name IS the domain (apex record)
 func stripDomain(name, domain string) string {
+	nameNoDot := strings.TrimSuffix(name, ".")
+	domainNoDot := strings.TrimSuffix(domain, ".")
+	if nameNoDot == domainNoDot {
+		return ""
+	}
 	if strings.HasSuffix(name, "."+domain) {
 		return strings.TrimSuffix(name, "."+domain)
 	}
