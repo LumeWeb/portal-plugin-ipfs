@@ -903,11 +903,11 @@ func TestDNSServiceCreateRecord(t *testing.T) {
 			require.NoError(tb, err)
 			require.NotNil(tb, zone)
 
-			// Try to create a record - PATCH succeeds but GetRRSet fails
+			// Try to create a record - PATCH returns 500, so error is caught immediately
 			_, err = svc.CreateRecord(ctx, zone.ID, "www", "A", "192.0.2.1", 3600)
 			require.Error(tb, err)
-			// Error should be from GetRRSet failing after creation
-			require.Contains(tb, err.Error(), "RRSet not found")
+			// Error should be from UpdateZoneRRSets detecting the 500
+			require.Contains(tb, err.Error(), "PowerDNS returned status 500")
 		}, testOptionsWithError)
 	})
 

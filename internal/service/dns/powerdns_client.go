@@ -136,8 +136,18 @@ func (c *PowerDNSClient) UpdateZoneRRSets(ctx context.Context, zoneID string, rr
 	if err != nil {
 		return fmt.Errorf("failed to update zone: %w", err)
 	}
-	if resp != nil {
-		defer resp.Body.Close()
+	if resp == nil {
+		return fmt.Errorf("failed to update zone: nil response from PowerDNS")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		c.logger.Warn("PowerDNS returned non-success status",
+			zap.Int("status", resp.StatusCode),
+			zap.String("zone_id", zoneID),
+			zap.String("body", string(bodyBytes)))
+		return fmt.Errorf("PowerDNS returned status %d", resp.StatusCode)
 	}
 
 	c.logger.Info("Zone RRsets updated in PowerDNS",
@@ -153,8 +163,18 @@ func (c *PowerDNSClient) DeleteZone(ctx context.Context, zoneID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete zone: %w", err)
 	}
-	if resp != nil {
-		defer resp.Body.Close()
+	if resp == nil {
+		return fmt.Errorf("failed to delete zone: nil response from PowerDNS")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		c.logger.Warn("PowerDNS returned non-success status",
+			zap.Int("status", resp.StatusCode),
+			zap.String("zone_id", zoneID),
+			zap.String("body", string(bodyBytes)))
+		return fmt.Errorf("PowerDNS returned status %d", resp.StatusCode)
 	}
 
 	c.logger.Info("Zone deleted from PowerDNS",

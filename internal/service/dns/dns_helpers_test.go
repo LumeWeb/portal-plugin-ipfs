@@ -146,7 +146,8 @@ func TestBuildFullName_RelativeName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildFullName(tt.name, tt.domain)
+			result, err := buildFullName(tt.name, tt.domain)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, result, "buildFullName(%q, %q)", tt.name, tt.domain)
 		})
 	}
@@ -188,8 +189,28 @@ func TestBuildFullName_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildFullName(tt.name, tt.domain)
+			result, err := buildFullName(tt.name, tt.domain)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, result, "buildFullName(%q, %q)", tt.name, tt.domain)
+		})
+	}
+}
+
+// TestBuildFullName_InvalidAtPosition tests that @ in non-apex position returns an error
+func TestBuildFullName_InvalidAtPosition(t *testing.T) {
+	tests := []string{
+		"subdomain.@",
+		"@.subdomain",
+		"a@b",
+		"prefix@",
+		"@suffix",
+	}
+
+	for _, name := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := buildFullName(name, "example.com")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "must be used alone for apex records")
 		})
 	}
 }
@@ -198,7 +219,8 @@ func TestBuildFullName_EdgeCases(t *testing.T) {
 func TestBuildFullName_CaseSensitivity(t *testing.T) {
 	name := "WWW"
 	domain := "EXAMPLE.COM"
-	result := buildFullName(name, domain)
+	result, err := buildFullName(name, domain)
+	require.NoError(t, err)
 
 	// The result should preserve the input case
 	assert.Equal(t, "WWW.EXAMPLE.COM.", result)
@@ -260,7 +282,8 @@ func TestBuildFullNameIdentity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.relativeName, func(t *testing.T) {
-			fullName := buildFullName(tt.relativeName, tt.domainBase)
+			fullName, err := buildFullName(tt.relativeName, tt.domainBase)
+			require.NoError(t, err)
 			// stripDomain needs the full name without trailing dot to properly match
 			strippedName := stripDomain(strings.TrimSuffix(fullName, "."), tt.domainBase)
 			assert.Equal(t, tt.relativeName, strippedName,
@@ -304,7 +327,8 @@ func TestBuildFullNameRoundTrip(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			full := buildFullName(tc.name, tc.domain)
+			full, err := buildFullName(tc.name, tc.domain)
+			require.NoError(t, err)
 			// stripDomain needs the full name without trailing dot to properly match
 			relative := stripDomain(strings.TrimSuffix(full, "."), tc.domain)
 
@@ -344,7 +368,8 @@ func TestBuildFullName_AbsoluteName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildFullName(tt.name, tt.domain)
+			result, err := buildFullName(tt.name, tt.domain)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, result, "buildFullName(%q, %q)", tt.name, tt.domain)
 		})
 	}
@@ -380,7 +405,8 @@ func TestBuildFullName_ZoneApex(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildFullName(tt.name, tt.domain)
+			result, err := buildFullName(tt.name, tt.domain)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, result, "buildFullName(%q, %q)", tt.name, tt.domain)
 		})
 	}
@@ -411,7 +437,8 @@ func TestBuildFullName_SubdomainLevels(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildFullName(tt.name, tt.domain)
+			result, err := buildFullName(tt.name, tt.domain)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, result, "buildFullName(%q, %q)", tt.name, tt.domain)
 		})
 	}
@@ -452,7 +479,8 @@ func TestBuildFullName_DomainWithTrailingDot(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildFullName(tt.name, tt.domain)
+			result, err := buildFullName(tt.name, tt.domain)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, result, "buildFullName(%q, %q)", tt.name, tt.domain)
 		})
 	}
@@ -475,7 +503,8 @@ func TestBuildFullName_CanonicalAllResults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildFullName(tt.name, tt.domain)
+			result, err := buildFullName(tt.name, tt.domain)
+			require.NoError(t, err)
 			assert.True(t, strings.HasSuffix(result, "."),
 				"Result should have trailing dot: buildFullName(%q, %q) = %q", tt.name, tt.domain, result)
 		})
@@ -509,7 +538,8 @@ func TestBuildFullName_RealWorldScenarios(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildFullName(tt.name, tt.domain)
+			result, err := buildFullName(tt.name, tt.domain)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, result, "buildFullName(%q, %q)", tt.name, tt.domain)
 		})
 	}

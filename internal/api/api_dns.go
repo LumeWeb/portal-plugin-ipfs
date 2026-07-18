@@ -1,7 +1,9 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -322,6 +324,10 @@ func (a *API) createRecord(c echo.Context) error {
 		return nil
 	}
 
+	if err := validateRecordNameAndRespond(ctx, req.Name); err != nil {
+		return err
+	}
+
 	ttl := uint(dnsservice.DefaultTTL) // Using constant from service layer
 
 	record, err := a.dnsService.CreateRecord(reqCtx, zoneID, req.Name, req.Type, req.Content, ttl)
@@ -351,6 +357,10 @@ func (a *API) updateRecord(c echo.Context) error {
 	reqCtx := ctx.Context.Request().Context()
 	name := c.Param("name")
 	recordType := c.Param("type")
+
+	if err := validateRecordNameAndRespond(ctx, name); err != nil {
+		return err
+	}
 
 	var req dto.RecordRequest
 	_, ok := httputil.DecodeAndValidateRequest(ctx, &req)
@@ -393,6 +403,10 @@ func (a *API) deleteRecord(c echo.Context) error {
 	name := c.Param("name")
 	recordType := c.Param("type")
 
+	if err := validateRecordNameAndRespond(ctx, name); err != nil {
+		return err
+	}
+
 	err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType)
 	if err != nil {
 		a.Logger().Error("Failed to delete DNS record", zap.Error(err), zap.String("name", name), zap.String("type", recordType))
@@ -421,6 +435,18 @@ func (a *API) bulkRecords(c echo.Context) error {
 	var req dto.BulkRecordRequest
 	if _, ok := httputil.DecodeAndValidateRequest(ctx, &req); !ok {
 		return nil
+	}
+
+	var invalid []string
+	for _, r := range req.Records {
+		if err := validateRecordName(r.Name); err != nil {
+			invalid = append(invalid, fmt.Sprintf("%q: %v", r.Name, err))
+		}
+	}
+	if len(invalid) > 0 {
+		msg := strings.Join(invalid, "; ")
+		apiErr := NewError(ErrKeyInvalidRecordName, fmt.Errorf("%s", msg))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	// For bulk operations, we'll process each record individually
@@ -479,4 +505,25 @@ func (a *API) bulkDeleteRecords(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, response)
+}
+
+// validateRecordName checks that a record name is valid DNS syntax.
+// Returns an error for invalid names like "subdomain.@" where @ is misplaced.
+func validateRecordName(name string) error {
+	// @ is only valid as the sole character (apex shorthand)
+	nameNoDot := strings.TrimSuffix(name, ".")
+	if strings.Contains(nameNoDot, "@") && nameNoDot != "@" {
+		return fmt.Errorf("\"@\" must be used alone for apex records")
+	}
+	return nil
+}
+
+// validateRecordNameAndRespond validates a record name and returns a 422
+// error response if invalid. Use in API handlers that take a name param.
+func validateRecordNameAndRespond(ctx httputil.RequestContext, name string) error {
+	if err := validateRecordName(name); err != nil {
+		apiErr := NewError(ErrKeyInvalidRecordName, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	return nil
 }

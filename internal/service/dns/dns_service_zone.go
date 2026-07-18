@@ -362,9 +362,18 @@ func (s *DNSServiceDefault) CreateWebsiteDNSRecords(ctx context.Context, zoneID 
 	disabled := false
 	targetPath := string(buildTargetPath(targetHash, targetType))
 
-	dnslinkName := buildFullName("_dnslink", websiteDomain)
-	verifyName := buildFullName(s.config.VerificationTokenKey, websiteDomain)
-	recordName := buildFullName(websiteDomain, websiteDomain)
+	dnslinkName, err := buildFullName("_dnslink", websiteDomain)
+	if err != nil {
+		return fmt.Errorf("invalid dnslink name: %w", err)
+	}
+	verifyName, err := buildFullName(s.config.VerificationTokenKey, websiteDomain)
+	if err != nil {
+		return fmt.Errorf("invalid verification token key: %w", err)
+	}
+	recordName, err := buildFullName(websiteDomain, websiteDomain)
+	if err != nil {
+		return fmt.Errorf("invalid record name: %w", err)
+	}
 
 	rrsets := []powerdns.RRSet{
 		{
@@ -444,7 +453,10 @@ func (s *DNSServiceDefault) UpdateWebsiteDNSRecords(ctx context.Context, zoneID 
 	disabled := false
 	targetPath := string(buildTargetPath(targetHash, targetType))
 
-	dnslinkName := buildFullName("_dnslink", websiteDomain)
+	dnslinkName, err := buildFullName("_dnslink", websiteDomain)
+	if err != nil {
+		return fmt.Errorf("invalid dnslink name: %w", err)
+	}
 
 	rrsets := []powerdns.RRSet{
 		{
@@ -492,9 +504,18 @@ func (s *DNSServiceDefault) DeleteWebsiteDNSRecords(ctx context.Context, zoneID 
 		return fmt.Errorf("DNS hosting not enabled")
 	}
 
-	dnslinkName := buildFullName("_dnslink", websiteDomain)
-	verifyName := buildFullName(s.config.VerificationTokenKey, websiteDomain)
-	recordName := buildFullName(websiteDomain, websiteDomain)
+	dnslinkName, err := buildFullName("_dnslink", websiteDomain)
+	if err != nil {
+		return fmt.Errorf("invalid dnslink name: %w", err)
+	}
+	verifyName, err := buildFullName(s.config.VerificationTokenKey, websiteDomain)
+	if err != nil {
+		return fmt.Errorf("invalid verification token key: %w", err)
+	}
+	recordName, err := buildFullName(websiteDomain, websiteDomain)
+	if err != nil {
+		return fmt.Errorf("invalid record name: %w", err)
+	}
 
 	rrsets := []powerdns.RRSet{
 		{

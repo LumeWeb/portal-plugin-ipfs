@@ -63,7 +63,10 @@ func (s *DNSServiceDefault) GetRRSet(ctx context.Context, zoneID uint, name stri
 	}
 
 	// Find matching RRSet
-	fullName := buildFullName(name, zone.Domain)
+	fullName, err := buildFullName(name, zone.Domain)
+	if err != nil {
+		return nil, err
+	}
 
 	if pdnsZone.Rrsets != nil {
 		matchingRRSet, found := lo.Find(*pdnsZone.Rrsets, func(rrset powerdns.RRSet) bool {
@@ -91,7 +94,10 @@ func (s *DNSServiceDefault) CreateRecord(ctx context.Context, zoneID uint, name 
 		return nil, err
 	}
 
-	fullName := buildFullName(name, zone.Domain)
+	fullName, err := buildFullName(name, zone.Domain)
+	if err != nil {
+		return nil, fmt.Errorf("invalid record name: %w", err)
+	}
 
 	pdnsContent := formatRecordContent(recordType, content)
 
@@ -142,7 +148,10 @@ func (s *DNSServiceDefault) UpdateRecord(ctx context.Context, zoneID uint, name 
 		return nil, err
 	}
 
-	fullName := buildFullName(name, zone.Domain)
+	fullName, err := buildFullName(name, zone.Domain)
+	if err != nil {
+		return nil, fmt.Errorf("invalid record name: %w", err)
+	}
 
 	pdnsRecords := lo.Map(records, func(r string, _ int) powerdns.Record {
 		return powerdns.Record{Content: formatRecordContent(recordType, r)}
@@ -187,7 +196,10 @@ func (s *DNSServiceDefault) DeleteRecord(ctx context.Context, zoneID uint, name 
 		return err
 	}
 
-	fullName := buildFullName(name, zone.Domain)
+	fullName, err := buildFullName(name, zone.Domain)
+	if err != nil {
+		return fmt.Errorf("invalid record name: %w", err)
+	}
 
 	rrset := buildRRSet(fullName, recordType, powerdns.DELETE, nil, nil)
 
@@ -219,10 +231,14 @@ func (s *DNSServiceDefault) BulkDeleteRecords(ctx context.Context, zoneID uint, 
 	}
 
 	// Convert RecordIdentifiers to PowerDNS DELETE RRSet operations
-	rrsets := lo.Map(records, func(r apiDTO.RecordIdentifier, _ int) powerdns.RRSet {
-		fullName := buildFullName(r.Name, zone.Domain)
-		return buildRRSet(fullName, r.Type, powerdns.DELETE, nil, nil)
-	})
+	rrsets := make([]powerdns.RRSet, 0, len(records))
+	for _, r := range records {
+		fullName, err := buildFullName(r.Name, zone.Domain)
+		if err != nil {
+			return nil, fmt.Errorf("invalid record name %q: %w", r.Name, err)
+		}
+		rrsets = append(rrsets, buildRRSet(fullName, r.Type, powerdns.DELETE, nil, nil))
+	}
 
 	// If dryRun is true, return success results without actually deleting
 	if dryRun {
@@ -430,7 +446,16 @@ func (s *DNSServiceDefault) ImportZoneFile(ctx context.Context, zoneID uint, zon
 			continue
 		}
 
-		fullName := buildFullName(name, zone.Domain)
+		fullName, err := buildFullName(name, zone.Domain)
+		if err != nil {
+			response.Errors = append(response.Errors, apiDTO.ImportZoneError{
+				Name:  name,
+				Type:  recordType,
+				Error: fmt.Sprintf("Invalid record name: %v", err),
+			})
+			response.FailedCount++
+			continue
+		}
 		key := fmt.Sprintf("%s:%s", fullName, recordType)
 
 		values := entry.Values()

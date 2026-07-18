@@ -35,32 +35,38 @@ func (s *DNSServiceDefault) getZoneWithPowerDNS(ctx context.Context, zoneID uint
 	return zone, pdnsZone, nil
 }
 
-// buildFullName constructs the full DNS record name from a name and domain
-// Returns a canonical DNS name (with trailing dot) as required by PowerDNS API
-func buildFullName(name, domain string) string {
+// buildFullName constructs the full DNS record name from a name and domain.
+// Returns a canonical DNS name (with trailing dot) as required by PowerDNS API.
+// Returns an error if the name contains "@" in an invalid position.
+func buildFullName(name, domain string) (string, error) {
 	// Normalize both name and domain (strip trailing dots for comparison)
 	nameNoDot := strings.TrimSuffix(name, ".")
 	domainNoDot := strings.TrimSuffix(domain, ".")
 
 	// If name is the zone apex shorthand (@ or empty string), return canonical domain
 	if nameNoDot == "@" || nameNoDot == "" {
-		return domainNoDot + "."
+		return domainNoDot + ".", nil
+	}
+
+	// Reject @ used anywhere except as the sole character (invalid DNS name)
+	if strings.Contains(nameNoDot, "@") {
+		return "", fmt.Errorf("%q contains \"@\" which must be used alone for apex records", name)
 	}
 
 	// If name is the zone apex (equals domain), return canonical domain
 	if nameNoDot == domainNoDot {
-		return domainNoDot + "."
+		return domainNoDot + ".", nil
 	}
-	
+
 	// If name already contains the domain
 	if strings.HasSuffix(nameNoDot, "."+domainNoDot) {
 		// Return it canonically normalized (with trailing dot)
-		return nameNoDot + "."
+		return nameNoDot + ".", nil
 	}
-	
+
 	// Otherwise, construct the full name and canonicalize
 	fullName := nameNoDot + "." + domainNoDot
-	return fullName + "."
+	return fullName + ".", nil
 }
 
 // stripDomain removes the domain suffix from a full DNS name
