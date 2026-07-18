@@ -46,6 +46,7 @@ const (
 	ErrKeyInvalidDomainFormat core.ErrorType = "INVALID_DOMAIN_FORMAT"
 	ErrKeyDuplicateRecord     core.ErrorType = "DUPLICATE_RECORD"
 	ErrKeyValidationFailed    core.ErrorType = "VALIDATION_FAILED"
+	ErrKeyInvalidRecordName   core.ErrorType = "INVALID_RECORD_NAME"
 
 	// Website validation error types
 	ErrKeyInvalidCID    core.ErrorType = "INVALID_CID"
@@ -80,6 +81,7 @@ func init() {
 		ErrKeyInvalidDomainFormat:   {Key: ErrKeyInvalidDomainFormat, Message: "Invalid domain format"},
 		ErrKeyDuplicateRecord:       {Key: ErrKeyDuplicateRecord, Message: "Duplicate DNS record"},
 		ErrKeyValidationFailed:      {Key: ErrKeyValidationFailed, Message: "DNS validation failed"},
+		ErrKeyInvalidRecordName:     {Key: ErrKeyInvalidRecordName, Message: "Invalid DNS record name"},
 		ErrKeyPermissionDenied:      {Key: ErrKeyPermissionDenied, Message: "Permission denied"},
 		ErrKeyInvalidCID:            {Key: ErrKeyInvalidCID, Message: "Invalid CID provided"},
 		ErrKeyInvalidTarget:         {Key: ErrKeyInvalidTarget, Message: "Invalid target hash or peer ID provided"},
@@ -106,6 +108,7 @@ func init() {
 		ErrKeyZoneNotFound:          http.StatusNotFound,
 		ErrKeyDuplicateRecord:       http.StatusConflict,
 		ErrKeyValidationFailed:      http.StatusInternalServerError,
+		ErrKeyInvalidRecordName:     http.StatusUnprocessableEntity,
 		ErrKeyInvalidRequest:        http.StatusUnprocessableEntity,
 		ErrKeyInvalidIdentifier:     http.StatusUnprocessableEntity,
 		ErrKeyInvalidCID:            http.StatusUnprocessableEntity,

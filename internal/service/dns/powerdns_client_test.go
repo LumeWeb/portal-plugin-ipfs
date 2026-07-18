@@ -237,12 +237,40 @@ func TestUpdateZoneRRSets(t *testing.T) {
 			mockError:    errors.New("network error"),
 			expectError:  true,
 		},
+		{
+			name:   "RRSet update with 422 from PowerDNS",
+			zoneID: "example.com.",
+			rrsets: []powerdns.RRSet{
+				{
+					Changetype: powerdns.REPLACE,
+					Name:       "test.example.com.",
+					Type:       "CNAME",
+					Ttl:        intPtr(300),
+					Records: []powerdns.Record{
+						{Content: "target.example.com."},
+					},
+				},
+			},
+			mockResponse: &http.Response{
+				StatusCode: http.StatusUnprocessableEntity,
+				Body:       io.NopCloser(bytes.NewBufferString(`{"error": "CNAME conflict"}`)),
+			},
+			expectError: true,
+		},
+		{
+			name:   "RRSet update with nil response",
+			zoneID: "example.com.",
+			rrsets: []powerdns.RRSet{},
+			mockResponse: nil,
+			mockError:    nil,
+			expectError:  true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := zap.NewNop()
-	coreLogger := &core.Logger{Logger: logger}
+			coreLogger := &core.Logger{Logger: logger}
 			mockClient := &mockHTTPClient{
 				response: tt.mockResponse,
 				err:      tt.mockError,
@@ -293,12 +321,28 @@ func TestDeleteZone(t *testing.T) {
 			mockError:   errors.New("network error"),
 			expectError: true,
 		},
+		{
+			name:   "zone deletion with 404 from PowerDNS",
+			zoneID: "example.com.",
+			mockResponse: &http.Response{
+				StatusCode: http.StatusNotFound,
+				Body:       io.NopCloser(bytes.NewBufferString(`{"error": "Zone not found"}`)),
+			},
+			expectError: true,
+		},
+		{
+			name:         "zone deletion with nil response",
+			zoneID:       "example.com.",
+			mockResponse: nil,
+			mockError:    nil,
+			expectError:  true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := zap.NewNop()
-	coreLogger := &core.Logger{Logger: logger}
+			coreLogger := &core.Logger{Logger: logger}
 			mockClient := &mockHTTPClient{
 				response: tt.mockResponse,
 				err:      tt.mockError,
