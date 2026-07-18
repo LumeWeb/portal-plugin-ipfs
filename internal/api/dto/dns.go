@@ -148,12 +148,12 @@ type RecordRequest struct {
 
 func (r RecordRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
-		"Name":    zog.String().Required().Min(1).Max(255),
-		"Type":    zog.String().Required().OneOf([]string{
+		"Name":     zog.String().Optional().Max(255),
+		"Type":     zog.String().Required().OneOf([]string{
 			"A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "ALIAS",
 		}),
-		"Content": zog.String().Required().Min(1).Max(1024),
-		"TTL":     zog.UintLike[uint]().Optional(),
+		"Content":  zog.String().Required().Min(1).Max(1024),
+		"TTL":      zog.UintLike[uint]().Optional(),
 		"Disabled": zog.Bool().Optional(),
 	})
 }

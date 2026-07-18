@@ -160,6 +160,16 @@ func TestBuildFullName_EdgeCases(t *testing.T) {
 		expected string
 	}{
 		{
+			name:     "",
+			domain:   "example.com",
+			expected: "example.com.",
+		},
+		{
+			name:     "@",
+			domain:   "example.com",
+			expected: "example.com.",
+		},
+		{
 			name:     "a",
 			domain:   "b.com",
 			expected: "a.b.com.",
@@ -219,7 +229,7 @@ func TestStripDomain(t *testing.T) {
 		{
 			name:     "example.com",
 			domain:   "example.com",
-			expected: "example.com",
+			expected: "",
 		},
 		{
 			name:     "www",

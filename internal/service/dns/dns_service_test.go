@@ -807,6 +807,46 @@ func TestDNSServiceCreateRecord(t *testing.T) {
 		}, testOptions)
 	})
 
+	t.Run("success_apex_record_empty_name", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
+			require.NotNil(tb, svc)
+
+			zone, err := svc.CreateZone(ctx, "example.com.", 1)
+			require.NoError(tb, err)
+			require.NotNil(tb, zone)
+
+			record, err := svc.CreateRecord(ctx, zone.ID, "", "TXT", "v=spf1 include:_spf.example.com ~all", 3600)
+			require.NoError(tb, err)
+			require.NotNil(tb, record)
+
+			require.Equal(tb, zone.ID, record.ZoneID)
+			require.Equal(tb, "", record.Name)
+			require.Equal(tb, "TXT", record.Type)
+			require.Equal(tb, "v=spf1 include:_spf.example.com ~all", record.Content)
+		}, testOptions)
+	})
+
+	t.Run("success_apex_record_at_symbol", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
+			require.NotNil(tb, svc)
+
+			zone, err := svc.CreateZone(ctx, "example.com.", 1)
+			require.NoError(tb, err)
+			require.NotNil(tb, zone)
+
+			record, err := svc.CreateRecord(ctx, zone.ID, "@", "A", "192.0.2.1", 3600)
+			require.NoError(tb, err)
+			require.NotNil(tb, record)
+
+			require.Equal(tb, zone.ID, record.ZoneID)
+			require.Equal(tb, "", record.Name)
+			require.Equal(tb, "A", record.Type)
+			require.Equal(tb, "192.0.2.1", record.Content)
+		}, testOptions)
+	})
+
 	t.Run("zone_not_found", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
