@@ -234,7 +234,22 @@ func formatRecordContent(recordType, content string) string {
 	if strings.EqualFold(recordType, "TXT") {
 		return formatTXTContent(content)
 	}
+	// PowerDNS requires fully-qualified domain names for CNAME, MX, NS
+	// Append trailing dot if missing so the name is absolute, not relative
+	if strings.EqualFold(recordType, "CNAME") || strings.EqualFold(recordType, "MX") || strings.EqualFold(recordType, "NS") {
+		return ensureTrailingDot(content)
+	}
 	return content
+}
+
+// ensureTrailingDot appends a dot to a domain name if it doesn't already have one.
+// PowerDNS requires FQDNs to end with a dot to be treated as absolute.
+func ensureTrailingDot(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.HasSuffix(name, ".") {
+		return name
+	}
+	return name + "."
 }
 
 // stripTXTQuotes removes surrounding double quotes from TXT record content
