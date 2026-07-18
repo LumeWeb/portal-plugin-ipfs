@@ -81,7 +81,7 @@ func init() {
 		ErrKeyInvalidDomainFormat:   {Key: ErrKeyInvalidDomainFormat, Message: "Invalid domain format"},
 		ErrKeyDuplicateRecord:       {Key: ErrKeyDuplicateRecord, Message: "Duplicate DNS record"},
 		ErrKeyValidationFailed:      {Key: ErrKeyValidationFailed, Message: "DNS validation failed"},
-		ErrKeyInvalidRecordName:     {Key: ErrKeyInvalidRecordName, Message: "Invalid DNS record name"},
+		ErrKeyInvalidRecordName:     {Key: ErrKeyInvalidRecordName, Message: "Invalid DNS record name: %v"},
 		ErrKeyPermissionDenied:      {Key: ErrKeyPermissionDenied, Message: "Permission denied"},
 		ErrKeyInvalidCID:            {Key: ErrKeyInvalidCID, Message: "Invalid CID provided"},
 		ErrKeyInvalidTarget:         {Key: ErrKeyInvalidTarget, Message: "Invalid target hash or peer ID provided"},

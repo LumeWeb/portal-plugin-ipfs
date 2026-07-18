@@ -445,7 +445,7 @@ func (a *API) bulkRecords(c echo.Context) error {
 	}
 	if len(invalid) > 0 {
 		msg := strings.Join(invalid, "; ")
-		apiErr := NewError(ErrKeyInvalidRecordName, fmt.Errorf("%s", msg))
+		apiErr := NewError(ErrKeyInvalidRecordName, fmt.Errorf("%s", msg), msg)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -522,7 +522,7 @@ func validateRecordName(name string) error {
 // error response if invalid. Use in API handlers that take a name param.
 func validateRecordNameAndRespond(ctx httputil.RequestContext, name string) error {
 	if err := validateRecordName(name); err != nil {
-		apiErr := NewError(ErrKeyInvalidRecordName, err)
+		apiErr := NewError(ErrKeyInvalidRecordName, err, err.Error())
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 	return nil
