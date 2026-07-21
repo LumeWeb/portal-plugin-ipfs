@@ -1000,6 +1000,8 @@ go.lumeweb.com/portal-plugin-core v0.1.0 h1:bHHJ7oZrBKmBvdUFutr3Dx6FdwvSg/ZeF33Q
 go.lumeweb.com/portal-plugin-core v0.1.0/go.mod h1:jvhHVmkSad4AAW9AA0Gaka07zvYXG3e848qIFL3Gx1A=
 go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260708232039-b4aebacb9791 h1:D6u80zZHcUJDtiedocgdAfd4TdPzR3MkRnR545he1Qk=
 go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260708232039-b4aebacb9791/go.mod h1:LJymPd3Jyt+i8FkPIXm5qMhQ9U6IWKws7os9gd2RFZI=
+go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260718154130-077206a2fc1c h1:3dXnZ8IEtmyki1T2BNhxPf6Jn5FFUsYLhHeTxpA+Q4A=
+go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260718154130-077206a2fc1c/go.mod h1:ej8oHZURhsIA0n+jCSo+5y6KVrZx2Q8Vz2zTLnknROU=
 go.lumeweb.com/portal-plugin-quota v0.1.0 h1:q1G7wpC8XRILc+mEpkVMEJEOkgEMXWX1If0oIAnYRaA=
 go.lumeweb.com/portal-plugin-quota v0.1.0/go.mod h1:DFdg/dVyfJEWlHdWvVUSAuAYCC/acQhG7YDOVhD9JQ8=
 go.lumeweb.com/portal-router v0.7.6 h1:9q4i4SqhaE39ecJSlLfBIDF6vZ5Jd2S+tYSOZb11cfk=
