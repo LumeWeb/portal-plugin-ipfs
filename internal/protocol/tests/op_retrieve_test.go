@@ -77,7 +77,7 @@ func setupTestSecondNode(t *testing.T) *TestSecondNodeInfo {
 		dht.Datastore(secondDstore),
 		dht.ProtocolExtension("/lan"),
 	}
-	testDHT, err := dht.New(context.Background(), secondHost, dhtOpts...)
+	testDHT, err := dht.New(secondHost, dhtOpts...)
 	require.NoError(t, err, "Failed to create test DHT")
 
 	// Create bitswap exchange using bsnet.NewFromIpfsHost for network functionality
