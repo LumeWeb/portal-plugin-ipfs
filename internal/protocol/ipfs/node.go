@@ -563,7 +563,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	switch cfg.DHTMode {
 	case config.DHTModeBasic:
 		// Use basic DHT
-		basicDHT, dhtErr := dht.New(ctx, node, dhtOpts...)
+		basicDHT, dhtErr := dht.New(node, dhtOpts...)
 		if dhtErr != nil {
 			return nil, fmt.Errorf("failed to create basic dht: %w", dhtErr)
 		}
@@ -580,7 +580,7 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		// inbound DHT queries (FIND_NODE, GET_PROVIDER, PUT_VALUE). A
 		// companion IpfsDHT in server mode runs alongside it to handle
 		// inbound queries and keep this node's multiaddrs discoverable.
-		companion, dhtErr := dht.New(ctx, node, dhtOpts...)
+		companion, dhtErr := dht.New(node, dhtOpts...)
 		if dhtErr != nil {
 			return nil, fmt.Errorf("failed to create companion DHT: %w", dhtErr)
 		}
