@@ -89,6 +89,8 @@ github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.14 h1:3IZY0XAJquT3aHz
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.14/go.mod h1:zwM6veDkhGgQFqkBy+uT28AAYpLu+uFMlPl+rCg/73E=
 github.com/aws/aws-sdk-go-v2/config v1.32.30 h1:XwsEzpTJfQYJbFicz/QMLwAZdyeNVVoOEkbF7R3gPJk=
 github.com/aws/aws-sdk-go-v2/config v1.32.30/go.mod h1:Ud32SuMc+/9BGxfpSVld7HrE2o05JwKmXY4M3jOQNZU=
+github.com/aws/aws-sdk-go-v2/config v1.32.31 h1:n4nY9O3QKoHIkL85EX+V8RcMFtOhlpTFhGArg915PXk=
+github.com/aws/aws-sdk-go-v2/config v1.32.31/go.mod h1:PN0NYDCCoOpGGsZ2+elDUidmHfQBPyYzN2GCgl8HEBs=
 github.com/aws/aws-sdk-go-v2/credentials v1.19.30 h1:TTCvvzFU6gXa4iJecNG/0F/B0oYTiazoRECr2XyLHrY=
 github.com/aws/aws-sdk-go-v2/credentials v1.19.30/go.mod h1:jKxAp2AEncnliinzpgOSZDFv6+VjvWhjw/AtbfsWT9U=
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.31 h1:kfVL5wAunCJycL6MOQ6aNh6PlAYEymflcjuKmrWUA0o=
@@ -1008,6 +1010,8 @@ go.lumeweb.com/portal v0.5.2-0.20260722093808-a32858a7aaed h1:3JhluFPwblKb+yaOtY
 go.lumeweb.com/portal v0.5.2-0.20260722093808-a32858a7aaed/go.mod h1:XtDG7l1LrtXmhAyuqT/4CbU+jPx+fjXp3VtbNC/4Eq8=
 go.lumeweb.com/portal v0.5.2-0.20260722164617-0dadc7cf5958 h1:tUMhTaq46v9dE+978dGyf3ZHAGK9bPiZ3/tbSJsKzOs=
 go.lumeweb.com/portal v0.5.2-0.20260722164617-0dadc7cf5958/go.mod h1:w2+4gJcdBhPRWJxmwlF+Oi5iqYN9OaOWRfxE7wlEdWE=
+go.lumeweb.com/portal v0.5.2-0.20260722181526-c41a9d5fa1b4 h1:LEyVNM4WQCCxK115llp1eu6aSlopR7BqR2+YrNm8/7Y=
+go.lumeweb.com/portal v0.5.2-0.20260722181526-c41a9d5fa1b4/go.mod h1:YQ1GFR5nmziwK94ghM+REJFS3hNbM8jEiYwDCZ11K2c=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.1.0 h1:bHHJ7oZrBKmBvdUFutr3Dx6FdwvSg/ZeF33QaRM0DKU=
