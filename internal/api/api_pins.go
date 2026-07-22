@@ -47,7 +47,7 @@ func (a *API) listPins(c echo.Context) error {
 	}
 
 	filter := dto.IPFSPinFilter{}
-	if _, ok := httputil.DecodeAndValidateRequest(ctx, &filter); !ok {
+	if _, ok := httputil.DecodeAndValidateQueryRequest(ctx, &filter); !ok {
 		return nil
 	}
 

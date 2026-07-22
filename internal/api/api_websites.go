@@ -167,7 +167,7 @@ func (a *API) listWebsites(c echo.Context) error {
 	}
 
 	websiteFilter := dto.WebsiteFilter{}
-	if _, ok := httputil.DecodeAndValidateRequest(ctx, &websiteFilter); !ok {
+	if _, ok := httputil.DecodeAndValidateQueryRequest(ctx, &websiteFilter); !ok {
 		return nil
 	}
 
