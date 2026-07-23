@@ -54,6 +54,15 @@ func extractParentDomain(domain string) string {
 	return strings.Join(parts[1:], ".")
 }
 
+// normalizeDomain strips the www. prefix if present so we never store it as primary.
+func normalizeDomain(domain string) string {
+	domain = strings.TrimSpace(strings.ToLower(domain))
+	if strings.HasPrefix(domain, "www.") {
+		return domain[4:]
+	}
+	return domain
+}
+
 // Validation error types
 var (
 	ErrInvalidCID    = errors.New("invalid CID")
@@ -123,7 +132,8 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 		CreateWebsiteDuration.WithLabelValues(),
 		CreateWebsiteTotal.WithLabelValues(LabelStatusError),
 		func() (*pluginDb.Website, error) {
-			// Validate domain name format
+			// Normalize and validate domain
+			website.Domain = normalizeDomain(website.Domain)
 			if err := s.validateDomain(website.Domain); err != nil {
 				return nil, fmt.Errorf("invalid domain: %w", err)
 			}
@@ -353,6 +363,8 @@ func (s *WebsiteServiceDefault) GetWebsiteByDomain(ctx context.Context, domain s
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.GetWebsiteByDomain")
 	defer span.End()
 
+	domain = normalizeDomain(domain)
+
 	return core.MetricTrackResult(
 		GetWebsiteByDomainDuration.WithLabelValues(),
 		GetWebsiteByDomainTotal.WithLabelValues(LabelStatusError),
@@ -476,6 +488,8 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 
 				// Validate domain if being updated
 				if domain, ok := updates["domain"].(string); ok {
+					domain = normalizeDomain(domain)
+					updates["domain"] = domain
 					if err := s.validateDomain(domain); err != nil {
 						_ = tx.AddError(fmt.Errorf("invalid domain: %w", err))
 						return tx
