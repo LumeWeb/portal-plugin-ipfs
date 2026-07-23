@@ -469,6 +469,88 @@ func TestWebsiteService_CreateWebsite_InvalidTargetType(t *testing.T) {
 	}, TestOptions)
 }
 
+func TestWebsiteService_CreateWebsite_NormalizesWWWPrefix(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		website := createTestIPFSWebsite(testUserID1, "www.example.com", testCID.String())
+
+		// Act
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+
+		// Assert
+		require.NoError(tb, err)
+		assert.NotNil(tb, createdWebsite)
+		assert.Equal(tb, "example.com", createdWebsite.Domain)
+	}, TestOptions)
+}
+
+func TestWebsiteService_CreateWebsite_NormalizesCase(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		website := createTestIPFSWebsite(testUserID1, "WWW.Example.COM", testCID.String())
+
+		// Act
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+
+		// Assert
+		require.NoError(tb, err)
+		assert.NotNil(tb, createdWebsite)
+		assert.Equal(tb, "example.com", createdWebsite.Domain)
+	}, TestOptions)
+}
+
+func TestWebsiteService_CreateWebsite_WWWDuplicateRejected(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		website1 := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
+		_, err := websiteService.CreateWebsite(context.Background(), website1)
+		require.NoError(tb, err)
+
+		// Act - try to create with www. prefix of existing domain
+		website2 := createTestIPFSWebsite(testUserID1, "www.example.com", testCID.String())
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website2)
+
+		// Assert
+		assert.Error(tb, err)
+		assert.Nil(tb, createdWebsite)
+		assert.Contains(tb, err.Error(), "domain already exists")
+	}, TestOptions)
+}
+
+func TestWebsiteService_UpdateWebsite_NormalizesWWWPrefix(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		website := createTestIPFSWebsite(testUserID1, "old-domain.com", testCID.String())
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		// Act - update domain to www.new-domain.com
+		updates := map[string]any{"domain": "www.new-domain.com"}
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
+
+		// Assert
+		require.NoError(tb, err)
+		assert.NotNil(tb, updatedWebsite)
+		assert.Equal(tb, "new-domain.com", updatedWebsite.Domain)
+	}, TestOptions)
+}
+
 func TestWebsiteService_GetWebsite(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
