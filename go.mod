@@ -322,9 +322,9 @@ require (
 	go.lumeweb.com/configmanager v0.3.29 // indirect
 	go.lumeweb.com/event/v2 v2.1.0 // indirect
 	go.lumeweb.com/gswagger v0.20.12
-	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20260721094348-433d16f1e823 // indirect
-	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20260721094348-433d16f1e823 // indirect
-	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20260721094348-433d16f1e823 // indirect
+	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20260722190812-27c8d53607dd // indirect
+	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20260722190812-27c8d53607dd // indirect
+	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20260722190812-27c8d53607dd // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/bridges/otelzap v0.19.0 // indirect
 	go.opentelemetry.io/otel v1.44.0
