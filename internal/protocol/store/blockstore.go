@@ -79,8 +79,19 @@ func (bs *BlockStore) Has(ctx context.Context, c cid.Cid) (bool, error) {
 	log := bs.log.Named("Has").With(zap.Stringer("cid", c))
 
 	if pc.IsVirtualReadEnabled(ctx) {
-		log.Debug("virtual read enabled, assuming block does not exist")
-		return false, nil
+		// In virtual mode, still check the metadata store for existence.
+		// This allows the blockservice to return locally-stored blocks without
+		// roundtripping through bitswap when blocks already exist from a prior
+		// upload by any user. Virtual mode only skips storage (Put), not reads.
+		err := bs.metadata.BlockExists(ctx, c)
+		if format.IsNotFound(err) {
+			log.Debug("virtual read enabled, block not found in metadata store")
+			return false, nil
+		} else if err != nil {
+			return false, fmt.Errorf("failed to get block location: %w", err)
+		}
+		log.Debug("virtual read enabled, block exists in metadata store")
+		return true, nil
 	}
 
 	start := time.Now()
@@ -201,12 +212,26 @@ func (bs *BlockStore) GetSize(ctx context.Context, c cid.Cid) (int, error) {
 	log := bs.log.Named("GetSize").With(zap.Stringer("cid", c), zap.String("key", key))
 
 	if pc.IsVirtualReadEnabled(ctx) {
-		log.Debug("virtual read enabled, fetching block size without storing")
-		block, err := bs.Get(ctx, c)
-		if err != nil {
-			return 0, err
+		// In virtual mode, query the metadata store for size instead of
+		// downloading the full block. This avoids unnecessary network I/O
+		// when the block already exists locally.
+		if err := bs.metadata.BlockExists(ctx, c); err != nil {
+			if !format.IsNotFound(err) {
+				return 0, fmt.Errorf("failed to get block location: %w", err)
+			}
+			// Block not in metadata store — fall through to downloader
+			log.Debug("virtual read enabled, block not in metadata store, fetching from downloader")
+			block, err := bs.Get(ctx, c)
+			if err != nil {
+				return 0, err
+			}
+			return len(block.RawData()), nil
 		}
-		return len(block.RawData()), nil
+		size, err := bs.metadata.Size(ctx, c)
+		if err != nil {
+			return 0, fmt.Errorf("failed to query block size: %w", err)
+		}
+		return int(size), nil
 	}
 
 	err := bs.metadata.BlockExists(ctx, c)
