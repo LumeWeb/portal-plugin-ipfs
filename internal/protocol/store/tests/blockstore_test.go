@@ -8,6 +8,7 @@ import (
 
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
+	format "github.com/ipfs/go-ipld-format"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -664,13 +665,15 @@ func TestBlockStore_VirtualReadEnabled(t *testing.T) {
 		require.NoError(tb, err)
 		assert.Equal(tb, testBlock, block)
 
-		// Test Has
+		// Test Has — in virtual mode, now checks metadata store
+		mockMetadata.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
 		has, err := bs.Has(readCtx, testCid)
 		require.NoError(tb, err)
-		assert.False(tb, has)
+		assert.True(tb, has)
 
-		// Test GetSize
-		mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(testBlock, nil).Once()
+		// Test GetSize — in virtual mode, now checks BlockExists then metadata store for size
+		mockMetadata.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
+		mockMetadata.EXPECT().Size(mock.Anything, testCid).Return(uint64(len(testData)), nil).Once()
 		size, err := bs.GetSize(readCtx, testCid)
 		require.NoError(tb, err)
 		assert.Equal(tb, len(testData), size)
@@ -690,6 +693,100 @@ func TestBlockStore_VirtualReadEnabled(t *testing.T) {
 		_, ok := <-ch
 		assert.False(tb, ok, "AllKeysChan should return a closed channel when virtual read is enabled")
 
+	}, ipfsTestConfig)
+}
+
+func TestBlockStore_VirtualReadHas_BlockExists(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		mockDownloader := localMocks.NewMockBlockDownloader(t)
+		mockMetadata := localMocks.NewMockMetadataStore(t)
+
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
+		require.NoError(tb, err)
+
+		testData := "test data"
+		testCid := generateCid(t, testData)
+
+		// In virtual mode, Has checks metadata store — block exists
+		mockMetadata.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
+
+		readCtx := pc.VirtualReadOption(context.Background(), true)
+		has, err := bs.Has(readCtx, testCid)
+
+		assert.NoError(tb, err)
+		assert.True(tb, has, "Has should return true when block exists in metadata store in virtual mode")
+	}, ipfsTestConfig)
+}
+
+func TestBlockStore_VirtualReadHas_BlockNotFound(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		mockDownloader := localMocks.NewMockBlockDownloader(t)
+		mockMetadata := localMocks.NewMockMetadataStore(t)
+
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
+		require.NoError(tb, err)
+
+		testData := "test data"
+		testCid := generateCid(t, testData)
+
+		// In virtual mode, Has checks metadata store — block not found
+		mockMetadata.EXPECT().BlockExists(mock.Anything, testCid).
+			Return(format.ErrNotFound{Cid: testCid}).Once()
+
+		readCtx := pc.VirtualReadOption(context.Background(), true)
+		has, err := bs.Has(readCtx, testCid)
+
+		assert.NoError(tb, err)
+		assert.False(tb, has, "Has should return false when block is not in metadata store in virtual mode")
+	}, ipfsTestConfig)
+}
+
+func TestBlockStore_VirtualReadGetSize_FromMetadata(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		mockDownloader := localMocks.NewMockBlockDownloader(t)
+		mockMetadata := localMocks.NewMockMetadataStore(t)
+
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
+		require.NoError(tb, err)
+
+		testData := "test data"
+		testCid := generateCid(t, testData)
+		expectedSize := uint64(42)
+
+		// In virtual mode, GetSize checks BlockExists then queries metadata store for size
+		mockMetadata.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
+		mockMetadata.EXPECT().Size(mock.Anything, testCid).Return(expectedSize, nil).Once()
+
+		readCtx := pc.VirtualReadOption(context.Background(), true)
+		size, err := bs.GetSize(readCtx, testCid)
+
+		assert.NoError(tb, err)
+		assert.Equal(tb, int(expectedSize), size, "GetSize should return size from metadata store in virtual mode")
+	}, ipfsTestConfig)
+}
+
+func TestBlockStore_VirtualReadGetSize_FallbackToDownloader(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		mockDownloader := localMocks.NewMockBlockDownloader(t)
+		mockMetadata := localMocks.NewMockMetadataStore(t)
+
+		bs, err := store.NewBlockStore(ctx, mockDownloader, mockMetadata, nil)
+		require.NoError(tb, err)
+
+		testData := "test data"
+		testCid := generateCid(t, testData)
+		testBlock, err := blocks.NewBlockWithCid([]byte(testData), testCid)
+		require.NoError(t, err)
+
+		// BlockExists returns not-found → falls back to downloader.Get
+		mockMetadata.EXPECT().BlockExists(mock.Anything, testCid).Return(format.ErrNotFound{Cid: testCid}).Once()
+		mockDownloader.EXPECT().Get(mock.Anything, testCid).Return(testBlock, nil).Once()
+
+		readCtx := pc.VirtualReadOption(context.Background(), true)
+		size, err := bs.GetSize(readCtx, testCid)
+
+		assert.NoError(tb, err)
+		assert.Equal(tb, len(testData), size, "GetSize should fall back to downloader when block not in metadata store")
 	}, ipfsTestConfig)
 }
 
