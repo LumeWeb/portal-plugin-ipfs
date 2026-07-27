@@ -167,8 +167,6 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		h.Logger().Warn("Failed to update progress", zap.Error(err))
 	}
 
-	h.processMetadata(ctx, allCids)
-
 	// Set progress - creating root pin
 	if err := tracker.SetProgress(70); err != nil {
 		h.Logger().Warn("Failed to update progress", zap.Error(err))
@@ -203,6 +201,10 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		// Release all per-block reservations on error
 		quota.ReleaseBlockReservationsMap(reservations)
 		return err
+	}
+
+	if err := h.startFilePathWorkflow(ctx, req, allCids, ipfsPin); err != nil {
+		h.Logger().Warn("Failed to start filepath workflow", zap.Error(err))
 	}
 
 	h.logProcessingResult(allCids, rootCids)
@@ -337,17 +339,6 @@ func (h *PostUploadOperationHandler) processCIDs(ctx context.Context, allCids []
 	return nil
 }
 
-// processMetadata processes missing UnixFS metadata
-func (h *PostUploadOperationHandler) processMetadata(ctx context.Context, allCids []cid.Cid) {
-	metadataStore := h.Protocol().(*Protocol).GetMetadataStore()
-	if metadataStore != nil {
-		err := metadataStore.ProcessMissingUnixFSNames(ctx, allCids)
-		if err != nil {
-			h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
-		}
-	}
-}
-
 // createRootPin creates a root pin for the upload
 func (h *PostUploadOperationHandler) createRootPin(ctx context.Context, rootCid cid.Cid, userID uint) (*db.IPFSPin, error) {
 	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.createRootPin")
@@ -374,11 +365,6 @@ func (h *PostUploadOperationHandler) updateWorkflow(ctx context.Context, request
 	err := h.UpdateWorkflowDataStruct(requestID, workflowData)
 	if err != nil {
 		return fmt.Errorf("failed to update workflow data: %w", err)
-	}
-
-	err = ValidateDAGCompletionAndUpdateWorkflow(ctx, h, requestID, ipfsPin, workflowData)
-	if err != nil {
-		h.Logger().Error("Failed to validate DAG completion and update workflow", zap.Error(err))
 	}
 
 	return nil
@@ -415,4 +401,52 @@ func NewPostUploadOperation(ctx core.Context) core.Operation {
 			OperationHelper: core.NewProtocolOperationHelper(ctx, internal.ProtocolName),
 		},
 	)
+}
+
+// startFilePathWorkflow starts the dedicated FILE_PATH_WORKFLOW with the
+// uploaded CIDs and related CIDs as workflow data. The workflow runs
+// asynchronously as a separate request.
+func (h *PostUploadOperationHandler) startFilePathWorkflow(
+	ctx context.Context,
+	req *models.Request,
+	allCids []cid.Cid,
+	ipfsPin *db.IPFSPin,
+) error {
+	userID := lo.FromPtrOr(req.UserID, 0)
+	cids := lo.Map(allCids, func(c cid.Cid, _ int) string { return c.String() })
+
+	if len(allCids) == 0 {
+		return fmt.Errorf("no CIDs to process in filepath workflow")
+	}
+
+	var relatedCIDs []string
+	if ipfsPin != nil {
+		pinSvc := core.GetService[pluginCore.IPFSPinService](h.Context(), pluginCore.PIN_SERVICE)
+		if pinSvc != nil {
+			related, err := pinSvc.ValidateDAGCompletion(ctx, ipfsPin)
+			if err != nil {
+				h.Logger().Error("Failed to validate DAG completion for filepath workflow", zap.Error(err))
+			} else {
+				relatedCIDs = lo.FilterMap(related, func(b []byte, _ int) (string, bool) {
+					c, err := cid.Cast(b)
+					if err != nil {
+						h.Logger().Error("Failed to cast related CID", zap.Binary("cid", b), zap.Error(err))
+						return "", false
+					}
+					return c.String(), true
+				})
+			}
+		}
+	}
+
+	_, err := h.StartWorkflow(
+		FILE_PATH_WORKFLOW,
+		core.WithWorkflowStructData(FilePathWorkflowInputData{
+			CIDs:        cids,
+			RelatedCIDs: relatedCIDs,
+			UserID:      userID,
+		}, "json"),
+		core.WithWorkflowUserID(userID),
+	)
+	return err
 }

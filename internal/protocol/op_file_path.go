@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -43,9 +44,25 @@ type FilePathOperationHandler struct {
 
 func (h *FilePathOperationHandler) ValidateRequest(_ context.Context, req *models.Request) error {
 	if len(req.Hash) == 0 {
-		var workflowData PinWorkflowData
+		// During StartWorkflow, req.ID is 0 (not yet created in DB).
+		// StructuredWorkflowData reads from the DB, so it won't work here.
+		// Parse the metadata directly to verify valid CIDs are present.
+		if req.ID == 0 {
+			var meta struct {
+				Data json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(req.Metadata, &meta); err != nil {
+				return fmt.Errorf("hash is required")
+			}
+			var workflowData FilePathWorkflowInputData
+			if err := json.Unmarshal(meta.Data, &workflowData); err != nil || len(workflowData.CIDs) == 0 {
+				return fmt.Errorf("hash is required")
+			}
+			return nil
+		}
+		var workflowData FilePathWorkflowInputData
 		err := h.StructuredWorkflowData(req.ID, &workflowData)
-		if err != nil || len(workflowData.Cids) == 0 {
+		if err != nil || len(workflowData.CIDs) == 0 {
 			return fmt.Errorf("hash is required")
 		}
 	}
@@ -56,25 +73,63 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 	ctx, span := core.TraceMethod(ctx, "FilePathOperationHandler.Execute")
 	defer span.End()
 
-	var pinWorkflowData PinWorkflowData
-	err := h.StructuredWorkflowData(req.ID, &pinWorkflowData)
+	var input FilePathWorkflowInputData
+	err := h.StructuredWorkflowData(req.ID, &input)
 	if err != nil {
-		return fmt.Errorf("failed to get pin workflow data: %w", err)
+		return fmt.Errorf("failed to get filepath workflow input data: %w", err)
 	}
 
+	// Use req.UserID as the authoritative user ID (set by StartWorkflow
+	// from the parent workflow's authenticated user). Validate that the
+	// workflow input data matches to prevent user ID substitution.
 	userID := lo.FromPtrOr(req.UserID, 0)
-
-	// Validate that userID is non-nil and not zero
-	if req.UserID == nil || userID == 0 {
+	if userID == 0 {
 		return fmt.Errorf("invalid or missing user ID")
 	}
+	if input.UserID != 0 && input.UserID != userID {
+		return fmt.Errorf("workflow user ID mismatch")
+	}
 
-	allCIDs := pinWorkflowData.Cids
+	// Build a deduplicated CID list from input CIDs and related CIDs,
+	// preserving the original input order for deterministic processing.
+	uniqueCIDSet := make(map[string]struct{}, len(input.CIDs)+len(input.RelatedCIDs))
+	allCIDs := make([]string, 0, len(input.CIDs)+len(input.RelatedCIDs))
+	for _, cidStr := range append(input.CIDs, input.RelatedCIDs...) {
+		if _, seen := uniqueCIDSet[cidStr]; seen {
+			continue
+		}
+		uniqueCIDSet[cidStr] = struct{}{}
+		allCIDs = append(allCIDs, cidStr)
+	}
+
+	proto, ok := h.Protocol().(*Protocol)
+	if !ok || proto == nil {
+		return fmt.Errorf("protocol is not available")
+	}
+	metadataStore := proto.GetMetadataStore()
+	if metadataStore != nil {
+		cids := make([]cid.Cid, 0, len(allCIDs))
+		for _, cidStr := range allCIDs {
+			c, err := cid.Parse(cidStr)
+			if err != nil {
+				h.Logger().Warn("Failed to parse CID for UnixFS metadata processing", zap.String("cid", cidStr), zap.Error(err))
+				continue
+			}
+			cids = append(cids, c)
+		}
+
+		if len(cids) > 0 {
+			if err := metadataStore.ProcessMissingUnixFSNames(ctx, cids); err != nil {
+				h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
+			}
+		}
+	}
 
 	// Initialize workflow data with progress tracking
 	workflowData := FilePathWorkflowData{
 		RequestID:       strconv.FormatUint(uint64(req.ID), 10),
 		CIDs:            allCIDs,
+		RelatedCIDs:     input.RelatedCIDs,
 		UserID:          userID,
 		CurrentPhase:    FilePathPhaseStarting,
 		CompletedPhases: 0,
@@ -562,8 +617,21 @@ func (h *FilePathOperationHandler) enrichOrphanEntryFromBlockstore(ctx context.C
 	defer span.End()
 
 	// Try to get basic block metadata from blockstore using metadata-only APIs
-	proto := core.GetProtocol(internal.ProtocolName).(ProtoNode)
-	blockstore := proto.GetNode().GetBlockstore()
+	proto := core.GetProtocol(internal.ProtocolName)
+	if proto == nil {
+		h.Logger().Debug("Protocol not available for orphan enrichment",
+			zap.Stringer("cid", c))
+		return
+	}
+
+	protoNode, ok := proto.(ProtoNode)
+	if !ok {
+		h.Logger().Debug("Protocol does not implement ProtoNode",
+			zap.Stringer("cid", c))
+		return
+	}
+
+	blockstore := protoNode.GetNode().GetBlockstore()
 
 	// First check if the block exists
 	has, err := blockstore.Has(ctx, c)

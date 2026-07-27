@@ -136,10 +136,10 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		}
 
 		// Flush buffered metadata to the database before any DB lookups.
-		// collectDAGCids stores blocks via BlockStore.Put → batcher.Add,
+		// collectDAGCids stores blocks via BlockStore.Put -> batcher.Add,
 		// but the batcher only auto-flushes at batch-size boundaries.
-		// Without an explicit flush, subsequent ProcessMissingUnixFSNames
-		// and quota lookups will fail with "record not found".
+		// Without an explicit flush, subsequent quota lookups will fail
+		// with "record not found".
 		if flusher := proto.GetBlockstoreFlusher(); flusher != nil {
 			if err := flusher.Flush(ctx); err != nil {
 				h.Logger().Error("Failed to flush block metadata", zap.Error(err))
@@ -147,14 +147,6 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		}
 
 		h.setProgressOrWarn(tracker, 70)
-
-		// UnixFS name processing (NOW AFTER blocks are in blockstore)
-		if metadataStore != nil {
-			err = metadataStore.ProcessMissingUnixFSNames(ctx, dagResult.Cids)
-			if err != nil {
-				h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
-			}
-		}
 
 		// Include both parent and child CIDs in the workflow data
 		allCids := append([]cid.Cid{c}, childCids...)

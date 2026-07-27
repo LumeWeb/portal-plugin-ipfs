@@ -19,3 +19,9 @@ type PinWorkflowData struct {
 type PostUploadWorkflowData struct {
 	UploadID string `json:"upload_id"`
 }
+
+type FilePathWorkflowInputData struct {
+	CIDs        []string `json:"cids"`
+	RelatedCIDs []string `json:"related_cids,omitempty"`
+	UserID      uint     `json:"user_id"`
+}

@@ -87,22 +87,27 @@ func handleTUSUpload(p core.Protocol) func(ctx context.Context, helper core.Oper
 		metaStore := protoNode.GetMetadataStore()
 		ipfsPin, err := processUploadWithServices(ctx, helper, p, allCids, rootCids, *request.UserID, reservations, request, metaStore)
 		if err != nil {
+			// processUploadWithServices releases reservations on all internal error paths.
+			// Calling ReleaseBlockReservationsMap here would double-release.
 			return err
 		}
+		// From this point on, reservations must be released on all paths
+		// (including errors from SetHashById, updateWorkflowDataForTUSUpload,
+		// and startTUSFilePathWorkflow) since processUploadWithServices
+		// only releases on its own internal failures.
+		defer quota.ReleaseBlockReservationsMap(reservations)
 
 		if err := tusHandler.SetHashById(ctx, tsReq.TUSUploadID, internal.NewIPFSHash(rootCids[0])); err != nil {
 			helper.Logger().Error("Failed to set upload hash", zap.Error(err))
 		}
 
 		// Update workflow data
-		workflowData, err := updateWorkflowDataForTUSUpload(helper, request.ID, rootCids, ipfsPin)
-		if err != nil {
+		if _, err := updateWorkflowDataForTUSUpload(helper, request.ID, rootCids, ipfsPin); err != nil {
 			return err
 		}
 
-		// Validate DAG
-		if err := validateDAGForTUSUpload(ctx, helper, request.ID, ipfsPin, workflowData); err != nil {
-			return err
+		if err := startTUSFilePathWorkflow(ctx, helper, request, allCids, ipfsPin); err != nil {
+			helper.Logger().Warn("Failed to start filepath workflow", zap.Error(err))
 		}
 
 		return nil
@@ -235,23 +240,18 @@ func processUploadWithServices(ctx context.Context, helper core.OperationHelper,
 		return nil, fmt.Errorf("failed to process upload: %w", err)
 	}
 
-	// Fix any UnixFS metadata gaps before proceeding
-	if metaStore != nil {
-		err = metaStore.ProcessMissingUnixFSNames(ctx, allCids)
-		if err != nil {
-			helper.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
-		}
-	}
-
 	// Create IPFS pin record for the root CID
 	ipfsPin, err := uploadSvc.CreateRootPin(ctx, rootCids[0], userID)
 	if err != nil {
+		quota.ReleaseBlockReservationsMap(reservations)
 		return nil, fmt.Errorf("failed to create root pin: %w", err)
 	}
+
 
 	// Update pin status to pinned
 	pinSvc := core.GetService[pluginCore.IPFSPinService](helper.Context(), pluginCore.PIN_SERVICE)
 	if pinSvc == nil {
+		quota.ReleaseBlockReservationsMap(reservations)
 		return nil, fmt.Errorf("pin service not available: cannot update pin status")
 	}
 
@@ -279,19 +279,56 @@ func updateWorkflowDataForTUSUpload(helper core.OperationHelper, requestID uint,
 	return workflowData, nil
 }
 
-// validateDAGForTUSUpload validates DAG completion and updates workflow data
-func validateDAGForTUSUpload(ctx context.Context, helper core.OperationHelper, requestID uint, ipfsPin *pluginDb.IPFSPin, workflowData *PinWorkflowData) error {
-	err := ValidateDAGCompletionAndUpdateWorkflow(ctx, helper, requestID, ipfsPin, workflowData)
-	if err != nil {
-		helper.Logger().Error("Failed to validate DAG completion and update workflow", zap.Error(err))
-		// Don't fail the whole operation for DAG validation failure
-		return nil
-	}
-
-	return nil
-}
-
 // cidSliceToStringSlice converts a slice of CIDs to a slice of strings
 func cidSliceToStringSlice(cids []cid.Cid) []string {
 	return lo.Map(cids, func(item cid.Cid, _ int) string { return item.String() })
+}
+
+// startTUSFilePathWorkflow starts the dedicated FILE_PATH_WORKFLOW with the
+// uploaded CIDs and related CIDs as workflow data. The workflow runs
+// asynchronously as a separate request.
+func startTUSFilePathWorkflow(
+	ctx context.Context,
+	helper core.OperationHelper,
+	request *models.Request,
+	allCids []cid.Cid,
+	ipfsPin *pluginDb.IPFSPin,
+) error {
+	userID := lo.FromPtrOr(request.UserID, 0)
+	cids := lo.Map(allCids, func(c cid.Cid, _ int) string { return c.String() })
+
+	if len(allCids) == 0 {
+		return fmt.Errorf("no CIDs to process in filepath workflow")
+	}
+
+	var relatedCIDs []string
+	if ipfsPin != nil {
+		pinSvc := core.GetService[pluginCore.IPFSPinService](helper.Context(), pluginCore.PIN_SERVICE)
+		if pinSvc != nil {
+			related, err := pinSvc.ValidateDAGCompletion(ctx, ipfsPin)
+			if err != nil {
+				helper.Logger().Error("Failed to validate DAG completion for filepath workflow", zap.Error(err))
+			} else {
+				relatedCIDs = lo.FilterMap(related, func(b []byte, _ int) (string, bool) {
+					c, err := cid.Cast(b)
+					if err != nil {
+						helper.Logger().Warn("Failed to cast related CID", zap.Binary("cid", b), zap.Error(err))
+						return "", false
+					}
+					return c.String(), true
+				})
+			}
+		}
+	}
+
+	_, err := helper.StartWorkflow(
+		FILE_PATH_WORKFLOW,
+		core.WithWorkflowStructData(FilePathWorkflowInputData{
+			CIDs:        cids,
+			RelatedCIDs: relatedCIDs,
+			UserID:      userID,
+		}, "json"),
+		core.WithWorkflowUserID(userID),
+	)
+	return err
 }

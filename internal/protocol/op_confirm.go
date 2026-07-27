@@ -69,6 +69,12 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 		cidList = append(cidList, c)
 	}
 
+	// Guard: no CIDs means nothing to confirm — avoid inconsistent state
+	// where UpdatePinStatus and GetPinByRequestID run on a missing record.
+	if len(cidList) == 0 {
+		return fmt.Errorf("no CIDs to confirm")
+	}
+
 	// Process all CIDs to create upload/core pin records for all CIDs
 	if len(cidList) > 0 {
 		// Set progress - processing CIDs
@@ -85,12 +91,6 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 		err := uploadSvc.ProcessUpload(ctx, cidList, lo.FromPtrOr(req.UserID, 0), nil)
 		if err != nil {
 			return fmt.Errorf("failed to process upload: %w", err)
-		}
-
-		// Fix any UnixFS metadata gaps before proceeding
-		err = metadataStore.ProcessMissingUnixFSNames(ctx, cidList)
-		if err != nil {
-			h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
 		}
 
 		// Set progress - creating root pin
@@ -115,19 +115,20 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 		return fmt.Errorf("failed to update pin status: %w", err)
 	}
 
-	// Get the pin record for DAG validation
+	// Get the pin record for DAG validation. After the pin status has been
+	// committed, a transient lookup failure should not abort the operation,
+	// because retrying would re-run non-idempotent upload/pin creation steps.
 	pin, err := pinSvc.GetPinByRequestID(ctx, types.FromUUID(workflowData.PinRequestID))
 	if err != nil {
-		h.Logger().Error("Failed to get pin record for DAG validation", zap.Error(err))
-		// Don't fail the whole operation for this
-		return nil
+		h.Logger().Warn("Failed to get pin record for DAG validation, continuing without related CIDs", zap.Error(err))
+		pin = nil
 	}
 
-	// Validate DAG completion and update workflow data with related CIDs
-	err = ValidateDAGCompletionAndUpdateWorkflow(ctx, h, req.ID, pin, &workflowData)
-	if err != nil {
-		h.Logger().Error("Failed to validate DAG completion and update workflow", zap.Error(err))
-		// Don't fail the whole operation for DAG validation failure
+	// Start the dedicated filepath workflow asynchronously.
+	// Name resolution and file path tree computation run as a separate
+	// workflow request, independent of this confirm operation.
+	if err := h.startFilePathWorkflow(ctx, req, cidList, pin); err != nil {
+		h.Logger().Warn("Failed to start filepath workflow", zap.Error(err))
 	}
 
 	// Complete
@@ -144,6 +145,55 @@ func (h *ConfirmOperationHandler) GetStatus(_ context.Context, req *models.Reque
 
 func (h *ConfirmOperationHandler) Cleanup(_ context.Context, _ *models.Request) error {
 	return nil
+}
+
+// startFilePathWorkflow starts the dedicated FILE_PATH_WORKFLOW with the
+// confirmed CIDs and related CIDs as workflow data. The workflow runs
+// asynchronously as a separate request.
+func (h *ConfirmOperationHandler) startFilePathWorkflow(
+	ctx context.Context,
+	req *models.Request,
+	cidList []cid.Cid,
+	pin *db.IPFSPin,
+) error {
+	userID := lo.FromPtrOr(req.UserID, 0)
+
+	cids := lo.Map(cidList, func(c cid.Cid, _ int) string { return c.String() })
+
+	if len(cidList) == 0 {
+		return fmt.Errorf("no CIDs to process in filepath workflow")
+	}
+
+	var relatedCIDs []string
+	if pin != nil {
+		pinSvc := core.GetService[pluginCore.IPFSPinService](h.Context(), pluginCore.PIN_SERVICE)
+		if pinSvc != nil {
+			related, err := pinSvc.ValidateDAGCompletion(ctx, pin)
+			if err != nil {
+				h.Logger().Error("Failed to validate DAG completion for filepath workflow", zap.Error(err))
+			} else {
+				relatedCIDs = lo.FilterMap(related, func(b []byte, _ int) (string, bool) {
+						c, err := cid.Cast(b)
+						if err != nil {
+							h.Logger().Warn("Failed to cast related CID", zap.Binary("cid", b), zap.Error(err))
+							return "", false
+						}
+						return c.String(), true
+					})
+			}
+		}
+	}
+
+	_, err := h.StartWorkflow(
+		FILE_PATH_WORKFLOW,
+		core.WithWorkflowStructData(FilePathWorkflowInputData{
+			CIDs:         cids,
+			RelatedCIDs: relatedCIDs,
+			UserID:       userID,
+		}, "json"),
+		core.WithWorkflowUserID(userID),
+	)
+	return err
 }
 
 func NewConfirmOperation(ctx core.Context) core.Operation {

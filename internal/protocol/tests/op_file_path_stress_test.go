@@ -76,8 +76,9 @@ func TestFilePathOperationHandler_StressTest_ConcurrentDirectoryCreation(t *test
 					// Start the workflow
 					req := wfTest.StartWorkflow(
 						uniqueWorkflowName,
-						core.WithWorkflowStructData(protocol.PinWorkflowData{
-							Cids: []string{rootCID.String()},
+						core.WithWorkflowStructData(protocol.FilePathWorkflowInputData{
+							CIDs:   []string{rootCID.String()},
+							UserID: userID,
 						}, "json"),
 						core.WithWorkflowStorageHash(internal.NewIPFSHash(rootCID)),
 						core.WithWorkflowUserID(userID),

@@ -15,6 +15,10 @@ import (
 func GetStandardTestOptions() []coreTesting.TestContextBuilderOption {
 	return []coreTesting.TestContextBuilderOption{
 		serviceTesting.PresetE2E(),
+		func(ctx coreTesting.TestContext) (coreTesting.TestContext, error) {
+			coreTesting.EnableCron()
+			return ctx, nil
+		},
 		coreTesting.WithConfig("core.mail.host", "localhost"),
 		coreTesting.WithConfig("core.mail.port", 25),
 		coreTesting.WithConfig("plugin.ipfs.protocol.port", 0),
