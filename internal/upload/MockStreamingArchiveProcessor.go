@@ -164,7 +164,7 @@ type MockStreamingArchiveProcessor_GetRootNode_Call struct {
 
 // GetRootNode is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockStreamingArchiveProcessor_Expecter) GetRootNode(ctx interface{}) *MockStreamingArchiveProcessor_GetRootNode_Call {
+func (_e *MockStreamingArchiveProcessor_Expecter) GetRootNode(ctx any) *MockStreamingArchiveProcessor_GetRootNode_Call {
 	return &MockStreamingArchiveProcessor_GetRootNode_Call{Call: _e.mock.On("GetRootNode", ctx)}
 }
 
@@ -216,7 +216,7 @@ type MockStreamingArchiveProcessor_ProcessArchive_Call struct {
 // ProcessArchive is a helper method to define mock.On call
 //   - ctx context.Context
 //   - extractor archive.ArchiveExtractor
-func (_e *MockStreamingArchiveProcessor_Expecter) ProcessArchive(ctx interface{}, extractor interface{}) *MockStreamingArchiveProcessor_ProcessArchive_Call {
+func (_e *MockStreamingArchiveProcessor_Expecter) ProcessArchive(ctx any, extractor any) *MockStreamingArchiveProcessor_ProcessArchive_Call {
 	return &MockStreamingArchiveProcessor_ProcessArchive_Call{Call: _e.mock.On("ProcessArchive", ctx, extractor)}
 }
 

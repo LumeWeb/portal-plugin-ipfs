@@ -175,7 +175,7 @@ type MockIPNSKeyService_CreateKey_Call struct {
 //   - userID uint
 //   - name string
 //   - keyType int
-func (_e *MockIPNSKeyService_Expecter) CreateKey(ctx interface{}, userID interface{}, name interface{}, keyType interface{}) *MockIPNSKeyService_CreateKey_Call {
+func (_e *MockIPNSKeyService_Expecter) CreateKey(ctx any, userID any, name any, keyType any) *MockIPNSKeyService_CreateKey_Call {
 	return &MockIPNSKeyService_CreateKey_Call{Call: _e.mock.On("CreateKey", ctx, userID, name, keyType)}
 }
 
@@ -289,7 +289,7 @@ type MockIPNSKeyService_DeleteKey_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - keyID uint
-func (_e *MockIPNSKeyService_Expecter) DeleteKey(ctx interface{}, userID interface{}, keyID interface{}) *MockIPNSKeyService_DeleteKey_Call {
+func (_e *MockIPNSKeyService_Expecter) DeleteKey(ctx any, userID any, keyID any) *MockIPNSKeyService_DeleteKey_Call {
 	return &MockIPNSKeyService_DeleteKey_Call{Call: _e.mock.On("DeleteKey", ctx, userID, keyID)}
 }
 
@@ -361,7 +361,7 @@ type MockIPNSKeyService_ExportKey_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - keyID uint
-func (_e *MockIPNSKeyService_Expecter) ExportKey(ctx interface{}, userID interface{}, keyID interface{}) *MockIPNSKeyService_ExportKey_Call {
+func (_e *MockIPNSKeyService_Expecter) ExportKey(ctx any, userID any, keyID any) *MockIPNSKeyService_ExportKey_Call {
 	return &MockIPNSKeyService_ExportKey_Call{Call: _e.mock.On("ExportKey", ctx, userID, keyID)}
 }
 
@@ -435,7 +435,7 @@ type MockIPNSKeyService_GetKeyByID_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - keyID uint
-func (_e *MockIPNSKeyService_Expecter) GetKeyByID(ctx interface{}, userID interface{}, keyID interface{}) *MockIPNSKeyService_GetKeyByID_Call {
+func (_e *MockIPNSKeyService_Expecter) GetKeyByID(ctx any, userID any, keyID any) *MockIPNSKeyService_GetKeyByID_Call {
 	return &MockIPNSKeyService_GetKeyByID_Call{Call: _e.mock.On("GetKeyByID", ctx, userID, keyID)}
 }
 
@@ -509,7 +509,7 @@ type MockIPNSKeyService_GetKeyByName_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - name string
-func (_e *MockIPNSKeyService_Expecter) GetKeyByName(ctx interface{}, userID interface{}, name interface{}) *MockIPNSKeyService_GetKeyByName_Call {
+func (_e *MockIPNSKeyService_Expecter) GetKeyByName(ctx any, userID any, name any) *MockIPNSKeyService_GetKeyByName_Call {
 	return &MockIPNSKeyService_GetKeyByName_Call{Call: _e.mock.On("GetKeyByName", ctx, userID, name)}
 }
 
@@ -583,7 +583,7 @@ type MockIPNSKeyService_GetPrivateKey_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - keyID uint
-func (_e *MockIPNSKeyService_Expecter) GetPrivateKey(ctx interface{}, userID interface{}, keyID interface{}) *MockIPNSKeyService_GetPrivateKey_Call {
+func (_e *MockIPNSKeyService_Expecter) GetPrivateKey(ctx any, userID any, keyID any) *MockIPNSKeyService_GetPrivateKey_Call {
 	return &MockIPNSKeyService_GetPrivateKey_Call{Call: _e.mock.On("GetPrivateKey", ctx, userID, keyID)}
 }
 
@@ -662,7 +662,7 @@ type MockIPNSKeyService_GetPrivateKeyByPeerID_Call struct {
 // GetPrivateKeyByPeerID is a helper method to define mock.On call
 //   - ctx context.Context
 //   - peerID string
-func (_e *MockIPNSKeyService_Expecter) GetPrivateKeyByPeerID(ctx interface{}, peerID interface{}) *MockIPNSKeyService_GetPrivateKeyByPeerID_Call {
+func (_e *MockIPNSKeyService_Expecter) GetPrivateKeyByPeerID(ctx any, peerID any) *MockIPNSKeyService_GetPrivateKeyByPeerID_Call {
 	return &MockIPNSKeyService_GetPrivateKeyByPeerID_Call{Call: _e.mock.On("GetPrivateKeyByPeerID", ctx, peerID)}
 }
 
@@ -731,7 +731,7 @@ type MockIPNSKeyService_GetPublished_Call struct {
 //   - ctx context.Context
 //   - keyID string
 //   - checkRouting bool
-func (_e *MockIPNSKeyService_Expecter) GetPublished(ctx interface{}, keyID interface{}, checkRouting interface{}) *MockIPNSKeyService_GetPublished_Call {
+func (_e *MockIPNSKeyService_Expecter) GetPublished(ctx any, keyID any, checkRouting any) *MockIPNSKeyService_GetPublished_Call {
 	return &MockIPNSKeyService_GetPublished_Call{Call: _e.mock.On("GetPublished", ctx, keyID, checkRouting)}
 }
 
@@ -850,7 +850,7 @@ type MockIPNSKeyService_ImportKey_Call struct {
 //   - userID uint
 //   - name string
 //   - privateKeyBase64 string
-func (_e *MockIPNSKeyService_Expecter) ImportKey(ctx interface{}, userID interface{}, name interface{}, privateKeyBase64 interface{}) *MockIPNSKeyService_ImportKey_Call {
+func (_e *MockIPNSKeyService_Expecter) ImportKey(ctx any, userID any, name any, privateKeyBase64 any) *MockIPNSKeyService_ImportKey_Call {
 	return &MockIPNSKeyService_ImportKey_Call{Call: _e.mock.On("ImportKey", ctx, userID, name, privateKeyBase64)}
 }
 
@@ -928,7 +928,7 @@ type MockIPNSKeyService_ListKeys_Call struct {
 // ListKeys is a helper method to define mock.On call
 //   - ctx context.Context
 //   - userID uint
-func (_e *MockIPNSKeyService_Expecter) ListKeys(ctx interface{}, userID interface{}) *MockIPNSKeyService_ListKeys_Call {
+func (_e *MockIPNSKeyService_Expecter) ListKeys(ctx any, userID any) *MockIPNSKeyService_ListKeys_Call {
 	return &MockIPNSKeyService_ListKeys_Call{Call: _e.mock.On("ListKeys", ctx, userID)}
 }
 
@@ -1005,7 +1005,7 @@ type MockIPNSKeyService_ListKeysWithFilters_Call struct {
 //   - filters []filter.CrudFilter
 //   - sort []filter.Sort
 //   - pagination filter.Pagination
-func (_e *MockIPNSKeyService_Expecter) ListKeysWithFilters(ctx interface{}, userID interface{}, filters interface{}, sort interface{}, pagination interface{}) *MockIPNSKeyService_ListKeysWithFilters_Call {
+func (_e *MockIPNSKeyService_Expecter) ListKeysWithFilters(ctx any, userID any, filters any, sort any, pagination any) *MockIPNSKeyService_ListKeysWithFilters_Call {
 	return &MockIPNSKeyService_ListKeysWithFilters_Call{Call: _e.mock.On("ListKeysWithFilters", ctx, userID, filters, sort, pagination)}
 }
 
@@ -1087,7 +1087,7 @@ type MockIPNSKeyService_ListPublished_Call struct {
 
 // ListPublished is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockIPNSKeyService_Expecter) ListPublished(ctx interface{}) *MockIPNSKeyService_ListPublished_Call {
+func (_e *MockIPNSKeyService_Expecter) ListPublished(ctx any) *MockIPNSKeyService_ListPublished_Call {
 	return &MockIPNSKeyService_ListPublished_Call{Call: _e.mock.On("ListPublished", ctx)}
 }
 
@@ -1187,7 +1187,7 @@ type MockIPNSKeyService_PublishCID_Call struct {
 //   - keyID string
 //   - cidStr string
 //   - ttl time.Duration
-func (_e *MockIPNSKeyService_Expecter) PublishCID(ctx interface{}, keyID interface{}, cidStr interface{}, ttl interface{}) *MockIPNSKeyService_PublishCID_Call {
+func (_e *MockIPNSKeyService_Expecter) PublishCID(ctx any, keyID any, cidStr any, ttl any) *MockIPNSKeyService_PublishCID_Call {
 	return &MockIPNSKeyService_PublishCID_Call{Call: _e.mock.On("PublishCID", ctx, keyID, cidStr, ttl)}
 }
 
@@ -1256,7 +1256,7 @@ type MockIPNSKeyService_PublishWithKey_Call struct {
 //   - privKey crypto.PrivKey
 //   - cidStr string
 //   - ttl time.Duration
-func (_e *MockIPNSKeyService_Expecter) PublishWithKey(ctx interface{}, privKey interface{}, cidStr interface{}, ttl interface{}) *MockIPNSKeyService_PublishWithKey_Call {
+func (_e *MockIPNSKeyService_Expecter) PublishWithKey(ctx any, privKey any, cidStr any, ttl any) *MockIPNSKeyService_PublishWithKey_Call {
 	return &MockIPNSKeyService_PublishWithKey_Call{Call: _e.mock.On("PublishWithKey", ctx, privKey, cidStr, ttl)}
 }
 
@@ -1311,7 +1311,7 @@ type MockIPNSKeyService_SetConfig_Call struct {
 
 // SetConfig is a helper method to define mock.On call
 //   - cfg config.Manager
-func (_e *MockIPNSKeyService_Expecter) SetConfig(cfg interface{}) *MockIPNSKeyService_SetConfig_Call {
+func (_e *MockIPNSKeyService_Expecter) SetConfig(cfg any) *MockIPNSKeyService_SetConfig_Call {
 	return &MockIPNSKeyService_SetConfig_Call{Call: _e.mock.On("SetConfig", cfg)}
 }
 
@@ -1351,7 +1351,7 @@ type MockIPNSKeyService_SetContext_Call struct {
 
 // SetContext is a helper method to define mock.On call
 //   - ctx core.Context
-func (_e *MockIPNSKeyService_Expecter) SetContext(ctx interface{}) *MockIPNSKeyService_SetContext_Call {
+func (_e *MockIPNSKeyService_Expecter) SetContext(ctx any) *MockIPNSKeyService_SetContext_Call {
 	return &MockIPNSKeyService_SetContext_Call{Call: _e.mock.On("SetContext", ctx)}
 }
 
@@ -1391,7 +1391,7 @@ type MockIPNSKeyService_SetDB_Call struct {
 
 // SetDB is a helper method to define mock.On call
 //   - db1 *gorm.DB
-func (_e *MockIPNSKeyService_Expecter) SetDB(db1 interface{}) *MockIPNSKeyService_SetDB_Call {
+func (_e *MockIPNSKeyService_Expecter) SetDB(db1 any) *MockIPNSKeyService_SetDB_Call {
 	return &MockIPNSKeyService_SetDB_Call{Call: _e.mock.On("SetDB", db1)}
 }
 
@@ -1431,7 +1431,7 @@ type MockIPNSKeyService_SetLogger_Call struct {
 
 // SetLogger is a helper method to define mock.On call
 //   - logger *core.Logger
-func (_e *MockIPNSKeyService_Expecter) SetLogger(logger interface{}) *MockIPNSKeyService_SetLogger_Call {
+func (_e *MockIPNSKeyService_Expecter) SetLogger(logger any) *MockIPNSKeyService_SetLogger_Call {
 	return &MockIPNSKeyService_SetLogger_Call{Call: _e.mock.On("SetLogger", logger)}
 }
 

@@ -60,7 +60,7 @@ type MockKeystore_Delete_Call struct {
 
 // Delete is a helper method to define mock.On call
 //   - s string
-func (_e *MockKeystore_Expecter) Delete(s interface{}) *MockKeystore_Delete_Call {
+func (_e *MockKeystore_Expecter) Delete(s any) *MockKeystore_Delete_Call {
 	return &MockKeystore_Delete_Call{Call: _e.mock.On("Delete", s)}
 }
 
@@ -122,7 +122,7 @@ type MockKeystore_Get_Call struct {
 
 // Get is a helper method to define mock.On call
 //   - s string
-func (_e *MockKeystore_Expecter) Get(s interface{}) *MockKeystore_Get_Call {
+func (_e *MockKeystore_Expecter) Get(s any) *MockKeystore_Get_Call {
 	return &MockKeystore_Get_Call{Call: _e.mock.On("Get", s)}
 }
 
@@ -182,7 +182,7 @@ type MockKeystore_Has_Call struct {
 
 // Has is a helper method to define mock.On call
 //   - s string
-func (_e *MockKeystore_Expecter) Has(s interface{}) *MockKeystore_Has_Call {
+func (_e *MockKeystore_Expecter) Has(s any) *MockKeystore_Has_Call {
 	return &MockKeystore_Has_Call{Call: _e.mock.On("Has", s)}
 }
 
@@ -289,7 +289,7 @@ type MockKeystore_Put_Call struct {
 // Put is a helper method to define mock.On call
 //   - s string
 //   - privKey crypto.PrivKey
-func (_e *MockKeystore_Expecter) Put(s interface{}, privKey interface{}) *MockKeystore_Put_Call {
+func (_e *MockKeystore_Expecter) Put(s any, privKey any) *MockKeystore_Put_Call {
 	return &MockKeystore_Put_Call{Call: _e.mock.On("Put", s, privKey)}
 }
 

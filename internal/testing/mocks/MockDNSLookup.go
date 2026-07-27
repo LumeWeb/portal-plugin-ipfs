@@ -72,7 +72,7 @@ type MockDNSLookup_LookupNS_Call struct {
 
 // LookupNS is a helper method to define mock.On call
 //   - domain string
-func (_e *MockDNSLookup_Expecter) LookupNS(domain interface{}) *MockDNSLookup_LookupNS_Call {
+func (_e *MockDNSLookup_Expecter) LookupNS(domain any) *MockDNSLookup_LookupNS_Call {
 	return &MockDNSLookup_LookupNS_Call{Call: _e.mock.On("LookupNS", domain)}
 }
 

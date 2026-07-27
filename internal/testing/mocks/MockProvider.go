@@ -63,7 +63,7 @@ type MockProvider_ProvideMany_Call struct {
 // ProvideMany is a helper method to define mock.On call
 //   - ctx context.Context
 //   - keys []multihash.Multihash
-func (_e *MockProvider_Expecter) ProvideMany(ctx interface{}, keys interface{}) *MockProvider_ProvideMany_Call {
+func (_e *MockProvider_Expecter) ProvideMany(ctx any, keys any) *MockProvider_ProvideMany_Call {
 	return &MockProvider_ProvideMany_Call{Call: _e.mock.On("ProvideMany", ctx, keys)}
 }
 

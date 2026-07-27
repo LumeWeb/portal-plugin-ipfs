@@ -56,6 +56,12 @@ type DNSService interface {
 	// GetRRSet retrieves a specific DNS RRSet by name and type from PowerDNS
 	GetRRSet(ctx context.Context, zoneID uint, name string, recordType string) ([]*apiDTO.DNSRecord, error)
 
+	// CreateDNSLinkRecord creates a DNSLink _dnslink.<domain> TXT record
+	CreateDNSLinkRecord(ctx context.Context, zoneID uint, target string) error
+
+	// CreateALIASRecord creates an ALIAS / CNAME apex record pointing to gateway
+	CreateALIASRecord(ctx context.Context, zoneID uint, gatewayHost string) error
+
 	// CreateRecord creates a new DNS record in PowerDNS via RRSet
 	// name: the record name (e.g., "www")
 	// recordType: the record type (e.g., "A", "CNAME")
@@ -74,4 +80,7 @@ type DNSService interface {
 
 	// BulkDeleteRecords deletes multiple DNS records in a single PowerDNS API call
 	BulkDeleteRecords(ctx context.Context, zoneID uint, userID uint, records []apiDTO.RecordIdentifier, dryRun bool) (*apiDTO.BulkDeleteResponse, error)
+
+	// EnableDNSSEC enables DNSSEC on a zone and returns the DNSKEY record content.
+	EnableDNSSEC(ctx context.Context, zoneID uint) (dnskey string, err error)
 }

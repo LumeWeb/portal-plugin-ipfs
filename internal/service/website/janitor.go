@@ -14,6 +14,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 )
 
@@ -25,12 +26,13 @@ JanitorJobType     = "plugin.ipfs.website_janitor"
 // WebsiteJanitorJob implements core.CronJob for periodic website validation
 type WebsiteJanitorJob struct {
 	*core.BaseCronJob
-	config         *config.WebsiteConfig
-	pinService     pluginCore.IPFSPinService
-	ipnsKeyService pluginCore.IPNSKeyService
-	dnsService     pluginCore.DNSService
-	db             *gorm.DB
-	logger         *core.Logger
+	config             *config.WebsiteConfig
+	pinService         pluginCore.IPFSPinService
+	ipnsKeyService     pluginCore.IPNSKeyService
+	dnsService         pluginCore.DNSService
+	delegatedDomainSvc delegatedDomainService
+	db                 *gorm.DB
+	logger             *core.Logger
 }
 
 // NewWebsiteJanitorJob creates a new WebsiteJanitorJob instance
@@ -100,6 +102,14 @@ func (j *WebsiteJanitorJob) Run(ctx core.Context, eventCtx context.Context) erro
 	if j.dnsService != nil {
 		if err := j.validateDNSZones(eventCtx); err != nil {
 			j.logger.Warn("Failed to validate DNS zones",
+				zap.Error(err))
+		}
+	}
+
+	// Verify pending domain delegations (alt-root NS/TLSA verification)
+	if j.delegatedDomainSvc != nil {
+		if err := j.verifyPendingDelegations(eventCtx); err != nil {
+			j.logger.Warn("Failed to verify pending delegations",
 				zap.Error(err))
 		}
 	}
@@ -403,6 +413,62 @@ func (j *WebsiteJanitorJob) validateDNSZones(ctx context.Context) error {
 	return nil
 }
 
+// verifyPendingDelegations checks if pending website_domains have their
+// delegation NS records published and updates their status.
+func (j *WebsiteJanitorJob) verifyPendingDelegations(ctx context.Context) error {
+	ctx, span := core.TraceMethod(ctx, "WebsiteJanitorJob.verifyPendingDelegations")
+	defer span.End()
+
+	pendingStatuses := []pluginDb.DomainStatus{
+		pluginDb.DomainStatusWaitingDelegation,
+		pluginDb.DomainStatusRecordsGenerated,
+	}
+
+	const batchSize = 100
+
+	for _, status := range pendingStatuses {
+		var lastID int
+		for {
+			wds, err := j.delegatedDomainSvc.GetPendingWebsiteDomainsPaginated(ctx, status, batchSize, lastID)
+			if err != nil {
+				j.logger.Error("failed to fetch pending domain delegations",
+					zap.String("status", string(status)),
+					zap.Error(err))
+				break
+			}
+			if len(wds) == 0 {
+				break
+			}
+
+			for i := range wds {
+				wd := &wds[i]
+				verifyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				_, err := j.delegatedDomainSvc.VerifyDomain(verifyCtx, wd)
+				cancel()
+				if err != nil {
+					j.logger.Warn("delegation verification failed",
+						zap.String("domain", wd.Domain),
+						zap.String("namespace", string(wd.Namespace)),
+						zap.Error(err))
+					continue
+				}
+
+				j.logger.Info("delegation verified",
+					zap.String("domain", wd.Domain),
+					zap.String("namespace", string(wd.Namespace)),
+					zap.String("status", string(wd.Status)))
+			}
+
+			lastID = int(wds[len(wds)-1].ID)
+			if len(wds) < batchSize {
+				break
+			}
+		}
+	}
+
+	return nil
+}
+
 // initializeJob sets up the job dependencies
 func (j *WebsiteJanitorJob) initializeJob(ctx core.Context) error {
 	// Get configuration from service config
@@ -424,6 +490,13 @@ func (j *WebsiteJanitorJob) initializeJob(ctx core.Context) error {
 	j.dnsService = core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
 	if j.dnsService == nil {
 		j.logger.Debug("DNS service not available, skipping DNS validation")
+	}
+
+	// Get delegated domain service (optional - for alt-root delegation verification)
+	if dds := core.GetServiceOptional[*domsvc.DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE); dds != nil {
+		j.delegatedDomainSvc = dds
+	} else if j.logger != nil {
+		j.logger.Debug("Delegated domain service not available, skipping delegation verification")
 	}
 
 	// Get database

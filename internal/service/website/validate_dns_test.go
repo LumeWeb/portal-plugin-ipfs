@@ -16,6 +16,8 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
 
 func setMockResolver(ws pluginCore.WebsiteService, r DNSResolver) {
@@ -24,6 +26,53 @@ func setMockResolver(ws pluginCore.WebsiteService, r DNSResolver) {
 		panic("setMockResolver: service is not *WebsiteServiceDefault")
 	}
 	svc.resolver = r
+}
+
+type testDelegatedDomainService struct {
+	uses   func(string) bool
+	verify func(context.Context, *pluginDb.WebsiteDomain) (bool, error)
+	getNs  func(string) (string, bool)
+}
+
+func (t *testDelegatedDomainService) UsesDelegationForOwnership(d string) bool {
+	if t.uses != nil {
+		return t.uses(d)
+	}
+	return false
+}
+
+func (t *testDelegatedDomainService) VerifyDomain(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error) {
+	if t.verify != nil {
+		return t.verify(ctx, wd)
+	}
+	return true, nil
+}
+
+func (t *testDelegatedDomainService) GetNamespaceForDomain(d string) (string, bool) {
+	if t.getNs != nil {
+		return t.getNs(d)
+	}
+	// Default: for .hns tests, return hns if domain ends with .hns or contains hns
+	if len(d) > 4 && d[len(d)-4:] == ".hns" {
+		return string(pluginDb.DomainNamespaceHNS), true
+	}
+	return string(pluginDb.DomainNamespaceICANN), true
+}
+
+func (t *testDelegatedDomainService) GetWebsiteDomainByName(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error) {
+	return nil, gorm.ErrRecordNotFound
+}
+
+func (t *testDelegatedDomainService) GetPendingWebsiteDomainsPaginated(ctx context.Context, status pluginDb.DomainStatus, limit, offset int) ([]pluginDb.WebsiteDomain, error) {
+	return nil, nil
+}
+
+func setMockDelegatedDomainSvc(ws pluginCore.WebsiteService, d delegatedDomainService) {
+	svc, ok := ws.(*WebsiteServiceDefault)
+	if !ok {
+		panic("setMockDelegatedDomainSvc: service is not *WebsiteServiceDefault")
+	}
+	svc.delegatedDomainSvc = d
 }
 
 func TestValidateDNS_PendingValidation_ValidDNSLinkAndToken_ReturnsValidated(t *testing.T) {
@@ -43,7 +92,7 @@ func TestValidateDNS_PendingValidation_ValidDNSLinkAndToken_ReturnsValidated(t *
 				"ipfs": {{Identifier: created.TargetHash()}},
 			},
 		}, nil)
-		mockResolver.EXPECT().LookupTXT("lumeweb-verify.validate-pending.com").Return([]string{
+		mockResolver.EXPECT().LookupTXT(mock.Anything, "lumeweb-verify.validate-pending.com").Return([]string{
 			fmt.Sprintf("lumeweb-verify=%s", created.ValidationToken),
 		}, nil)
 		setMockResolver(ws, mockResolver)
@@ -100,7 +149,7 @@ func TestValidateDNS_PendingValidation_MissingToken_ReturnsTokenMissing(t *testi
 				"ipfs": {{Identifier: created.TargetHash()}},
 			},
 		}, nil)
-		mockResolver.EXPECT().LookupTXT("lumeweb-verify.missing-token.com").Return([]string{"some-other-txt-record=foo"}, nil)
+		mockResolver.EXPECT().LookupTXT(mock.Anything, "lumeweb-verify.missing-token.com").Return([]string{"some-other-txt-record=foo"}, nil)
 		setMockResolver(ws, mockResolver)
 
 		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
@@ -297,7 +346,7 @@ func TestValidateDNS_TxTTLookupFailure_ReturnsError(t *testing.T) {
 				"ipfs": {{Identifier: created.TargetHash()}},
 			},
 		}, nil)
-		mockResolver.EXPECT().LookupTXT("lumeweb-verify.txt-fail-test.com").Return(nil, fmt.Errorf("TXT lookup timeout"))
+		mockResolver.EXPECT().LookupTXT(mock.Anything, "lumeweb-verify.txt-fail-test.com").Return(nil, fmt.Errorf("TXT lookup timeout"))
 		setMockResolver(ws, mockResolver)
 
 		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
@@ -350,7 +399,7 @@ func TestValidateDNS_IPNSTarget_ValidDNSLinkAndToken(t *testing.T) {
 				"ipns": {{Identifier: created.TargetHash()}},
 			},
 		}, nil)
-		mockResolver.EXPECT().LookupTXT("lumeweb-verify.ipns-validate.com").Return([]string{
+		mockResolver.EXPECT().LookupTXT(mock.Anything, "lumeweb-verify.ipns-validate.com").Return([]string{
 			fmt.Sprintf("lumeweb-verify=%s", created.ValidationToken),
 		}, nil)
 		setMockResolver(ws, mockResolver)
@@ -436,5 +485,171 @@ func TestValidateDNS_WebsiteNotFound_ReturnsError(t *testing.T) {
 		require.Error(tb, err)
 		assert.False(tb, result.Valid)
 		assert.Contains(tb, err.Error(), "website not found")
+	}, TestOptions)
+}
+
+func TestValidateDNS_PendingDelegated_SkipsTokenCheck(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "delegated-skip-token")
+		website := createTestIPFSWebsite(testUserID1, "delegated-skip.com", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		// Only DNSLink, no TXT lookup expected because token check skipped
+		mockResolver.EXPECT().ResolveDNSLink("delegated-skip.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		// Delegated svc says this domain uses delegation for ownership → skip token
+		mockDelegated := &testDelegatedDomainService{
+			uses: func(d string) bool { return d == "delegated-skip.com" },
+		}
+		setMockDelegatedDomainSvc(ws, mockDelegated)
+
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
+	}, TestOptions)
+}
+
+func TestValidateDNS_DelegatedAttached_Success(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "delegated-attached-ok")
+		website := createTestIPFSWebsite(testUserID1, "attached-ok.hns", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		// Insert an attached domain record (simulating delegated domain binding)
+		svc := ws.(*WebsiteServiceDefault)
+		if db := svc.DB(); db != nil {
+			db.Create(&pluginDb.WebsiteDomain{
+				WebsiteID:      created.ID,
+				UserID:         testUserID1,
+				Domain:         "attached-ok.hns",
+				Namespace:      pluginDb.DomainNamespaceHNS,
+				DelegationData: datatypes.JSONMap{},
+			})
+		}
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("attached-ok.hns").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		mockDelegated := &testDelegatedDomainService{
+			uses: func(d string) bool { return true },
+			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error) {
+				return true, nil
+			},
+		}
+		setMockDelegatedDomainSvc(ws, mockDelegated)
+
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, result.Valid)
+	}, TestOptions)
+}
+
+func TestValidateDNS_DelegatedAttached_FailsVerification(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "delegated-attached-fail")
+		website := createTestIPFSWebsite(testUserID1, "attached-fail.hns", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		svc := ws.(*WebsiteServiceDefault)
+		if db := svc.DB(); db != nil {
+			db.Create(&pluginDb.WebsiteDomain{
+				WebsiteID:      created.ID,
+				UserID:         testUserID1,
+				Domain:         "attached-fail.hns",
+				Namespace:      pluginDb.DomainNamespaceHNS,
+				DelegationData: datatypes.JSONMap{},
+			})
+		}
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("attached-fail.hns").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		mockDelegated := &testDelegatedDomainService{
+			uses: func(d string) bool { return true },
+			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error) {
+				return false, nil
+			},
+		}
+		setMockDelegatedDomainSvc(ws, mockDelegated)
+
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.False(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonDelegationPending, result.Reason)
+		assert.Contains(tb, result.Message, "Domain delegation not yet published")
+	}, TestOptions)
+}
+
+func TestValidateDNS_DelegatedAttached_VerifyError_Fails(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "delegated-verify-err")
+		website := createTestIPFSWebsite(testUserID1, "verify-err.hns", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+
+		svc := ws.(*WebsiteServiceDefault)
+		if db := svc.DB(); db != nil {
+			db.Create(&pluginDb.WebsiteDomain{
+				WebsiteID:      created.ID,
+				UserID:         testUserID1,
+				Domain:         "verify-err.hns",
+				Namespace:      pluginDb.DomainNamespaceHNS,
+				DelegationData: datatypes.JSONMap{},
+			})
+		}
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("verify-err.hns").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		mockDelegated := &testDelegatedDomainService{
+			uses: func(d string) bool { return true },
+			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error) {
+				return false, fmt.Errorf("delegation verify internal error")
+			},
+		}
+		setMockDelegatedDomainSvc(ws, mockDelegated)
+
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.False(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonDelegationPending, result.Reason)
+		assert.Contains(tb, result.Message, "Domain delegation not yet published")
 	}, TestOptions)
 }

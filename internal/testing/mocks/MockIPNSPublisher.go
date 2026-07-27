@@ -78,7 +78,7 @@ type MockIPNSPublisher_GetPublished_Call struct {
 //   - ctx context.Context
 //   - name ipns.Name
 //   - checkRouting bool
-func (_e *MockIPNSPublisher_Expecter) GetPublished(ctx interface{}, name interface{}, checkRouting interface{}) *MockIPNSPublisher_GetPublished_Call {
+func (_e *MockIPNSPublisher_Expecter) GetPublished(ctx any, name any, checkRouting any) *MockIPNSPublisher_GetPublished_Call {
 	return &MockIPNSPublisher_GetPublished_Call{Call: _e.mock.On("GetPublished", ctx, name, checkRouting)}
 }
 
@@ -150,7 +150,7 @@ type MockIPNSPublisher_ListPublished_Call struct {
 
 // ListPublished is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockIPNSPublisher_Expecter) ListPublished(ctx interface{}) *MockIPNSPublisher_ListPublished_Call {
+func (_e *MockIPNSPublisher_Expecter) ListPublished(ctx any) *MockIPNSPublisher_ListPublished_Call {
 	return &MockIPNSPublisher_ListPublished_Call{Call: _e.mock.On("ListPublished", ctx)}
 }
 
@@ -180,11 +180,11 @@ func (_c *MockIPNSPublisher_ListPublished_Call) RunAndReturn(run func(ctx contex
 // Publish provides a mock function for the type MockIPNSPublisher
 func (_mock *MockIPNSPublisher) Publish(ctx context.Context, privKey crypto.PrivKey, ipnsPath path.Path, options ...namesys.PublishOption) error {
 	// namesys.PublishOption
-	_va := make([]interface{}, len(options))
+	_va := make([]any, len(options))
 	for _i := range options {
 		_va[_i] = options[_i]
 	}
-	var _ca []interface{}
+	var _ca []any
 	_ca = append(_ca, ctx, privKey, ipnsPath)
 	_ca = append(_ca, _va...)
 	ret := _mock.Called(_ca...)
@@ -212,9 +212,9 @@ type MockIPNSPublisher_Publish_Call struct {
 //   - privKey crypto.PrivKey
 //   - ipnsPath path.Path
 //   - options ...namesys.PublishOption
-func (_e *MockIPNSPublisher_Expecter) Publish(ctx interface{}, privKey interface{}, ipnsPath interface{}, options ...interface{}) *MockIPNSPublisher_Publish_Call {
+func (_e *MockIPNSPublisher_Expecter) Publish(ctx any, privKey any, ipnsPath any, options ...any) *MockIPNSPublisher_Publish_Call {
 	return &MockIPNSPublisher_Publish_Call{Call: _e.mock.On("Publish",
-		append([]interface{}{ctx, privKey, ipnsPath}, options...)...)}
+		append([]any{ctx, privKey, ipnsPath}, options...)...)}
 }
 
 func (_c *MockIPNSPublisher_Publish_Call) Run(run func(ctx context.Context, privKey crypto.PrivKey, ipnsPath path.Path, options ...namesys.PublishOption)) *MockIPNSPublisher_Publish_Call {

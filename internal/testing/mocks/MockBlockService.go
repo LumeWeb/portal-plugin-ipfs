@@ -216,7 +216,7 @@ type MockBlockService_GetBlockMeta_Call struct {
 // GetBlockMeta is a helper method to define mock.On call
 //   - ctx context.Context
 //   - c cid.Cid
-func (_e *MockBlockService_Expecter) GetBlockMeta(ctx interface{}, c interface{}) *MockBlockService_GetBlockMeta_Call {
+func (_e *MockBlockService_Expecter) GetBlockMeta(ctx any, c any) *MockBlockService_GetBlockMeta_Call {
 	return &MockBlockService_GetBlockMeta_Call{Call: _e.mock.On("GetBlockMeta", ctx, c)}
 }
 
@@ -284,7 +284,7 @@ type MockBlockService_GetBlockMetaBatch_Call struct {
 // GetBlockMetaBatch is a helper method to define mock.On call
 //   - ctx context.Context
 //   - cids []cid.Cid
-func (_e *MockBlockService_Expecter) GetBlockMetaBatch(ctx interface{}, cids interface{}) *MockBlockService_GetBlockMetaBatch_Call {
+func (_e *MockBlockService_Expecter) GetBlockMetaBatch(ctx any, cids any) *MockBlockService_GetBlockMetaBatch_Call {
 	return &MockBlockService_GetBlockMetaBatch_Call{Call: _e.mock.On("GetBlockMetaBatch", ctx, cids)}
 }
 
@@ -419,7 +419,7 @@ type MockBlockService_SetConfig_Call struct {
 
 // SetConfig is a helper method to define mock.On call
 //   - cfg config.Manager
-func (_e *MockBlockService_Expecter) SetConfig(cfg interface{}) *MockBlockService_SetConfig_Call {
+func (_e *MockBlockService_Expecter) SetConfig(cfg any) *MockBlockService_SetConfig_Call {
 	return &MockBlockService_SetConfig_Call{Call: _e.mock.On("SetConfig", cfg)}
 }
 
@@ -459,7 +459,7 @@ type MockBlockService_SetContext_Call struct {
 
 // SetContext is a helper method to define mock.On call
 //   - ctx core.Context
-func (_e *MockBlockService_Expecter) SetContext(ctx interface{}) *MockBlockService_SetContext_Call {
+func (_e *MockBlockService_Expecter) SetContext(ctx any) *MockBlockService_SetContext_Call {
 	return &MockBlockService_SetContext_Call{Call: _e.mock.On("SetContext", ctx)}
 }
 
@@ -499,7 +499,7 @@ type MockBlockService_SetDB_Call struct {
 
 // SetDB is a helper method to define mock.On call
 //   - db1 *gorm.DB
-func (_e *MockBlockService_Expecter) SetDB(db1 interface{}) *MockBlockService_SetDB_Call {
+func (_e *MockBlockService_Expecter) SetDB(db1 any) *MockBlockService_SetDB_Call {
 	return &MockBlockService_SetDB_Call{Call: _e.mock.On("SetDB", db1)}
 }
 
@@ -539,7 +539,7 @@ type MockBlockService_SetLogger_Call struct {
 
 // SetLogger is a helper method to define mock.On call
 //   - logger *core.Logger
-func (_e *MockBlockService_Expecter) SetLogger(logger interface{}) *MockBlockService_SetLogger_Call {
+func (_e *MockBlockService_Expecter) SetLogger(logger any) *MockBlockService_SetLogger_Call {
 	return &MockBlockService_SetLogger_Call{Call: _e.mock.On("SetLogger", logger)}
 }
 

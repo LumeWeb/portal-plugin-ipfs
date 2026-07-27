@@ -249,7 +249,7 @@ type MockProtoNode_EncodeFileName_Call struct {
 
 // EncodeFileName is a helper method to define mock.On call
 //   - storageHash core.StorageHash
-func (_e *MockProtoNode_Expecter) EncodeFileName(storageHash interface{}) *MockProtoNode_EncodeFileName_Call {
+func (_e *MockProtoNode_Expecter) EncodeFileName(storageHash any) *MockProtoNode_EncodeFileName_Call {
 	return &MockProtoNode_EncodeFileName_Call{Call: _e.mock.On("EncodeFileName", storageHash)}
 }
 
@@ -588,7 +588,7 @@ type MockProtoNode_Hash_Call struct {
 // Hash is a helper method to define mock.On call
 //   - r io.Reader
 //   - size uint64
-func (_e *MockProtoNode_Expecter) Hash(r interface{}, size interface{}) *MockProtoNode_Hash_Call {
+func (_e *MockProtoNode_Expecter) Hash(r any, size any) *MockProtoNode_Hash_Call {
 	return &MockProtoNode_Hash_Call{Call: _e.mock.On("Hash", r, size)}
 }
 
@@ -857,7 +857,7 @@ type MockProtoNode_SetConfig_Call struct {
 
 // SetConfig is a helper method to define mock.On call
 //   - cfg config.Manager
-func (_e *MockProtoNode_Expecter) SetConfig(cfg interface{}) *MockProtoNode_SetConfig_Call {
+func (_e *MockProtoNode_Expecter) SetConfig(cfg any) *MockProtoNode_SetConfig_Call {
 	return &MockProtoNode_SetConfig_Call{Call: _e.mock.On("SetConfig", cfg)}
 }
 
@@ -897,7 +897,7 @@ type MockProtoNode_SetContext_Call struct {
 
 // SetContext is a helper method to define mock.On call
 //   - ctx core.Context
-func (_e *MockProtoNode_Expecter) SetContext(ctx interface{}) *MockProtoNode_SetContext_Call {
+func (_e *MockProtoNode_Expecter) SetContext(ctx any) *MockProtoNode_SetContext_Call {
 	return &MockProtoNode_SetContext_Call{Call: _e.mock.On("SetContext", ctx)}
 }
 
@@ -937,7 +937,7 @@ type MockProtoNode_SetDB_Call struct {
 
 // SetDB is a helper method to define mock.On call
 //   - db *gorm.DB
-func (_e *MockProtoNode_Expecter) SetDB(db interface{}) *MockProtoNode_SetDB_Call {
+func (_e *MockProtoNode_Expecter) SetDB(db any) *MockProtoNode_SetDB_Call {
 	return &MockProtoNode_SetDB_Call{Call: _e.mock.On("SetDB", db)}
 }
 
@@ -977,7 +977,7 @@ type MockProtoNode_SetLogger_Call struct {
 
 // SetLogger is a helper method to define mock.On call
 //   - logger *core.Logger
-func (_e *MockProtoNode_Expecter) SetLogger(logger interface{}) *MockProtoNode_SetLogger_Call {
+func (_e *MockProtoNode_Expecter) SetLogger(logger any) *MockProtoNode_SetLogger_Call {
 	return &MockProtoNode_SetLogger_Call{Call: _e.mock.On("SetLogger", logger)}
 }
 

@@ -17,6 +17,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/upload"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/website"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/portal/core"
 	portal_plugin_ipfs "go.lumeweb.com/web/go/portal-plugin-ipfs"
 )
@@ -73,7 +74,12 @@ func getPluginInfoWithoutTemplates() core.PluginInfo {
 				{
 					ID:      pluginCore.WEBSITE_SERVICE,
 					Factory: website.NewWebsiteService,
-					Depends: []string{pluginCore.PIN_SERVICE, pluginCore.IPNS_KEY_SERVICE, pluginCore.DNS_SERVICE},
+					Depends: []string{pluginCore.PIN_SERVICE, pluginCore.IPNS_KEY_SERVICE, pluginCore.DNS_SERVICE, pluginCore.DELEGATED_DOMAIN_SERVICE},
+				},
+				{
+					ID:      pluginCore.DELEGATED_DOMAIN_SERVICE,
+					Factory: domain.NewDelegatedDomainServiceFactory,
+					Depends: []string{pluginCore.DNS_SERVICE},
 				},
 				{
 					ID:      pluginCore.DNS_SERVICE,
@@ -96,6 +102,7 @@ func getPluginInfoWithoutTemplates() core.PluginInfo {
 			&db.UnixFSNode{},
 			&db.IPFSIPNSKey{},
 			&db.Website{},
+			&db.WebsiteDomain{},
 			&db.DNSZone{},
 		},
 		Metrics:         GetCollectors(),

@@ -12,20 +12,23 @@ import (
 
 const WEBSITE_SERVICE = "ipfs.website"
 
+const DELEGATED_DOMAIN_SERVICE = "ipfs.delegated_domain"
+
 type ValidationReason string
 
 const (
-	ValidationReasonValidated    ValidationReason = "validated"
-	ValidationReasonTokenExpired ValidationReason = "token_expired"
-	ValidationReasonDNSMissing   ValidationReason = "dns_missing"
-	ValidationReasonDNSMismatch  ValidationReason = "dns_mismatch"
-	ValidationReasonTokenMissing ValidationReason = "token_missing"
+	ValidationReasonValidated         ValidationReason = "validated"
+	ValidationReasonTokenExpired      ValidationReason = "token_expired"
+	ValidationReasonDNSMissing        ValidationReason = "dns_missing"
+	ValidationReasonDNSMismatch       ValidationReason = "dns_mismatch"
+	ValidationReasonTokenMissing      ValidationReason = "token_missing"
+	ValidationReasonDelegationPending ValidationReason = "delegation_pending"
 )
 
 type ValidateDNSResult struct {
 	Valid   bool
 	Message string
-	Reason  ValidationReason // machine-readable: "validated", "token_expired", "dns_missing", "dns_mismatch", "token_missing"
+	Reason  ValidationReason // machine-readable: "validated", "token_expired", "dns_missing", "dns_mismatch", "token_missing", "delegation_pending"
 }
 
 // WebsiteService defines the interface for managing website configurations

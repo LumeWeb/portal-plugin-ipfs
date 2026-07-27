@@ -5,6 +5,10 @@ filename: "Mock{{.InterfaceName}}.go"
 pkgname: "mocks"
 dir: ./internal/testing/mocks
 packages:
+  go.lumeweb.com/portal-plugin-ipfs/internal/service/domain:
+    interfaces:
+      DomainProvider: {}
+      DNSZoneService: {}
   go.lumeweb.com/portal-plugin-ipfs/core:
     interfaces:
       Provider: {}

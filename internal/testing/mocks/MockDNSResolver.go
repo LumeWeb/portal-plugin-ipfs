@@ -5,6 +5,8 @@
 package mocks
 
 import (
+	"context"
+
 	"github.com/dnslink-std/go"
 	mock "github.com/stretchr/testify/mock"
 )
@@ -37,8 +39,8 @@ func (_m *MockDNSResolver) EXPECT() *MockDNSResolver_Expecter {
 }
 
 // LookupTXT provides a mock function for the type MockDNSResolver
-func (_mock *MockDNSResolver) LookupTXT(domain string) ([]string, error) {
-	ret := _mock.Called(domain)
+func (_mock *MockDNSResolver) LookupTXT(ctx context.Context, domain string) ([]string, error) {
+	ret := _mock.Called(ctx, domain)
 
 	if len(ret) == 0 {
 		panic("no return value specified for LookupTXT")
@@ -46,18 +48,18 @@ func (_mock *MockDNSResolver) LookupTXT(domain string) ([]string, error) {
 
 	var r0 []string
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(string) ([]string, error)); ok {
-		return returnFunc(domain)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) ([]string, error)); ok {
+		return returnFunc(ctx, domain)
 	}
-	if returnFunc, ok := ret.Get(0).(func(string) []string); ok {
-		r0 = returnFunc(domain)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) []string); ok {
+		r0 = returnFunc(ctx, domain)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]string)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(string) error); ok {
-		r1 = returnFunc(domain)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = returnFunc(ctx, domain)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -70,19 +72,25 @@ type MockDNSResolver_LookupTXT_Call struct {
 }
 
 // LookupTXT is a helper method to define mock.On call
+//   - ctx context.Context
 //   - domain string
-func (_e *MockDNSResolver_Expecter) LookupTXT(domain interface{}) *MockDNSResolver_LookupTXT_Call {
-	return &MockDNSResolver_LookupTXT_Call{Call: _e.mock.On("LookupTXT", domain)}
+func (_e *MockDNSResolver_Expecter) LookupTXT(ctx any, domain any) *MockDNSResolver_LookupTXT_Call {
+	return &MockDNSResolver_LookupTXT_Call{Call: _e.mock.On("LookupTXT", ctx, domain)}
 }
 
-func (_c *MockDNSResolver_LookupTXT_Call) Run(run func(domain string)) *MockDNSResolver_LookupTXT_Call {
+func (_c *MockDNSResolver_LookupTXT_Call) Run(run func(ctx context.Context, domain string)) *MockDNSResolver_LookupTXT_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 string
+		var arg0 context.Context
 		if args[0] != nil {
-			arg0 = args[0].(string)
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
 		}
 		run(
 			arg0,
+			arg1,
 		)
 	})
 	return _c
@@ -93,7 +101,7 @@ func (_c *MockDNSResolver_LookupTXT_Call) Return(strings []string, err error) *M
 	return _c
 }
 
-func (_c *MockDNSResolver_LookupTXT_Call) RunAndReturn(run func(domain string) ([]string, error)) *MockDNSResolver_LookupTXT_Call {
+func (_c *MockDNSResolver_LookupTXT_Call) RunAndReturn(run func(ctx context.Context, domain string) ([]string, error)) *MockDNSResolver_LookupTXT_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -131,7 +139,7 @@ type MockDNSResolver_ResolveDNSLink_Call struct {
 
 // ResolveDNSLink is a helper method to define mock.On call
 //   - domain string
-func (_e *MockDNSResolver_Expecter) ResolveDNSLink(domain interface{}) *MockDNSResolver_ResolveDNSLink_Call {
+func (_e *MockDNSResolver_Expecter) ResolveDNSLink(domain any) *MockDNSResolver_ResolveDNSLink_Call {
 	return &MockDNSResolver_ResolveDNSLink_Call{Call: _e.mock.On("ResolveDNSLink", domain)}
 }
 

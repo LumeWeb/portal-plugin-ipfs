@@ -64,7 +64,7 @@ type MockMetadataStore_BatchPin_Call struct {
 // BatchPin is a helper method to define mock.On call
 //   - ctx context.Context
 //   - pinnedBlocks []core.PinnedBlock
-func (_e *MockMetadataStore_Expecter) BatchPin(ctx interface{}, pinnedBlocks interface{}) *MockMetadataStore_BatchPin_Call {
+func (_e *MockMetadataStore_Expecter) BatchPin(ctx any, pinnedBlocks any) *MockMetadataStore_BatchPin_Call {
 	return &MockMetadataStore_BatchPin_Call{Call: _e.mock.On("BatchPin", ctx, pinnedBlocks)}
 }
 
@@ -133,7 +133,7 @@ type MockMetadataStore_BlockChildren_Call struct {
 //   - ctx context.Context
 //   - c cid.Cid
 //   - max *int
-func (_e *MockMetadataStore_Expecter) BlockChildren(ctx interface{}, c interface{}, max interface{}) *MockMetadataStore_BlockChildren_Call {
+func (_e *MockMetadataStore_Expecter) BlockChildren(ctx any, c any, max any) *MockMetadataStore_BlockChildren_Call {
 	return &MockMetadataStore_BlockChildren_Call{Call: _e.mock.On("BlockChildren", ctx, c, max)}
 }
 
@@ -195,7 +195,7 @@ type MockMetadataStore_BlockExists_Call struct {
 // BlockExists is a helper method to define mock.On call
 //   - ctx context.Context
 //   - c cid.Cid
-func (_e *MockMetadataStore_Expecter) BlockExists(ctx interface{}, c interface{}) *MockMetadataStore_BlockExists_Call {
+func (_e *MockMetadataStore_Expecter) BlockExists(ctx any, c any) *MockMetadataStore_BlockExists_Call {
 	return &MockMetadataStore_BlockExists_Call{Call: _e.mock.On("BlockExists", ctx, c)}
 }
 
@@ -264,7 +264,7 @@ type MockMetadataStore_BlockSiblings_Call struct {
 //   - ctx context.Context
 //   - c cid.Cid
 //   - max int
-func (_e *MockMetadataStore_Expecter) BlockSiblings(ctx interface{}, c interface{}, max interface{}) *MockMetadataStore_BlockSiblings_Call {
+func (_e *MockMetadataStore_Expecter) BlockSiblings(ctx any, c any, max any) *MockMetadataStore_BlockSiblings_Call {
 	return &MockMetadataStore_BlockSiblings_Call{Call: _e.mock.On("BlockSiblings", ctx, c, max)}
 }
 
@@ -326,7 +326,7 @@ type MockMetadataStore_MarkBlockReady_Call struct {
 // MarkBlockReady is a helper method to define mock.On call
 //   - c cid.Cid
 //   - ready bool
-func (_e *MockMetadataStore_Expecter) MarkBlockReady(c interface{}, ready interface{}) *MockMetadataStore_MarkBlockReady_Call {
+func (_e *MockMetadataStore_Expecter) MarkBlockReady(c any, ready any) *MockMetadataStore_MarkBlockReady_Call {
 	return &MockMetadataStore_MarkBlockReady_Call{Call: _e.mock.On("MarkBlockReady", c, ready)}
 }
 
@@ -383,7 +383,7 @@ type MockMetadataStore_Pin_Call struct {
 // Pin is a helper method to define mock.On call
 //   - ctx context.Context
 //   - pinnedBlock core.PinnedBlock
-func (_e *MockMetadataStore_Expecter) Pin(ctx interface{}, pinnedBlock interface{}) *MockMetadataStore_Pin_Call {
+func (_e *MockMetadataStore_Expecter) Pin(ctx any, pinnedBlock any) *MockMetadataStore_Pin_Call {
 	return &MockMetadataStore_Pin_Call{Call: _e.mock.On("Pin", ctx, pinnedBlock)}
 }
 
@@ -452,7 +452,7 @@ type MockMetadataStore_Pinned_Call struct {
 //   - ctx context.Context
 //   - offset int
 //   - limit int
-func (_e *MockMetadataStore_Expecter) Pinned(ctx interface{}, offset interface{}, limit interface{}) *MockMetadataStore_Pinned_Call {
+func (_e *MockMetadataStore_Expecter) Pinned(ctx any, offset any, limit any) *MockMetadataStore_Pinned_Call {
 	return &MockMetadataStore_Pinned_Call{Call: _e.mock.On("Pinned", ctx, offset, limit)}
 }
 
@@ -514,7 +514,7 @@ type MockMetadataStore_ProcessMissingUnixFSNames_Call struct {
 // ProcessMissingUnixFSNames is a helper method to define mock.On call
 //   - ctx context.Context
 //   - cids []cid.Cid
-func (_e *MockMetadataStore_Expecter) ProcessMissingUnixFSNames(ctx interface{}, cids interface{}) *MockMetadataStore_ProcessMissingUnixFSNames_Call {
+func (_e *MockMetadataStore_Expecter) ProcessMissingUnixFSNames(ctx any, cids any) *MockMetadataStore_ProcessMissingUnixFSNames_Call {
 	return &MockMetadataStore_ProcessMissingUnixFSNames_Call{Call: _e.mock.On("ProcessMissingUnixFSNames", ctx, cids)}
 }
 
@@ -580,7 +580,7 @@ type MockMetadataStore_Size_Call struct {
 // Size is a helper method to define mock.On call
 //   - ctx context.Context
 //   - c cid.Cid
-func (_e *MockMetadataStore_Expecter) Size(ctx interface{}, c interface{}) *MockMetadataStore_Size_Call {
+func (_e *MockMetadataStore_Expecter) Size(ctx any, c any) *MockMetadataStore_Size_Call {
 	return &MockMetadataStore_Size_Call{Call: _e.mock.On("Size", ctx, c)}
 }
 
@@ -637,7 +637,7 @@ type MockMetadataStore_Unpin_Call struct {
 // Unpin is a helper method to define mock.On call
 //   - ctx context.Context
 //   - c cid.Cid
-func (_e *MockMetadataStore_Expecter) Unpin(ctx interface{}, c interface{}) *MockMetadataStore_Unpin_Call {
+func (_e *MockMetadataStore_Expecter) Unpin(ctx any, c any) *MockMetadataStore_Unpin_Call {
 	return &MockMetadataStore_Unpin_Call{Call: _e.mock.On("Unpin", ctx, c)}
 }
 
@@ -694,7 +694,7 @@ type MockMetadataStore_UpdateUnixFSMetadata_Call struct {
 // UpdateUnixFSMetadata is a helper method to define mock.On call
 //   - c cid.Cid
 //   - metadata any
-func (_e *MockMetadataStore_Expecter) UpdateUnixFSMetadata(c interface{}, metadata interface{}) *MockMetadataStore_UpdateUnixFSMetadata_Call {
+func (_e *MockMetadataStore_Expecter) UpdateUnixFSMetadata(c any, metadata any) *MockMetadataStore_UpdateUnixFSMetadata_Call {
 	return &MockMetadataStore_UpdateUnixFSMetadata_Call{Call: _e.mock.On("UpdateUnixFSMetadata", c, metadata)}
 }
 

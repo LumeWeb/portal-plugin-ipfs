@@ -50,7 +50,7 @@ type MockBlockProcessor_Done_Call struct {
 
 // Done is a helper method to define mock.On call
 //   - cid1 cid.Cid
-func (_e *MockBlockProcessor_Expecter) Done(cid1 interface{}) *MockBlockProcessor_Done_Call {
+func (_e *MockBlockProcessor_Expecter) Done(cid1 any) *MockBlockProcessor_Done_Call {
 	return &MockBlockProcessor_Done_Call{Call: _e.mock.On("Done", cid1)}
 }
 

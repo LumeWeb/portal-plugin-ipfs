@@ -70,7 +70,7 @@ type MockWebsiteService_BlockWebsite_Call struct {
 // BlockWebsite is a helper method to define mock.On call
 //   - ctx context.Context
 //   - websiteID uint
-func (_e *MockWebsiteService_Expecter) BlockWebsite(ctx interface{}, websiteID interface{}) *MockWebsiteService_BlockWebsite_Call {
+func (_e *MockWebsiteService_Expecter) BlockWebsite(ctx any, websiteID any) *MockWebsiteService_BlockWebsite_Call {
 	return &MockWebsiteService_BlockWebsite_Call{Call: _e.mock.On("BlockWebsite", ctx, websiteID)}
 }
 
@@ -136,7 +136,7 @@ type MockWebsiteService_CheckStatus_Call struct {
 // CheckStatus is a helper method to define mock.On call
 //   - ctx context.Context
 //   - website *db.Website
-func (_e *MockWebsiteService_Expecter) CheckStatus(ctx interface{}, website interface{}) *MockWebsiteService_CheckStatus_Call {
+func (_e *MockWebsiteService_Expecter) CheckStatus(ctx any, website any) *MockWebsiteService_CheckStatus_Call {
 	return &MockWebsiteService_CheckStatus_Call{Call: _e.mock.On("CheckStatus", ctx, website)}
 }
 
@@ -296,7 +296,7 @@ type MockWebsiteService_CreateWebsite_Call struct {
 // CreateWebsite is a helper method to define mock.On call
 //   - ctx context.Context
 //   - website *db.Website
-func (_e *MockWebsiteService_Expecter) CreateWebsite(ctx interface{}, website interface{}) *MockWebsiteService_CreateWebsite_Call {
+func (_e *MockWebsiteService_Expecter) CreateWebsite(ctx any, website any) *MockWebsiteService_CreateWebsite_Call {
 	return &MockWebsiteService_CreateWebsite_Call{Call: _e.mock.On("CreateWebsite", ctx, website)}
 }
 
@@ -400,7 +400,7 @@ type MockWebsiteService_DeleteWebsite_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - websiteID uint
-func (_e *MockWebsiteService_Expecter) DeleteWebsite(ctx interface{}, userID interface{}, websiteID interface{}) *MockWebsiteService_DeleteWebsite_Call {
+func (_e *MockWebsiteService_Expecter) DeleteWebsite(ctx any, userID any, websiteID any) *MockWebsiteService_DeleteWebsite_Call {
 	return &MockWebsiteService_DeleteWebsite_Call{Call: _e.mock.On("DeleteWebsite", ctx, userID, websiteID)}
 }
 
@@ -529,7 +529,7 @@ type MockWebsiteService_GetWebsite_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - websiteID uint
-func (_e *MockWebsiteService_Expecter) GetWebsite(ctx interface{}, userID interface{}, websiteID interface{}) *MockWebsiteService_GetWebsite_Call {
+func (_e *MockWebsiteService_Expecter) GetWebsite(ctx any, userID any, websiteID any) *MockWebsiteService_GetWebsite_Call {
 	return &MockWebsiteService_GetWebsite_Call{Call: _e.mock.On("GetWebsite", ctx, userID, websiteID)}
 }
 
@@ -602,7 +602,7 @@ type MockWebsiteService_GetWebsiteByDomain_Call struct {
 // GetWebsiteByDomain is a helper method to define mock.On call
 //   - ctx context.Context
 //   - domain string
-func (_e *MockWebsiteService_Expecter) GetWebsiteByDomain(ctx interface{}, domain interface{}) *MockWebsiteService_GetWebsiteByDomain_Call {
+func (_e *MockWebsiteService_Expecter) GetWebsiteByDomain(ctx any, domain any) *MockWebsiteService_GetWebsiteByDomain_Call {
 	return &MockWebsiteService_GetWebsiteByDomain_Call{Call: _e.mock.On("GetWebsiteByDomain", ctx, domain)}
 }
 
@@ -723,7 +723,7 @@ type MockWebsiteService_ListWebsites_Call struct {
 //   - filter1 []queryutil.CrudFilter
 //   - sort []filter.Sort
 //   - pagination queryutil.Pagination
-func (_e *MockWebsiteService_Expecter) ListWebsites(ctx interface{}, userID interface{}, filter1 interface{}, sort interface{}, pagination interface{}) *MockWebsiteService_ListWebsites_Call {
+func (_e *MockWebsiteService_Expecter) ListWebsites(ctx any, userID any, filter1 any, sort any, pagination any) *MockWebsiteService_ListWebsites_Call {
 	return &MockWebsiteService_ListWebsites_Call{Call: _e.mock.On("ListWebsites", ctx, userID, filter1, sort, pagination)}
 }
 
@@ -829,7 +829,7 @@ type MockWebsiteService_SetConfig_Call struct {
 
 // SetConfig is a helper method to define mock.On call
 //   - cfg config.Manager
-func (_e *MockWebsiteService_Expecter) SetConfig(cfg interface{}) *MockWebsiteService_SetConfig_Call {
+func (_e *MockWebsiteService_Expecter) SetConfig(cfg any) *MockWebsiteService_SetConfig_Call {
 	return &MockWebsiteService_SetConfig_Call{Call: _e.mock.On("SetConfig", cfg)}
 }
 
@@ -869,7 +869,7 @@ type MockWebsiteService_SetContext_Call struct {
 
 // SetContext is a helper method to define mock.On call
 //   - ctx core.Context
-func (_e *MockWebsiteService_Expecter) SetContext(ctx interface{}) *MockWebsiteService_SetContext_Call {
+func (_e *MockWebsiteService_Expecter) SetContext(ctx any) *MockWebsiteService_SetContext_Call {
 	return &MockWebsiteService_SetContext_Call{Call: _e.mock.On("SetContext", ctx)}
 }
 
@@ -909,7 +909,7 @@ type MockWebsiteService_SetDB_Call struct {
 
 // SetDB is a helper method to define mock.On call
 //   - db1 *gorm.DB
-func (_e *MockWebsiteService_Expecter) SetDB(db1 interface{}) *MockWebsiteService_SetDB_Call {
+func (_e *MockWebsiteService_Expecter) SetDB(db1 any) *MockWebsiteService_SetDB_Call {
 	return &MockWebsiteService_SetDB_Call{Call: _e.mock.On("SetDB", db1)}
 }
 
@@ -949,7 +949,7 @@ type MockWebsiteService_SetLogger_Call struct {
 
 // SetLogger is a helper method to define mock.On call
 //   - logger *core.Logger
-func (_e *MockWebsiteService_Expecter) SetLogger(logger interface{}) *MockWebsiteService_SetLogger_Call {
+func (_e *MockWebsiteService_Expecter) SetLogger(logger any) *MockWebsiteService_SetLogger_Call {
 	return &MockWebsiteService_SetLogger_Call{Call: _e.mock.On("SetLogger", logger)}
 }
 
@@ -1001,7 +1001,7 @@ type MockWebsiteService_UnblockWebsite_Call struct {
 // UnblockWebsite is a helper method to define mock.On call
 //   - ctx context.Context
 //   - websiteID uint
-func (_e *MockWebsiteService_Expecter) UnblockWebsite(ctx interface{}, websiteID interface{}) *MockWebsiteService_UnblockWebsite_Call {
+func (_e *MockWebsiteService_Expecter) UnblockWebsite(ctx any, websiteID any) *MockWebsiteService_UnblockWebsite_Call {
 	return &MockWebsiteService_UnblockWebsite_Call{Call: _e.mock.On("UnblockWebsite", ctx, websiteID)}
 }
 
@@ -1072,7 +1072,7 @@ type MockWebsiteService_UpdateSSLStatus_Call struct {
 //   - status db.SSLStatus
 //   - sslError string
 //   - timestamp *time.Time
-func (_e *MockWebsiteService_Expecter) UpdateSSLStatus(ctx interface{}, domain interface{}, status interface{}, sslError interface{}, timestamp interface{}) *MockWebsiteService_UpdateSSLStatus_Call {
+func (_e *MockWebsiteService_Expecter) UpdateSSLStatus(ctx any, domain any, status any, sslError any, timestamp any) *MockWebsiteService_UpdateSSLStatus_Call {
 	return &MockWebsiteService_UpdateSSLStatus_Call{Call: _e.mock.On("UpdateSSLStatus", ctx, domain, status, sslError, timestamp)}
 }
 
@@ -1157,7 +1157,7 @@ type MockWebsiteService_UpdateWebsite_Call struct {
 //   - userID uint
 //   - websiteID uint
 //   - updates map[string]interface{}
-func (_e *MockWebsiteService_Expecter) UpdateWebsite(ctx interface{}, userID interface{}, websiteID interface{}, updates interface{}) *MockWebsiteService_UpdateWebsite_Call {
+func (_e *MockWebsiteService_Expecter) UpdateWebsite(ctx any, userID any, websiteID any, updates any) *MockWebsiteService_UpdateWebsite_Call {
 	return &MockWebsiteService_UpdateWebsite_Call{Call: _e.mock.On("UpdateWebsite", ctx, userID, websiteID, updates)}
 }
 
@@ -1199,39 +1199,6 @@ func (_c *MockWebsiteService_UpdateWebsite_Call) RunAndReturn(run func(ctx conte
 	return _c
 }
 
-// WaitForPublishes provides a mock function for the type MockWebsiteService
-func (_mock *MockWebsiteService) WaitForPublishes() {
-	_mock.Called()
-	return
-}
-
-// MockWebsiteService_WaitForPublishes_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'WaitForPublishes'
-type MockWebsiteService_WaitForPublishes_Call struct {
-	*mock.Call
-}
-
-// WaitForPublishes is a helper method to define mock.On call
-func (_e *MockWebsiteService_Expecter) WaitForPublishes() *MockWebsiteService_WaitForPublishes_Call {
-	return &MockWebsiteService_WaitForPublishes_Call{Call: _e.mock.On("WaitForPublishes")}
-}
-
-func (_c *MockWebsiteService_WaitForPublishes_Call) Run(run func()) *MockWebsiteService_WaitForPublishes_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockWebsiteService_WaitForPublishes_Call) Return() *MockWebsiteService_WaitForPublishes_Call {
-	_c.Call.Return()
-	return _c
-}
-
-func (_c *MockWebsiteService_WaitForPublishes_Call) RunAndReturn(run func()) *MockWebsiteService_WaitForPublishes_Call {
-	_c.Run(run)
-	return _c
-}
-
 // ValidateDNS provides a mock function for the type MockWebsiteService
 func (_mock *MockWebsiteService) ValidateDNS(ctx context.Context, userID uint, websiteID uint) (core0.ValidateDNSResult, error) {
 	ret := _mock.Called(ctx, userID, websiteID)
@@ -1267,7 +1234,7 @@ type MockWebsiteService_ValidateDNS_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - websiteID uint
-func (_e *MockWebsiteService_Expecter) ValidateDNS(ctx interface{}, userID interface{}, websiteID interface{}) *MockWebsiteService_ValidateDNS_Call {
+func (_e *MockWebsiteService_Expecter) ValidateDNS(ctx any, userID any, websiteID any) *MockWebsiteService_ValidateDNS_Call {
 	return &MockWebsiteService_ValidateDNS_Call{Call: _e.mock.On("ValidateDNS", ctx, userID, websiteID)}
 }
 
@@ -1301,5 +1268,38 @@ func (_c *MockWebsiteService_ValidateDNS_Call) Return(validateDNSResult core0.Va
 
 func (_c *MockWebsiteService_ValidateDNS_Call) RunAndReturn(run func(ctx context.Context, userID uint, websiteID uint) (core0.ValidateDNSResult, error)) *MockWebsiteService_ValidateDNS_Call {
 	_c.Call.Return(run)
+	return _c
+}
+
+// WaitForPublishes provides a mock function for the type MockWebsiteService
+func (_mock *MockWebsiteService) WaitForPublishes() {
+	_mock.Called()
+	return
+}
+
+// MockWebsiteService_WaitForPublishes_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'WaitForPublishes'
+type MockWebsiteService_WaitForPublishes_Call struct {
+	*mock.Call
+}
+
+// WaitForPublishes is a helper method to define mock.On call
+func (_e *MockWebsiteService_Expecter) WaitForPublishes() *MockWebsiteService_WaitForPublishes_Call {
+	return &MockWebsiteService_WaitForPublishes_Call{Call: _e.mock.On("WaitForPublishes")}
+}
+
+func (_c *MockWebsiteService_WaitForPublishes_Call) Run(run func()) *MockWebsiteService_WaitForPublishes_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockWebsiteService_WaitForPublishes_Call) Return() *MockWebsiteService_WaitForPublishes_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockWebsiteService_WaitForPublishes_Call) RunAndReturn(run func()) *MockWebsiteService_WaitForPublishes_Call {
+	_c.Run(run)
 	return _c
 }

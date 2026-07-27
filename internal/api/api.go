@@ -20,6 +20,7 @@ import (
 	pluginMw "go.lumeweb.com/portal-plugin-ipfs/internal/api/middleware"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	uploadpkg "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal-router"
 	"go.lumeweb.com/portal/config"
@@ -37,20 +38,21 @@ const TUS_HTTP_ROUTE = "/api/upload/tus"
 
 type API struct {
 	*core.BaseComponent
-	coreUploadService  core.UploadService
-	uploadService      pluginCore.UploadService
-	pinService         pluginCore.IPFSPinService
-	blockService       pluginCore.BlockService
-	fileManagerService pluginCore.FileManagerService
-	workflowService    core.WorkflowService
-	ipnsKeyService     pluginCore.IPNSKeyService
-	websiteService     pluginCore.WebsiteService
-	dnsService         pluginCore.DNSService
-	dnsConfig          *pluginConfig.DnsConfig
-	tusService         core.TUSService
-	requestService     core.RequestService
-	tus                core.TusHandler
-	ipfs               protocol.ProtoNode
+	coreUploadService     core.UploadService
+	uploadService         pluginCore.UploadService
+	pinService            pluginCore.IPFSPinService
+	blockService          pluginCore.BlockService
+	fileManagerService    pluginCore.FileManagerService
+	workflowService       core.WorkflowService
+	ipnsKeyService        pluginCore.IPNSKeyService
+	websiteService        pluginCore.WebsiteService
+	delegatedDomainSvc    *domain.DelegatedDomainService
+	dnsService            pluginCore.DNSService
+	dnsConfig            *pluginConfig.DnsConfig
+	tusService           core.TUSService
+	requestService       core.RequestService
+	tus                  core.TusHandler
+	ipfs                 protocol.ProtoNode
 }
 
 func NewAPI() (core.API, []core.ContextBuilderOption, error) {
@@ -67,6 +69,11 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 			api.websiteService = core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 			api.dnsService = core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
 			api.dnsConfig = core.GetServiceConfig[*pluginConfig.DnsConfig](ctx, pluginCore.DNS_SERVICE)
+
+			if dds := core.GetServiceOptional[*domain.DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE); dds != nil {
+				api.delegatedDomainSvc = dds
+			}
+
 			api.tusService = core.GetService[core.TUSService](ctx, core.TUS_SERVICE)
 			api.requestService = core.GetService[core.RequestService](ctx, core.REQUEST_SERVICE)
 			proto := core.GetProtocol(internal.ProtocolName)
@@ -613,10 +620,14 @@ Returns paginated list of website configurations with status, domain, and target
 
 See also:.*`),
 				router.WithTags("Websites"),
-				router.WithSuccessResponse(http.StatusOK, "List of websites", router.WithJSONContent(dto.WebsiteItemResponse{})),
-			),
-		),
-		router.NewRoute(http.MethodGet, "/websites/:id", a.getWebsite,
+					router.WithSuccessResponse(http.StatusOK, "List of websites", router.WithJSONContent(dto.WebsiteItemResponse{})),
+					router.WithErrorResponses(router.DefineSwaggerErrorResponses(
+						DefineErrorResponse(http.StatusUnauthorized, "Authentication required"),
+						DefineErrorResponse(http.StatusInternalServerError, "Internal server error occurred"),
+					)),
+					),
+				),
+				router.NewRoute(http.MethodGet, "/websites/:id", a.getWebsite,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Get website"),
@@ -681,7 +692,49 @@ See also:.*`),
 				router.WithSuccessResponse(http.StatusOK, "Validation result", router.WithJSONContent(dto.WebsiteValidateResponse{})),
 			),
 		),
-
+		router.NewRoute(http.MethodPost, "/websites/:id/domains", a.createDomain,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Add domain to website"),
+				router.WithDescription(`Binds a domain to a website under a specific namespace.`),
+				router.WithTags("Websites", "Domains"),
+				router.WithPathParam("id", "Website ID", ""),
+				router.WithRequestBody(&dto.DomainRequest{}, "Domain request", true),
+				router.WithSuccessResponse(http.StatusCreated, "Domain created", router.WithJSONContent(dto.DomainResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/websites/:id/domains", a.listDomains,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("List website domains"),
+				router.WithDescription(`Lists all domains bound to a website.`),
+				router.WithTags("Websites", "Domains"),
+				router.WithPathParam("id", "Website ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "List of domains", router.WithJSONContent(dto.DomainResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodDelete, "/websites/:id/domains/:domain_id", a.deleteDomain,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Remove domain from website"),
+				router.WithDescription(`Removes a domain binding from a website.`),
+				router.WithTags("Websites", "Domains"),
+				router.WithPathParam("id", "Website ID", ""),
+				router.WithPathParam("domain_id", "Domain ID", ""),
+				router.WithSuccessResponse(http.StatusNoContent, "Domain deleted"),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/websites/:id/domains/:domain_id/verify", a.verifyDomain,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Verify domain delegation"),
+				router.WithDescription(`Triggers verification of domain delegation.`),
+				router.WithTags("Websites", "Domains"),
+				router.WithPathParam("id", "Website ID", ""),
+				router.WithPathParam("domain_id", "Domain ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Verification result", router.WithJSONContent(dto.DomainResponse{})),
+			),
+		),
 	)
 
 	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), websiteRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
@@ -986,6 +1039,32 @@ See also:.*`),
 
 	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), gatewayRoutes, router.WithMiddlewares(gatewayAuthMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register gateway routes: %w", err)
+	}
+
+	// Internal DNS routes for Caddy cert webhook integration
+	internalDNSRoutes := router.DefineRoutes(
+		router.NewRoute(http.MethodPost, "/internal/dns/tlsa", a.updateTLSA,
+			router.WithSwagger(
+				router.WithSummary("Update TLSA record"),
+				router.WithDescription("Internal endpoint for Caddy to push computed TLSA records."),
+				router.WithTags("Gateway", "DNS"),
+				router.WithRequestBody(&dto.TLSAUpdateRequest{}, "TLSA update request", true),
+				router.WithSuccessResponse(http.StatusOK, "TLSA updated", router.WithJSONContent(dto.CertPushResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/internal/dns/cert", a.pushCert,
+			router.WithSwagger(
+				router.WithSummary("Push certificate and receive TLSA"),
+				router.WithDescription("Internal endpoint for Caddy to push a cert and receive computed TLSA."),
+				router.WithTags("Gateway", "DNS"),
+				router.WithRequestBody(&dto.CertPushRequest{}, "Cert push request", true),
+				router.WithSuccessResponse(http.StatusOK, "TLSA computed", router.WithJSONContent(dto.CertPushResponse{})),
+			),
+		),
+	)
+
+	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), internalDNSRoutes, router.WithMiddlewares(gatewayAuthMw), router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register internal dns routes: %w", err)
 	}
 
 	// Public info endpoint

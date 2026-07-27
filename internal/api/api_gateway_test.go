@@ -69,7 +69,7 @@ func TestAPI_GetGatewayWebsite(t *testing.T) {
 		helper.SetupWebsiteServiceMocks(domain, website)
 
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/websites/"+domain, nil)
-		req.Header.Set("X-Gateway-Secret", "test-secret")
+		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
 		// Act
 		rec := httptest.NewRecorder()
@@ -140,7 +140,7 @@ func TestAPI_GetGatewayWebsite_BrokenSite(t *testing.T) {
 		helper.SetupWebsiteServiceMocks(domain, website)
 		
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/websites/"+domain, nil)
-		req.Header.Set("X-Gateway-Secret", "test-secret")
+		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
 		// Act
 		rec := httptest.NewRecorder()
@@ -169,7 +169,7 @@ func TestAPI_GetGatewayWebsite_DeletedSite(t *testing.T) {
 
 		helper.SetupWebsiteServiceMocks(domain, website)
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/websites/"+domain, nil)
-		req.Header.Set("X-Gateway-Secret", "test-secret")
+		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
 		// Act
 		rec := httptest.NewRecorder()
@@ -194,7 +194,7 @@ func TestAPI_GetGatewayWebsite_NotFound(t *testing.T) {
 		helper.SetupWebsiteServiceMocks(domain, nil)
 		
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/websites/"+domain, nil)
-		req.Header.Set("X-Gateway-Secret", "test-secret")
+		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
 		// Act
 		rec := httptest.NewRecorder()
@@ -217,7 +217,7 @@ func TestAPI_GetGatewayWebsiteStatus(t *testing.T) {
 		helper.SetupWebsiteServiceMocks(domain, website)
 		
 		req := ctx.NewAPIRequest(http.MethodGet, fmt.Sprintf("/internal/websites/%s/status", domain), nil)
-		req.Header.Set("X-Gateway-Secret", "test-secret")
+		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
 		// Act
 		rec := httptest.NewRecorder()
@@ -247,7 +247,7 @@ func TestAPI_GetGatewayWebsiteStatus_BrokenSite(t *testing.T) {
 		helper.SetupWebsiteServiceMocks(domain, website)
 		
 		req := ctx.NewAPIRequest(http.MethodGet, fmt.Sprintf("/internal/websites/%s/status", domain), nil)
-		req.Header.Set("X-Gateway-Secret", "test-secret")
+		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
 		// Act
 		rec := httptest.NewRecorder()
@@ -273,7 +273,7 @@ func TestAPI_GetGatewayWebsiteStatus_NotFound(t *testing.T) {
 		helper.SetupWebsiteServiceMocks(domain, nil)
 		
 		req := ctx.NewAPIRequest(http.MethodGet, fmt.Sprintf("/internal/websites/%s/status", domain), nil)
-		req.Header.Set("X-Gateway-Secret", "test-secret")
+		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
 		// Act
 		rec := httptest.NewRecorder()
@@ -293,7 +293,7 @@ func TestAPI_GetGatewayWebsite_ServiceError(t *testing.T) {
 		mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, domain).Return(nil, errors.New("database error"))
 		
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/websites/"+domain, nil)
-		req.Header.Set("X-Gateway-Secret", "test-secret")
+		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
@@ -305,7 +305,7 @@ func TestAPI_GetGatewayWebsite_ServiceError(t *testing.T) {
 func TestAPI_Ping_Success(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/ping", nil)
-		req.Header.Set("X-Gateway-Secret", "test-secret")
+		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
