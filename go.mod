@@ -48,7 +48,7 @@ require (
 	go.lumeweb.com/portal v0.5.2-0.20260727183439-11ece2045795
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.1.0
-	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260727133751-97cacf77fad2
+	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260727174827-1094f19b4797
 	go.lumeweb.com/portal-plugin-quota v0.1.0
 	go.lumeweb.com/portal-router v0.7.6
 	go.lumeweb.com/queryutil v0.3.17
