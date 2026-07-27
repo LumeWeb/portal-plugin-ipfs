@@ -68,8 +68,9 @@ func TestFilePathOperationHandler_Execute_WithValidUnixFSDirectory(t *testing.T)
 		// Start workflow
 		req := wfTest.StartWorkflow(
 			"test-workflow",
-			core.WithWorkflowStructData(protocol.PinWorkflowData{
-				Cids: []string{testCID.String()},
+			core.WithWorkflowStructData(protocol.FilePathWorkflowInputData{
+				CIDs:   []string{testCID.String()},
+				UserID: userID,
 			}, "json"),
 			core.WithWorkflowStorageHash(internal.NewIPFSHash(testCID)),
 			core.WithWorkflowUserID(userID),
@@ -136,8 +137,9 @@ func TestFilePathOperationHandler_Execute_WithIncompleteMetadata(t *testing.T) {
 		// Start workflow
 		req := wfTest.StartWorkflow(
 			"test-workflow-incomplete",
-			core.WithWorkflowStructData(protocol.PinWorkflowData{
-				Cids: []string{testCID.String()},
+			core.WithWorkflowStructData(protocol.FilePathWorkflowInputData{
+				CIDs:   []string{testCID.String()},
+				UserID: userID,
 			}, "json"),
 			core.WithWorkflowStorageHash(internal.NewIPFSHash(testCID)),
 			core.WithWorkflowUserID(userID),
@@ -178,8 +180,9 @@ func TestFilePathOperationHandler_Execute_WithMissingMetadata(t *testing.T) {
 		// Start workflow
 		req := wfTest.StartWorkflow(
 			"test-workflow-missing",
-			core.WithWorkflowStructData(protocol.PinWorkflowData{
-				Cids: []string{testCID.String()},
+			core.WithWorkflowStructData(protocol.FilePathWorkflowInputData{
+				CIDs:   []string{testCID.String()},
+				UserID: userID,
 			}, "json"),
 			core.WithWorkflowStorageHash(internal.NewIPFSHash(testCID)),
 			core.WithWorkflowUserID(userID),
@@ -363,8 +366,9 @@ func TestFilePathOperationHandler_GetStatus(t *testing.T) {
 		// Start and complete workflow
 		req := wfTest.StartWorkflow(
 			"test-workflow-status",
-			core.WithWorkflowStructData(protocol.PinWorkflowData{
-				Cids: []string{testCID.String()},
+			core.WithWorkflowStructData(protocol.FilePathWorkflowInputData{
+				CIDs:   []string{testCID.String()},
+				UserID: userID,
 			}, "json"),
 			core.WithWorkflowStorageHash(internal.NewIPFSHash(testCID)),
 			core.WithWorkflowUserID(userID),
@@ -411,8 +415,9 @@ func TestFilePathOperationHandler_GetStatus_Processing(t *testing.T) {
 		// Start workflow (don't complete it yet)
 		req := wfTest.StartWorkflow(
 			"test-workflow-processing",
-			core.WithWorkflowStructData(protocol.PinWorkflowData{
-				Cids: []string{testCID1.String(), testCID2.String()},
+			core.WithWorkflowStructData(protocol.FilePathWorkflowInputData{
+				CIDs:   []string{testCID1.String(), testCID2.String()},
+				UserID: userID,
 			}, "json"),
 			core.WithWorkflowStorageHash(internal.NewIPFSHash(testCID1)),
 			core.WithWorkflowUserID(userID),

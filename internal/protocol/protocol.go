@@ -137,6 +137,7 @@ func NewProtocolWorkflows(p core.Protocol) []core.WorkflowDefinition {
 		newPinWorkflow(),
 		newUploadWorkflow(p.Name()),
 		newTUSUploadWorkflow(p.Name()),
+		newFilePathWorkflow(),
 	}
 }
 
@@ -151,7 +152,6 @@ func pinWorkflowSteps() []core.OperationStep {
 		newRetryStep(core.StoreOperationName(internal.ProtocolName)),
 		newContinueStep(core.PublishOperationName(internal.ProtocolName)),
 		newRetryStep(confirmOperationName()),
-		newRetryStep(FilePathOperationName()),
 	}
 }
 
@@ -175,7 +175,6 @@ func newUploadWorkflow(protocolName string) core.WorkflowDefinition {
 		AutoTriggerFirstStep: true,
 		Steps: []core.OperationStep{
 			newRetryStep(core.PostUploadOperationName(protocolName)),
-			newRetryStep(FilePathOperationName()),
 		},
 	}
 }
@@ -186,8 +185,17 @@ func newTUSUploadWorkflow(protocolName string) core.WorkflowDefinition {
 		AutoTriggerFirstStep: true,
 		Steps: append([]core.OperationStep{
 			newRetryStep(core.TUSUploadOperationName(protocolName)),
-			newRetryStep(FilePathOperationName()),
 		}, publishWorkflowSteps()...),
+	}
+}
+
+func newFilePathWorkflow() core.WorkflowDefinition {
+	return core.WorkflowDefinition{
+		Name:                 FILE_PATH_WORKFLOW,
+		AutoTriggerFirstStep: true,
+		Steps: []core.OperationStep{
+			newRetryStep(FilePathOperationName()),
+		},
 	}
 }
 
