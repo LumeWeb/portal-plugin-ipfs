@@ -64,6 +64,7 @@ require (
 	filippo.io/bigmod v0.1.1-0.20260103110540-f8a47775ebe5 // indirect
 	filippo.io/keygen v0.0.0-20260114151900-8e2790ea4c5b // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
+	github.com/apt304/sse-go v0.0.3 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5 // indirect
 	github.com/dchest/uniuri v1.2.0 // indirect
 	github.com/go-kiss/monkey v0.0.0-20240508030602-d03795257a64 // indirect
