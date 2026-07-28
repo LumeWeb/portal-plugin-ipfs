@@ -3,9 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	sseServer "github.com/apt304/sse-go/server"
 	"go.lumeweb.com/portal/core"
@@ -71,7 +71,7 @@ func (a *API) publishWebsiteEvent(eventType string, eventData any) error {
 	// Create SSE event
 	topic := "gateway"
 	event := sseServer.Event{
-		ID:    fmt.Sprintf("website-%d", time.Now().UnixNano()),
+		ID:    uuid.New().String(),
 		Type:  eventType,
 		Data:  eventJSON,
 		Retry: 3000, // Recommended retry interval in milliseconds
