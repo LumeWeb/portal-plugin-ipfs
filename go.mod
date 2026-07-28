@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/Oudwins/zog v0.22.2
+	github.com/apt304/sse-go v0.0.3
 	github.com/avast/retry-go/v5 v5.0.0
 	github.com/bits-and-blooms/bloom/v3 v3.7.1
 	github.com/bwesterb/go-zonefile v1.0.1
@@ -12,7 +13,7 @@ require (
 	github.com/gammazero/workerpool v1.2.1
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/uuid v1.6.0
-	github.com/ipfs/boxo v0.42.0
+	github.com/ipfs/boxo v0.42.1
 	github.com/ipfs/go-block-format v0.2.4
 	github.com/ipfs/go-cid v0.6.2
 	github.com/ipfs/go-datastore v0.9.2
@@ -64,7 +65,6 @@ require (
 	filippo.io/bigmod v0.1.1-0.20260103110540-f8a47775ebe5 // indirect
 	filippo.io/keygen v1.0.0 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
-	github.com/apt304/sse-go v0.0.3 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5 // indirect
 	github.com/dchest/uniuri v1.2.0 // indirect
 	github.com/go-kiss/monkey v0.0.0-20240508030602-d03795257a64 // indirect
