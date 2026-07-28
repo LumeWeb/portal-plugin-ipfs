@@ -108,7 +108,7 @@ type MockMockDatastore_Delete_Call struct {
 // Delete is a helper method to define mock.On call
 //   - ctx context.Context
 //   - key datastore.Key
-func (_e *MockMockDatastore_Expecter) Delete(ctx interface{}, key interface{}) *MockMockDatastore_Delete_Call {
+func (_e *MockMockDatastore_Expecter) Delete(ctx any, key any) *MockMockDatastore_Delete_Call {
 	return &MockMockDatastore_Delete_Call{Call: _e.mock.On("Delete", ctx, key)}
 }
 
@@ -176,7 +176,7 @@ type MockMockDatastore_Get_Call struct {
 // Get is a helper method to define mock.On call
 //   - ctx context.Context
 //   - key datastore.Key
-func (_e *MockMockDatastore_Expecter) Get(ctx interface{}, key interface{}) *MockMockDatastore_Get_Call {
+func (_e *MockMockDatastore_Expecter) Get(ctx any, key any) *MockMockDatastore_Get_Call {
 	return &MockMockDatastore_Get_Call{Call: _e.mock.On("Get", ctx, key)}
 }
 
@@ -242,7 +242,7 @@ type MockMockDatastore_GetSize_Call struct {
 // GetSize is a helper method to define mock.On call
 //   - ctx context.Context
 //   - key datastore.Key
-func (_e *MockMockDatastore_Expecter) GetSize(ctx interface{}, key interface{}) *MockMockDatastore_GetSize_Call {
+func (_e *MockMockDatastore_Expecter) GetSize(ctx any, key any) *MockMockDatastore_GetSize_Call {
 	return &MockMockDatastore_GetSize_Call{Call: _e.mock.On("GetSize", ctx, key)}
 }
 
@@ -308,7 +308,7 @@ type MockMockDatastore_Has_Call struct {
 // Has is a helper method to define mock.On call
 //   - ctx context.Context
 //   - key datastore.Key
-func (_e *MockMockDatastore_Expecter) Has(ctx interface{}, key interface{}) *MockMockDatastore_Has_Call {
+func (_e *MockMockDatastore_Expecter) Has(ctx any, key any) *MockMockDatastore_Has_Call {
 	return &MockMockDatastore_Has_Call{Call: _e.mock.On("Has", ctx, key)}
 }
 
@@ -366,7 +366,7 @@ type MockMockDatastore_Put_Call struct {
 //   - ctx context.Context
 //   - key datastore.Key
 //   - value []byte
-func (_e *MockMockDatastore_Expecter) Put(ctx interface{}, key interface{}, value interface{}) *MockMockDatastore_Put_Call {
+func (_e *MockMockDatastore_Expecter) Put(ctx any, key any, value any) *MockMockDatastore_Put_Call {
 	return &MockMockDatastore_Put_Call{Call: _e.mock.On("Put", ctx, key, value)}
 }
 
@@ -439,7 +439,7 @@ type MockMockDatastore_Query_Call struct {
 // Query is a helper method to define mock.On call
 //   - ctx context.Context
 //   - q query.Query
-func (_e *MockMockDatastore_Expecter) Query(ctx interface{}, q interface{}) *MockMockDatastore_Query_Call {
+func (_e *MockMockDatastore_Expecter) Query(ctx any, q any) *MockMockDatastore_Query_Call {
 	return &MockMockDatastore_Query_Call{Call: _e.mock.On("Query", ctx, q)}
 }
 
@@ -496,7 +496,7 @@ type MockMockDatastore_Sync_Call struct {
 // Sync is a helper method to define mock.On call
 //   - ctx context.Context
 //   - prefix datastore.Key
-func (_e *MockMockDatastore_Expecter) Sync(ctx interface{}, prefix interface{}) *MockMockDatastore_Sync_Call {
+func (_e *MockMockDatastore_Expecter) Sync(ctx any, prefix any) *MockMockDatastore_Sync_Call {
 	return &MockMockDatastore_Sync_Call{Call: _e.mock.On("Sync", ctx, prefix)}
 }
 

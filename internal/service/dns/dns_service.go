@@ -1,11 +1,13 @@
 package dns
 
 import (
+	"context"
 	"fmt"
 	"net"
 
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 )
@@ -143,4 +145,49 @@ func (s *DNSServiceDefault) ID() string {
 
 func (s *DNSServiceDefault) GetConfig() (any, error) {
 	return &pluginConfig.DnsConfig{}, nil
+}
+
+// CreateDNSLinkRecord creates a DNSLink TXT record in a zone (adapter for domain.DNSZoneService)
+func (s *DNSServiceDefault) CreateDNSLinkRecord(ctx context.Context, zoneID uint, target string) error {
+	_, err := s.CreateRecord(ctx, zoneID, "_dnslink", "TXT", "dnslink="+target, 300)
+	return err
+}
+
+// CreateALIASRecord creates an ALIAS/CNAME apex record in a zone (adapter for domain.DNSZoneService)
+func (s *DNSServiceDefault) CreateALIASRecord(ctx context.Context, zoneID uint, gatewayHost string) error {
+	_, err := s.CreateRecord(ctx, zoneID, "", "ALIAS", gatewayHost, 300)
+	return err
+}
+
+// EnableDNSSEC enables DNSSEC on a zone and returns the DNSKEY record content.
+// It delegates to the PowerDNS client's cryptokey API.
+func (s *DNSServiceDefault) EnableDNSSEC(ctx context.Context, zoneID uint) (string, error) {
+	if s.pdnsClient == nil {
+		return "", fmt.Errorf("PowerDNS client not configured")
+	}
+
+	// Look up the zone to get the PowerDNS zone ID
+	var zone pluginDb.DNSZone
+	if err := s.DB().WithContext(ctx).First(&zone, zoneID).Error; err != nil {
+		return "", fmt.Errorf("failed to fetch zone: %w", err)
+	}
+
+	if zone.PowerDNSZoneID == "" {
+		return "", fmt.Errorf("zone %d has no PowerDNS zone ID", zoneID)
+	}
+
+	dnskey, err := s.pdnsClient.EnableDNSSEC(ctx, zone.PowerDNSZoneID)
+	if err != nil {
+		s.Logger().Error("Failed to enable DNSSEC",
+			zap.Uint("zone_id", zoneID),
+			zap.String("pdns_zone_id", zone.PowerDNSZoneID),
+			zap.Error(err))
+		return "", fmt.Errorf("enable DNSSEC: %w", err)
+	}
+
+	s.Logger().Info("DNSSEC enabled",
+		zap.Uint("zone_id", zoneID),
+		zap.String("pdns_zone_id", zone.PowerDNSZoneID))
+
+	return dnskey, nil
 }

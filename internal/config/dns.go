@@ -20,6 +20,14 @@ type DnsConfig struct {
 	// Approved nameservers for validation
 	Nameservers []string `config:"nameservers"`
 
+	// HNSResolver is the address (host:port) of an HNS-aware DNS resolver
+	// used for HNS namespace:
+	// - Delegation verification (NS lookup via HNSProvider)
+	// - Full DNS validation: DNSLink + TXT token (via LiveResolver selection)
+	// Different roots require different resolvers because alt-roots are not
+	// visible to the system default resolver.
+	HNSResolver string `config:"hns_resolver"`
+
 	// Gateway domain for ALIAS records (auto-wiring)
 	GatewayDomain string `config:"gateway_domain"`
 
@@ -32,12 +40,13 @@ type DnsConfig struct {
 
 func (c DnsConfig) Defaults() map[string]any {
 	return map[string]any{
-		"Enabled":                       false,
-		"PowerDNSAPIURL":                "",
-		"PowerDNSAPIKey":                "",
-		"Nameservers":                   []string{},
-		"GatewayDomain":                 "",
-		"VerificationTokenKey":           "lumeweb-verify",
-		"NameserverValidationInterval":  5 * time.Minute,
+		"Enabled":                      false,
+		"PowerDNSAPIURL":               "",
+		"PowerDNSAPIKey":               "",
+		"Nameservers":                  []string{},
+		"HNSResolver":                  "",
+		"GatewayDomain":                "",
+		"VerificationTokenKey":         "lumeweb-verify",
+		"NameserverValidationInterval": 5 * time.Minute,
 	}
 }

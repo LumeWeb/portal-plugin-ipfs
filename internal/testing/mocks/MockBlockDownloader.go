@@ -75,7 +75,7 @@ type MockBlockDownloader_Get_Call struct {
 // Get is a helper method to define mock.On call
 //   - ctx context.Context
 //   - c cid.Cid
-func (_e *MockBlockDownloader_Expecter) Get(ctx interface{}, c interface{}) *MockBlockDownloader_Get_Call {
+func (_e *MockBlockDownloader_Expecter) Get(ctx any, c any) *MockBlockDownloader_Get_Call {
 	return &MockBlockDownloader_Get_Call{Call: _e.mock.On("Get", ctx, c)}
 }
 

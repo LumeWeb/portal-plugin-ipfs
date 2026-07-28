@@ -13,11 +13,14 @@ import (
 
 	dnslink "github.com/dnslink-std/go"
 	"github.com/ipfs/go-cid"
+	"golang.org/x/sync/errgroup"
 	"github.com/libp2p/go-libp2p/core/peer"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
+
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
@@ -39,11 +42,12 @@ func (s *WebsiteServiceDefault) verificationTokenKey() string {
 }
 
 const (
-	msgTokenExpired  = "Validation token expired for %s — a new token has been generated. Please add the updated TXT record at %s.%s to your DNS configuration"
-	msgDNSMissing    = "No DNS records found for %s. Please add the required TXT records to your DNS configuration"
-	msgDNSMismatch   = "DNS validation failed: missing or incorrect dnslink record (expected: %s, found: %s)"
-	msgTokenMissing  = "DNS validation failed: missing validation token at %s.%s for %s"
-	msgValidated     = "DNS validation successful for %s"
+	msgTokenExpired = "Validation token expired for %s — a new token has been generated. Please add the updated TXT record at %s.%s to your DNS configuration"
+	msgDNSMissing   = "No DNS records found for %s. Please add the required TXT records to your DNS configuration"
+	msgDNSMismatch  = "DNS validation failed: missing or incorrect dnslink record (expected: %s, found: %s)"
+	msgTokenMissing = "DNS validation failed: missing validation token at %s.%s for %s"
+	msgValidated    = "DNS validation successful for %s"
+	msgDelegationPending = "Domain delegation not yet published"
 )
 
 func extractParentDomain(domain string) string {
@@ -54,51 +58,80 @@ func extractParentDomain(domain string) string {
 	return strings.Join(parts[1:], ".")
 }
 
-// normalizeDomain strips the www. prefix if present so we never store it as primary.
-func normalizeDomain(domain string) string {
-	domain = strings.TrimSpace(strings.ToLower(domain))
-	if strings.HasPrefix(domain, "www.") {
-		return domain[4:]
-	}
-	return domain
-}
-
 // Validation error types
 var (
-	ErrInvalidCID    = errors.New("invalid CID")
-	ErrInvalidIPNS   = errors.New("invalid IPNS name")
-	ErrInvalidTarget = errors.New("invalid target")
-	ErrInvalidDomain = errors.New("invalid domain")
-	ErrCIDNotPinned  = errors.New("CID is not pinned")
+	ErrInvalidCID      = errors.New("invalid CID")
+	ErrInvalidIPNS     = errors.New("invalid IPNS name")
+	ErrInvalidTarget   = errors.New("invalid target")
+	ErrInvalidDomain   = errors.New("invalid domain")
+	ErrCIDNotPinned    = errors.New("CID is not pinned")
 	ErrIPNSKeyNotFound = errors.New("IPNS key not found")
 )
 
 // WebsiteServiceDefault implements the WebsiteService interface
 type WebsiteServiceDefault struct {
 	*core.BaseComponent
-	pinSvc       pluginCore.IPFSPinService
-	ipnsKeySvc   pluginCore.IPNSKeyService
-	mailerSvc    core.MailerService
-	dnsSvc       pluginCore.DNSService
-	config       *pluginConfig.WebsiteConfig
-	dnsConfig    *pluginConfig.DnsConfig
-	resolver     DNSResolver
-	publishWg    sync.WaitGroup
+	pinSvc             pluginCore.IPFSPinService
+	ipnsKeySvc         pluginCore.IPNSKeyService
+	mailerSvc          core.MailerService
+	dnsSvc             pluginCore.DNSService
+	config             *pluginConfig.WebsiteConfig
+	dnsConfig          *pluginConfig.DnsConfig
+	delegatedDomainSvc delegatedDomainService
+	resolver           DNSResolver
+	publishWg          sync.WaitGroup
 }
 
 // Ensure WebsiteServiceDefault implements the interface
 var _ pluginCore.WebsiteService = (*WebsiteServiceDefault)(nil)
 
+// delegatedDomainService is the subset of *domsvc.DelegatedDomainService
+// used by WebsiteServiceDefault for delegation-aware validation.
+type delegatedDomainService interface {
+	UsesDelegationForOwnership(domain string) bool
+	VerifyDomain(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error)
+	GetNamespaceForDomain(domain string) (string, bool)
+	GetWebsiteDomainByName(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error)
+	GetPendingWebsiteDomainsPaginated(ctx context.Context, status pluginDb.DomainStatus, limit, offset int) ([]pluginDb.WebsiteDomain, error)
+}
+// resolverForDomain returns the appropriate DNSResolver for the given domain.
+// Different roots (ICANN vs HNS etc.) may require different DNS resolvers
+// because alt-root records are not visible to the system default resolver.
+func (s *WebsiteServiceDefault) resolverForDomain(domain string) DNSResolver {
+	// Explicitly set resolver (used by tests via setMockResolver) takes top priority.
+	if s.resolver != nil {
+		return s.resolver
+	}
+
+	// Namespace-specific resolver for alt-roots.
+	if s.delegatedDomainSvc != nil {
+		if ns, ok := s.delegatedDomainSvc.GetNamespaceForDomain(domain); ok {
+			if ns == string(pluginDb.DomainNamespaceHNS) {
+				if s.dnsConfig != nil && s.dnsConfig.HNSResolver != "" {
+					return NewLiveResolver(s.dnsConfig.HNSResolver)
+				}
+			}
+		}
+	}
+
+	return NewLiveResolver("")
+}
+
+
 // NewWebsiteService creates a new website service
 func NewWebsiteService() (core.Service, []core.ContextBuilderOption, error) {
 	svc := &WebsiteServiceDefault{}
 
-		opts := core.ContextOptions(
+	opts := core.ContextOptions(
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
 			svc.pinSvc = core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)
 			svc.ipnsKeySvc = core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 			svc.mailerSvc = core.GetService[core.MailerService](ctx, core.MAILER_SERVICE)
 			svc.dnsSvc = core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
+			var dds *domsvc.DelegatedDomainService = core.GetServiceOptional[*domsvc.DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		if dds != nil {
+			svc.delegatedDomainSvc = dds
+		}
 
 			// Load configuration from service config
 			svc.config = core.GetServiceConfig[*pluginConfig.WebsiteConfig](ctx, pluginCore.WEBSITE_SERVICE)
@@ -133,7 +166,7 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 		CreateWebsiteTotal.WithLabelValues(LabelStatusError),
 		func() (*pluginDb.Website, error) {
 			// Normalize and validate domain
-			website.Domain = normalizeDomain(website.Domain)
+			website.Domain = domsvc.NormalizeDomain(website.Domain)
 			if err := s.validateDomain(website.Domain); err != nil {
 				return nil, fmt.Errorf("invalid domain: %w", err)
 			}
@@ -358,23 +391,41 @@ func (s *WebsiteServiceDefault) GetWebsite(ctx context.Context, userID uint, web
 	)
 }
 
-// GetWebsiteByDomain retrieves a website by domain name
+// GetWebsiteByDomain retrieves a website by domain name.
+// It first checks the website_domains join table (for alt-root/DANE domains),
+// then falls back to the legacy ipfs_websites.domain column for backward compatibility.
 func (s *WebsiteServiceDefault) GetWebsiteByDomain(ctx context.Context, domain string) (*pluginDb.Website, error) {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.GetWebsiteByDomain")
 	defer span.End()
 
-	domain = normalizeDomain(domain)
+	domain = domsvc.NormalizeDomain(domain)
 
 	return core.MetricTrackResult(
 		GetWebsiteByDomainDuration.WithLabelValues(),
 		GetWebsiteByDomainTotal.WithLabelValues(LabelStatusError),
 		func() (*pluginDb.Website, error) {
-			var website pluginDb.Website
+			// First: check website_domains (alt-root / delegated domains)
+			if s.delegatedDomainSvc != nil {
+				wd, err := s.delegatedDomainSvc.GetWebsiteDomainByName(ctx, domain)
+				if err == nil && wd != nil && !wd.DeletedAt.Valid {
+					var website pluginDb.Website
+						if err := s.DB().WithContext(ctx).
+							Where("id = ?", wd.WebsiteID).
+							First(&website).Error; err != nil {
+							if errors.Is(err, gorm.ErrRecordNotFound) {
+								return nil, nil
+							}
+							return nil, fmt.Errorf("failed to get website by domain (join): %w", err)
+						}
+						return &website, nil
+				}
+			}
 
+			// Fallback: legacy ipfs_websites.domain lookup
+			var website pluginDb.Website
 			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 				return tx.Where("domain = ?", domain).First(&website)
 			})
-
 			if err != nil {
 				if err == gorm.ErrRecordNotFound {
 					return nil, nil
@@ -488,7 +539,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 
 				// Validate domain if being updated
 				if domain, ok := updates["domain"].(string); ok {
-					domain = normalizeDomain(domain)
+					domain = domsvc.NormalizeDomain(domain)
 					updates["domain"] = domain
 					if err := s.validateDomain(domain); err != nil {
 						_ = tx.AddError(fmt.Errorf("invalid domain: %w", err))
@@ -671,19 +722,19 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 					}
 				}
 
-			// Update DNS records if target changed and DNS hosting is enabled
-			// Note: Skip DNS only when staying as IPNS (peer ID doesn't change)
-			if targetHashChanged && website.Enabled && website.DNSZoneID != nil && s.dnsSvc != nil {
-				newTargetType := pluginDb.WebsiteTargetType(website.TargetType)
-				if oldTargetType != pluginDb.WebsiteTargetTypeIPNS || newTargetType != pluginDb.WebsiteTargetTypeIPNS {
-					newTargetHash := website.TargetHash()
-					if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.Domain, newTargetHash, newTargetType); err != nil {
-						s.Logger().Warn("Failed to update DNS records for website",
-							zap.Error(err),
-							zap.Uint("website_id", websiteID),
-							zap.Uint("dns_zone_id", *website.DNSZoneID))
+				// Update DNS records if target changed and DNS hosting is enabled
+				// Note: Skip DNS only when staying as IPNS (peer ID doesn't change)
+				if targetHashChanged && website.Enabled && website.DNSZoneID != nil && s.dnsSvc != nil {
+					newTargetType := pluginDb.WebsiteTargetType(website.TargetType)
+					if oldTargetType != pluginDb.WebsiteTargetTypeIPNS || newTargetType != pluginDb.WebsiteTargetTypeIPNS {
+						newTargetHash := website.TargetHash()
+						if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.Domain, newTargetHash, newTargetType); err != nil {
+							s.Logger().Warn("Failed to update DNS records for website",
+								zap.Error(err),
+								zap.Uint("website_id", websiteID),
+								zap.Uint("dns_zone_id", *website.DNSZoneID))
+						}
 					}
-				}
 				}
 
 				return tx
@@ -1081,7 +1132,29 @@ func (s *WebsiteServiceDefault) UnblockWebsite(ctx context.Context, websiteID ui
 	)
 }
 
+func (s *WebsiteServiceDefault) loadWebsite(ctx context.Context, userID, websiteID uint) (pluginDb.Website, error) {
+	var website pluginDb.Website
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		return tx.Where("user_id = ? AND id = ?", userID, websiteID).First(&website)
+	}); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return pluginDb.Website{}, fmt.Errorf("website not found")
+		}
+		return pluginDb.Website{}, fmt.Errorf("failed to get website: %w", err)
+	}
+	return website, nil
+}
+
 // ValidateDNS validates the DNS TXT record for a website domain
+func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Website) bool {
+	needs := website.Status == string(pluginDb.WebsiteStatusPendingValidation)
+	if needs && s.delegatedDomainSvc != nil && s.delegatedDomainSvc.UsesDelegationForOwnership(website.Domain) {
+		s.Logger().Debug("skipping TXT token (ownership proven via delegation verification)", zap.String("domain", website.Domain))
+		return false
+	}
+	return needs
+}
+
 func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, websiteID uint) (pluginCore.ValidateDNSResult, error) {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.ValidateDNS")
 	defer span.End()
@@ -1090,17 +1163,12 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 		ValidateDNSDuration.WithLabelValues(),
 		ValidateDNSTotal.WithLabelValues(LabelStatusError),
 		func() (pluginCore.ValidateDNSResult, error) {
-			var website pluginDb.Website
-			if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				return tx.Where("user_id = ? AND id = ?", userID, websiteID).First(&website)
-			}); err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return pluginCore.ValidateDNSResult{}, fmt.Errorf("website not found")
-				}
-				return pluginCore.ValidateDNSResult{}, fmt.Errorf("failed to get website: %w", err)
+			website, err := s.loadWebsite(ctx, userID, websiteID)
+			if err != nil {
+				return pluginCore.ValidateDNSResult{}, err
 			}
 
-			needsTokenCheck := website.Status == string(pluginDb.WebsiteStatusPendingValidation)
+			needsTokenCheck := s.shouldPerformTokenCheck(&website)
 
 			if needsTokenCheck && website.IsExpired() {
 				if err := s.regenerateExpiredToken(ctx, &website); err != nil {
@@ -1113,7 +1181,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				}, nil
 			}
 
-			result, err := s.resolver.ResolveDNSLink(website.Domain)
+			result, err := s.resolverForDomain(website.Domain).ResolveDNSLink(website.Domain)
 			if err != nil {
 				if dnsErr, ok := errors.AsType[dnslink.DNSRCodeError](err); ok && dnsErr.DNSRCode == 3 {
 					s.Logger().Debug("DNS validation failed: no DNS records found (NXDOMAIN)",
@@ -1130,83 +1198,43 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				return pluginCore.ValidateDNSResult{}, fmt.Errorf("DNS lookup failed for %s: %w", website.Domain, err)
 			}
 
-			expectedDNSlink := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
-
-			var hasDNSlink bool
-			var foundDNSlink string
-
-			if ipfsLinks, ok := result.Links["ipfs"]; ok && len(ipfsLinks) > 0 {
-				foundDNSlink = dto.IPFSPath(ipfsLinks[0].Identifier)
-				if foundDNSlink == expectedDNSlink {
-					hasDNSlink = true
-					s.Logger().Debug("Found valid DNSlink record",
-						zap.String("domain", website.Domain),
-						zap.String("dnslink", foundDNSlink))
-				}
-			}
-			if ipnsLinks, ok := result.Links["ipns"]; ok && len(ipnsLinks) > 0 {
-				foundDNSlink = dto.IPNSPath(ipnsLinks[0].Identifier)
-				if foundDNSlink == expectedDNSlink {
-					hasDNSlink = true
-					s.Logger().Debug("Found valid DNSlink record",
-						zap.String("domain", website.Domain),
-						zap.String("dnslink", foundDNSlink))
-				}
-			}
-
-			if !hasDNSlink {
-				s.Logger().Warn("DNS validation failed: missing or incorrect dnslink record",
-					zap.String("domain", website.Domain),
-					zap.String("expected", expectedDNSlink),
-					zap.String("found", foundDNSlink))
+			if ok, msg, reason := s.checkDNSLinkMatch(&website, result); !ok {
 				return pluginCore.ValidateDNSResult{
 					Valid:   false,
-					Message: fmt.Sprintf(msgDNSMismatch, expectedDNSlink, foundDNSlink),
-					Reason:  pluginCore.ValidationReasonDNSMismatch,
+					Message: msg,
+					Reason:  reason,
 				}, nil
 			}
 
+			_ = s.determineFoundDNSLink(result, &website)
+
 			if needsTokenCheck {
-				expectedTokenRecord := fmt.Sprintf("%s=%s", s.verificationTokenKey(), website.ValidationToken)
-				txtRecords, err := s.resolver.LookupTXT(s.verificationTokenKey() + "." + website.Domain)
-				if err != nil {
-					return pluginCore.ValidateDNSResult{}, fmt.Errorf("DNS TXT lookup failed for %s.%s: %w", s.verificationTokenKey(), website.Domain, err)
-				}
-
-				var hasToken bool
-				for _, txtRecord := range txtRecords {
-					if strings.Contains(txtRecord, expectedTokenRecord) {
-						hasToken = true
-						s.Logger().Debug("Found valid validation token",
-							zap.String("domain", website.Domain),
-							zap.String("token", website.ValidationToken))
-						break
-					}
-				}
-
-				if !hasToken {
-					s.Logger().Warn("DNS validation failed: missing validation token",
-						zap.String("domain", website.Domain),
-						zap.String("expected_token", website.ValidationToken))
+				if ok, msg, reason, err := s.checkValidationToken(ctx, &website); err != nil {
+					return pluginCore.ValidateDNSResult{}, err
+				} else if !ok {
 					return pluginCore.ValidateDNSResult{
 						Valid:   false,
-						Message: fmt.Sprintf(msgTokenMissing, s.verificationTokenKey(), website.Domain, website.Domain),
-						Reason:  pluginCore.ValidationReasonTokenMissing,
+						Message: msg,
+						Reason:  reason,
 					}, nil
 				}
 			}
 
-			s.Logger().Info("DNS validation successful",
-				zap.String("domain", website.Domain),
-				zap.Uint("website_id", website.ID),
-				zap.String("dnslink", foundDNSlink))
+			if ok, msg, reason, err := s.checkAttachedDelegations(ctx, &website); err != nil {
+				return pluginCore.ValidateDNSResult{}, err
+			} else if !ok {
+				return pluginCore.ValidateDNSResult{
+					Valid:   false,
+					Message: msg,
+					Reason:  reason,
+				}, nil
+			}
 
 			if err := s.activateValidatedWebsite(ctx, &website); err != nil {
 				return pluginCore.ValidateDNSResult{}, err
 			}
 
 			s.Logger().Info("DNS validation completed",
-				zap.Uint("website_id", websiteID),
 				zap.Uint("user_id", userID),
 				zap.Bool("validated", true))
 
@@ -1217,6 +1245,118 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 			}, nil
 		},
 	)
+}
+
+func (s *WebsiteServiceDefault) checkDNSLinkMatch(website *pluginDb.Website, result dnslink.Result) (bool, string, pluginCore.ValidationReason) {
+	expectedDNSlink := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
+
+	var foundDNSlink string
+	if ipfsLinks, ok := result.Links["ipfs"]; ok && len(ipfsLinks) > 0 {
+		foundDNSlink = dto.IPFSPath(ipfsLinks[0].Identifier)
+		if foundDNSlink == expectedDNSlink {
+			s.Logger().Debug("Found valid DNSlink record",
+				zap.String("domain", website.Domain),
+				zap.String("dnslink", foundDNSlink))
+			return true, "", ""
+		}
+	}
+	if ipnsLinks, ok := result.Links["ipns"]; ok && len(ipnsLinks) > 0 {
+		foundDNSlink = dto.IPNSPath(ipnsLinks[0].Identifier)
+		if foundDNSlink == expectedDNSlink {
+			s.Logger().Debug("Found valid DNSlink record",
+				zap.String("domain", website.Domain),
+				zap.String("dnslink", foundDNSlink))
+			return true, "", ""
+		}
+	}
+
+	s.Logger().Warn("DNS validation failed: missing or incorrect dnslink record",
+		zap.String("domain", website.Domain),
+		zap.String("expected", expectedDNSlink),
+		zap.String("found", foundDNSlink))
+	return false, fmt.Sprintf(msgDNSMismatch, expectedDNSlink, foundDNSlink), pluginCore.ValidationReasonDNSMismatch
+}
+
+func (s *WebsiteServiceDefault) determineFoundDNSLink(result dnslink.Result, website *pluginDb.Website) string {
+	if ipfsLinks, ok := result.Links["ipfs"]; ok && len(ipfsLinks) > 0 {
+		return dto.IPFSPath(ipfsLinks[0].Identifier)
+	}
+	if ipnsLinks, ok := result.Links["ipns"]; ok && len(ipnsLinks) > 0 {
+		return dto.IPNSPath(ipnsLinks[0].Identifier)
+	}
+	return ""
+}
+
+func (s *WebsiteServiceDefault) checkValidationToken(ctx context.Context, website *pluginDb.Website) (bool, string, pluginCore.ValidationReason, error) {
+	expectedTokenRecord := fmt.Sprintf("%s=%s", s.verificationTokenKey(), website.ValidationToken)
+	txtRecords, err := s.resolverForDomain(website.Domain).LookupTXT(ctx, s.verificationTokenKey()+"."+website.Domain)
+	if err != nil {
+		return false, "", "", fmt.Errorf("DNS TXT lookup failed for %s.%s: %w", s.verificationTokenKey(), website.Domain, err)
+	}
+
+	for _, txtRecord := range txtRecords {
+		if strings.Contains(txtRecord, expectedTokenRecord) {
+			s.Logger().Debug("Found valid validation token",
+				zap.String("domain", website.Domain),
+				zap.String("token", website.ValidationToken))
+			return true, "", "", nil
+		}
+	}
+
+	s.Logger().Warn("DNS validation failed: missing validation token",
+		zap.String("domain", website.Domain),
+		zap.String("expected_token", website.ValidationToken))
+	return false, fmt.Sprintf(msgTokenMissing, s.verificationTokenKey(), website.Domain, website.Domain), pluginCore.ValidationReasonTokenMissing, nil
+}
+
+func (s *WebsiteServiceDefault) checkAttachedDelegations(ctx context.Context, website *pluginDb.Website) (bool, string, pluginCore.ValidationReason, error) {
+	if s.delegatedDomainSvc == nil {
+		return true, "", "", nil
+	}
+
+	var attached []pluginDb.WebsiteDomain
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		return tx.Where("website_id = ?", website.ID).Find(&attached)
+	}); err != nil {
+		s.Logger().Error("failed to load attached domains for delegation verification",
+			zap.Error(err),
+			zap.Uint("website_id", website.ID))
+		return false, "", "", fmt.Errorf("failed to verify domain delegations: %w", err)
+	}
+
+	// Verify delegations concurrently with a bounded worker pool and a
+	// shared context deadline to avoid N*10s serial blocking.
+	grp, verifyCtx := errgroup.WithContext(ctx)
+	grp.SetLimit(5)
+	var mu sync.Mutex
+	var failedDomain string
+	var failed bool
+	for i := range attached {
+		ad := &attached[i]
+		grp.Go(func() error {
+			verifyCtx2, cancel := context.WithTimeout(verifyCtx, 10*time.Second)
+			defer cancel()
+			verified, verr := s.delegatedDomainSvc.VerifyDomain(verifyCtx2, ad)
+			if verr != nil || !verified {
+				s.Logger().Info("delegation not verified for attached domain",
+					zap.String("domain", ad.Domain), zap.Error(verr))
+				mu.Lock()
+				if !failed {
+					failed = true
+					failedDomain = ad.Domain
+				}
+				mu.Unlock()
+				return errors.New("delegation not verified")
+			}
+			return nil
+		})
+	}
+	if err := grp.Wait(); err != nil {
+		s.Logger().Info("delegation verification failed for attached domain",
+			zap.String("domain", failedDomain))
+		return false, msgDelegationPending, pluginCore.ValidationReasonDelegationPending, nil
+	}
+	return true, "", "", nil
 }
 
 func (s *WebsiteServiceDefault) regenerateExpiredToken(ctx context.Context, website *pluginDb.Website) error {

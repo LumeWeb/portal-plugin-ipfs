@@ -82,7 +82,7 @@ type MockIPFSPinService_AddPin_Call struct {
 // AddPin is a helper method to define mock.On call
 //   - ctx context.Context
 //   - pin *db.IPFSPin
-func (_e *MockIPFSPinService_Expecter) AddPin(ctx interface{}, pin interface{}) *MockIPFSPinService_AddPin_Call {
+func (_e *MockIPFSPinService_Expecter) AddPin(ctx any, pin any) *MockIPFSPinService_AddPin_Call {
 	return &MockIPFSPinService_AddPin_Call{Call: _e.mock.On("AddPin", ctx, pin)}
 }
 
@@ -277,7 +277,7 @@ type MockIPFSPinService_DeletePin_Call struct {
 // DeletePin is a helper method to define mock.On call
 //   - ctx context.Context
 //   - requestID types.BinaryUUID
-func (_e *MockIPFSPinService_Expecter) DeletePin(ctx interface{}, requestID interface{}) *MockIPFSPinService_DeletePin_Call {
+func (_e *MockIPFSPinService_Expecter) DeletePin(ctx any, requestID any) *MockIPFSPinService_DeletePin_Call {
 	return &MockIPFSPinService_DeletePin_Call{Call: _e.mock.On("DeletePin", ctx, requestID)}
 }
 
@@ -335,7 +335,7 @@ type MockIPFSPinService_DeletePinForUser_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - requestID types.BinaryUUID
-func (_e *MockIPFSPinService_Expecter) DeletePinForUser(ctx interface{}, userID interface{}, requestID interface{}) *MockIPFSPinService_DeletePinForUser_Call {
+func (_e *MockIPFSPinService_Expecter) DeletePinForUser(ctx any, userID any, requestID any) *MockIPFSPinService_DeletePinForUser_Call {
 	return &MockIPFSPinService_DeletePinForUser_Call{Call: _e.mock.On("DeletePinForUser", ctx, userID, requestID)}
 }
 
@@ -409,7 +409,7 @@ type MockIPFSPinService_GetPinByCIDAndUser_Call struct {
 //   - ctx context.Context
 //   - c cid.Cid
 //   - userID uint
-func (_e *MockIPFSPinService_Expecter) GetPinByCIDAndUser(ctx interface{}, c interface{}, userID interface{}) *MockIPFSPinService_GetPinByCIDAndUser_Call {
+func (_e *MockIPFSPinService_Expecter) GetPinByCIDAndUser(ctx any, c any, userID any) *MockIPFSPinService_GetPinByCIDAndUser_Call {
 	return &MockIPFSPinService_GetPinByCIDAndUser_Call{Call: _e.mock.On("GetPinByCIDAndUser", ctx, c, userID)}
 }
 
@@ -482,7 +482,7 @@ type MockIPFSPinService_GetPinByRequestID_Call struct {
 // GetPinByRequestID is a helper method to define mock.On call
 //   - ctx context.Context
 //   - requestID types.BinaryUUID
-func (_e *MockIPFSPinService_Expecter) GetPinByRequestID(ctx interface{}, requestID interface{}) *MockIPFSPinService_GetPinByRequestID_Call {
+func (_e *MockIPFSPinService_Expecter) GetPinByRequestID(ctx any, requestID any) *MockIPFSPinService_GetPinByRequestID_Call {
 	return &MockIPFSPinService_GetPinByRequestID_Call{Call: _e.mock.On("GetPinByRequestID", ctx, requestID)}
 }
 
@@ -551,7 +551,7 @@ type MockIPFSPinService_GetPinByRequestIDForUser_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - requestID types.BinaryUUID
-func (_e *MockIPFSPinService_Expecter) GetPinByRequestIDForUser(ctx interface{}, userID interface{}, requestID interface{}) *MockIPFSPinService_GetPinByRequestIDForUser_Call {
+func (_e *MockIPFSPinService_Expecter) GetPinByRequestIDForUser(ctx any, userID any, requestID any) *MockIPFSPinService_GetPinByRequestIDForUser_Call {
 	return &MockIPFSPinService_GetPinByRequestIDForUser_Call{Call: _e.mock.On("GetPinByRequestIDForUser", ctx, userID, requestID)}
 }
 
@@ -676,7 +676,7 @@ type MockIPFSPinService_ListPins_Call struct {
 //   - filter1 []queryutil.CrudFilter
 //   - sort []filter.Sort
 //   - pagination queryutil.Pagination
-func (_e *MockIPFSPinService_Expecter) ListPins(ctx interface{}, filter1 interface{}, sort interface{}, pagination interface{}) *MockIPFSPinService_ListPins_Call {
+func (_e *MockIPFSPinService_Expecter) ListPins(ctx any, filter1 any, sort any, pagination any) *MockIPFSPinService_ListPins_Call {
 	return &MockIPFSPinService_ListPins_Call{Call: _e.mock.On("ListPins", ctx, filter1, sort, pagination)}
 }
 
@@ -763,7 +763,7 @@ type MockIPFSPinService_ListPinsForUser_Call struct {
 //   - filter1 []queryutil.CrudFilter
 //   - sort []filter.Sort
 //   - pagination queryutil.Pagination
-func (_e *MockIPFSPinService_Expecter) ListPinsForUser(ctx interface{}, userID interface{}, filter1 interface{}, sort interface{}, pagination interface{}) *MockIPFSPinService_ListPinsForUser_Call {
+func (_e *MockIPFSPinService_Expecter) ListPinsForUser(ctx any, userID any, filter1 any, sort any, pagination any) *MockIPFSPinService_ListPinsForUser_Call {
 	return &MockIPFSPinService_ListPinsForUser_Call{Call: _e.mock.On("ListPinsForUser", ctx, userID, filter1, sort, pagination)}
 }
 
@@ -895,7 +895,7 @@ type MockIPFSPinService_ReplacePin_Call struct {
 //   - userIp string
 //   - oldRequestID types.BinaryUUID
 //   - newPin *db.IPFSPin
-func (_e *MockIPFSPinService_Expecter) ReplacePin(ctx interface{}, userId interface{}, userIp interface{}, oldRequestID interface{}, newPin interface{}) *MockIPFSPinService_ReplacePin_Call {
+func (_e *MockIPFSPinService_Expecter) ReplacePin(ctx any, userId any, userIp any, oldRequestID any, newPin any) *MockIPFSPinService_ReplacePin_Call {
 	return &MockIPFSPinService_ReplacePin_Call{Call: _e.mock.On("ReplacePin", ctx, userId, userIp, oldRequestID, newPin)}
 }
 
@@ -981,7 +981,7 @@ type MockIPFSPinService_ReplacePinForUser_Call struct {
 //   - userIp string
 //   - oldRequestID types.BinaryUUID
 //   - newPin *db.IPFSPin
-func (_e *MockIPFSPinService_Expecter) ReplacePinForUser(ctx interface{}, userID interface{}, userIp interface{}, oldRequestID interface{}, newPin interface{}) *MockIPFSPinService_ReplacePinForUser_Call {
+func (_e *MockIPFSPinService_Expecter) ReplacePinForUser(ctx any, userID any, userIp any, oldRequestID any, newPin any) *MockIPFSPinService_ReplacePinForUser_Call {
 	return &MockIPFSPinService_ReplacePinForUser_Call{Call: _e.mock.On("ReplacePinForUser", ctx, userID, userIp, oldRequestID, newPin)}
 }
 
@@ -1041,7 +1041,7 @@ type MockIPFSPinService_SetConfig_Call struct {
 
 // SetConfig is a helper method to define mock.On call
 //   - cfg config.Manager
-func (_e *MockIPFSPinService_Expecter) SetConfig(cfg interface{}) *MockIPFSPinService_SetConfig_Call {
+func (_e *MockIPFSPinService_Expecter) SetConfig(cfg any) *MockIPFSPinService_SetConfig_Call {
 	return &MockIPFSPinService_SetConfig_Call{Call: _e.mock.On("SetConfig", cfg)}
 }
 
@@ -1081,7 +1081,7 @@ type MockIPFSPinService_SetContext_Call struct {
 
 // SetContext is a helper method to define mock.On call
 //   - ctx core.Context
-func (_e *MockIPFSPinService_Expecter) SetContext(ctx interface{}) *MockIPFSPinService_SetContext_Call {
+func (_e *MockIPFSPinService_Expecter) SetContext(ctx any) *MockIPFSPinService_SetContext_Call {
 	return &MockIPFSPinService_SetContext_Call{Call: _e.mock.On("SetContext", ctx)}
 }
 
@@ -1121,7 +1121,7 @@ type MockIPFSPinService_SetDB_Call struct {
 
 // SetDB is a helper method to define mock.On call
 //   - db1 *gorm.DB
-func (_e *MockIPFSPinService_Expecter) SetDB(db1 interface{}) *MockIPFSPinService_SetDB_Call {
+func (_e *MockIPFSPinService_Expecter) SetDB(db1 any) *MockIPFSPinService_SetDB_Call {
 	return &MockIPFSPinService_SetDB_Call{Call: _e.mock.On("SetDB", db1)}
 }
 
@@ -1161,7 +1161,7 @@ type MockIPFSPinService_SetLogger_Call struct {
 
 // SetLogger is a helper method to define mock.On call
 //   - logger *core.Logger
-func (_e *MockIPFSPinService_Expecter) SetLogger(logger interface{}) *MockIPFSPinService_SetLogger_Call {
+func (_e *MockIPFSPinService_Expecter) SetLogger(logger any) *MockIPFSPinService_SetLogger_Call {
 	return &MockIPFSPinService_SetLogger_Call{Call: _e.mock.On("SetLogger", logger)}
 }
 
@@ -1215,7 +1215,7 @@ type MockIPFSPinService_UpdatePinStatus_Call struct {
 //   - requestID types.BinaryUUID
 //   - status db.PinningStatus
 //   - info datatypes.JSON
-func (_e *MockIPFSPinService_Expecter) UpdatePinStatus(ctx interface{}, requestID interface{}, status interface{}, info interface{}) *MockIPFSPinService_UpdatePinStatus_Call {
+func (_e *MockIPFSPinService_Expecter) UpdatePinStatus(ctx any, requestID any, status any, info any) *MockIPFSPinService_UpdatePinStatus_Call {
 	return &MockIPFSPinService_UpdatePinStatus_Call{Call: _e.mock.On("UpdatePinStatus", ctx, requestID, status, info)}
 }
 
@@ -1293,7 +1293,7 @@ type MockIPFSPinService_ValidateDAGCompletion_Call struct {
 // ValidateDAGCompletion is a helper method to define mock.On call
 //   - ctx context.Context
 //   - pin *db.IPFSPin
-func (_e *MockIPFSPinService_Expecter) ValidateDAGCompletion(ctx interface{}, pin interface{}) *MockIPFSPinService_ValidateDAGCompletion_Call {
+func (_e *MockIPFSPinService_Expecter) ValidateDAGCompletion(ctx any, pin any) *MockIPFSPinService_ValidateDAGCompletion_Call {
 	return &MockIPFSPinService_ValidateDAGCompletion_Call{Call: _e.mock.On("ValidateDAGCompletion", ctx, pin)}
 }
 

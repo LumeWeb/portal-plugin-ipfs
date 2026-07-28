@@ -174,7 +174,7 @@ type MockUploadService_CreateRootPin_Call struct {
 //   - ctx context.Context
 //   - cid1 cid.Cid
 //   - userId uint
-func (_e *MockUploadService_Expecter) CreateRootPin(ctx interface{}, cid1 interface{}, userId interface{}) *MockUploadService_CreateRootPin_Call {
+func (_e *MockUploadService_Expecter) CreateRootPin(ctx any, cid1 any, userId any) *MockUploadService_CreateRootPin_Call {
 	return &MockUploadService_CreateRootPin_Call{Call: _e.mock.On("CreateRootPin", ctx, cid1, userId)}
 }
 
@@ -298,7 +298,7 @@ type MockUploadService_HandleUpload_Call struct {
 //   - ctx context.Context
 //   - reader io.ReadSeekCloser
 //   - userId uint
-func (_e *MockUploadService_Expecter) HandleUpload(ctx interface{}, reader interface{}, userId interface{}) *MockUploadService_HandleUpload_Call {
+func (_e *MockUploadService_Expecter) HandleUpload(ctx any, reader any, userId any) *MockUploadService_HandleUpload_Call {
 	return &MockUploadService_HandleUpload_Call{Call: _e.mock.On("HandleUpload", ctx, reader, userId)}
 }
 
@@ -377,7 +377,7 @@ type MockUploadService_HandleUploadWithMode_Call struct {
 //   - reader io.ReadSeekCloser
 //   - userId uint
 //   - mode upload.ArchiveMode
-func (_e *MockUploadService_Expecter) HandleUploadWithMode(ctx interface{}, reader interface{}, userId interface{}, mode interface{}) *MockUploadService_HandleUploadWithMode_Call {
+func (_e *MockUploadService_Expecter) HandleUploadWithMode(ctx any, reader any, userId any, mode any) *MockUploadService_HandleUploadWithMode_Call {
 	return &MockUploadService_HandleUploadWithMode_Call{Call: _e.mock.On("HandleUploadWithMode", ctx, reader, userId, mode)}
 }
 
@@ -536,7 +536,7 @@ type MockUploadService_ProcessUpload_Call struct {
 //   - cids []cid.Cid
 //   - userId uint
 //   - reservations map[cid.Cid]*quota.BlockReservations
-func (_e *MockUploadService_Expecter) ProcessUpload(ctx interface{}, cids interface{}, userId interface{}, reservations interface{}) *MockUploadService_ProcessUpload_Call {
+func (_e *MockUploadService_Expecter) ProcessUpload(ctx any, cids any, userId any, reservations any) *MockUploadService_ProcessUpload_Call {
 	return &MockUploadService_ProcessUpload_Call{Call: _e.mock.On("ProcessUpload", ctx, cids, userId, reservations)}
 }
 
@@ -591,7 +591,7 @@ type MockUploadService_SetConfig_Call struct {
 
 // SetConfig is a helper method to define mock.On call
 //   - cfg config.Manager
-func (_e *MockUploadService_Expecter) SetConfig(cfg interface{}) *MockUploadService_SetConfig_Call {
+func (_e *MockUploadService_Expecter) SetConfig(cfg any) *MockUploadService_SetConfig_Call {
 	return &MockUploadService_SetConfig_Call{Call: _e.mock.On("SetConfig", cfg)}
 }
 
@@ -631,7 +631,7 @@ type MockUploadService_SetContext_Call struct {
 
 // SetContext is a helper method to define mock.On call
 //   - ctx core.Context
-func (_e *MockUploadService_Expecter) SetContext(ctx interface{}) *MockUploadService_SetContext_Call {
+func (_e *MockUploadService_Expecter) SetContext(ctx any) *MockUploadService_SetContext_Call {
 	return &MockUploadService_SetContext_Call{Call: _e.mock.On("SetContext", ctx)}
 }
 
@@ -671,7 +671,7 @@ type MockUploadService_SetDB_Call struct {
 
 // SetDB is a helper method to define mock.On call
 //   - db1 *gorm.DB
-func (_e *MockUploadService_Expecter) SetDB(db1 interface{}) *MockUploadService_SetDB_Call {
+func (_e *MockUploadService_Expecter) SetDB(db1 any) *MockUploadService_SetDB_Call {
 	return &MockUploadService_SetDB_Call{Call: _e.mock.On("SetDB", db1)}
 }
 
@@ -711,7 +711,7 @@ type MockUploadService_SetLogger_Call struct {
 
 // SetLogger is a helper method to define mock.On call
 //   - logger *core.Logger
-func (_e *MockUploadService_Expecter) SetLogger(logger interface{}) *MockUploadService_SetLogger_Call {
+func (_e *MockUploadService_Expecter) SetLogger(logger any) *MockUploadService_SetLogger_Call {
 	return &MockUploadService_SetLogger_Call{Call: _e.mock.On("SetLogger", logger)}
 }
 

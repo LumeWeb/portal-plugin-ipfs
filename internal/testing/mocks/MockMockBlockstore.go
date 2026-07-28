@@ -74,7 +74,7 @@ type MockMockBlockstore_AllKeysChan_Call struct {
 
 // AllKeysChan is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockMockBlockstore_Expecter) AllKeysChan(ctx interface{}) *MockMockBlockstore_AllKeysChan_Call {
+func (_e *MockMockBlockstore_Expecter) AllKeysChan(ctx any) *MockMockBlockstore_AllKeysChan_Call {
 	return &MockMockBlockstore_AllKeysChan_Call{Call: _e.mock.On("AllKeysChan", ctx)}
 }
 
@@ -126,7 +126,7 @@ type MockMockBlockstore_DeleteBlock_Call struct {
 // DeleteBlock is a helper method to define mock.On call
 //   - context1 context.Context
 //   - cid1 cid.Cid
-func (_e *MockMockBlockstore_Expecter) DeleteBlock(context1 interface{}, cid1 interface{}) *MockMockBlockstore_DeleteBlock_Call {
+func (_e *MockMockBlockstore_Expecter) DeleteBlock(context1 any, cid1 any) *MockMockBlockstore_DeleteBlock_Call {
 	return &MockMockBlockstore_DeleteBlock_Call{Call: _e.mock.On("DeleteBlock", context1, cid1)}
 }
 
@@ -194,7 +194,7 @@ type MockMockBlockstore_Get_Call struct {
 // Get is a helper method to define mock.On call
 //   - context1 context.Context
 //   - cid1 cid.Cid
-func (_e *MockMockBlockstore_Expecter) Get(context1 interface{}, cid1 interface{}) *MockMockBlockstore_Get_Call {
+func (_e *MockMockBlockstore_Expecter) Get(context1 any, cid1 any) *MockMockBlockstore_Get_Call {
 	return &MockMockBlockstore_Get_Call{Call: _e.mock.On("Get", context1, cid1)}
 }
 
@@ -260,7 +260,7 @@ type MockMockBlockstore_GetSize_Call struct {
 // GetSize is a helper method to define mock.On call
 //   - context1 context.Context
 //   - cid1 cid.Cid
-func (_e *MockMockBlockstore_Expecter) GetSize(context1 interface{}, cid1 interface{}) *MockMockBlockstore_GetSize_Call {
+func (_e *MockMockBlockstore_Expecter) GetSize(context1 any, cid1 any) *MockMockBlockstore_GetSize_Call {
 	return &MockMockBlockstore_GetSize_Call{Call: _e.mock.On("GetSize", context1, cid1)}
 }
 
@@ -326,7 +326,7 @@ type MockMockBlockstore_Has_Call struct {
 // Has is a helper method to define mock.On call
 //   - context1 context.Context
 //   - cid1 cid.Cid
-func (_e *MockMockBlockstore_Expecter) Has(context1 interface{}, cid1 interface{}) *MockMockBlockstore_Has_Call {
+func (_e *MockMockBlockstore_Expecter) Has(context1 any, cid1 any) *MockMockBlockstore_Has_Call {
 	return &MockMockBlockstore_Has_Call{Call: _e.mock.On("Has", context1, cid1)}
 }
 
@@ -383,7 +383,7 @@ type MockMockBlockstore_Put_Call struct {
 // Put is a helper method to define mock.On call
 //   - context1 context.Context
 //   - block blocks.Block
-func (_e *MockMockBlockstore_Expecter) Put(context1 interface{}, block interface{}) *MockMockBlockstore_Put_Call {
+func (_e *MockMockBlockstore_Expecter) Put(context1 any, block any) *MockMockBlockstore_Put_Call {
 	return &MockMockBlockstore_Put_Call{Call: _e.mock.On("Put", context1, block)}
 }
 
@@ -440,7 +440,7 @@ type MockMockBlockstore_PutMany_Call struct {
 // PutMany is a helper method to define mock.On call
 //   - context1 context.Context
 //   - blocks1 []blocks.Block
-func (_e *MockMockBlockstore_Expecter) PutMany(context1 interface{}, blocks1 interface{}) *MockMockBlockstore_PutMany_Call {
+func (_e *MockMockBlockstore_Expecter) PutMany(context1 any, blocks1 any) *MockMockBlockstore_PutMany_Call {
 	return &MockMockBlockstore_PutMany_Call{Call: _e.mock.On("PutMany", context1, blocks1)}
 }
 

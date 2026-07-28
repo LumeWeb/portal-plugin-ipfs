@@ -326,6 +326,12 @@ func (m *mockHelper) makeAuthenticatedRequest(method, url string, token string, 
 	return rec
 }
 
+// testGatewaySecret returns the gateway secret from the environment.
+// TestMain sets a default if GATEWAY_SECRET is unset.
+func testGatewaySecret() string {
+	return os.Getenv("GATEWAY_SECRET")
+}
+
 // makeGatewayAuthenticatedRequest creates and executes a gateway-authenticated API request, returning the response
 func (m *mockHelper) makeGatewayAuthenticatedRequest(method, url string, gatewaySecret string, body []byte) *httptest.ResponseRecorder {
 	req := m.ctx.NewAPIRequest(method, url, body)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -13,11 +14,16 @@ import (
 	"go.uber.org/zap"
 )
 
+func testGatewaySecret() string {
+	return os.Getenv("GATEWAY_SECRET")
+}
+
 // TestGatewayAuth_NoSecret tests that requests without X-Gateway-Secret header return 401
 func TestGatewayAuth_NoSecret(t *testing.T) {
+	t.Setenv("GATEWAY_SECRET", "test-gw-"+t.Name())
 	// Create config with a secret
 	cfg := &config.APIConfig{
-		GatewaySecret: "test-secret",
+		GatewaySecret: testGatewaySecret(),
 	}
 
 	// Create logger (nil for testing - middleware handles this gracefully)
@@ -56,9 +62,10 @@ func TestGatewayAuth_NoSecret(t *testing.T) {
 
 // TestGatewayAuth_InvalidSecret tests that requests with invalid secret return 401
 func TestGatewayAuth_InvalidSecret(t *testing.T) {
+	t.Setenv("GATEWAY_SECRET", "test-gw-"+t.Name())
 	// Create config with a secret
 	cfg := &config.APIConfig{
-		GatewaySecret: "test-secret",
+		GatewaySecret: testGatewaySecret(),
 	}
 
 	// Create logger (nil for testing - middleware handles this gracefully)
@@ -98,9 +105,10 @@ func TestGatewayAuth_InvalidSecret(t *testing.T) {
 
 // TestGatewayAuth_ValidSecret tests that requests with valid secret return 200
 func TestGatewayAuth_ValidSecret(t *testing.T) {
+	t.Setenv("GATEWAY_SECRET", "test-gw-"+t.Name())
 	// Create config with a secret
 	cfg := &config.APIConfig{
-		GatewaySecret: "test-secret",
+		GatewaySecret: testGatewaySecret(),
 	}
 
 	// Create logger (nil for testing - middleware handles this gracefully)
@@ -116,7 +124,7 @@ func TestGatewayAuth_ValidSecret(t *testing.T) {
 
 	// Create request with valid secret
 	req := httptest.NewRequest(http.MethodGet, "/internal/websites/test.com/status", nil)
-	req.Header.Set("X-Gateway-Secret", "test-secret")
+	req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 	rec := httptest.NewRecorder()
 
 	// Create Echo context
@@ -152,7 +160,7 @@ func TestGatewayAuth_EmptyConfigSecret(t *testing.T) {
 
 	// Create request with secret (but config has empty secret)
 	req := httptest.NewRequest(http.MethodGet, "/internal/websites/test.com/status", nil)
-	req.Header.Set("X-Gateway-Secret", "test-secret")
+	req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 	rec := httptest.NewRecorder()
 
 	// Create Echo context
@@ -169,6 +177,7 @@ func TestGatewayAuth_EmptyConfigSecret(t *testing.T) {
 
 // TestGatewayAuth_Logging tests that authentication failures are logged
 func TestGatewayAuth_Logging(t *testing.T) {
+	t.Setenv("GATEWAY_SECRET", "test-gw-"+t.Name())
 	// Create a logger
 	zapLogger, err := zap.NewDevelopment()
 	assert.NoError(t, err)
@@ -177,7 +186,7 @@ func TestGatewayAuth_Logging(t *testing.T) {
 
 	// Create config with a secret
 	cfg := &config.APIConfig{
-		GatewaySecret: "test-secret",
+		GatewaySecret: testGatewaySecret(),
 	}
 
 	// Create middleware with logger

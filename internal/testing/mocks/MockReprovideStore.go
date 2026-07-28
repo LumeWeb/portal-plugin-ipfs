@@ -40,6 +40,72 @@ func (_m *MockReprovideStore) EXPECT() *MockReprovideStore_Expecter {
 	return &MockReprovideStore_Expecter{mock: &_m.Mock}
 }
 
+// CountPinned provides a mock function for the type MockReprovideStore
+func (_mock *MockReprovideStore) CountPinned(ctx context.Context, since time.Time) (core.PinnedCIDStats, error) {
+	ret := _mock.Called(ctx, since)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CountPinned")
+	}
+
+	var r0 core.PinnedCIDStats
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, time.Time) (core.PinnedCIDStats, error)); ok {
+		return returnFunc(ctx, since)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, time.Time) core.PinnedCIDStats); ok {
+		r0 = returnFunc(ctx, since)
+	} else {
+		r0 = ret.Get(0).(core.PinnedCIDStats)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, time.Time) error); ok {
+		r1 = returnFunc(ctx, since)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockReprovideStore_CountPinned_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CountPinned'
+type MockReprovideStore_CountPinned_Call struct {
+	*mock.Call
+}
+
+// CountPinned is a helper method to define mock.On call
+//   - ctx context.Context
+//   - since time.Time
+func (_e *MockReprovideStore_Expecter) CountPinned(ctx any, since any) *MockReprovideStore_CountPinned_Call {
+	return &MockReprovideStore_CountPinned_Call{Call: _e.mock.On("CountPinned", ctx, since)}
+}
+
+func (_c *MockReprovideStore_CountPinned_Call) Run(run func(ctx context.Context, since time.Time)) *MockReprovideStore_CountPinned_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 time.Time
+		if args[1] != nil {
+			arg1 = args[1].(time.Time)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockReprovideStore_CountPinned_Call) Return(pinnedCIDStats core.PinnedCIDStats, err error) *MockReprovideStore_CountPinned_Call {
+	_c.Call.Return(pinnedCIDStats, err)
+	return _c
+}
+
+func (_c *MockReprovideStore_CountPinned_Call) RunAndReturn(run func(ctx context.Context, since time.Time) (core.PinnedCIDStats, error)) *MockReprovideStore_CountPinned_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ProvideCIDs provides a mock function for the type MockReprovideStore
 func (_mock *MockReprovideStore) ProvideCIDs(ctx context.Context, since time.Time, limit int) ([]core.PinnedCID, error) {
 	ret := _mock.Called(ctx, since, limit)
@@ -77,7 +143,7 @@ type MockReprovideStore_ProvideCIDs_Call struct {
 //   - ctx context.Context
 //   - since time.Time
 //   - limit int
-func (_e *MockReprovideStore_Expecter) ProvideCIDs(ctx interface{}, since interface{}, limit interface{}) *MockReprovideStore_ProvideCIDs_Call {
+func (_e *MockReprovideStore_Expecter) ProvideCIDs(ctx any, since any, limit any) *MockReprovideStore_ProvideCIDs_Call {
 	return &MockReprovideStore_ProvideCIDs_Call{Call: _e.mock.On("ProvideCIDs", ctx, since, limit)}
 }
 
@@ -140,7 +206,7 @@ type MockReprovideStore_SetLastAnnouncement_Call struct {
 //   - ctx context.Context
 //   - cids []cid.Cid
 //   - t time.Time
-func (_e *MockReprovideStore_Expecter) SetLastAnnouncement(ctx interface{}, cids interface{}, t interface{}) *MockReprovideStore_SetLastAnnouncement_Call {
+func (_e *MockReprovideStore_Expecter) SetLastAnnouncement(ctx any, cids any, t any) *MockReprovideStore_SetLastAnnouncement_Call {
 	return &MockReprovideStore_SetLastAnnouncement_Call{Call: _e.mock.On("SetLastAnnouncement", ctx, cids, t)}
 }
 
@@ -173,72 +239,6 @@ func (_c *MockReprovideStore_SetLastAnnouncement_Call) Return(err error) *MockRe
 }
 
 func (_c *MockReprovideStore_SetLastAnnouncement_Call) RunAndReturn(run func(ctx context.Context, cids []cid.Cid, t time.Time) error) *MockReprovideStore_SetLastAnnouncement_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// CountPinned provides a mock function for the type MockReprovideStore
-func (_mock *MockReprovideStore) CountPinned(ctx context.Context, since time.Time) (core.PinnedCIDStats, error) {
-	ret := _mock.Called(ctx, since)
-
-	if len(ret) == 0 {
-		panic("no return value specified for CountPinned")
-	}
-
-	var r0 core.PinnedCIDStats
-	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, time.Time) (core.PinnedCIDStats, error)); ok {
-		return returnFunc(ctx, since)
-	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, time.Time) core.PinnedCIDStats); ok {
-		r0 = returnFunc(ctx, since)
-	} else {
-		r0 = ret.Get(0).(core.PinnedCIDStats)
-	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, time.Time) error); ok {
-		r1 = returnFunc(ctx, since)
-	} else {
-		r1 = ret.Error(1)
-	}
-	return r0, r1
-}
-
-// MockReprovideStore_CountPinned_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CountPinned'
-type MockReprovideStore_CountPinned_Call struct {
-	*mock.Call
-}
-
-// CountPinned is a helper method to define mock.On call
-//   - ctx context.Context
-//   - since time.Time
-func (_e *MockReprovideStore_Expecter) CountPinned(ctx interface{}, since interface{}) *MockReprovideStore_CountPinned_Call {
-	return &MockReprovideStore_CountPinned_Call{Call: _e.mock.On("CountPinned", ctx, since)}
-}
-
-func (_c *MockReprovideStore_CountPinned_Call) Run(run func(ctx context.Context, since time.Time)) *MockReprovideStore_CountPinned_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 context.Context
-		if args[0] != nil {
-			arg0 = args[0].(context.Context)
-		}
-		var arg1 time.Time
-		if args[1] != nil {
-			arg1 = args[1].(time.Time)
-		}
-		run(
-			arg0,
-			arg1,
-		)
-	})
-	return _c
-}
-
-func (_c *MockReprovideStore_CountPinned_Call) Return(pinnedCIDStats core.PinnedCIDStats, err error) *MockReprovideStore_CountPinned_Call {
-	_c.Call.Return(pinnedCIDStats, err)
-	return _c
-}
-
-func (_c *MockReprovideStore_CountPinned_Call) RunAndReturn(run func(ctx context.Context, since time.Time) (core.PinnedCIDStats, error)) *MockReprovideStore_CountPinned_Call {
 	_c.Call.Return(run)
 	return _c
 }

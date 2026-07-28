@@ -117,6 +117,9 @@ type Website struct {
 	CreatedAt           time.Time      `gorm:"autoCreateTime"`
 	UpdatedAt           time.Time      `gorm:"autoUpdateTime"`
 	DeletedAt           gorm.DeletedAt `gorm:"index:idx_ipfs_websites_deleted_at"`
+
+	// Domains holds all domain bindings across protocols
+	Domains []WebsiteDomain `gorm:"foreignKey:WebsiteID"`
 }
 
 func (W Website) TableName() string {

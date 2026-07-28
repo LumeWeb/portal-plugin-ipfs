@@ -160,7 +160,7 @@ type MockFileManagerService_CreateFilePath_Call struct {
 // CreateFilePath is a helper method to define mock.On call
 //   - ctx context.Context
 //   - path *db.FilePath
-func (_e *MockFileManagerService_Expecter) CreateFilePath(ctx interface{}, path interface{}) *MockFileManagerService_CreateFilePath_Call {
+func (_e *MockFileManagerService_Expecter) CreateFilePath(ctx any, path any) *MockFileManagerService_CreateFilePath_Call {
 	return &MockFileManagerService_CreateFilePath_Call{Call: _e.mock.On("CreateFilePath", ctx, path)}
 }
 
@@ -264,7 +264,7 @@ type MockFileManagerService_DeleteFilePath_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - cid []byte
-func (_e *MockFileManagerService_Expecter) DeleteFilePath(ctx interface{}, userID interface{}, cid interface{}) *MockFileManagerService_DeleteFilePath_Call {
+func (_e *MockFileManagerService_Expecter) DeleteFilePath(ctx any, userID any, cid any) *MockFileManagerService_DeleteFilePath_Call {
 	return &MockFileManagerService_DeleteFilePath_Call{Call: _e.mock.On("DeleteFilePath", ctx, userID, cid)}
 }
 
@@ -327,7 +327,7 @@ type MockFileManagerService_DeleteFilePathSmart_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - cid []byte
-func (_e *MockFileManagerService_Expecter) DeleteFilePathSmart(ctx interface{}, userID interface{}, cid interface{}) *MockFileManagerService_DeleteFilePathSmart_Call {
+func (_e *MockFileManagerService_Expecter) DeleteFilePathSmart(ctx any, userID any, cid any) *MockFileManagerService_DeleteFilePathSmart_Call {
 	return &MockFileManagerService_DeleteFilePathSmart_Call{Call: _e.mock.On("DeleteFilePathSmart", ctx, userID, cid)}
 }
 
@@ -389,7 +389,7 @@ type MockFileManagerService_DeleteFilePathsByUserID_Call struct {
 // DeleteFilePathsByUserID is a helper method to define mock.On call
 //   - ctx context.Context
 //   - userID uint
-func (_e *MockFileManagerService_Expecter) DeleteFilePathsByUserID(ctx interface{}, userID interface{}) *MockFileManagerService_DeleteFilePathsByUserID_Call {
+func (_e *MockFileManagerService_Expecter) DeleteFilePathsByUserID(ctx any, userID any) *MockFileManagerService_DeleteFilePathsByUserID_Call {
 	return &MockFileManagerService_DeleteFilePathsByUserID_Call{Call: _e.mock.On("DeleteFilePathsByUserID", ctx, userID)}
 }
 
@@ -458,7 +458,7 @@ type MockFileManagerService_GetBreadcrumbs_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - path string
-func (_e *MockFileManagerService_Expecter) GetBreadcrumbs(ctx interface{}, userID interface{}, path interface{}) *MockFileManagerService_GetBreadcrumbs_Call {
+func (_e *MockFileManagerService_Expecter) GetBreadcrumbs(ctx any, userID any, path any) *MockFileManagerService_GetBreadcrumbs_Call {
 	return &MockFileManagerService_GetBreadcrumbs_Call{Call: _e.mock.On("GetBreadcrumbs", ctx, userID, path)}
 }
 
@@ -530,7 +530,7 @@ type MockFileManagerService_GetIncompletePins_Call struct {
 
 // GetIncompletePins is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockFileManagerService_Expecter) GetIncompletePins(ctx interface{}) *MockFileManagerService_GetIncompletePins_Call {
+func (_e *MockFileManagerService_Expecter) GetIncompletePins(ctx any) *MockFileManagerService_GetIncompletePins_Call {
 	return &MockFileManagerService_GetIncompletePins_Call{Call: _e.mock.On("GetIncompletePins", ctx)}
 }
 
@@ -592,7 +592,7 @@ type MockFileManagerService_GetOrphanedPaths_Call struct {
 
 // GetOrphanedPaths is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockFileManagerService_Expecter) GetOrphanedPaths(ctx interface{}) *MockFileManagerService_GetOrphanedPaths_Call {
+func (_e *MockFileManagerService_Expecter) GetOrphanedPaths(ctx any) *MockFileManagerService_GetOrphanedPaths_Call {
 	return &MockFileManagerService_GetOrphanedPaths_Call{Call: _e.mock.On("GetOrphanedPaths", ctx)}
 }
 
@@ -700,7 +700,7 @@ type MockFileManagerService_ListDirectoryContents_Call struct {
 //   - ctx context.Context
 //   - userID uint
 //   - parentPath string
-func (_e *MockFileManagerService_Expecter) ListDirectoryContents(ctx interface{}, userID interface{}, parentPath interface{}) *MockFileManagerService_ListDirectoryContents_Call {
+func (_e *MockFileManagerService_Expecter) ListDirectoryContents(ctx any, userID any, parentPath any) *MockFileManagerService_ListDirectoryContents_Call {
 	return &MockFileManagerService_ListDirectoryContents_Call{Call: _e.mock.On("ListDirectoryContents", ctx, userID, parentPath)}
 }
 
@@ -782,7 +782,7 @@ type MockFileManagerService_ListFiles_Call struct {
 //   - filters []queryutil.CrudFilter
 //   - sort []filter.Sort
 //   - pagination queryutil.Pagination
-func (_e *MockFileManagerService_Expecter) ListFiles(ctx interface{}, userID interface{}, filters interface{}, sort interface{}, pagination interface{}) *MockFileManagerService_ListFiles_Call {
+func (_e *MockFileManagerService_Expecter) ListFiles(ctx any, userID any, filters any, sort any, pagination any) *MockFileManagerService_ListFiles_Call {
 	return &MockFileManagerService_ListFiles_Call{Call: _e.mock.On("ListFiles", ctx, userID, filters, sort, pagination)}
 }
 
@@ -888,7 +888,7 @@ type MockFileManagerService_SetConfig_Call struct {
 
 // SetConfig is a helper method to define mock.On call
 //   - cfg config.Manager
-func (_e *MockFileManagerService_Expecter) SetConfig(cfg interface{}) *MockFileManagerService_SetConfig_Call {
+func (_e *MockFileManagerService_Expecter) SetConfig(cfg any) *MockFileManagerService_SetConfig_Call {
 	return &MockFileManagerService_SetConfig_Call{Call: _e.mock.On("SetConfig", cfg)}
 }
 
@@ -928,7 +928,7 @@ type MockFileManagerService_SetContext_Call struct {
 
 // SetContext is a helper method to define mock.On call
 //   - ctx core.Context
-func (_e *MockFileManagerService_Expecter) SetContext(ctx interface{}) *MockFileManagerService_SetContext_Call {
+func (_e *MockFileManagerService_Expecter) SetContext(ctx any) *MockFileManagerService_SetContext_Call {
 	return &MockFileManagerService_SetContext_Call{Call: _e.mock.On("SetContext", ctx)}
 }
 
@@ -968,7 +968,7 @@ type MockFileManagerService_SetDB_Call struct {
 
 // SetDB is a helper method to define mock.On call
 //   - db1 *gorm.DB
-func (_e *MockFileManagerService_Expecter) SetDB(db1 interface{}) *MockFileManagerService_SetDB_Call {
+func (_e *MockFileManagerService_Expecter) SetDB(db1 any) *MockFileManagerService_SetDB_Call {
 	return &MockFileManagerService_SetDB_Call{Call: _e.mock.On("SetDB", db1)}
 }
 
@@ -1008,7 +1008,7 @@ type MockFileManagerService_SetLogger_Call struct {
 
 // SetLogger is a helper method to define mock.On call
 //   - logger *core.Logger
-func (_e *MockFileManagerService_Expecter) SetLogger(logger interface{}) *MockFileManagerService_SetLogger_Call {
+func (_e *MockFileManagerService_Expecter) SetLogger(logger any) *MockFileManagerService_SetLogger_Call {
 	return &MockFileManagerService_SetLogger_Call{Call: _e.mock.On("SetLogger", logger)}
 }
 
@@ -1060,7 +1060,7 @@ type MockFileManagerService_UpdateFilePath_Call struct {
 // UpdateFilePath is a helper method to define mock.On call
 //   - ctx context.Context
 //   - path *db.FilePath
-func (_e *MockFileManagerService_Expecter) UpdateFilePath(ctx interface{}, path interface{}) *MockFileManagerService_UpdateFilePath_Call {
+func (_e *MockFileManagerService_Expecter) UpdateFilePath(ctx any, path any) *MockFileManagerService_UpdateFilePath_Call {
 	return &MockFileManagerService_UpdateFilePath_Call{Call: _e.mock.On("UpdateFilePath", ctx, path)}
 }
 
@@ -1125,7 +1125,7 @@ type MockFileManagerService_ValidatePathCompleteness_Call struct {
 
 // ValidatePathCompleteness is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockFileManagerService_Expecter) ValidatePathCompleteness(ctx interface{}) *MockFileManagerService_ValidatePathCompleteness_Call {
+func (_e *MockFileManagerService_Expecter) ValidatePathCompleteness(ctx any) *MockFileManagerService_ValidatePathCompleteness_Call {
 	return &MockFileManagerService_ValidatePathCompleteness_Call{Call: _e.mock.On("ValidatePathCompleteness", ctx)}
 }
 

@@ -1,11 +1,13 @@
 package dns
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 	"strings"
 
 	"go.lumeweb.com/portal/core"
@@ -18,8 +20,10 @@ const defaultServerID = "localhost"
 
 // PowerDNSClient wraps the generated PowerDNS client
 type PowerDNSClient struct {
-	client *powerdns.Client
-	logger *core.Logger
+	client   *powerdns.Client
+	logger   *core.Logger
+	baseURL  string
+	apiKey   string
 }
 
 // NewPowerDNSClient creates a new PowerDNS client wrapper
@@ -33,8 +37,10 @@ func NewPowerDNSClient(baseURL, apiKey string, logger *core.Logger) (*PowerDNSCl
 	}
 
 	return &PowerDNSClient{
-		client: pdnsClient,
-		logger: logger,
+		client:  pdnsClient,
+		logger:  logger,
+		baseURL: baseURL,
+		apiKey:  apiKey,
 	}, nil
 }
 
@@ -181,4 +187,69 @@ func (c *PowerDNSClient) DeleteZone(ctx context.Context, zoneID string) error {
 		zap.String("zone_id", zoneID))
 
 	return nil
+}
+
+// EnableDNSSEC enables DNSSEC on a zone via the PowerDNS cryptokeys API.
+// Returns the DNSKEY record content (base64-encoded public key).
+func (c *PowerDNSClient) EnableDNSSEC(ctx context.Context, zoneID string) (string, error) {
+	// PowerDNS cryptokey creation endpoint:
+	// POST /api/v1/servers/:server_id/zones/:zone_id/cryptokeys
+	// Body: {"keytype": "ksk", "active": true}
+	// Response: { "dnskey": "257 3 13 <base64>", "ds": [...], ... }
+
+	parts := strings.Split(zoneID, "/")
+	apiZoneID := parts[len(parts)-1]
+	if apiZoneID == "" {
+		return "", fmt.Errorf("invalid zone ID: %s", zoneID)
+	}
+
+	// PowerDNS picks algorithm based on its config defaults.
+	// We don't force `bits` or `algorithm` — that would override
+	// the operator's PowerDNS backend configuration.
+	reqBody := map[string]any{
+		"keytype": "ksk",
+		"active":  true,
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("marshal cryptokey request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/servers/%s/zones/%s/cryptokeys",
+		strings.TrimSuffix(c.baseURL, "/"), defaultServerID, apiZoneID)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("create cryptokey request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", c.apiKey)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("cryptokey request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("PowerDNS cryptokey API returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		DNSKey string `json:"dnskey"`
+		DS    []struct {
+			Digest string `json:"digest"`
+		} `json:"ds"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode cryptokey response: %w", err)
+	}
+
+	c.logger.Info("DNSSEC enabled on zone",
+		zap.String("zone_id", zoneID),
+		zap.Bool("has_ds", len(result.DS) > 0))
+
+	return result.DNSKey, nil
 }

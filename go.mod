@@ -42,6 +42,7 @@ require (
 	github.com/samber/lo v1.53.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tus/tusd/v2 v2.10.0
+	go.lumeweb.com/dane v0.0.1
 	go.lumeweb.com/httputil v0.5.6
 	go.lumeweb.com/ipfs-content v0.1.17
 	go.lumeweb.com/portal v0.5.2-0.20260727134630-81cb4868c2ce
@@ -378,7 +379,7 @@ require (
 	gorm.io/driver/clickhouse v0.7.0 // indirect
 	gorm.io/driver/mysql v1.6.0 // indirect
 	gorm.io/driver/postgres v1.6.0 // indirect
-	gorm.io/driver/sqlite v1.6.0 // indirect
+	gorm.io/driver/sqlite v1.6.0
 	gorm.io/driver/sqlserver v1.6.3 // indirect
 	gorm.io/plugin/dbresolver v1.6.2 // indirect
 	gorm.io/plugin/opentelemetry v0.1.16 // indirect

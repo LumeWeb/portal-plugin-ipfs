@@ -72,7 +72,7 @@ type MockIPFSNode_AddBlock_Call struct {
 // AddBlock is a helper method to define mock.On call
 //   - ctx context.Context
 //   - block blocks.Block
-func (_e *MockIPFSNode_Expecter) AddBlock(ctx interface{}, block interface{}) *MockIPFSNode_AddBlock_Call {
+func (_e *MockIPFSNode_Expecter) AddBlock(ctx any, block any) *MockIPFSNode_AddBlock_Call {
 	return &MockIPFSNode_AddBlock_Call{Call: _e.mock.On("AddBlock", ctx, block)}
 }
 
@@ -117,7 +117,7 @@ type MockIPFSNode_AddPeer_Call struct {
 
 // AddPeer is a helper method to define mock.On call
 //   - addr peer.AddrInfo
-func (_e *MockIPFSNode_Expecter) AddPeer(addr interface{}) *MockIPFSNode_AddPeer_Call {
+func (_e *MockIPFSNode_Expecter) AddPeer(addr any) *MockIPFSNode_AddPeer_Call {
 	return &MockIPFSNode_AddPeer_Call{Call: _e.mock.On("AddPeer", addr)}
 }
 
@@ -468,7 +468,7 @@ type MockIPFSNode_GetBlock_Call struct {
 // GetBlock is a helper method to define mock.On call
 //   - ctx context.Context
 //   - c cid.Cid
-func (_e *MockIPFSNode_Expecter) GetBlock(ctx interface{}, c interface{}) *MockIPFSNode_GetBlock_Call {
+func (_e *MockIPFSNode_Expecter) GetBlock(ctx any, c any) *MockIPFSNode_GetBlock_Call {
 	return &MockIPFSNode_GetBlock_Call{Call: _e.mock.On("GetBlock", ctx, c)}
 }
 
@@ -764,7 +764,7 @@ type MockIPFSNode_HasBlock_Call struct {
 // HasBlock is a helper method to define mock.On call
 //   - ctx context.Context
 //   - c cid.Cid
-func (_e *MockIPFSNode_Expecter) HasBlock(ctx interface{}, c interface{}) *MockIPFSNode_HasBlock_Call {
+func (_e *MockIPFSNode_Expecter) HasBlock(ctx any, c any) *MockIPFSNode_HasBlock_Call {
 	return &MockIPFSNode_HasBlock_Call{Call: _e.mock.On("HasBlock", ctx, c)}
 }
 
@@ -958,7 +958,7 @@ type MockIPFSNode_Pin_Call struct {
 //   - ctx context.Context
 //   - root cid.Cid
 //   - recursive bool
-func (_e *MockIPFSNode_Expecter) Pin(ctx interface{}, root interface{}, recursive interface{}) *MockIPFSNode_Pin_Call {
+func (_e *MockIPFSNode_Expecter) Pin(ctx any, root any, recursive any) *MockIPFSNode_Pin_Call {
 	return &MockIPFSNode_Pin_Call{Call: _e.mock.On("Pin", ctx, root, recursive)}
 }
 
@@ -1039,6 +1039,63 @@ func (_c *MockIPFSNode_Port_Call) RunAndReturn(run func() int) *MockIPFSNode_Por
 	return _c
 }
 
+// ProvideCID provides a mock function for the type MockIPFSNode
+func (_mock *MockIPFSNode) ProvideCID(ctx context.Context, c cid.Cid) error {
+	ret := _mock.Called(ctx, c)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ProvideCID")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, cid.Cid) error); ok {
+		r0 = returnFunc(ctx, c)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockIPFSNode_ProvideCID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ProvideCID'
+type MockIPFSNode_ProvideCID_Call struct {
+	*mock.Call
+}
+
+// ProvideCID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - c cid.Cid
+func (_e *MockIPFSNode_Expecter) ProvideCID(ctx any, c any) *MockIPFSNode_ProvideCID_Call {
+	return &MockIPFSNode_ProvideCID_Call{Call: _e.mock.On("ProvideCID", ctx, c)}
+}
+
+func (_c *MockIPFSNode_ProvideCID_Call) Run(run func(ctx context.Context, c cid.Cid)) *MockIPFSNode_ProvideCID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 cid.Cid
+		if args[1] != nil {
+			arg1 = args[1].(cid.Cid)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPFSNode_ProvideCID_Call) Return(err error) *MockIPFSNode_ProvideCID_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockIPFSNode_ProvideCID_Call) RunAndReturn(run func(ctx context.Context, c cid.Cid) error) *MockIPFSNode_ProvideCID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // TriggerReprovider provides a mock function for the type MockIPFSNode
 func (_mock *MockIPFSNode) TriggerReprovider() {
 	_mock.Called()
@@ -1069,57 +1126,5 @@ func (_c *MockIPFSNode_TriggerReprovider_Call) Return() *MockIPFSNode_TriggerRep
 
 func (_c *MockIPFSNode_TriggerReprovider_Call) RunAndReturn(run func()) *MockIPFSNode_TriggerReprovider_Call {
 	_c.Run(run)
-	return _c
-}
-
-func (_mock *MockIPFSNode) ProvideCID(ctx context.Context, c cid.Cid) error {
-	ret := _mock.Called(ctx, c)
-
-	if len(ret) == 0 {
-		panic("no return value specified for ProvideCID")
-	}
-
-	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, cid.Cid) error); ok {
-		r0 = returnFunc(ctx, c)
-	} else {
-		r0 = ret.Error(0)
-	}
-	return r0
-}
-
-type MockIPFSNode_ProvideCID_Call struct {
-	*mock.Call
-}
-
-func (_e *MockIPFSNode_Expecter) ProvideCID(ctx interface{}, c interface{}) *MockIPFSNode_ProvideCID_Call {
-	return &MockIPFSNode_ProvideCID_Call{Call: _e.mock.On("ProvideCID", ctx, c)}
-}
-
-func (_c *MockIPFSNode_ProvideCID_Call) Run(run func(ctx context.Context, c cid.Cid)) *MockIPFSNode_ProvideCID_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 context.Context
-		if args[0] != nil {
-			arg0 = args[0].(context.Context)
-		}
-		var arg1 cid.Cid
-		if args[1] != nil {
-			arg1 = args[1].(cid.Cid)
-		}
-		run(
-			arg0,
-			arg1,
-		)
-	})
-	return _c
-}
-
-func (_c *MockIPFSNode_ProvideCID_Call) Return(err error) *MockIPFSNode_ProvideCID_Call {
-	_c.Call.Return(err)
-	return _c
-}
-
-func (_c *MockIPFSNode_ProvideCID_Call) RunAndReturn(run func(ctx context.Context, c cid.Cid) error) *MockIPFSNode_ProvideCID_Call {
-	_c.Call.Return(run)
 	return _c
 }
