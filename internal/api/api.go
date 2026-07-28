@@ -425,6 +425,22 @@ See also:.*`),
 				router.WithRequestBody(&dto.GetBlockMetaBatchRequest{}, "Batch request for block metadata", true),
 			),
 		),
+		router.NewRoute(http.MethodGet, "/dag/:cid", a.handleGetDAG,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Resolve block DAG"),
+				router.WithDescription(`Resolves the complete block graph (DAG) for a root CID in a single query.
+
+Returns all blocks reachable from the root CID, including their sizes and ordered child relationships. Uses a recursive SQL query internally for efficient batch resolution instead of per-block round-trips.
+
+Only blocks with ready status are included. Blocks appearing in multiple paths are deduplicated.
+
+See also: GET /block/meta/:cid (single block metadata)`),
+				router.WithTags("Content"),
+				router.WithPathParam("cid", "Root content identifier (CID) of the DAG to resolve. Example: bafybeieffnocaq7t4w4daagvydl32igft5oziyyaebqr6vx6rb3fwh2ab4", ""),
+				router.WithSuccessResponse(http.StatusOK, "DAG resolved successfully", router.WithJSONContent(dto.DAGResponse{})),
+			),
+		),
 	)
 
 	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), ipfsRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {

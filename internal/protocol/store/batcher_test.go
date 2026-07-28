@@ -45,6 +45,9 @@ func (m *mockBatchStore) ProcessMissingUnixFSNames(ctx context.Context, cids []c
 }
 func (m *mockBatchStore) UpdateUnixFSMetadata(c cid.Cid, metadata any) error { return nil }
 func (m *mockBatchStore) MarkBlockReady(c cid.Cid, ready bool) error        { return nil }
+func (m *mockBatchStore) ResolveDAG(ctx context.Context, rootCID cid.Cid) ([]core.DAGBlockNode, error) {
+	return nil, nil
+}
 
 func makePinnedBlock(data string) pluginCore.PinnedBlock {
 	c, _ := cid.V1Builder{Codec: 0x55, MhType: 0x12}.Sum([]byte(data))

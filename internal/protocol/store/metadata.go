@@ -703,6 +703,134 @@ func (s *MetadataStoreDefault) Size(ctx context.Context, c cid.Cid) (uint64, err
 	return size, nil
 }
 
+// ResolveDAG resolves the complete block graph rooted at rootCID in a single
+// recursive SQL query. It collects all blocks reachable from the root via
+// ipfs_linked_blocks, along with their sizes and ordered child CIDs.
+//
+// The query uses a recursive CTE with UNION (not UNION ALL) to deduplicate
+// by block ID, preventing infinite recursion on cycles. Only blocks with
+// ready = true are included, matching BlockChildren behavior.
+//
+// A single query collects both block metadata and parent→child link
+// relationships in one result set: the CTE is traversed once, then LEFT
+// JOINed to ipfs_linked_blocks and self-joined to dag_blocks for child
+// CIDs. Leaf blocks produce rows with NULL child columns.
+//
+// The results are assembled in Go into []core.DAGBlockNode.
+func (s *MetadataStoreDefault) ResolveDAG(ctx context.Context, rootCID cid.Cid) (nodes []core.DAGBlockNode, err error) {
+	ctx, span := core.TraceMethod(ctx, "MetadataStoreDefault.ResolveDAG")
+	defer core.EndSpanWithErr(span, err)
+
+	rootCID = encoding.NormalizeCid(rootCID)
+
+	// Single recursive CTE + LEFT JOIN: one traversal, one result set.
+	// The CTE collects all ready blocks reachable from the root.
+	// The LEFT JOIN to ipfs_linked_blocks gets each block's children;
+	// the self-join back to dag_blocks filters to ready children and
+	// retrieves their CIDs. Leaf blocks get NULL child columns.
+	const dagQuery = `
+		WITH RECURSIVE dag_blocks AS (
+			SELECT b.id, b.cid, b.size
+			FROM ipfs_blocks b
+			WHERE b.cid = ? AND b.ready = 1
+
+			UNION
+
+			SELECT child.id, child.cid, child.size
+			FROM dag_blocks dag
+			INNER JOIN ipfs_linked_blocks lb ON lb.parent_id = dag.id
+			INNER JOIN ipfs_blocks child ON child.id = lb.child_id
+			WHERE child.ready = 1
+		)
+		SELECT b.id, b.cid, b.size, child.cid AS child_cid, lb.link_index
+		FROM dag_blocks b
+		LEFT JOIN ipfs_linked_blocks lb ON lb.parent_id = b.id
+		LEFT JOIN dag_blocks child ON child.id = lb.child_id
+		ORDER BY b.id, lb.link_index
+	`
+
+	type dagRow struct {
+		ID       uint64
+		CID      []byte
+		Size     uint64
+		ChildCID []byte // nil for leaf blocks (no children)
+		LinkIndex *int  // nil for leaf blocks
+	}
+
+	blockByID := make(map[uint64]core.DAGBlockNode)
+	childrenByParent := make(map[uint64][]cid.Cid)
+	var orderedIDs []uint64
+
+	if err = db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		ret := tx.Raw(dagQuery, rootCID.Bytes())
+		if ret.Error != nil {
+			_ = tx.AddError(ret.Error)
+			return tx
+		}
+		rows, err := ret.Rows()
+		if err != nil {
+			_ = tx.AddError(err)
+			return tx
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var r dagRow
+			if scanErr := rows.Scan(&r.ID, &r.CID, &r.Size, &r.ChildCID, &r.LinkIndex); scanErr != nil {
+				_ = tx.AddError(fmt.Errorf("failed to scan dag row: %w", scanErr))
+				return tx
+			}
+
+			// Register the block (dedup by ID — a block with N children appears N times)
+			if _, ok := blockByID[r.ID]; !ok {
+				nodeCID, err := cid.Parse(r.CID)
+				if err != nil {
+					_ = tx.AddError(fmt.Errorf("failed to parse block CID: %w", err))
+					return tx
+				}
+				blockByID[r.ID] = core.DAGBlockNode{
+					CID:      nodeCID,
+					Size:     r.Size,
+					Children: []cid.Cid{}, // initialize non-nil for consistency
+				}
+				orderedIDs = append(orderedIDs, r.ID)
+			}
+
+			// If child columns are present, record the parent→child link
+			if r.ChildCID != nil && r.LinkIndex != nil {
+				childCID, err := cid.Parse(r.ChildCID)
+				if err != nil {
+					_ = tx.AddError(fmt.Errorf("failed to parse child CID: %w", err))
+					return tx
+				}
+				childrenByParent[r.ID] = append(childrenByParent[r.ID], childCID)
+			}
+		}
+		if rows.Err() != nil {
+			_ = tx.AddError(fmt.Errorf("failed to iterate dag rows: %w", rows.Err()))
+			return tx
+		}
+
+		return tx
+	}); err != nil {
+		return nil, fmt.Errorf("failed to resolve DAG: %w", err)
+	}
+
+	// Assemble the result: one DAGBlockNode per block, with ordered children.
+	// Iterate orderedIDs (SQL query order) instead of ranging over blockByID
+	// (map iteration is nondeterministic) to produce stable output.
+	nodes = make([]core.DAGBlockNode, 0, len(orderedIDs))
+	for _, id := range orderedIDs {
+		blk := blockByID[id]
+		if children, ok := childrenByParent[id]; ok {
+			blk.Children = children
+		}
+		nodes = append(nodes, blk)
+	}
+
+	return nodes, nil
+}
+
 func (s *MetadataStoreDefault) ProcessMissingUnixFSNames(ctx context.Context, cids []cid.Cid) error {
 	// Skip quota check for internal name resolution - this is metadata extraction from already-pinned data
 	ctx = pc.SkipQuotaCheckOption(ctx, true)

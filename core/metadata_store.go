@@ -5,6 +5,7 @@ import (
 
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
+	"go.lumeweb.com/portal/core"
 )
 
 // A MetadataStore is a store for IPFS block metadata. It is used to
@@ -24,6 +25,11 @@ type MetadataStore interface {
 	ProcessMissingUnixFSNames(ctx context.Context, cids []cid.Cid) error
 	UpdateUnixFSMetadata(c cid.Cid, metadata any) error
 	MarkBlockReady(c cid.Cid, ready bool) error
+
+	// ResolveDAG resolves the complete block graph rooted at rootCID in a single
+	// recursive SQL query. Returns all blocks in the DAG with their sizes and
+	// ordered parent→child link relationships.
+	ResolveDAG(ctx context.Context, rootCID cid.Cid) ([]core.DAGBlockNode, error)
 }
 
 type PinnedBlock struct {

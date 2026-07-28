@@ -1016,6 +1016,8 @@ go.lumeweb.com/portal v0.5.2-0.20260727130906-c632318fe632 h1:5Dp4xQr3vhb7o9/VvI
 go.lumeweb.com/portal v0.5.2-0.20260727130906-c632318fe632/go.mod h1:ElkjJGuXnRC14fDbGYFiH57kB5/hCDqOULFAeD3UUzE=
 go.lumeweb.com/portal v0.5.2-0.20260727134630-81cb4868c2ce h1:M3ewhDvlqZTwKbkJrQ04wqclqnscXF1L7bluRS63N48=
 go.lumeweb.com/portal v0.5.2-0.20260727134630-81cb4868c2ce/go.mod h1:ElkjJGuXnRC14fDbGYFiH57kB5/hCDqOULFAeD3UUzE=
+go.lumeweb.com/portal v0.5.2-0.20260727183439-11ece2045795 h1:52KRdJH3z61wu3dDDbENGkwSqBC1JYr3FzLVt8PC71E=
+go.lumeweb.com/portal v0.5.2-0.20260727183439-11ece2045795/go.mod h1:ZRACzuG0WlaML/5qRUKe9QmHU3elU/uc5pyJCukxgMc=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.1.0 h1:bHHJ7oZrBKmBvdUFutr3Dx6FdwvSg/ZeF33QaRM0DKU=
@@ -1152,6 +1154,8 @@ golang.org/x/exp v0.0.0-20191227195350-da58074b4299/go.mod h1:2RIsYlXP63K8oxa1u0
 golang.org/x/exp v0.0.0-20200207192155-f17229e696bd/go.mod h1:J/WKrq2StrnmMY6+EHIKF9dgMWnmCNThgcyBT1FY9mM=
 golang.org/x/exp v0.0.0-20260718201538-764159d718ef h1:LkZ48HFgy/TvhTI0bcWkjgFkgLyKUwcTbDjS0DUjw+A=
 golang.org/x/exp v0.0.0-20260718201538-764159d718ef/go.mod h1:EdfpwwqSu+0Li0mzskwHU6FWDV3t9Q+RZDo3QMUtL3Q=
+golang.org/x/exp v0.0.0-20260727155853-b88d891fe743 h1:ex206bKw+v3K0dm3andkrIF+ijyQKJG1pLgwQ2PYdQM=
+golang.org/x/exp v0.0.0-20260727155853-b88d891fe743/go.mod h1:EdfpwwqSu+0Li0mzskwHU6FWDV3t9Q+RZDo3QMUtL3Q=
 golang.org/x/image v0.0.0-20190227222117-0694c2d4d067/go.mod h1:kZ7UVZpmo3dzQBMxlp+ypCbDeSB+sBbTgSJuh5dn5js=
 golang.org/x/image v0.0.0-20190802002840-cff245a6509b/go.mod h1:FeLwcggjj3mMvU+oOTbSwawSJRM1uh48EjtB4UJZlP0=
 golang.org/x/image v0.34.0 h1:33gCkyw9hmwbZJeZkct8XyR11yH889EQt/QH4VmXMn8=
