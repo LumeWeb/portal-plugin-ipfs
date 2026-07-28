@@ -19,6 +19,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	pluginEvent "go.lumeweb.com/portal-plugin-ipfs/internal/event"
 	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
@@ -347,6 +348,11 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				zap.String("target_hash", website.TargetHash()),
 				zap.Bool("enabled", website.Enabled))
 
+			// Emit website published event for SSE gateway notification
+			core.Fire(s.Context(), pluginEvent.EVENT_WEBSITE_PUBLISHED, pluginEvent.NewWebsitePublishedEvent(
+				ctx, website.Domain, website.TargetHash(), website.UserID, website.ID,
+			))
+
 			// Send notification to admin
 			if err := s.notifyAdminWebsiteCreated(ctx, website, ""); err != nil {
 				s.Logger().Warn("Failed to send website created notification", zap.Error(err))
@@ -511,6 +517,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 	var updatedWebsite *pluginDb.Website
 	var oldEnabled bool
 	var dnsEnabledChanged bool
+	var targetHashChanged bool
 
 	err := core.MetricTrack(
 		UpdateWebsiteDuration.WithLabelValues(),
@@ -532,7 +539,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				oldTargetHash := website.TargetHash()
 				oldTargetType := pluginDb.WebsiteTargetType(website.TargetType)
 				oldEnabled = website.Enabled
-				targetHashChanged := false
+				targetHashChanged = false
 				dnsEnabledChanged = false
 				ipnsAutoCreated := false
 				var newTargetHashStr string
@@ -772,6 +779,13 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 		zap.Uint("id", websiteID),
 		zap.Uint("user_id", userID),
 		zap.Any("updates", updates))
+
+	// Emit website published event if target hash changed (content was republished)
+	if targetHashChanged && updatedWebsite != nil {
+		core.Fire(s.Context(), pluginEvent.EVENT_WEBSITE_PUBLISHED, pluginEvent.NewWebsitePublishedEvent(
+			ctx, updatedWebsite.Domain, updatedWebsite.TargetHash(), updatedWebsite.UserID, updatedWebsite.ID,
+		))
+	}
 
 	// Send notification to admin
 	if err := s.notifyAdminWebsiteUpdated(ctx, updatedWebsite, "", updates); err != nil {
@@ -1026,6 +1040,11 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 			s.Logger().Info("Website deleted",
 				zap.Uint("id", websiteID),
 				zap.Uint("user_id", userID))
+
+			// Emit website removed event for SSE gateway notification
+			core.Fire(s.Context(), pluginEvent.EVENT_WEBSITE_REMOVED, pluginEvent.NewWebsiteRemovedEvent(
+				ctx, websiteDomain, userID, websiteID,
+			))
 
 			// Clean up DNS records if DNS hosting was enabled
 			// Note: We do NOT delete the zone itself as zones are independent from websites

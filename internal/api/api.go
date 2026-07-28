@@ -53,6 +53,7 @@ type API struct {
 	requestService       core.RequestService
 	tus                  core.TusHandler
 	ipfs                 protocol.ProtoNode
+	sse                  *sseState
 }
 
 func NewAPI() (core.API, []core.ContextBuilderOption, error) {
@@ -124,6 +125,11 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 			})
 
 			api.ipfs = proto.(protocol.ProtoNode)
+
+			// Initialize SSE server for website event streaming
+			if err := api.initSSEServer(ctx); err != nil {
+				return fmt.Errorf("failed to initialize SSE server: %w", err)
+			}
 
 			return nil
 		}),
@@ -1049,6 +1055,16 @@ See also:.*`),
 					DefineErrorResponse(http.StatusInternalServerError, "Internal server error occurred"),
 					router.DefineResponse(http.StatusGone, "Website is broken or deleted", router.WithJSONContent(dto.GatewayWebsiteStatusResponse{})),
 				)),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/internal/websites/events", a.handleWebsiteSSE,
+			router.WithSwagger(
+				router.WithSummary("Stream website events via SSE"),
+				router.WithDescription(`Server-Sent Events endpoint for gateway-to-portal communication.
+Streams website lifecycle events (published, removed) in real time.
+Requires X-Gateway-Secret header for authentication.`),
+				router.WithTags("Gateway"),
+				router.WithSuccessResponse(http.StatusOK, "SSE event stream"),
 			),
 		),
 	)
