@@ -39,6 +39,7 @@ import (
 var _ core.Protocol = (*Protocol)(nil)
 var _ core.StorageProtocol = (*Protocol)(nil)
 var _ core.ProtocolGetPinHandler = (*Protocol)(nil)
+var _ core.ProtocolDAGProvider = (*Protocol)(nil)
 var _ core.ProtocolPinHandler = (*pinHandler)(nil)
 
 // Helper functions for operation names
@@ -304,6 +305,24 @@ func (p *Protocol) GetPeerTracker() *ipfs.BlockRequestTracker {
 
 func (p *Protocol) GetMetadataStore() pluginCore.MetadataStore {
 	return p.metadataStore
+}
+
+// BlockChildren returns the ordered child CIDs of a block.
+// Delegates to MetadataStore.
+func (p *Protocol) BlockChildren(ctx context.Context, c cid.Cid, max *int) ([]cid.Cid, error) {
+	return p.GetMetadataStore().BlockChildren(ctx, c, max)
+}
+
+// BlockSize returns the size of a block in bytes.
+// Delegates to MetadataStore.Size.
+func (p *Protocol) BlockSize(ctx context.Context, c cid.Cid) (uint64, error) {
+	return p.GetMetadataStore().Size(ctx, c)
+}
+
+// ResolveDAG resolves the complete block graph rooted at rootCID in a single
+// batch SQL query (recursive CTE). Delegates to MetadataStore.
+func (p *Protocol) ResolveDAG(ctx context.Context, rootCID cid.Cid) ([]core.DAGBlockNode, error) {
+	return p.GetMetadataStore().ResolveDAG(ctx, rootCID)
 }
 
 func (p *Protocol) GetNodeFactory() *ipfs.NodeFactory {
