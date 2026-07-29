@@ -42,6 +42,19 @@ func (r *DomainResponse) FromModel(m *db.WebsiteDomain) error {
 	return nil
 }
 
+// DomainListResponse is a swagger-only DTO that represents the paginated response for domains.
+// It merges the generic queryutil.Response[dto.DomainResponse] for OpenAPI documentation.
+//
+// This struct exists due to a TODO bug where queryutil.Response generics are not getting detected
+// properly as an array type in the swagger documentation generation. By providing a concrete struct,
+// we ensure the swagger docs correctly show the data field as an array of DomainResponse items.
+//
+// Note: This struct is only used for swagger documentation, not for actual encoding.
+type DomainListResponse struct {
+	Data  []DomainResponse `json:"data"`
+	Total int64            `json:"total"`
+}
+
 var _ httputil.DTOValidator = (*DomainRequest)(nil)
 var _ httputil.DTORequest[*DomainRequest] = (*DomainRequest)(nil)
 var _ httputil.DTOResponse[*db.WebsiteDomain] = (*DomainResponse)(nil)
