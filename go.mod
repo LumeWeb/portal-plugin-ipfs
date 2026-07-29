@@ -46,7 +46,7 @@ require (
 	go.lumeweb.com/dane v0.0.1
 	go.lumeweb.com/httputil v0.5.6
 	go.lumeweb.com/ipfs-content v0.1.17
-	go.lumeweb.com/portal v0.5.2-0.20260727183439-11ece2045795
+	go.lumeweb.com/portal v0.5.2-0.20260729095724-94fb4733a077
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.1.0
 	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260727174827-1094f19b4797
