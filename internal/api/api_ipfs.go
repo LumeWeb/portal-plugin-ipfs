@@ -21,7 +21,7 @@ func (a *API) handleIPFSGet(c echo.Context) error {
 	ctx := httputil.Context(c)
 
 	req := dto.IPFSRequest{}
-	model, ok := httputil.DecodeAndValidateRequest(ctx, &req)
+	model, ok := httputil.DecodeAndValidatePathRequest(ctx, &req)
 
 	if !ok {
 		return nil

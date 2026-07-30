@@ -26,7 +26,7 @@ func (a *API) handleGetDAG(c echo.Context) error {
 	ctx := httputil.Context(c)
 
 	req := dto.GetDAGRequest{}
-	model, ok := httputil.DecodeAndValidateRequest(ctx, &req)
+	model, ok := httputil.DecodeAndValidatePathRequest(ctx, &req)
 	if !ok {
 		return nil
 	}

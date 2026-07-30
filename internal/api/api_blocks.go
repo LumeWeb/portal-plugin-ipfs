@@ -17,7 +17,7 @@ func (a *API) handleGetBlockMeta(c echo.Context) error {
 	ctx := httputil.Context(c)
 
 	req := dto.GetBlockMetaRequest{}
-	model, ok := httputil.DecodeAndValidateRequest(ctx, &req)
+	model, ok := httputil.DecodeAndValidatePathRequest(ctx, &req)
 
 	if !ok {
 		return nil
