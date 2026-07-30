@@ -40,6 +40,7 @@ var _ core.Protocol = (*Protocol)(nil)
 var _ core.StorageProtocol = (*Protocol)(nil)
 var _ core.ProtocolGetPinHandler = (*Protocol)(nil)
 var _ core.ProtocolDAGProvider = (*Protocol)(nil)
+var _ core.ProtocolExportAccessController = (*Protocol)(nil)
 var _ core.ProtocolPinHandler = (*pinHandler)(nil)
 
 // Helper functions for operation names
@@ -311,6 +312,13 @@ func (p *Protocol) GetMetadataStore() pluginCore.MetadataStore {
 // Delegates to MetadataStore.
 func (p *Protocol) BlockChildren(ctx context.Context, c cid.Cid, max *int) ([]cid.Cid, error) {
 	return p.GetMetadataStore().BlockChildren(ctx, c, max)
+}
+
+// CanExportCID allows export of any CID. IPFS content is public and
+// content-addressed — there are no protocol-level access restrictions
+// on reading block data or DAG structure.
+func (p *Protocol) CanExportCID(ctx context.Context, cidStr string) (bool, error) {
+	return true, nil
 }
 
 // BlockSize returns the size of a block in bytes.
