@@ -58,7 +58,7 @@ func createTestDeletedIPFSGatewayWebsite(id, userID uint, domain string, testCID
 }
 
 func TestAPI_GetGatewayWebsite(t *testing.T) {
-	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		helper := newMockHelper(t, ctx)
 		domain := TestDomain
@@ -129,7 +129,7 @@ func TestAPI_GetGatewayWebsite_InvalidSecret(t *testing.T) {
 }
 
 func TestAPI_GetGatewayWebsite_BrokenSite(t *testing.T) {
-	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		helper := newMockHelper(t, ctx)
 		domain := "broken.example.com"
@@ -158,7 +158,7 @@ func TestAPI_GetGatewayWebsite_BrokenSite(t *testing.T) {
 }
 
 func TestAPI_GetGatewayWebsite_DeletedSite(t *testing.T) {
-	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		helper := newMockHelper(t, ctx)
 		domain := "deleted.example.com"
@@ -186,7 +186,7 @@ func TestAPI_GetGatewayWebsite_DeletedSite(t *testing.T) {
 }
 
 func TestAPI_GetGatewayWebsite_NotFound(t *testing.T) {
-	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
 		helper := newMockHelper(t, ctx)
 		domain := "nonexistent.example.com"
@@ -285,12 +285,12 @@ func TestAPI_GetGatewayWebsiteStatus_NotFound(t *testing.T) {
 }
 
 func TestAPI_GetGatewayWebsite_ServiceError(t *testing.T) {
-	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		helper := newMockHelper(t, ctx)
 		domain := "error.example.com"
 		
 		mockWebsiteService := core.GetService[*mocks.MockWebsiteService](helper.ctx, pluginCore.WEBSITE_SERVICE)
-		mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, domain).Return(nil, errors.New("database error"))
+		mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, domain).Return(nil, pluginDb.DomainNamespaceICANN, errors.New("database error"))
 		
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/websites/"+domain, nil)
 		req.Header.Set("X-Gateway-Secret", testGatewaySecret())

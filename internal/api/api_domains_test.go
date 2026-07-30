@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 )
 
@@ -17,16 +17,16 @@ func TestAPI_DeleteDomain(t *testing.T) {
 			token, userID, testCID, _ := helper.SetupAuthenticatedTest()
 
 			// Create a website to attach the domain to.
-			website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, db.WebsiteStatusActive)
+			website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
 			require.NoError(t, ctx.DB().Create(website).Error)
 
 			// Create a domain binding.
-			wd := &db.WebsiteDomain{
+			wd := &pluginDb.WebsiteDomain{
 				WebsiteID: 1,
 				UserID:    userID,
 				Domain:    "example.com",
-				Namespace: db.DomainNamespaceICANN,
-				Status:    db.DomainStatusDraft,
+				Namespace: pluginDb.DomainNamespaceICANN,
+				Status:    pluginDb.DomainStatusDraft,
 			}
 			require.NoError(t, ctx.DB().Create(wd).Error)
 
@@ -36,16 +36,16 @@ func TestAPI_DeleteDomain(t *testing.T) {
 
 			// The record should be gone (hard-deleted, not soft-deleted).
 			var count int64
-			ctx.DB().Unscoped().Model(&db.WebsiteDomain{}).Where("domain = ? AND namespace = ?", "example.com", db.DomainNamespaceICANN).Count(&count)
+			ctx.DB().Unscoped().Model(&pluginDb.WebsiteDomain{}).Where("domain = ? AND namespace = ?", "example.com", pluginDb.DomainNamespaceICANN).Count(&count)
 			assert.Zero(t, count, "domain should be hard-deleted, not soft-deleted")
 
 			// Re-create the same domain+namespace — should succeed (no unique collision).
-			wd2 := &db.WebsiteDomain{
+			wd2 := &pluginDb.WebsiteDomain{
 				WebsiteID: 1,
 				UserID:    userID,
 				Domain:    "example.com",
-				Namespace: db.DomainNamespaceICANN,
-				Status:    db.DomainStatusDraft,
+				Namespace: pluginDb.DomainNamespaceICANN,
+				Status:    pluginDb.DomainStatusDraft,
 			}
 			err := ctx.DB().Create(wd2).Error
 			assert.NoError(t, err, "re-creating same domain+namespace after hard delete should succeed")
@@ -58,16 +58,16 @@ func TestAPI_DeleteDomain(t *testing.T) {
 			token, userID, testCID, _ := helper.SetupAuthenticatedTest()
 
 			// Create a website owned by the authenticated user.
-			website := createTestIPFSGatewayWebsite(1, userID, "other.com", testCID, db.WebsiteStatusActive)
+			website := createTestIPFSGatewayWebsite(1, userID, "other.com", testCID, pluginDb.WebsiteStatusActive)
 			require.NoError(t, ctx.DB().Create(website).Error)
 
 			// Create a domain binding owned by a different user.
-			wd := &db.WebsiteDomain{
+			wd := &pluginDb.WebsiteDomain{
 				WebsiteID: 1,
 				UserID:    userID + 100, // different user
 				Domain:    "other.com",
-				Namespace: db.DomainNamespaceICANN,
-				Status:    db.DomainStatusDraft,
+				Namespace: pluginDb.DomainNamespaceICANN,
+				Status:    pluginDb.DomainStatusDraft,
 			}
 			require.NoError(t, ctx.DB().Create(wd).Error)
 

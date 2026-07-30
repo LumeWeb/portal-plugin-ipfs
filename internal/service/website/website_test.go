@@ -613,7 +613,7 @@ func TestWebsiteService_GetWebsiteByDomain(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Act
-		retrievedWebsite, err := websiteService.GetWebsiteByDomain(context.Background(), "domain-test.com")
+		retrievedWebsite, _, err := websiteService.GetWebsiteByDomain(context.Background(), "domain-test.com")
 
 		// Assert
 		require.NoError(tb, err)
@@ -630,7 +630,7 @@ func TestWebsiteService_GetWebsiteByDomain_NotFound(t *testing.T) {
 		require.NotNil(tb, websiteService)
 
 		// Act
-		retrievedWebsite, err := websiteService.GetWebsiteByDomain(context.Background(), "nonexistent.com")
+		retrievedWebsite, _, err := websiteService.GetWebsiteByDomain(context.Background(), "nonexistent.com")
 
 		// Assert - GetWebsiteByDomain returns (nil, nil) for not found (no error)
 		require.NoError(tb, err)
@@ -1095,7 +1095,7 @@ func TestWebsiteService_UpdateSSLStatus_IssuedAtSetOnlyOnReadyTransition(t *test
 		require.NoError(tb, err)
 
 		// Check website after first update
-		websiteAfterIssuing, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
+		websiteAfterIssuing, _, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
 		require.NoError(tb, err)
 		assert.Nil(tb, websiteAfterIssuing.SSLIssuedAt)
 
@@ -1104,7 +1104,7 @@ func TestWebsiteService_UpdateSSLStatus_IssuedAtSetOnlyOnReadyTransition(t *test
 		require.NoError(tb, err)
 
 		// Check website after ready transition
-		websiteAfterReady, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
+		websiteAfterReady, _, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
 		require.NoError(tb, err)
 		assert.NotNil(tb, websiteAfterReady.SSLIssuedAt)
 
@@ -1115,7 +1115,7 @@ func TestWebsiteService_UpdateSSLStatus_IssuedAtSetOnlyOnReadyTransition(t *test
 		require.NoError(tb, err)
 
 		// Check website after second ready update
-		websiteAfterSecondReady, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
+		websiteAfterSecondReady, _, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
 		require.NoError(tb, err)
 		assert.NotNil(tb, websiteAfterSecondReady.SSLIssuedAt)
 		assert.Equal(tb, originalIssuedAt.Unix(), websiteAfterSecondReady.SSLIssuedAt.Unix(), "issued_at should not change when already ready")
@@ -1165,7 +1165,7 @@ func TestWebsiteService_UpdateSSLStatus_ErrorClearedOnStatusChange(t *testing.T)
 		require.NoError(tb, err)
 
 		// Verify error is set
-		websiteAfterFailed, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
+		websiteAfterFailed, _, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
 		require.NoError(tb, err)
 		assert.Equal(tb, testErrorMsg, websiteAfterFailed.SSLError)
 
@@ -1234,7 +1234,7 @@ func TestWebsiteService_UpdateSSLStatus_AtomicUpdates(t *testing.T) {
 		}
 
 		// Assert - Final state should be consistent (no data corruption)
-		finalWebsite, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
+		finalWebsite, _, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
 		require.NoError(tb, err)
 		assert.NotNil(tb, finalWebsite)
 
@@ -2303,7 +2303,7 @@ func TestWebsiteService_CreateWebsite_InheritsSSLFromSoftDeletedWebsite(t *testi
 		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 
-		_, err = websiteService.GetWebsiteByDomain(context.Background(), domain)
+		_, _, err = websiteService.GetWebsiteByDomain(context.Background(), domain)
 		require.NoError(tb, err)
 
 		newWebsite := createTestIPFSWebsite(testUserID1, domain, testCID.String())

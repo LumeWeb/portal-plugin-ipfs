@@ -567,7 +567,7 @@ func (_c *MockWebsiteService_GetWebsite_Call) RunAndReturn(run func(ctx context.
 }
 
 // GetWebsiteByDomain provides a mock function for the type MockWebsiteService
-func (_mock *MockWebsiteService) GetWebsiteByDomain(ctx context.Context, domain string) (*db.Website, error) {
+func (_mock *MockWebsiteService) GetWebsiteByDomain(ctx context.Context, domain string) (*db.Website, db.DomainNamespace, error) {
 	ret := _mock.Called(ctx, domain)
 
 	if len(ret) == 0 {
@@ -575,8 +575,9 @@ func (_mock *MockWebsiteService) GetWebsiteByDomain(ctx context.Context, domain 
 	}
 
 	var r0 *db.Website
-	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*db.Website, error)); ok {
+	var r1 db.DomainNamespace
+	var r2 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*db.Website, db.DomainNamespace, error)); ok {
 		return returnFunc(ctx, domain)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string) *db.Website); ok {
@@ -586,12 +587,17 @@ func (_mock *MockWebsiteService) GetWebsiteByDomain(ctx context.Context, domain 
 			r0 = ret.Get(0).(*db.Website)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) db.DomainNamespace); ok {
 		r1 = returnFunc(ctx, domain)
 	} else {
-		r1 = ret.Error(1)
+		r1 = ret.Get(1).(db.DomainNamespace)
 	}
-	return r0, r1
+	if returnFunc, ok := ret.Get(2).(func(context.Context, string) error); ok {
+		r2 = returnFunc(ctx, domain)
+	} else {
+		r2 = ret.Error(2)
+	}
+	return r0, r1, r2
 }
 
 // MockWebsiteService_GetWebsiteByDomain_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetWebsiteByDomain'
@@ -624,12 +630,12 @@ func (_c *MockWebsiteService_GetWebsiteByDomain_Call) Run(run func(ctx context.C
 	return _c
 }
 
-func (_c *MockWebsiteService_GetWebsiteByDomain_Call) Return(website *db.Website, err error) *MockWebsiteService_GetWebsiteByDomain_Call {
-	_c.Call.Return(website, err)
+func (_c *MockWebsiteService_GetWebsiteByDomain_Call) Return(website *db.Website, domainNamespace db.DomainNamespace, err error) *MockWebsiteService_GetWebsiteByDomain_Call {
+	_c.Call.Return(website, domainNamespace, err)
 	return _c
 }
 
-func (_c *MockWebsiteService_GetWebsiteByDomain_Call) RunAndReturn(run func(ctx context.Context, domain string) (*db.Website, error)) *MockWebsiteService_GetWebsiteByDomain_Call {
+func (_c *MockWebsiteService_GetWebsiteByDomain_Call) RunAndReturn(run func(ctx context.Context, domain string) (*db.Website, db.DomainNamespace, error)) *MockWebsiteService_GetWebsiteByDomain_Call {
 	_c.Call.Return(run)
 	return _c
 }

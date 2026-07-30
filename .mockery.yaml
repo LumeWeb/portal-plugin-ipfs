@@ -1,6 +1,4 @@
 template: testify
-template-data:
-  unroll-variadic: true
 filename: "Mock{{.InterfaceName}}.go"
 pkgname: "mocks"
 dir: ./internal/testing/mocks
