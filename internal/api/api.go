@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
 
 	routingServer "github.com/ipfs/boxo/routing/http/server"
 	"github.com/ipld/go-car/v2"
@@ -434,8 +436,12 @@ See also:.*`),
 				router.WithRequestBody(&dto.GetBlockMetaBatchRequest{}, "Batch request for block metadata", true),
 			),
 		),
+	)
+
+	// DAG route is public — IPFS content is content-addressed and not user-scoped.
+	// See handleGetDAG doc comment for rationale.
+	dagRoutes := router.DefineRoutes(
 		router.NewRoute(http.MethodGet, "/dag/:cid", a.handleGetDAG,
-			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Resolve block DAG"),
 				router.WithDescription(`Resolves the complete block graph (DAG) for a root CID in a single query.
@@ -454,6 +460,40 @@ See also: GET /block/meta/:cid (single block metadata)`),
 
 	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), ipfsRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register ipfs routes: %w", err)
+	}
+
+	// DAG route is registered without auth middleware — it exposes public,
+	// content-addressed IPFS data that is derivable from any gateway.
+	// Per-IP rate limiting protects the recursive DAG CTE from abuse.
+	// Gateway IPs and private networks bypass the limiter.
+	protoCfg := core.GetProtocolConfig[*pluginConfig.ProtocolConfig](a.Context(), internal.ProtocolName)
+	allowNets := pluginMw.AppendGatewayNets(pluginMw.DefaultDAGAllowNets(), protoCfg.Gateways)
+
+	// Build a trusted-proxy-aware IP extractor so forged X-Forwarded-For /
+	// X-Real-IP headers cannot bypass per-IP throttling.
+	var trustOpts []echo.TrustOption
+	for _, proxy := range protoCfg.TrustedProxies {
+		if _, ipNet, err := net.ParseCIDR(proxy); err == nil {
+			trustOpts = append(trustOpts, echo.TrustIPRange(ipNet))
+		} else if ip := net.ParseIP(proxy); ip != nil {
+			bits := 32
+			if ip.To4() == nil {
+				bits = 128
+			}
+			if _, ipNet, err := net.ParseCIDR(ip.String() + "/" + strconv.Itoa(bits)); err == nil {
+				trustOpts = append(trustOpts, echo.TrustIPRange(ipNet))
+			}
+		}
+	}
+	ipExtractor := echo.ExtractIPFromXFFHeader(trustOpts...)
+
+	dagRateLimitMw := pluginMw.NewDAGRateLimiterMiddleware(pluginMw.DAGRateLimiterConfig{
+		AllowNets:   allowNets,
+		IPExtractor: ipExtractor,
+	})
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), dagRoutes,
+		router.WithMiddlewares(dagRateLimitMw), router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register dag routes: %w", err)
 	}
 
 	ipfsContentRoutes := router.DefineRoutes(
