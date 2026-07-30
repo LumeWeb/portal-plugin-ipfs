@@ -190,9 +190,9 @@ func (m *mockHelper) SetupWebsiteServiceMocks(domain string, website *pluginDb.W
 	mockWebsiteService := core.GetService[*mocks.MockWebsiteService](m.ctx, pluginCore.WEBSITE_SERVICE)
 
 	if website != nil {
-		mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, domain).Return(website, nil).Maybe()
+		mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, domain).Return(website, pluginDb.DomainNamespaceICANN, nil).Maybe()
 	} else {
-		mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, domain).Return(nil, nil).Maybe()
+		mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, domain).Return(nil, pluginDb.DomainNamespaceICANN, nil).Maybe()
 	}
 
 	return mockWebsiteService

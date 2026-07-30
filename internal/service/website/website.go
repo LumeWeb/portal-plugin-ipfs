@@ -195,7 +195,7 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 			}
 
 			// Check if domain already exists
-			existing, err := s.GetWebsiteByDomain(ctx, website.Domain)
+			existing, _, err := s.GetWebsiteByDomain(ctx, website.Domain)
 			if err != nil && err != gorm.ErrRecordNotFound {
 				return nil, fmt.Errorf("failed to check existing domain: %w", err)
 			}
@@ -397,16 +397,18 @@ func (s *WebsiteServiceDefault) GetWebsite(ctx context.Context, userID uint, web
 	)
 }
 
-// GetWebsiteByDomain retrieves a website by domain name.
-// It first checks the website_domains join table (for alt-root/DANE domains),
-// then falls back to the legacy ipfs_websites.domain column for backward compatibility.
-func (s *WebsiteServiceDefault) GetWebsiteByDomain(ctx context.Context, domain string) (*pluginDb.Website, error) {
+// GetWebsiteByDomain retrieves a website by domain name, along with its
+// namespace. For alt-root domains the namespace comes from website_domains;
+// for legacy ipfs_websites.domain lookups it defaults to ICANN.
+func (s *WebsiteServiceDefault) GetWebsiteByDomain(ctx context.Context, domain string) (*pluginDb.Website, pluginDb.DomainNamespace, error) {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.GetWebsiteByDomain")
 	defer span.End()
 
 	domain = domsvc.NormalizeDomain(domain)
 
-	return core.MetricTrackResult(
+	var namespace pluginDb.DomainNamespace
+
+	website, err := core.MetricTrackResult(
 		GetWebsiteByDomainDuration.WithLabelValues(),
 		GetWebsiteByDomainTotal.WithLabelValues(LabelStatusError),
 		func() (*pluginDb.Website, error) {
@@ -415,15 +417,16 @@ func (s *WebsiteServiceDefault) GetWebsiteByDomain(ctx context.Context, domain s
 				wd, err := s.delegatedDomainSvc.GetWebsiteDomainByName(ctx, domain)
 				if err == nil && wd != nil && !wd.DeletedAt.Valid {
 					var website pluginDb.Website
-						if err := s.DB().WithContext(ctx).
-							Where("id = ?", wd.WebsiteID).
-							First(&website).Error; err != nil {
-							if errors.Is(err, gorm.ErrRecordNotFound) {
-								return nil, nil
-							}
-							return nil, fmt.Errorf("failed to get website by domain (join): %w", err)
+					if err := s.DB().WithContext(ctx).
+						Where("id = ?", wd.WebsiteID).
+						First(&website).Error; err != nil {
+						if errors.Is(err, gorm.ErrRecordNotFound) {
+							return nil, nil
 						}
-						return &website, nil
+						return nil, fmt.Errorf("failed to get website by domain (join): %w", err)
+					}
+					namespace = wd.Namespace
+					return &website, nil
 				}
 			}
 
@@ -442,6 +445,13 @@ func (s *WebsiteServiceDefault) GetWebsiteByDomain(ctx context.Context, domain s
 			return &website, nil
 		},
 	)
+	if err != nil {
+		return nil, pluginDb.DomainNamespaceICANN, err
+	}
+	if namespace == "" {
+		namespace = pluginDb.DomainNamespaceICANN
+	}
+	return website, namespace, err
 }
 
 // ListWebsites retrieves a paginated and filtered list of websites

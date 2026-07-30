@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	mocks "go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
@@ -23,14 +23,14 @@ import (
 )
 
 // Helper function to create a mock IPFS website
-func createMockIPFSWebsite(id, userID uint, domain string, testCID string, status db.WebsiteStatus, token string) *db.Website {
+func createMockIPFSWebsite(id, userID uint, domain string, testCID string, status pluginDb.WebsiteStatus, token string) *pluginDb.Website {
 	c := cid.MustParse(testCID)
 	version := uint8(c.Version())
-	return &db.Website{
+	return &pluginDb.Website{
 		ID:              id,
 		UserID:          userID,
 		Domain:          domain,
-		TargetType:      string(db.WebsiteTargetTypeIPFS),
+		TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
 		TargetMultihash: c.Hash(),
 		CIDVersion:      &version,
 		Status:          string(status),
@@ -39,13 +39,13 @@ func createMockIPFSWebsite(id, userID uint, domain string, testCID string, statu
 }
 
 // Helper function to create a mock IPNS website
-func createMockIPNSWebsite(id, userID uint, domain string, peerIDStr string, status db.WebsiteStatus, token string) *db.Website {
-	target, _ := db.NewIPNSTargetFromString(peerIDStr)
-	return &db.Website{
+func createMockIPNSWebsite(id, userID uint, domain string, peerIDStr string, status pluginDb.WebsiteStatus, token string) *pluginDb.Website {
+	target, _ := pluginDb.NewIPNSTargetFromString(peerIDStr)
+	return &pluginDb.Website{
 		ID:              id,
 		UserID:          userID,
 		Domain:          domain,
-		TargetType:      string(db.WebsiteTargetTypeIPNS),
+		TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
 		TargetMultihash: target.ToMultihash(),
 		CIDVersion:      nil,
 		Status:          string(status),
@@ -69,7 +69,7 @@ func TestAPI_CreateWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusPendingValidation, "test-token")
+			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, pluginDb.WebsiteStatusPendingValidation, "test-token")
 
 			mockWebsiteService.EXPECT().CreateWebsite(mock.Anything, mock.AnythingOfType("*db.Website")).Return(mockWebsite, nil)
 
@@ -97,7 +97,7 @@ func TestAPI_CreateWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := createMockIPNSWebsite(1, userID, TestDomain, TestPeerID, db.WebsiteStatusPendingValidation, "test-token")
+			mockWebsite := createMockIPNSWebsite(1, userID, TestDomain, TestPeerID, pluginDb.WebsiteStatusPendingValidation, "test-token")
 
 			mockWebsiteService.EXPECT().CreateWebsite(mock.Anything, mock.AnythingOfType("*db.Website")).Return(mockWebsite, nil)
 
@@ -186,7 +186,7 @@ func TestAPI_CreateWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusBroken, "test-token")
+			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, pluginDb.WebsiteStatusBroken, "test-token")
 
 			mockWebsiteService.EXPECT().CreateWebsite(mock.Anything, mock.AnythingOfType("*db.Website")).Return(mockWebsite, nil)
 
@@ -220,17 +220,17 @@ func TestAPI_GetSSLStatus(t *testing.T) {
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			timestamp := time.Now().UTC()
-			mockWebsite := &db.Website{
+			mockWebsite := &pluginDb.Website{
 				ID:              1,
 				UserID:          userID,
 				Domain:          TestDomain,
-				TargetType:      string(db.WebsiteTargetTypeIPFS),
-				Status:          string(db.WebsiteStatusActive),
-				SSLStatus:       string(db.SSLStatusReady),
+				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+				Status:          string(pluginDb.WebsiteStatusActive),
+				SSLStatus:       string(pluginDb.SSLStatusReady),
 				SSLLastUpdatedAt: &timestamp,
 			}
 
-			mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, TestDomain).Return(mockWebsite, nil)
+			mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, TestDomain).Return(mockWebsite, pluginDb.DomainNamespaceICANN, nil)
 
 			rec := helper.makeRequest(http.MethodGet, "/api/websites/"+TestDomain+"/ssl-status", nil)
 
@@ -253,17 +253,17 @@ func TestAPI_GetSSLStatus(t *testing.T) {
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			timestamp := time.Now().UTC()
-			mockWebsite := &db.Website{
+			mockWebsite := &pluginDb.Website{
 				ID:              1,
 				UserID:          userID,
 				Domain:          TestDomain,
-				TargetType:      string(db.WebsiteTargetTypeIPFS),
-				Status:          string(db.WebsiteStatusActive),
-				SSLStatus:       string(db.SSLStatusPending),
+				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+				Status:          string(pluginDb.WebsiteStatusActive),
+				SSLStatus:       string(pluginDb.SSLStatusPending),
 				SSLLastUpdatedAt: &timestamp,
 			}
 
-			mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, TestDomain).Return(mockWebsite, nil)
+			mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, TestDomain).Return(mockWebsite, pluginDb.DomainNamespaceICANN, nil)
 
 			rec := helper.makeRequest(http.MethodGet, "/api/websites/"+TestDomain+"/ssl-status", nil)
 
@@ -282,7 +282,7 @@ func TestAPI_GetSSLStatus(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, TestDomain).Return(nil, nil)
+			mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, TestDomain).Return(nil, pluginDb.DomainNamespaceICANN, nil)
 
 			rec := helper.makeRequest(http.MethodGet, "/api/websites/"+TestDomain+"/ssl-status", nil)
 
@@ -311,17 +311,17 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			timestamp := time.Now().UTC()
-			mockWebsite := &db.Website{
+			mockWebsite := &pluginDb.Website{
 				ID:              1,
 				UserID:          userID,
 				Domain:          TestDomain,
-				TargetType:      string(db.WebsiteTargetTypeIPFS),
-				Status:          string(db.WebsiteStatusActive),
-				SSLStatus:       string(db.SSLStatusReady),
+				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+				Status:          string(pluginDb.WebsiteStatusActive),
+				SSLStatus:       string(pluginDb.SSLStatusReady),
 				SSLLastUpdatedAt: &timestamp,
 			}
 
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
 
 			reqBody := fmt.Sprintf(`{"status":"ready","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
 			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody))
@@ -345,18 +345,18 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			timestamp := time.Now().UTC()
-			mockWebsite := &db.Website{
+			mockWebsite := &pluginDb.Website{
 				ID:              1,
 				UserID:          userID,
 				Domain:          TestDomain,
-				TargetType:      string(db.WebsiteTargetTypeIPFS),
-				Status:          string(db.WebsiteStatusActive),
-				SSLStatus:       string(db.SSLStatusFailed),
+				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+				Status:          string(pluginDb.WebsiteStatusActive),
+				SSLStatus:       string(pluginDb.SSLStatusFailed),
 				SSLError:        "certificate validation failed",
 				SSLLastUpdatedAt: &timestamp,
 			}
 
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusFailed, "certificate validation failed", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusFailed, "certificate validation failed", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
 
 			reqBody := fmt.Sprintf(`{"status":"failed","error":"certificate validation failed","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
 			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody))
@@ -381,17 +381,17 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			timestamp := time.Now().UTC()
-			mockWebsite := &db.Website{
+			mockWebsite := &pluginDb.Website{
 				ID:              1,
 				UserID:          userID,
 				Domain:          TestDomain,
-				TargetType:      string(db.WebsiteTargetTypeIPFS),
-				Status:          string(db.WebsiteStatusActive),
-				SSLStatus:       string(db.SSLStatusPending),
+				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+				Status:          string(pluginDb.WebsiteStatusActive),
+				SSLStatus:       string(pluginDb.SSLStatusPending),
 				SSLLastUpdatedAt: &timestamp,
 			}
 
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusPending, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusPending, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
 
 			reqBody := fmt.Sprintf(`{"status":"pending","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
 			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody))
@@ -415,17 +415,17 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			timestamp := time.Now().UTC()
-			mockWebsite := &db.Website{
+			mockWebsite := &pluginDb.Website{
 				ID:              1,
 				UserID:          userID,
 				Domain:          TestDomain,
-				TargetType:      string(db.WebsiteTargetTypeIPFS),
-				Status:          string(db.WebsiteStatusActive),
-				SSLStatus:       string(db.SSLStatusIssuing),
+				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+				Status:          string(pluginDb.WebsiteStatusActive),
+				SSLStatus:       string(pluginDb.SSLStatusIssuing),
 				SSLLastUpdatedAt: &timestamp,
 			}
 
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusIssuing, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusIssuing, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
 
 			reqBody := fmt.Sprintf(`{"status":"issuing","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
 			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody))
@@ -501,7 +501,7 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusReady, "", (*time.Time)(nil)).Return(nil, errors.New("website not found"))
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusReady, "", (*time.Time)(nil)).Return(nil, errors.New("website not found"))
 
 			reqBody := `{"status":"ready"}`
 			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody))
@@ -516,7 +516,7 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusReady, "", (*time.Time)(nil)).Return(nil, errors.New("database error"))
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusReady, "", (*time.Time)(nil)).Return(nil, errors.New("database error"))
 
 			reqBody := `{"status":"ready"}`
 			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody))
@@ -533,17 +533,17 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			timestamp := time.Now().UTC()
-			mockWebsite := &db.Website{
+			mockWebsite := &pluginDb.Website{
 				ID:              1,
 				UserID:          userID,
 				Domain:          TestDomain,
-				TargetType:      string(db.WebsiteTargetTypeIPFS),
-				Status:          string(db.WebsiteStatusActive),
-				SSLStatus:       string(db.SSLStatusReady),
+				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+				Status:          string(pluginDb.WebsiteStatusActive),
+				SSLStatus:       string(pluginDb.SSLStatusReady),
 				SSLLastUpdatedAt: &timestamp,
 			}
 
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil).Times(2)
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil).Times(2)
 
 			reqBody := fmt.Sprintf(`{"status":"ready","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
 
@@ -566,39 +566,39 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			timestamp2 := timestamp1.Add(time.Minute)
 			timestamp3 := timestamp2.Add(time.Hour)
 
-			mockWebsitePending := &db.Website{
+			mockWebsitePending := &pluginDb.Website{
 				ID:              1,
 				UserID:          userID,
 				Domain:          TestDomain,
-				TargetType:      string(db.WebsiteTargetTypeIPFS),
-				Status:          string(db.WebsiteStatusActive),
-				SSLStatus:       string(db.SSLStatusPending),
+				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+				Status:          string(pluginDb.WebsiteStatusActive),
+				SSLStatus:       string(pluginDb.SSLStatusPending),
 				SSLLastUpdatedAt: &timestamp1,
 			}
 
-			mockWebsiteIssuing := &db.Website{
+			mockWebsiteIssuing := &pluginDb.Website{
 				ID:              1,
 				UserID:          userID,
 				Domain:          TestDomain,
-				TargetType:      string(db.WebsiteTargetTypeIPFS),
-				Status:          string(db.WebsiteStatusActive),
-				SSLStatus:       string(db.SSLStatusIssuing),
+				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+				Status:          string(pluginDb.WebsiteStatusActive),
+				SSLStatus:       string(pluginDb.SSLStatusIssuing),
 				SSLLastUpdatedAt: &timestamp2,
 			}
 
-			mockWebsiteReady := &db.Website{
+			mockWebsiteReady := &pluginDb.Website{
 				ID:              1,
 				UserID:          userID,
 				Domain:          TestDomain,
-				TargetType:      string(db.WebsiteTargetTypeIPFS),
-				Status:          string(db.WebsiteStatusActive),
-				SSLStatus:       string(db.SSLStatusReady),
+				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+				Status:          string(pluginDb.WebsiteStatusActive),
+				SSLStatus:       string(pluginDb.SSLStatusReady),
 				SSLLastUpdatedAt: &timestamp3,
 			}
 
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusPending, "", mock.AnythingOfType("*time.Time")).Return(mockWebsitePending, nil)
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusIssuing, "", mock.AnythingOfType("*time.Time")).Return(mockWebsiteIssuing, nil)
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, db.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockWebsiteReady, nil)
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusPending, "", mock.AnythingOfType("*time.Time")).Return(mockWebsitePending, nil)
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusIssuing, "", mock.AnythingOfType("*time.Time")).Return(mockWebsiteIssuing, nil)
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockWebsiteReady, nil)
 
 			reqBody1 := fmt.Sprintf(`{"status":"pending","timestamp":"%s"}`, timestamp1.Format(time.RFC3339))
 			rec1 := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody1))
@@ -640,9 +640,9 @@ func TestAPI_ListWebsites(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsites := []*db.Website{
-				createMockIPFSWebsite(1, userID, "example1.com", TestCID, db.WebsiteStatusActive, ""),
-				createMockIPNSWebsite(2, userID, "example2.com", TestPeerID, db.WebsiteStatusPendingValidation, ""),
+			mockWebsites := []*pluginDb.Website{
+				createMockIPFSWebsite(1, userID, "example1.com", TestCID, pluginDb.WebsiteStatusActive, ""),
+				createMockIPNSWebsite(2, userID, "example2.com", TestPeerID, pluginDb.WebsiteStatusPendingValidation, ""),
 			}
 
 			mockWebsiteService.EXPECT().ListWebsites(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return(mockWebsites, int64(2), nil)
@@ -668,8 +668,8 @@ func TestAPI_ListWebsites(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsites := []*db.Website{
-				createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusActive, ""),
+			mockWebsites := []*pluginDb.Website{
+				createMockIPFSWebsite(1, userID, TestDomain, TestCID, pluginDb.WebsiteStatusActive, ""),
 			}
 
 			mockWebsiteService.EXPECT().ListWebsites(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return(mockWebsites, int64(1), nil)
@@ -692,7 +692,7 @@ func TestAPI_ListWebsites(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsiteService.EXPECT().ListWebsites(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return([]*db.Website{}, int64(0), nil)
+			mockWebsiteService.EXPECT().ListWebsites(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.Website{}, int64(0), nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites", token, nil)
 
@@ -714,9 +714,9 @@ func TestAPI_ListWebsites(t *testing.T) {
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			// Create 5 websites, but return only 2 for page 1
-			mockWebsites := []*db.Website{
-				createMockIPFSWebsite(1, userID, "example1.com", TestCID, db.WebsiteStatusActive, ""),
-				createMockIPNSWebsite(2, userID, "example2.com", TestPeerID, db.WebsiteStatusPendingValidation, ""),
+			mockWebsites := []*pluginDb.Website{
+				createMockIPFSWebsite(1, userID, "example1.com", TestCID, pluginDb.WebsiteStatusActive, ""),
+				createMockIPNSWebsite(2, userID, "example2.com", TestPeerID, pluginDb.WebsiteStatusPendingValidation, ""),
 			}
 
 			mockWebsiteService.EXPECT().ListWebsites(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return(mockWebsites, int64(5), nil)
@@ -768,7 +768,7 @@ func TestAPI_GetWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusActive, "")
+			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, pluginDb.WebsiteStatusActive, "")
 
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)
 
@@ -817,7 +817,7 @@ func TestAPI_GetWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusBroken, "")
+			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, pluginDb.WebsiteStatusBroken, "")
 
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)
 
@@ -845,7 +845,7 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := createMockIPFSWebsite(1, userID, "updated-example.com", TestCID, db.WebsiteStatusActive, "")
+			mockWebsite := createMockIPFSWebsite(1, userID, "updated-example.com", TestCID, pluginDb.WebsiteStatusActive, "")
 
 			mockWebsiteService.EXPECT().UpdateWebsite(mock.Anything, userID, uint(1), mock.AnythingOfType("map[string]interface {}")).Return(mockWebsite, nil)
 
@@ -869,7 +869,7 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := createMockIPFSWebsite(1, userID, "example.com", TestCID, db.WebsiteStatusActive, "")
+			mockWebsite := createMockIPFSWebsite(1, userID, "example.com", TestCID, pluginDb.WebsiteStatusActive, "")
 
 			mockWebsiteService.EXPECT().UpdateWebsite(mock.Anything, userID, uint(1), mock.AnythingOfType("map[string]interface {}")).Return(mockWebsite, nil)
 
@@ -904,7 +904,7 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := createMockIPFSWebsite(1, userID, "example.com", TestCID, db.WebsiteStatusActive, "")
+			mockWebsite := createMockIPFSWebsite(1, userID, "example.com", TestCID, pluginDb.WebsiteStatusActive, "")
 
 			mockWebsiteService.EXPECT().UpdateWebsite(mock.Anything, userID, uint(1), mock.AnythingOfType("map[string]interface {}")).Return(mockWebsite, nil)
 
@@ -1094,7 +1094,7 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusActive, "")
+			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, pluginDb.WebsiteStatusActive, "")
 
 			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(pluginCore.ValidateDNSResult{Valid: true, Message: "DNS validation successful for test.example.com", Reason: pluginCore.ValidationReasonValidated}, nil)
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)
@@ -1120,7 +1120,7 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, db.WebsiteStatusPendingValidation, "")
+			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, pluginDb.WebsiteStatusPendingValidation, "")
 
 			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(pluginCore.ValidateDNSResult{Valid: false, Message: "DNS validation failed: missing validation token for test.example.com", Reason: pluginCore.ValidationReasonTokenMissing}, nil)
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)

@@ -401,7 +401,7 @@ func (a *API) getSSLStatus(c echo.Context) error {
 		return ctx.Error(apiErr, http.StatusBadRequest)
 	}
 
-	website, err := a.websiteService.GetWebsiteByDomain(reqCtx, domain)
+	website, _, err := a.websiteService.GetWebsiteByDomain(reqCtx, domain)
 	if err != nil {
 		if strings.Contains(err.Error(), "website not found") {
 			apiErr := NewError(pluginEvents.ErrWebsiteNotFound, err)

@@ -42,8 +42,10 @@ type WebsiteService interface {
 	// GetWebsite retrieves a single website by ID
 	GetWebsite(ctx context.Context, userID uint, websiteID uint) (*pluginDb.Website, error)
 
-	// GetWebsiteByDomain retrieves a website by domain name
-	GetWebsiteByDomain(ctx context.Context, domain string) (*pluginDb.Website, error)
+	// GetWebsiteByDomain retrieves a website by domain name, along with its
+	// namespace (icann, hns). For legacy ipfs_websites.domain lookups the
+	// namespace defaults to ICANN.
+	GetWebsiteByDomain(ctx context.Context, domain string) (*pluginDb.Website, pluginDb.DomainNamespace, error)
 
 	// ListWebsites retrieves a paginated and filtered list of websites
 	ListWebsites(ctx context.Context, userID uint, filter []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.Website, int64, error)

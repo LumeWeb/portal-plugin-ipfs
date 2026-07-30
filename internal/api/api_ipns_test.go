@@ -17,15 +17,15 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"gorm.io/gorm"
 )
 
 // Helper function to create a test IPNS key
-func createTestIPNSKey(id, userID uint, name string, peerIDStr string) db.IPFSIPNSKey {
+func createTestIPNSKey(id, userID uint, name string, peerIDStr string) pluginDb.IPFSIPNSKey {
 	pid, _ := peer.Decode(peerIDStr)
-	return db.IPFSIPNSKey{
+	return pluginDb.IPFSIPNSKey{
 		ID:              id,
 		UserID:          userID,
 		Name:            name,
@@ -69,7 +69,7 @@ func TestAPI_CreateIPNSKey(t *testing.T) {
 			mockIPNSKeyService := helper.SetupIPNSServiceMocksNoDefaults(userID)
 
 			testPeerID, _ := peer.Decode(TestPeerID)
-			mockKey := &db.IPFSIPNSKey{
+			mockKey := &pluginDb.IPFSIPNSKey{
 				ID:              1,
 				UserID:          userID,
 				Name:            "imported-key",
@@ -138,13 +138,13 @@ func TestAPI_ListIPNSKeys(t *testing.T) {
 
 			mockIPNSKeyService := helper.SetupIPNSServiceMocks(userID)
 
-			mockKeys := []db.IPFSIPNSKey{
+			mockKeys := []pluginDb.IPFSIPNSKey{
 				createTestIPNSKey(1, userID, "key1", TestPeerID),
 				createTestIPNSKey(2, userID, "key2", "k51qzi5uqu5dljj4y7g7lq43z7z8p9c0f1e2d3c4b5a6987654321fedcba"),
 			}
 
 			// New implementation uses ListKeysWithFilters
-			keyPointers := []*db.IPFSIPNSKey{&mockKeys[0], &mockKeys[1]}
+			keyPointers := []*pluginDb.IPFSIPNSKey{&mockKeys[0], &mockKeys[1]}
 			mockIPNSKeyService.EXPECT().ListKeysWithFilters(
 				mock.Anything,
 				userID,
@@ -181,7 +181,7 @@ func TestAPI_ListIPNSKeys(t *testing.T) {
 				mock.Anything,
 				mock.Anything,
 				mock.Anything,
-			).Return([]*db.IPFSIPNSKey{}, int64(0), nil)
+			).Return([]*pluginDb.IPFSIPNSKey{}, int64(0), nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/ipns/keys", token, nil)
 

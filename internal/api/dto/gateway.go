@@ -8,10 +8,11 @@ import (
 
 // GatewayWebsiteResponse contains website configuration for the gateway
 type GatewayWebsiteResponse struct {
-	Domain     string `json:"domain"`
-	TargetType string `json:"target_type"` // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
-	TargetHash string `json:"target_hash"` // CID or IPNS name
-	Status     string `json:"status"`      // pending_validation, active, broken
+	Domain     string                  `json:"domain"`
+	TargetType string                  `json:"target_type"` // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
+	TargetHash string                  `json:"target_hash"` // CID or IPNS name
+	Status     string                  `json:"status"`      // pending_validation, active, broken
+	Namespace  db.DomainNamespace      `json:"namespace,omitempty" jsonschema:"enum=icann,enum=hns"`
 }
 
 // GatewayWebsiteStatusResponse contains website status information

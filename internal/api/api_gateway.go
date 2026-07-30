@@ -22,7 +22,7 @@ func (a *API) getGatewayWebsite(c echo.Context) error {
 	}
 
 	// Get website by domain
-	website, err := a.websiteService.GetWebsiteByDomain(reqCtx, domain)
+	website, ns, err := a.websiteService.GetWebsiteByDomain(reqCtx, domain)
 	if err != nil {
 		a.Logger().Error("Failed to get website by domain", zap.String("domain", domain), zap.Error(err))
 		return ctx.Error(err, http.StatusInternalServerError)
@@ -40,7 +40,8 @@ func (a *API) getGatewayWebsite(c echo.Context) error {
 		})
 	}
 
-	return httputil.EncodeResponse(ctx, website, &dto.GatewayWebsiteResponse{})
+	resp := &dto.GatewayWebsiteResponse{Namespace: ns}
+	return httputil.EncodeResponse(ctx, website, resp)
 }
 
 // getGatewayWebsiteStatus retrieves website status for the gateway
@@ -54,7 +55,7 @@ func (a *API) getGatewayWebsiteStatus(c echo.Context) error {
 	}
 
 	// Get website by domain
-	website, err := a.websiteService.GetWebsiteByDomain(reqCtx, domain)
+	website, _, err := a.websiteService.GetWebsiteByDomain(reqCtx, domain)
 	if err != nil {
 		a.Logger().Error("Failed to get website by domain", zap.String("domain", domain), zap.Error(err))
 		return ctx.Error(err, http.StatusInternalServerError)

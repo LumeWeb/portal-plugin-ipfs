@@ -10,7 +10,7 @@ import (
 	"github.com/ipfs/go-cid"
 	mock "github.com/stretchr/testify/mock"
 	"go.lumeweb.com/portal-plugin-ipfs/core"
-	portalcore "go.lumeweb.com/portal/core"
+	core0 "go.lumeweb.com/portal/core"
 )
 
 // NewMockMetadataStore creates a new instance of MockMetadataStore. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -548,23 +548,30 @@ func (_c *MockMetadataStore_ProcessMissingUnixFSNames_Call) RunAndReturn(run fun
 }
 
 // ResolveDAG provides a mock function for the type MockMetadataStore
-func (_mock *MockMetadataStore) ResolveDAG(ctx context.Context, rootCID cid.Cid) ([]portalcore.DAGBlockNode, error) {
+func (_mock *MockMetadataStore) ResolveDAG(ctx context.Context, rootCID cid.Cid) ([]core0.DAGBlockNode, error) {
 	ret := _mock.Called(ctx, rootCID)
 
 	if len(ret) == 0 {
-		panic("ResolveDAG requires at least 1 return value")
+		panic("no return value specified for ResolveDAG")
 	}
 
-	var r0 []portalcore.DAGBlockNode
-	if ret[0] != nil {
-		r0 = ret[0].([]portalcore.DAGBlockNode)
-	}
-
+	var r0 []core0.DAGBlockNode
 	var r1 error
-	if len(ret) > 1 && ret[1] != nil {
-		r1 = ret[1].(error)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, cid.Cid) ([]core0.DAGBlockNode, error)); ok {
+		return returnFunc(ctx, rootCID)
 	}
-
+	if returnFunc, ok := ret.Get(0).(func(context.Context, cid.Cid) []core0.DAGBlockNode); ok {
+		r0 = returnFunc(ctx, rootCID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]core0.DAGBlockNode)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, cid.Cid) error); ok {
+		r1 = returnFunc(ctx, rootCID)
+	} else {
+		r1 = ret.Error(1)
+	}
 	return r0, r1
 }
 
@@ -576,23 +583,34 @@ type MockMetadataStore_ResolveDAG_Call struct {
 // ResolveDAG is a helper method to define mock.On call
 //   - ctx context.Context
 //   - rootCID cid.Cid
-func (_e *MockMetadataStore_Expecter) ResolveDAG(ctx interface{}, rootCID interface{}) *MockMetadataStore_ResolveDAG_Call {
+func (_e *MockMetadataStore_Expecter) ResolveDAG(ctx any, rootCID any) *MockMetadataStore_ResolveDAG_Call {
 	return &MockMetadataStore_ResolveDAG_Call{Call: _e.mock.On("ResolveDAG", ctx, rootCID)}
 }
 
 func (_c *MockMetadataStore_ResolveDAG_Call) Run(run func(ctx context.Context, rootCID cid.Cid)) *MockMetadataStore_ResolveDAG_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(cid.Cid))
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 cid.Cid
+		if args[1] != nil {
+			arg1 = args[1].(cid.Cid)
+		}
+		run(
+			arg0,
+			arg1,
+		)
 	})
 	return _c
 }
 
-func (_c *MockMetadataStore_ResolveDAG_Call) Return(nodes []portalcore.DAGBlockNode, err error) *MockMetadataStore_ResolveDAG_Call {
-	_c.Call.Return(nodes, err)
+func (_c *MockMetadataStore_ResolveDAG_Call) Return(dAGBlockNodes []core0.DAGBlockNode, err error) *MockMetadataStore_ResolveDAG_Call {
+	_c.Call.Return(dAGBlockNodes, err)
 	return _c
 }
 
-func (_c *MockMetadataStore_ResolveDAG_Call) RunAndReturn(run func(ctx context.Context, rootCID cid.Cid) ([]portalcore.DAGBlockNode, error)) *MockMetadataStore_ResolveDAG_Call {
+func (_c *MockMetadataStore_ResolveDAG_Call) RunAndReturn(run func(ctx context.Context, rootCID cid.Cid) ([]core0.DAGBlockNode, error)) *MockMetadataStore_ResolveDAG_Call {
 	_c.Call.Return(run)
 	return _c
 }

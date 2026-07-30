@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	mocks "go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"gorm.io/gorm"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
@@ -34,9 +34,9 @@ const (
 )
 
 // createMockDNSZone creates a standardized DNSZone mock object
-func createMockDNSZone(id, userID uint, domain string, status db.DNSZoneStatus, powerDNSZoneID string) *db.DNSZone {
+func createMockDNSZone(id, userID uint, domain string, status pluginDb.DNSZoneStatus, powerDNSZoneID string) *pluginDb.DNSZone {
 	now := time.Now()
-	return &db.DNSZone{
+	return &pluginDb.DNSZone{
 		Model:                  gorm.Model{ID: id, CreatedAt: now, UpdatedAt: now},
 		UserID:                 userID,
 		Domain:                 domain,
@@ -56,7 +56,7 @@ func TestAPI_CreateZone(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, db.DNSZoneStatusPendingNameserver, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusPendingNameserver, "pdns-123")
 
 			mockDNSService.EXPECT().CreateZone(mock.Anything, TestZoneDomain, userID).Return(mockZone, nil)
 
@@ -81,7 +81,7 @@ func TestAPI_CreateZone(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, db.DNSZoneStatusPendingNameserver, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusPendingNameserver, "pdns-123")
 
 			mockDNSService.EXPECT().CreateZone(mock.Anything, TestZoneDomain, userID).Return(mockZone, nil)
 
@@ -174,10 +174,10 @@ func TestAPI_ListZones(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockZone1 := createMockDNSZone(TestZoneID, userID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
-			mockZone2 := createMockDNSZone(TestZoneID2, userID, "test.com", db.DNSZoneStatusPendingNameserver, "pdns-456")
+			mockZone1 := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
+			mockZone2 := createMockDNSZone(TestZoneID2, userID, "test.com", pluginDb.DNSZoneStatusPendingNameserver, "pdns-456")
 
-			mockDNSService.EXPECT().ListZones(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*db.DNSZone{mockZone1, mockZone2}, int64(2), nil)
+			mockDNSService.EXPECT().ListZones(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.DNSZone{mockZone1, mockZone2}, int64(2), nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/dns/zones", token, nil)
 
@@ -201,9 +201,9 @@ func TestAPI_ListZones(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
-			mockDNSService.EXPECT().ListZones(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*db.DNSZone{mockZone}, int64(10), nil)
+			mockDNSService.EXPECT().ListZones(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.DNSZone{mockZone}, int64(10), nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/dns/zones?page=1&limit=1", token, nil)
 
@@ -227,7 +227,7 @@ func TestAPI_ListZones(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockDNSService.EXPECT().ListZones(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*db.DNSZone{}, int64(0), nil)
+			mockDNSService.EXPECT().ListZones(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.DNSZone{}, int64(0), nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/dns/zones", token, nil)
 
@@ -276,9 +276,9 @@ func TestAPI_ListZones(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
-			mockDNSService.EXPECT().ListZones(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*db.DNSZone{mockZone}, int64(1), nil)
+			mockDNSService.EXPECT().ListZones(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.DNSZone{mockZone}, int64(1), nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/dns/zones?filter[status]=active", token, nil)
 
@@ -295,7 +295,7 @@ func TestAPI_GetZone(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
 			mockDNSService.EXPECT().GetZone(mock.Anything, TestZoneID).Return(mockZone, nil)
 
@@ -344,7 +344,7 @@ func TestAPI_GetZone(t *testing.T) {
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
 			otherUserID := userID + 1
-			mockZone := createMockDNSZone(TestZoneID, otherUserID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, otherUserID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
 			mockDNSService.EXPECT().GetZone(mock.Anything, TestZoneID).Return(mockZone, nil)
 
@@ -374,7 +374,7 @@ func TestAPI_UpdateZone(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
 			mockDNSService.EXPECT().GetZone(mock.Anything, TestZoneID).Return(mockZone, nil)
 
@@ -426,7 +426,7 @@ func TestAPI_UpdateZone(t *testing.T) {
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
 			otherUserID := userID + 1
-			mockZone := createMockDNSZone(TestZoneID, otherUserID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, otherUserID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
 			mockDNSService.EXPECT().GetZone(mock.Anything, TestZoneID).Return(mockZone, nil)
 
@@ -470,7 +470,7 @@ func TestAPI_DeleteZone(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
 			mockDNSService.EXPECT().GetZone(mock.Anything, TestZoneID).Return(mockZone, nil)
 			mockDNSService.EXPECT().DeleteZone(mock.Anything, TestZoneID).Return(nil)
@@ -514,7 +514,7 @@ func TestAPI_DeleteZone(t *testing.T) {
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
 			otherUserID := userID + 1
-			mockZone := createMockDNSZone(TestZoneID, otherUserID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, otherUserID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
 			mockDNSService.EXPECT().GetZone(mock.Anything, TestZoneID).Return(mockZone, nil)
 
@@ -531,7 +531,7 @@ func TestAPI_DeleteZone(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
 			mockDNSService.EXPECT().GetZone(mock.Anything, TestZoneID).Return(mockZone, nil)
 			mockDNSService.EXPECT().DeleteZone(mock.Anything, TestZoneID).Return(errors.New("delete failed"))
@@ -562,7 +562,7 @@ func TestAPI_ValidateZone(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
 			mockDNSService.EXPECT().GetZone(mock.Anything, TestZoneID).Return(mockZone, nil)
 			mockDNSService.EXPECT().ValidateNameservers(mock.Anything, TestZoneID).Return(true, nil)
@@ -586,7 +586,7 @@ func TestAPI_ValidateZone(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, db.DNSZoneStatusPendingNameserver, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusPendingNameserver, "pdns-123")
 
 			mockDNSService.EXPECT().GetZone(mock.Anything, TestZoneID).Return(mockZone, nil)
 			mockDNSService.EXPECT().ValidateNameservers(mock.Anything, TestZoneID).Return(false, nil)
@@ -636,7 +636,7 @@ func TestAPI_ValidateZone(t *testing.T) {
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
 			otherUserID := userID + 1
-			mockZone := createMockDNSZone(TestZoneID, otherUserID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, otherUserID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
 			mockDNSService.EXPECT().GetZone(mock.Anything, TestZoneID).Return(mockZone, nil)
 
@@ -653,7 +653,7 @@ func TestAPI_ValidateZone(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
 			mockDNSService.EXPECT().GetZone(mock.Anything, TestZoneID).Return(mockZone, nil)
 			mockDNSService.EXPECT().ValidateNameservers(mock.Anything, TestZoneID).Return(false, errors.New("validation failed"))
@@ -684,7 +684,7 @@ func TestAPI_GetZoneStatus(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
 			mockDNSService.EXPECT().GetZone(mock.Anything, TestZoneID).Return(mockZone, nil)
 
@@ -697,7 +697,7 @@ func TestAPI_GetZoneStatus(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, TestZoneID, response.ID)
 			assert.Equal(t, TestZoneDomain, response.Domain)
-			assert.Equal(t, string(db.DNSZoneStatusActive), response.Status)
+			assert.Equal(t, string(pluginDb.DNSZoneStatusActive), response.Status)
 		}, TestOptions)
 	})
 
@@ -734,7 +734,7 @@ func TestAPI_GetZoneStatus(t *testing.T) {
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
 			otherUserID := userID + 1
-			mockZone := createMockDNSZone(TestZoneID, otherUserID, TestZoneDomain, db.DNSZoneStatusActive, "pdns-123")
+			mockZone := createMockDNSZone(TestZoneID, otherUserID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
 			mockDNSService.EXPECT().GetZone(mock.Anything, TestZoneID).Return(mockZone, nil)
 

@@ -179,15 +179,13 @@ func (_c *MockIPNSPublisher_ListPublished_Call) RunAndReturn(run func(ctx contex
 
 // Publish provides a mock function for the type MockIPNSPublisher
 func (_mock *MockIPNSPublisher) Publish(ctx context.Context, privKey crypto.PrivKey, ipnsPath path.Path, options ...namesys.PublishOption) error {
-	// namesys.PublishOption
-	_va := make([]any, len(options))
-	for _i := range options {
-		_va[_i] = options[_i]
+	var tmpRet mock.Arguments
+	if len(options) > 0 {
+		tmpRet = _mock.Called(ctx, privKey, ipnsPath, options)
+	} else {
+		tmpRet = _mock.Called(ctx, privKey, ipnsPath)
 	}
-	var _ca []any
-	_ca = append(_ca, ctx, privKey, ipnsPath)
-	_ca = append(_ca, _va...)
-	ret := _mock.Called(_ca...)
+	ret := tmpRet
 
 	if len(ret) == 0 {
 		panic("no return value specified for Publish")
@@ -232,11 +230,9 @@ func (_c *MockIPNSPublisher_Publish_Call) Run(run func(ctx context.Context, priv
 			arg2 = args[2].(path.Path)
 		}
 		var arg3 []namesys.PublishOption
-		variadicArgs := make([]namesys.PublishOption, len(args)-3)
-		for i, a := range args[3:] {
-			if a != nil {
-				variadicArgs[i] = a.(namesys.PublishOption)
-			}
+		var variadicArgs []namesys.PublishOption
+		if len(args) > 3 {
+			variadicArgs = args[3].([]namesys.PublishOption)
 		}
 		arg3 = variadicArgs
 		run(
