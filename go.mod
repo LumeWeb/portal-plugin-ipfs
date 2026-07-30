@@ -44,7 +44,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tus/tusd/v2 v2.10.0
 	go.lumeweb.com/dane v0.0.1
-	go.lumeweb.com/httputil v0.5.6
+	go.lumeweb.com/httputil v0.5.7
 	go.lumeweb.com/ipfs-content v0.1.17
 	go.lumeweb.com/portal v0.5.2-0.20260729212645-a4d79a550621
 	go.lumeweb.com/portal-middleware v0.3.7
