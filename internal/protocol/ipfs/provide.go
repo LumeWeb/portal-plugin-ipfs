@@ -104,8 +104,11 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(workers)
 
-	for _, k := range keys {
+	for i, k := range keys {
 		if gctx.Err() != nil {
+			mu.Lock()
+			failed = append(failed, keys[i:]...)
+			mu.Unlock()
 			break
 		}
 
