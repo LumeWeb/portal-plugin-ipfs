@@ -60,6 +60,10 @@ type (
 		ErrorSleep     time.Duration `config:"error_sleep"`
 		// BacklogSleep is how long to wait between batches while draining a backlog.
 		BacklogSleep   time.Duration `config:"backlog_sleep"`
+		// ProvideManyTimeout is the max duration for a single ProvideMany call.
+		// FullRT connects to all routing table peers per call; if one hangs,
+		// the entire reprovider loop blocks forever without this timeout.
+		ProvideManyTimeout time.Duration `config:"provide_many_timeout"`
 	}
 
 	// IPNS configures IPNS record publishing and republishing
@@ -100,6 +104,7 @@ func (I IPFSProvider) Defaults() map[string]any {
 		"EmptySleep":     10 * time.Minute,
 		"ErrorSleep":     time.Minute,
 		"BacklogSleep":   time.Minute,
+		"ProvideManyTimeout": 5 * time.Minute,
 	}
 }
 
