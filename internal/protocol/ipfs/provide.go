@@ -104,8 +104,11 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(workers)
 
-	for _, k := range keys {
+	for i, k := range keys {
 		if gctx.Err() != nil {
+			mu.Lock()
+			failed = append(failed, keys[i:]...)
+			mu.Unlock()
 			break
 		}
 
@@ -333,7 +336,10 @@ func (r *Reprovider) performProvide(ctx context.Context, trigger string) time.Du
 
 	start := time.Now()
 
-	if err := r.provider.ProvideMany(ctx, keys); err != nil {
+	provideCtx, provideCancel := context.WithTimeout(ctx, r.cfg.ProvideManyTimeout)
+	defer provideCancel()
+
+	if err := r.provider.ProvideMany(provideCtx, keys); err != nil {
 		ReprovideDuration.WithLabelValues().Observe(time.Since(start).Seconds())
 		ReprovideFailuresTotal.Inc()
 
