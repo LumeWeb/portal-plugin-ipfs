@@ -12,8 +12,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/multiformats/go-multihash"
 	"github.com/samber/lo"
-	"golang.org/x/sync/errgroup"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
@@ -291,6 +291,13 @@ func (r *Reprovider) performProvide(ctx context.Context, trigger string) time.Du
 	ctx, span := core.TraceMethod(ctx, "Reprovider.performProvide")
 	defer span.End()
 
+	// Wrap the entire cycle with a timeout. The inner ProvideManyTimeout
+	// only covers the DHT call — the rest (CountPinned, ProvideCIDs,
+	// SetLastAnnouncement) can hang indefinitely under connection saturation.
+	ctx, cancel := context.WithTimeout(ctx, r.cfg.ProvideManyTimeout*2)
+	defer cancel()
+
+	cycleStart := time.Now()
 	ReprovideAttemptsTotal.WithLabelValues(trigger).Inc()
 
 	// Update global pinned-state gauges.
@@ -308,6 +315,14 @@ func (r *Reprovider) performProvide(ctx context.Context, trigger string) time.Du
 		ReprovideAnnouncedTotal.Set(float64(stats.Announced))
 		ReprovidePendingTotal.Set(float64(stats.Pending))
 	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		r.log.Warn("reprovider cycle cancelled during CountPinned",
+			zap.String("trigger", trigger),
+			zap.Duration("elapsed", time.Since(cycleStart)),
+			zap.Error(ctxErr))
+		ReprovideFailuresTotal.Inc()
+		return r.cfg.ErrorSleep
+	}
 
 	// Only fetch CIDs whose last_announcement is older than the interval.
 	// Use the same buffer as CountPinned to avoid re-broadcasting CIDs that
@@ -315,7 +330,14 @@ func (r *Reprovider) performProvide(ctx context.Context, trigger string) time.Du
 	cutoff := time.Now().Add(-r.cfg.Interval - time.Minute)
 	cids, err := r.store.ProvideCIDs(ctx, cutoff, r.cfg.BatchSize)
 	if err != nil {
-		r.log.Error("failed to fetch CIDs to provide", zap.Error(err))
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			r.log.Warn("reprovider cycle cancelled during ProvideCIDs",
+				zap.String("trigger", trigger),
+				zap.Duration("elapsed", time.Since(cycleStart)),
+				zap.Error(ctxErr))
+		} else {
+			r.log.Error("failed to fetch CIDs to provide", zap.Error(err))
+		}
 		ReprovideFailuresTotal.Inc()
 		return r.cfg.ErrorSleep
 	}
@@ -334,14 +356,22 @@ func (r *Reprovider) performProvide(ctx context.Context, trigger string) time.Du
 
 	ReprovideBatchSize.WithLabelValues().Observe(float64(len(keys)))
 
-	start := time.Now()
-
 	provideCtx, provideCancel := context.WithTimeout(ctx, r.cfg.ProvideManyTimeout)
 	defer provideCancel()
 
+	provideStart := time.Now()
+
 	if err := r.provider.ProvideMany(provideCtx, keys); err != nil {
-		ReprovideDuration.WithLabelValues().Observe(time.Since(start).Seconds())
+		ReprovideDuration.WithLabelValues().Observe(time.Since(provideStart).Seconds())
 		ReprovideFailuresTotal.Inc()
+
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			r.log.Warn("reprovider cycle cancelled during ProvideMany",
+				zap.String("trigger", trigger),
+				zap.Int("batch_size", len(keys)),
+				zap.Duration("elapsed", time.Since(cycleStart)),
+				zap.Error(ctxErr))
+		}
 
 		// Extract per-CID failure info
 		var failedKeys []multihash.Multihash
@@ -380,10 +410,18 @@ func (r *Reprovider) performProvide(ctx context.Context, trigger string) time.Du
 		return r.cfg.ErrorSleep
 	}
 
-	ReprovideDuration.WithLabelValues().Observe(time.Since(start).Seconds())
+	ReprovideDuration.WithLabelValues().Observe(time.Since(provideStart).Seconds())
 
 	if err := r.store.SetLastAnnouncement(ctx, announced, time.Now()); err != nil {
-		r.log.Error("failed to update last announcement time", zap.Error(err))
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			r.log.Warn("reprovider cycle cancelled during SetLastAnnouncement",
+				zap.String("trigger", trigger),
+				zap.Int("count", len(announced)),
+				zap.Duration("elapsed", time.Since(cycleStart)),
+				zap.Error(ctxErr))
+		} else {
+			r.log.Error("failed to update last announcement time", zap.Error(err))
+		}
 		return r.cfg.ErrorSleep
 	}
 
@@ -391,7 +429,7 @@ func (r *Reprovider) performProvide(ctx context.Context, trigger string) time.Du
 
 	r.log.Debug("provided CIDs",
 		zap.Int("count", len(announced)),
-		zap.Duration("elapsed", time.Since(start)))
+		zap.Duration("elapsed", time.Since(provideStart)))
 
 	// If the batch was full, there are likely more pending CIDs.
 	// Return a short sleep to drain the backlog quickly instead of waiting
