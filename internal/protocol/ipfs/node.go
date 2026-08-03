@@ -466,7 +466,12 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		return nil, fmt.Errorf("failed to create resource manager: %w", err)
 	}
 
-	cmgr, err := connmgr.NewConnManager(900, rm.(libp2pCoreConnmgr.GetConnLimiter).GetConnLimit())
+	connLimit := rm.(libp2pCoreConnmgr.GetConnLimiter).GetConnLimit()
+	lowWater := int(float64(connLimit) * 0.5)
+	if lowWater < 160 {
+		lowWater = 160
+	}
+	cmgr, err := connmgr.NewConnManager(lowWater, connLimit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create connection manager: %w", err)
 	}
