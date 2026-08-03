@@ -57,3 +57,8 @@ func (p *ICANNProvider) VerifyDelegation(ctx context.Context, domain string,
 func (p *ICANNProvider) OnCertAvailable(ctx context.Context, domain string, certPEM string) error {
 	return nil
 }
+
+// Nameservers returns the ICANN nameservers configured for the namespace.
+func (p *ICANNProvider) Nameservers() []string {
+	return p.nameservers
+}

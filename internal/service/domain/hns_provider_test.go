@@ -27,6 +27,15 @@ func TestHNSProvider_Protocol(t *testing.T) {
 	assert.Equal(t, "hns", p.Protocol())
 }
 
+func TestHNSProvider_Nameservers(t *testing.T) {
+	// HNS declares its own namespace-specific nameservers, distinct from ICANN.
+	p := NewHNSProvider("", []string{"ns1.hns.\nns2.hns."}, TLSASource{})
+	assert.Equal(t, []string{"ns1.hns.\nns2.hns."}, p.Nameservers())
+
+	empty := NewHNSProvider("", nil, TLSASource{})
+	assert.Nil(t, empty.Nameservers())
+}
+
 func TestHNSProvider_Validate(t *testing.T) {
 	p := NewHNSProvider("", nil, TLSASource{})
 

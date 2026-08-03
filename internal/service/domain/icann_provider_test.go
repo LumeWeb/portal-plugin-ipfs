@@ -38,3 +38,11 @@ func TestICANNProvider_VerifyDelegation(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, verified)
 }
+
+func TestICANNProvider_Nameservers(t *testing.T) {
+	p := NewICANNProvider([]string{"ns1.example.com.", "ns2.example.com."})
+	assert.Equal(t, []string{"ns1.example.com.", "ns2.example.com."}, p.Nameservers())
+
+	empty := NewICANNProvider(nil)
+	assert.Nil(t, empty.Nameservers())
+}

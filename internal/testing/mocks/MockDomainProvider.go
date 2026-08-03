@@ -78,7 +78,7 @@ type MockDomainProvider_BuildDelegation_Call struct {
 //   - domain string
 //   - website *db.Website
 //   - config json.RawMessage
-func (_e *MockDomainProvider_Expecter) BuildDelegation(ctx any, zoneID any, domain any, website any, config any) *MockDomainProvider_BuildDelegation_Call {
+func (_e *MockDomainProvider_Expecter) BuildDelegation(ctx interface{}, zoneID interface{}, domain interface{}, website interface{}, config interface{}) *MockDomainProvider_BuildDelegation_Call {
 	return &MockDomainProvider_BuildDelegation_Call{Call: _e.mock.On("BuildDelegation", ctx, zoneID, domain, website, config)}
 }
 
@@ -125,6 +125,52 @@ func (_c *MockDomainProvider_BuildDelegation_Call) RunAndReturn(run func(ctx con
 	return _c
 }
 
+// Nameservers provides a mock function for the type MockDomainProvider
+func (_mock *MockDomainProvider) Nameservers() []string {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Nameservers")
+	}
+
+	var r0 []string
+	if returnFunc, ok := ret.Get(0).(func() []string); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]string)
+		}
+	}
+	return r0
+}
+
+// MockDomainProvider_Nameservers_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Nameservers'
+type MockDomainProvider_Nameservers_Call struct {
+	*mock.Call
+}
+
+// Nameservers is a helper method to define mock.On call
+func (_e *MockDomainProvider_Expecter) Nameservers() *MockDomainProvider_Nameservers_Call {
+	return &MockDomainProvider_Nameservers_Call{Call: _e.mock.On("Nameservers")}
+}
+
+func (_c *MockDomainProvider_Nameservers_Call) Run(run func()) *MockDomainProvider_Nameservers_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockDomainProvider_Nameservers_Call) Return(strings []string) *MockDomainProvider_Nameservers_Call {
+	_c.Call.Return(strings)
+	return _c
+}
+
+func (_c *MockDomainProvider_Nameservers_Call) RunAndReturn(run func() []string) *MockDomainProvider_Nameservers_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // OnCertAvailable provides a mock function for the type MockDomainProvider
 func (_mock *MockDomainProvider) OnCertAvailable(ctx context.Context, domain string, certPEM string) error {
 	ret := _mock.Called(ctx, domain, certPEM)
@@ -151,7 +197,7 @@ type MockDomainProvider_OnCertAvailable_Call struct {
 //   - ctx context.Context
 //   - domain string
 //   - certPEM string
-func (_e *MockDomainProvider_Expecter) OnCertAvailable(ctx any, domain any, certPEM any) *MockDomainProvider_OnCertAvailable_Call {
+func (_e *MockDomainProvider_Expecter) OnCertAvailable(ctx interface{}, domain interface{}, certPEM interface{}) *MockDomainProvider_OnCertAvailable_Call {
 	return &MockDomainProvider_OnCertAvailable_Call{Call: _e.mock.On("OnCertAvailable", ctx, domain, certPEM)}
 }
 
@@ -256,7 +302,7 @@ type MockDomainProvider_Validate_Call struct {
 
 // Validate is a helper method to define mock.On call
 //   - domain string
-func (_e *MockDomainProvider_Expecter) Validate(domain any) *MockDomainProvider_Validate_Call {
+func (_e *MockDomainProvider_Expecter) Validate(domain interface{}) *MockDomainProvider_Validate_Call {
 	return &MockDomainProvider_Validate_Call{Call: _e.mock.On("Validate", domain)}
 }
 
@@ -318,7 +364,7 @@ type MockDomainProvider_VerifyDelegation_Call struct {
 //   - ctx context.Context
 //   - domain string
 //   - delegationData json.RawMessage
-func (_e *MockDomainProvider_Expecter) VerifyDelegation(ctx any, domain any, delegationData any) *MockDomainProvider_VerifyDelegation_Call {
+func (_e *MockDomainProvider_Expecter) VerifyDelegation(ctx interface{}, domain interface{}, delegationData interface{}) *MockDomainProvider_VerifyDelegation_Call {
 	return &MockDomainProvider_VerifyDelegation_Call{Call: _e.mock.On("VerifyDelegation", ctx, domain, delegationData)}
 }
 
