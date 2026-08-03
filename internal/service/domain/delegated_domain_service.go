@@ -62,7 +62,6 @@ func (s *DelegatedDomainService) gatewayHost() string {
 	return dnsCfg.GatewayDomain
 }
 
-
 func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	namespace, domain string, websiteID, userID uint, config json.RawMessage) (*pluginDb.WebsiteDomain, error) {
 
@@ -382,13 +381,20 @@ func NewDelegatedDomainServiceFactory() (core.Service, []core.ContextBuilderOpti
 
 			dnsCfg := core.GetServiceConfig[*pluginConfig.DnsConfig](ctx, pluginCore.DNS_SERVICE)
 			var nsList []string
+			var hnsNSList []string
 			hnsResolver := ""
 			if dnsCfg != nil {
 				nsList = dnsCfg.Nameservers
+				hnsNSList = dnsCfg.HNSNameservers
+				// Fall back to the ICANN list if no HNS-specific nameservers
+				// are configured, so existing deployments keep working.
+				if len(hnsNSList) == 0 {
+					hnsNSList = nsList
+				}
 				hnsResolver = dnsCfg.HNSResolver
 			}
 			reg.Register(NewICANNProvider(nsList))
-			hnsProv := NewHNSProvider(hnsResolver, nsList, TLSASource{})
+			hnsProv := NewHNSProvider(hnsResolver, hnsNSList, TLSASource{})
 			dns := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
 			if dns != nil {
 				hnsProv.SetDNSService(dns)

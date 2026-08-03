@@ -199,7 +199,7 @@ func (p *HNSProvider) BuildDelegation(ctx context.Context, zoneID uint,
 		dsRecords = ds
 	}
 
-	nsRecords := p.getNSRecords(zoneName)
+	nsRecords := p.Nameservers()
 
 	var bundle DelegationBundle
 
@@ -376,7 +376,10 @@ func (p *HNSProvider) buildTLSA(ctx context.Context, zoneName string) (string, e
 	return spkiHash, nil
 }
 
-func (p *HNSProvider) getNSRecords(zoneName string) []string {
+// Nameservers returns the HNS nameservers configured for the namespace.
+// Alt-root namespaces delegate to nameservers that are themselves members
+// of the namespace (e.g. HNS domain names), distinct from ICANN's.
+func (p *HNSProvider) Nameservers() []string {
 	if len(p.nsRecords) == 0 {
 		return nil
 	}
@@ -407,7 +410,7 @@ func (p *HNSProvider) VerifyDelegation(ctx context.Context, domain string,
 		return false, fmt.Errorf("HNS resolver query failed: %w", err)
 	}
 
-	expectedNS := p.getNSRecords(domain + ".")
+	expectedNS := p.Nameservers()
 	for _, ns := range nss {
 		for _, expected := range expectedNS {
 			if strings.TrimSuffix(ns.Host, ".") == strings.TrimSuffix(expected, ".") {

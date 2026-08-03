@@ -20,6 +20,12 @@ type DnsConfig struct {
 	// Approved nameservers for validation
 	Nameservers []string `config:"nameservers"`
 
+	// HNS nameservers for the HNS namespace delegation/validation.
+	// Alt-root namespaces (e.g. HNS) must delegate to nameservers that are
+	// themselves members of that namespace, which differ from the ICANN
+	// nameservers in Nameservers. Provided by the operator, not the user.
+	HNSNameservers []string `config:"hns_nameservers"`
+
 	// HNSResolver is the address (host:port) of an HNS-aware DNS resolver
 	// used for HNS namespace:
 	// - Delegation verification (NS lookup via HNSProvider)
@@ -44,6 +50,7 @@ func (c DnsConfig) Defaults() map[string]any {
 		"PowerDNSAPIURL":               "",
 		"PowerDNSAPIKey":               "",
 		"Nameservers":                  []string{},
+		"HNSNameservers":               []string{},
 		"HNSResolver":                  "",
 		"GatewayDomain":                "",
 		"VerificationTokenKey":         "lumeweb-verify",

@@ -17,6 +17,12 @@ type DomainProvider interface {
 	// Providers can use it to update TLSA in delegation data or trigger
 	// namespace-specific protocol updates. Can be nil-safe by returning nil.
 	OnCertAvailable(ctx context.Context, domain string, certPEM string) error
+	// Nameservers returns the nameservers this provider publishes and
+	// validates delegation against for its namespace. Alt-root providers
+	// (e.g. HNS) return their own namespace-specific nameservers, which
+	// differ from ICANN's; these are operator-provided, not user-provided.
+	// Returns the namespace's nameservers, or nil/empty when none are set.
+	Nameservers() []string
 }
 
 type Registry struct {
