@@ -97,6 +97,8 @@ github.com/aws/aws-sdk-go-v2/config v1.32.31 h1:n4nY9O3QKoHIkL85EX+V8RcMFtOhlpTF
 github.com/aws/aws-sdk-go-v2/config v1.32.31/go.mod h1:PN0NYDCCoOpGGsZ2+elDUidmHfQBPyYzN2GCgl8HEBs=
 github.com/aws/aws-sdk-go-v2/config v1.32.33 h1:M1m/Q6f0OKDEDGwhiNOqx1OjTdrewe3v+GDbHmKczWk=
 github.com/aws/aws-sdk-go-v2/config v1.32.33/go.mod h1:fGj1iQj2QpIZzp7jE4aQQ+71TE8cd4z9K4+xCd6EqmE=
+github.com/aws/aws-sdk-go-v2/config v1.32.34 h1:o+YAizrX562nEZXaB38uYTK8RvIsvW0uuRP+e5e0Pfk=
+github.com/aws/aws-sdk-go-v2/config v1.32.34/go.mod h1:wc0zYRChOniiufvdWiRVf3jgXSgbkvaD683IHHHc2ZQ=
 github.com/aws/aws-sdk-go-v2/credentials v1.19.30 h1:TTCvvzFU6gXa4iJecNG/0F/B0oYTiazoRECr2XyLHrY=
 github.com/aws/aws-sdk-go-v2/credentials v1.19.30/go.mod h1:jKxAp2AEncnliinzpgOSZDFv6+VjvWhjw/AtbfsWT9U=
 github.com/aws/aws-sdk-go-v2/credentials v1.19.32 h1:eNE0JnIblBo1NCvd3tqEYuZz9XDefn69R74CHd3nT7U=
@@ -236,6 +238,8 @@ github.com/canonical/go-sp800.90a-drbg v0.0.0-20210314144037-6eeb1040d6c3 h1:oe6
 github.com/canonical/go-sp800.90a-drbg v0.0.0-20210314144037-6eeb1040d6c3/go.mod h1:qdP0gaj0QtgX2RUZhnlVrceJ+Qln8aSlDyJwelLLFeM=
 github.com/casbin/casbin/v3 v3.10.0 h1:039ORla55vCeIZWd0LfzWFt1yiEA5X4W41xBW2bQuHs=
 github.com/casbin/casbin/v3 v3.10.0/go.mod h1:5rJbQr2e6AuuDDNxnPc5lQlC9nIgg6nS1zYwKXhpHC8=
+github.com/casbin/casbin/v3 v3.11.0 h1:xVlnpCGs0c2Hp2WuUF36o8iZgEsXUne9/j1qJjOgJPA=
+github.com/casbin/casbin/v3 v3.11.0/go.mod h1:5rJbQr2e6AuuDDNxnPc5lQlC9nIgg6nS1zYwKXhpHC8=
 github.com/casbin/gorm-adapter/v3 v3.41.0 h1:Xhpi0tfRP9aKPDWDf6dgBxHZ9UM6IophxxPIEGWqCNM=
 github.com/casbin/gorm-adapter/v3 v3.41.0/go.mod h1:BQZRJhwUnwMpI+pT2m7/cUJwXxrHfzpBpPcNTyMGeGA=
 github.com/casbin/govaluate v1.3.0/go.mod h1:G/UnbIjZk/0uMNaLwZZmFQrR72tYRZWQkO70si/iR7A=
@@ -1124,6 +1128,8 @@ go.lumeweb.com/portal v0.5.2-0.20260801024238-8ed5e2de584b h1:xM5c1H8WPWmwLsm82m
 go.lumeweb.com/portal v0.5.2-0.20260801024238-8ed5e2de584b/go.mod h1:4V6pmyz6Vl2GA4qhcdKhB1Yu/XlNh65U/6qmCKN+KqM=
 go.lumeweb.com/portal v0.5.2-0.20260803150422-f1318b121758 h1:vOu/M+DzAhlWV8GQaZDOd5HqJVK8yyG9BzhQPPrAJX8=
 go.lumeweb.com/portal v0.5.2-0.20260803150422-f1318b121758/go.mod h1:gtsYzVnRthuJWrxV+7ltuH4qvr0gNvpDCqkhEF+fIwM=
+go.lumeweb.com/portal v0.5.2-0.20260803172620-dc498ad27955 h1:FYkcIWortHV+OA6l0Uqq3VGq0fmNVq6RNZmVlcgawMo=
+go.lumeweb.com/portal v0.5.2-0.20260803172620-dc498ad27955/go.mod h1:yw20TJv657m9t2B0/qByXAULsDWrd9QsLTMd4ojfLtk=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.1.0 h1:bHHJ7oZrBKmBvdUFutr3Dx6FdwvSg/ZeF33QaRM0DKU=
