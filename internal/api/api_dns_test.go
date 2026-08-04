@@ -361,7 +361,7 @@ func TestAPI_GetZone(t *testing.T) {
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/dns/zones/invalid", token, nil)
 
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
 		}, TestOptions)
 	})
 }
@@ -457,7 +457,7 @@ func TestAPI_UpdateZone(t *testing.T) {
 			reqBody := fmt.Sprintf(`{"domain":"%s"}`, TestZoneDomain)
 			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/dns/zones/invalid", token, []byte(reqBody))
 
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
 		}, TestOptions)
 	})
 }
@@ -549,7 +549,7 @@ func TestAPI_DeleteZone(t *testing.T) {
 
 			rec := helper.makeAuthenticatedRequest(http.MethodDelete, "/api/dns/zones/invalid", token, nil)
 
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
 		}, TestOptions)
 	})
 }
@@ -671,7 +671,7 @@ func TestAPI_ValidateZone(t *testing.T) {
 
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/dns/zones/invalid/validate", token, nil)
 
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
 		}, TestOptions)
 	})
 }
@@ -751,7 +751,7 @@ func TestAPI_GetZoneStatus(t *testing.T) {
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/dns/zones/invalid/status", token, nil)
 
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
 		}, TestOptions)
 	})
 }
