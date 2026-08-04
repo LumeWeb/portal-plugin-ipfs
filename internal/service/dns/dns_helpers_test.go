@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
 
 func TestParseZoneFile_EmptyContent(t *testing.T) {
@@ -569,6 +569,35 @@ func TestBuildTargetPath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := buildTargetPath(tt.targetHash, tt.targetType)
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestFormatRecordContent(t *testing.T) {
+	tests := []struct {
+		name       string
+		recordType string
+		content    string
+		expected   string
+	}{
+		// ALIAS targets must be absolute FQDNs (trailing dot) for PowerDNS.
+		{"alias no dot", "ALIAS", "ipfs.pub", "ipfs.pub."},
+		{"alias with dot", "ALIAS", "ipfs.pub.", "ipfs.pub."},
+		{"alias with spaces", "ALIAS", " gateway.example ", "gateway.example."},
+		// Existing FQDN-normalized types keep working.
+		{"cname no dot", "CNAME", "www.lumeweb", "www.lumeweb."},
+		{"ns no dot", "NS", "ns1.lumeweb", "ns1.lumeweb."},
+		{"mx no dot", "MX", "mail.lumeweb", "mail.lumeweb."},
+		// TXT gets quoted, not dotted.
+		{"txt quoted", "TXT", "dnslink=/ipfs/QmHash", `"dnslink=/ipfs/QmHash"`},
+		// Address types pass through unchanged.
+		{"a unchanged", "A", "185.150.189.208", "185.150.189.208"},
+		{"aaaa unchanged", "AAAA", "2001:db8::1", "2001:db8::1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatRecordContent(tt.recordType, tt.content)
+			assert.Equal(t, tt.expected, got)
 		})
 	}
 }
