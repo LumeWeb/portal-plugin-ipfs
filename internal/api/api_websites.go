@@ -13,10 +13,10 @@ import (
 	"go.lumeweb.com/httputil"
 	mcontext "go.lumeweb.com/portal-middleware/context"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	pluginEvents "go.lumeweb.com/portal-plugin-ipfs/internal/errors"
 	pluginservice "go.lumeweb.com/portal-plugin-ipfs/internal/service/website"
-	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
 	"go.uber.org/zap"
@@ -81,30 +81,30 @@ func (a *API) handleWebsiteValidationError(err error, c echo.Context) (error, bo
 	if err == nil {
 		return nil, false
 	}
-	
+
 	ctx := httputil.Context(c)
-	
+
 	// Check for specific validation errors using errors.Is
 	if errors.Is(err, pluginservice.ErrInvalidCID) {
 		apiErr := NewError(ErrKeyInvalidCID, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus()), true
 	}
-	
+
 	if errors.Is(err, pluginservice.ErrInvalidIPNS) {
 		apiErr := NewError(ErrKeyInvalidTarget, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus()), true
 	}
-	
+
 	if errors.Is(err, pluginservice.ErrInvalidTarget) {
 		apiErr := NewError(ErrKeyInvalidTarget, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus()), true
 	}
-	
+
 	if errors.Is(err, pluginservice.ErrInvalidDomain) {
 		apiErr := NewError(ErrKeyInvalidDomainFormat, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus()), true
 	}
-	
+
 	return err, false
 }
 
@@ -230,7 +230,7 @@ func (a *API) getWebsite(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidRequest, err)
+		apiErr := NewError(ErrKeyInvalidPathID, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -275,7 +275,7 @@ func (a *API) updateWebsite(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidRequest, err)
+		apiErr := NewError(ErrKeyInvalidPathID, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -339,7 +339,7 @@ func (a *API) deleteWebsite(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidRequest, err)
+		apiErr := NewError(ErrKeyInvalidPathID, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -362,7 +362,7 @@ func (a *API) validateWebsiteDNS(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidRequest, err)
+		apiErr := NewError(ErrKeyInvalidPathID, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 

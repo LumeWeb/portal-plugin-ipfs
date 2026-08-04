@@ -57,6 +57,16 @@ const (
 	ErrKeyInvalidPathID  core.ErrorType = "INVALID_PATH_ID"
 )
 
+// HTTP status classes (RFC 9110 / RFC 4918) — keep these consistent:
+//   - 400 Bad Request: malformed / unparseable request (e.g. a non-numeric
+//     path param, invalid JSON). Use ErrKeyInvalidPathID / DTO bind failures.
+//   - 422 Unprocessable Entity: request parses but fails semantic validation
+//     (empty field, bad field combination, invalid CID/TTL/domain/record
+//     value). Use the ErrKeyInvalid* validation keys / httputil.ValidationError.
+//
+// The ipfs-sdk swagger documents these statuses via portal-router's
+// DefaultCoreErrorResponses (400, 404, 422, 500) + auth (401, 403).
+
 func init() {
 	core.MustRegisterNamespace(Namespace)
 	core.MustRegisterDefaultErrorMessages(Namespace, map[core.ErrorType]core.ErrorDefinition{
