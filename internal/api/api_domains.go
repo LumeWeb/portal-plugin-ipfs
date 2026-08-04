@@ -10,10 +10,11 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.lumeweb.com/httputil"
 	mcontext "go.lumeweb.com/portal-middleware/context"
-	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/queryutil"
 	queryutilHttp "go.lumeweb.com/queryutil/http"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -29,7 +30,8 @@ func (a *API) createDomain(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		return ctx.Error(errors.New("invalid website ID"), http.StatusBadRequest)
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	req := dto.DomainRequest{}
@@ -49,12 +51,15 @@ func (a *API) createDomain(c echo.Context) error {
 
 	wd, err := a.delegatedDomainSvc.CreateDomain(reqCtx, req.Namespace, req.Domain, uint(websiteID), userID, configRaw)
 	if err != nil {
-		return ctx.Error(err, http.StatusInternalServerError)
+		a.Logger().Error("Failed to create domain", zap.Error(err))
+		apiErr := NewError(ErrKeyValidationFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	resp := dto.DomainResponse{}
 	if err := resp.FromModel(wd); err != nil {
-		return ctx.Error(err, http.StatusInternalServerError)
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 	ctx.Response().Before(func() {
 		ctx.Response().Status = http.StatusCreated
@@ -68,7 +73,8 @@ func (a *API) listDomains(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		return ctx.Error(errors.New("invalid website ID"), http.StatusBadRequest)
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	user, err := mcontext.GetUserID(c)
@@ -126,22 +132,26 @@ func (a *API) deleteDomain(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		return ctx.Error(errors.New("invalid website ID"), http.StatusBadRequest)
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	domainID, err := strconv.ParseUint(c.Param("domain_id"), 10, 64)
 	if err != nil {
-		return ctx.Error(errors.New("invalid domain ID"), http.StatusBadRequest)
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid domain ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	res := a.DB().WithContext(reqCtx).
 		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
 		Unscoped().Delete(&pluginDb.WebsiteDomain{})
 	if res.Error != nil {
-		return ctx.Error(res.Error, http.StatusInternalServerError)
+		apiErr := NewError(ErrKeyFileProcessingFailed, res.Error)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 	if res.RowsAffected == 0 {
-		return ctx.Error(errors.New("domain not found"), http.StatusNotFound)
+		apiErr := NewError(ErrKeyDomainNotFound, errors.New("domain not found"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	return ctx.NoContent(http.StatusNoContent)
@@ -158,12 +168,14 @@ func (a *API) verifyDomain(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		return ctx.Error(errors.New("invalid website ID"), http.StatusBadRequest)
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	domainID, err := strconv.ParseUint(c.Param("domain_id"), 10, 64)
 	if err != nil {
-		return ctx.Error(errors.New("invalid domain ID"), http.StatusBadRequest)
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid domain ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	var wd pluginDb.WebsiteDomain
@@ -171,9 +183,11 @@ func (a *API) verifyDomain(c echo.Context) error {
 		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
 		First(&wd).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ctx.Error(errors.New("domain not found"), http.StatusNotFound)
+			apiErr := NewError(ErrKeyDomainNotFound, errors.New("domain not found"))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
-		return ctx.Error(err, http.StatusInternalServerError)
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	if a.delegatedDomainSvc == nil {
@@ -182,12 +196,15 @@ func (a *API) verifyDomain(c echo.Context) error {
 	}
 
 	if _, err := a.delegatedDomainSvc.VerifyDomain(reqCtx, &wd); err != nil {
-		return ctx.Error(err, http.StatusInternalServerError)
+		a.Logger().Error("Failed to verify domain", zap.Error(err))
+		apiErr := NewError(ErrKeyValidationFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	resp := dto.DomainResponse{}
 	if err := resp.FromModel(&wd); err != nil {
-		return ctx.Error(err, http.StatusInternalServerError)
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 	return httputil.EncodeResponse(ctx, &wd, &resp)
 }

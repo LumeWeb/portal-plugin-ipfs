@@ -3,10 +3,10 @@ package api
 import (
 	"net/http"
 
-	router "go.lumeweb.com/portal-router"
 	swagger "go.lumeweb.com/gswagger"
-	core "go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/errors"
+	router "go.lumeweb.com/portal-router"
+	core "go.lumeweb.com/portal/core"
 )
 
 // Error keys
@@ -51,6 +51,10 @@ const (
 	// Website validation error types
 	ErrKeyInvalidCID    core.ErrorType = "INVALID_CID"
 	ErrKeyInvalidTarget core.ErrorType = "INVALID_TARGET"
+
+	// Website domain binding error types
+	ErrKeyDomainNotFound core.ErrorType = "DOMAIN_NOT_FOUND"
+	ErrKeyInvalidPathID  core.ErrorType = "INVALID_PATH_ID"
 )
 
 func init() {
@@ -85,6 +89,8 @@ func init() {
 		ErrKeyPermissionDenied:      {Key: ErrKeyPermissionDenied, Message: "Permission denied"},
 		ErrKeyInvalidCID:            {Key: ErrKeyInvalidCID, Message: "Invalid CID provided"},
 		ErrKeyInvalidTarget:         {Key: ErrKeyInvalidTarget, Message: "Invalid target hash or peer ID provided"},
+		ErrKeyDomainNotFound:        {Key: ErrKeyDomainNotFound, Message: "Domain not found"},
+		ErrKeyInvalidPathID:         {Key: ErrKeyInvalidPathID, Message: "Invalid path parameter: %s"},
 		ErrKeyDeleteFailed:          {Key: ErrKeyDeleteFailed, Message: "Failed to delete zone"},
 		ErrKeyUpdateFailed:          {Key: ErrKeyUpdateFailed, Message: "Failed to update zone"},
 	})
@@ -114,6 +120,8 @@ func init() {
 		ErrKeyInvalidCID:            http.StatusUnprocessableEntity,
 		ErrKeyInvalidTarget:         http.StatusUnprocessableEntity,
 		ErrKeyPermissionDenied:      http.StatusForbidden,
+		ErrKeyDomainNotFound:        http.StatusNotFound,
+		ErrKeyInvalidPathID:         http.StatusBadRequest,
 		ErrKeyDeleteFailed:          http.StatusInternalServerError,
 		ErrKeyUpdateFailed:          http.StatusInternalServerError,
 	})
