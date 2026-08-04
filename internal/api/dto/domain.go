@@ -31,6 +31,7 @@ type DomainResponse struct {
 	ID        uint   `json:"id"`
 	Domain    string `json:"domain"`
 	Namespace string `json:"namespace"`
+	Status    string `json:"status,omitempty"`
 	ZoneName  string `json:"zone_name,omitempty"`
 }
 
@@ -38,6 +39,7 @@ func (r *DomainResponse) FromModel(m *db.WebsiteDomain) error {
 	r.ID = m.ID
 	r.Domain = m.Domain
 	r.Namespace = string(m.Namespace)
+	r.Status = string(m.Status)
 	r.ZoneName = m.ZoneName
 	return nil
 }
