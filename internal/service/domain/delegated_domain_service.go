@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	dane "go.lumeweb.com/dane"
+	"go.lumeweb.com/ipfs-sdk/dnsname"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
@@ -209,11 +209,11 @@ func (s *DelegatedDomainService) DeleteDomain(ctx context.Context, domainID, web
 }
 
 func canonicalZoneName(domain string) string {
-	domain = strings.TrimSuffix(domain, ".")
-	if domain == "" {
+	name := dnsname.Normalize(domain)
+	if name == "" {
 		return "."
 	}
-	return domain + "."
+	return dnsname.EnsureFQDN(name)
 }
 
 // delegationRecord is used for typed access to delegation records.

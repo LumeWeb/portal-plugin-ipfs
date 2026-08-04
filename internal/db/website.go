@@ -128,6 +128,10 @@ func (W Website) TableName() string {
 
 // BeforeSave hook to validate status, target type, and multihash
 func (w *Website) BeforeSave(_ *gorm.DB) error {
+	// Normalize the domain to its canonical apex form on every write so a
+	// www.-prefixed hostname can never be persisted.
+	w.Domain = NormalizeDomain(w.Domain)
+
 	// Validate target type
 	if _, ok := validTargetTypes[WebsiteTargetType(w.TargetType)]; !ok {
 		return fmt.Errorf("%s: %s", errors.ErrInvalidTargetType, w.TargetType)

@@ -14,6 +14,7 @@ import (
 
 	dane "go.lumeweb.com/dane"
 	danehns "go.lumeweb.com/dane/hns"
+	"go.lumeweb.com/ipfs-sdk/dnsname"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
 
@@ -413,7 +414,7 @@ func (p *HNSProvider) VerifyDelegation(ctx context.Context, domain string,
 	expectedNS := p.Nameservers()
 	for _, ns := range nss {
 		for _, expected := range expectedNS {
-			if strings.TrimSuffix(ns.Host, ".") == strings.TrimSuffix(expected, ".") {
+			if dnsname.Equal(ns.Host, expected) {
 				return true, nil
 			}
 		}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"go.lumeweb.com/ipfs-sdk/dnsname"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
 	"go.lumeweb.com/portal/core"
@@ -289,15 +290,13 @@ func (s *DNSServiceDefault) ValidateNameservers(ctx context.Context, zoneID uint
 		return false, fmt.Errorf("failed to lookup nameservers for domain %s: %w", zone.Domain, err)
 	}
 
-	// Check if at least one approved nameserver is present in DNS response
-	// Normalize by stripping trailing dots — net.LookupNS returns FQDNs with
-	// trailing dots (e.g. "ns1.example.com.") but config values typically lack them.
+	// Check if at least one approved nameserver is present in DNS response.
+	// net.LookupNS returns FQDNs with trailing dots (e.g. "ns1.example.com.")
+	// while config values typically lack them; dnsname.Equal folds both.
 	valid := false
 	for _, approvedNS := range approvedNameservers {
-		normalizedApproved := strings.TrimSuffix(approvedNS, ".")
 		for _, dnsNS := range dnsNameservers {
-			normalizedDNS := strings.TrimSuffix(dnsNS.Host, ".")
-			if normalizedDNS == normalizedApproved {
+			if dnsname.Equal(dnsNS.Host, approvedNS) {
 				valid = true
 				break
 			}

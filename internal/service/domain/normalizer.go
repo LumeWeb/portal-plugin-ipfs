@@ -1,14 +1,12 @@
 package domain
 
 import (
-	"strings"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
 
-// NormalizeDomain lowercases, trims whitespace, strips www. prefix
+// NormalizeDomain lowercases, trims whitespace, and strips a leading "www."
+// prefix. It delegates to db.NormalizeDomain, the single source of truth, so
+// all callers share one normalization implementation.
 func NormalizeDomain(domain string) string {
-	domain = strings.TrimSpace(strings.ToLower(domain))
-	if strings.HasPrefix(domain, "www.") {
-		return domain[4:]
-	}
-	return domain
+	return db.NormalizeDomain(domain)
 }
