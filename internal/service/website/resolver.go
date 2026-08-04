@@ -21,6 +21,7 @@ type DNSResolver interface {
 // to standard recursive resolvers.
 type LiveResolver struct {
 	resolver *net.Resolver
+	addr     string
 }
 
 // NewLiveResolver returns a DNSResolver that targets the given server
@@ -33,6 +34,7 @@ func NewLiveResolver(addr string) DNSResolver {
 		return LiveResolver{}
 	}
 	return LiveResolver{
+		addr: addr,
 		resolver: &net.Resolver{
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
