@@ -217,8 +217,6 @@ func recordToDTOWithZoneID(rrset powerdns.RRSet, record powerdns.Record, zoneDom
 	}
 }
 
-
-
 // formatTXTContent wraps TXT record content in double quotes as required by PowerDNS API.
 // PowerDNS expects TXT record values to be quoted strings (e.g., "v=spf1 ~all").
 func formatTXTContent(content string) string {
@@ -234,9 +232,9 @@ func formatRecordContent(recordType, content string) string {
 	if strings.EqualFold(recordType, "TXT") {
 		return formatTXTContent(content)
 	}
-	// PowerDNS requires fully-qualified domain names for CNAME, MX, NS
+	// PowerDNS requires fully-qualified domain names for CNAME, MX, NS, ALIAS
 	// Append trailing dot if missing so the name is absolute, not relative
-	if strings.EqualFold(recordType, "CNAME") || strings.EqualFold(recordType, "MX") || strings.EqualFold(recordType, "NS") {
+	if strings.EqualFold(recordType, "CNAME") || strings.EqualFold(recordType, "MX") || strings.EqualFold(recordType, "NS") || strings.EqualFold(recordType, "ALIAS") {
 		return ensureTrailingDot(content)
 	}
 	return content
