@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/samber/lo"
+	"go.lumeweb.com/ipfs-sdk/dnsname"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	apiDTO "go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	powerdns "go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
@@ -70,7 +71,7 @@ func (s *DNSServiceDefault) GetRRSet(ctx context.Context, zoneID uint, name stri
 
 	if pdnsZone.Rrsets != nil {
 		matchingRRSet, found := lo.Find(*pdnsZone.Rrsets, func(rrset powerdns.RRSet) bool {
-			return rrset.Name == fullName && rrset.Type == recordType
+			return dnsname.Equal(rrset.Name, fullName) && rrset.Type == recordType
 		})
 
 		if found && matchingRRSet.Records != nil {

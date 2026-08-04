@@ -560,7 +560,7 @@ func (s *DNSServiceDefault) validateDomain(domain string) error {
 		return fmt.Errorf("domain too long (max 255 characters)")
 	}
 
-	trimmedDomain := strings.TrimSuffix(domain, ".")
+	trimmedDomain := dnsname.TrimDot(domain)
 
 	labels := strings.Split(trimmedDomain, ".")
 

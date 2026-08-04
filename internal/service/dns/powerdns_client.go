@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 	"strings"
+	"time"
 
-	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/ipfs-sdk/dnsname"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
+	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 )
 
@@ -66,11 +67,11 @@ func handleResponse[T any](resp *http.Response) (*T, error) {
 
 // CreateZone creates a new zone in PowerDNS, or returns the existing zone if it already exists (409)
 func (c *PowerDNSClient) CreateZone(ctx context.Context, domain string, nameservers []string) (*powerdns.Zone, error) {
-	canonicalDomain := strings.TrimSuffix(domain, ".") + "."
+	canonicalDomain := dnsname.EnsureFQDN(domain)
 
 	canonicalNameservers := make([]string, len(nameservers))
 	for i, ns := range nameservers {
-		canonicalNameservers[i] = strings.TrimSuffix(ns, ".") + "."
+		canonicalNameservers[i] = dnsname.EnsureFQDN(ns)
 	}
 
 	c.logger.Debug("Creating zone in PowerDNS",

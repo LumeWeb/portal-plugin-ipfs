@@ -7,6 +7,7 @@ import (
 
 	"github.com/bwesterb/go-zonefile"
 	"github.com/samber/lo"
+	"go.lumeweb.com/ipfs-sdk/dnsname"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	apiDTO "go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
@@ -40,12 +41,12 @@ func (s *DNSServiceDefault) getZoneWithPowerDNS(ctx context.Context, zoneID uint
 // Returns an error if the name contains "@" in an invalid position.
 func buildFullName(name, domain string) (string, error) {
 	// Normalize both name and domain (strip trailing dots for comparison)
-	nameNoDot := strings.TrimSuffix(name, ".")
-	domainNoDot := strings.TrimSuffix(domain, ".")
+	nameNoDot := dnsname.TrimDot(name)
+	domainNoDot := dnsname.TrimDot(domain)
 
 	// If name is the zone apex shorthand (@ or empty string), return canonical domain
 	if nameNoDot == "@" || nameNoDot == "" {
-		return domainNoDot + ".", nil
+		return dnsname.EnsureFQDN(domainNoDot), nil
 	}
 
 	// Reject @ used anywhere except as the sole character (invalid DNS name)
@@ -54,27 +55,26 @@ func buildFullName(name, domain string) (string, error) {
 	}
 
 	// If name is the zone apex (equals domain), return canonical domain
-	if nameNoDot == domainNoDot {
-		return domainNoDot + ".", nil
+	if dnsname.Equal(nameNoDot, domainNoDot) {
+		return dnsname.EnsureFQDN(domainNoDot), nil
 	}
 
 	// If name already contains the domain
 	if strings.HasSuffix(nameNoDot, "."+domainNoDot) {
 		// Return it canonically normalized (with trailing dot)
-		return nameNoDot + ".", nil
+		return dnsname.EnsureFQDN(nameNoDot), nil
 	}
 
 	// Otherwise, construct the full name and canonicalize
-	fullName := nameNoDot + "." + domainNoDot
-	return fullName + ".", nil
+	return dnsname.EnsureFQDN(nameNoDot + "." + domainNoDot), nil
 }
 
 // stripDomain removes the domain suffix from a full DNS name
 // Returns empty string if the name IS the domain (apex record)
 func stripDomain(name, domain string) string {
-	nameNoDot := strings.TrimSuffix(name, ".")
-	domainNoDot := strings.TrimSuffix(domain, ".")
-	if nameNoDot == domainNoDot {
+	nameNoDot := dnsname.TrimDot(name)
+	domainNoDot := dnsname.TrimDot(domain)
+	if dnsname.Equal(nameNoDot, domainNoDot) {
 		return ""
 	}
 	if strings.HasSuffix(name, "."+domain) {
@@ -246,10 +246,7 @@ func formatRecordContent(recordType, content string) string {
 // PowerDNS requires FQDNs to end with a dot to be treated as absolute.
 func ensureTrailingDot(name string) string {
 	name = strings.TrimSpace(name)
-	if name == "" || strings.HasSuffix(name, ".") {
-		return name
-	}
-	return name + "."
+	return dnsname.EnsureFQDN(name)
 }
 
 // stripTXTQuotes removes surrounding double quotes from TXT record content
