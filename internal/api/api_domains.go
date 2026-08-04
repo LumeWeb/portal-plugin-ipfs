@@ -30,7 +30,7 @@ func (a *API) createDomain(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidRequest, errors.New("invalid website ID"))
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -73,7 +73,7 @@ func (a *API) listDomains(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidRequest, errors.New("invalid website ID"))
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -132,13 +132,13 @@ func (a *API) deleteDomain(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidRequest, errors.New("invalid website ID"))
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	domainID, err := strconv.ParseUint(c.Param("domain_id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidRequest, errors.New("invalid domain ID"))
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid domain ID"))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -168,13 +168,13 @@ func (a *API) verifyDomain(c echo.Context) error {
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidRequest, errors.New("invalid website ID"))
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
 	domainID, err := strconv.ParseUint(c.Param("domain_id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidRequest, errors.New("invalid domain ID"))
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid domain ID"))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 

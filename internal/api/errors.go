@@ -54,6 +54,7 @@ const (
 
 	// Website domain binding error types
 	ErrKeyDomainNotFound core.ErrorType = "DOMAIN_NOT_FOUND"
+	ErrKeyInvalidPathID  core.ErrorType = "INVALID_PATH_ID"
 )
 
 func init() {
@@ -89,6 +90,7 @@ func init() {
 		ErrKeyInvalidCID:            {Key: ErrKeyInvalidCID, Message: "Invalid CID provided"},
 		ErrKeyInvalidTarget:         {Key: ErrKeyInvalidTarget, Message: "Invalid target hash or peer ID provided"},
 		ErrKeyDomainNotFound:        {Key: ErrKeyDomainNotFound, Message: "Domain not found"},
+		ErrKeyInvalidPathID:         {Key: ErrKeyInvalidPathID, Message: "Invalid path parameter: %s"},
 		ErrKeyDeleteFailed:          {Key: ErrKeyDeleteFailed, Message: "Failed to delete zone"},
 		ErrKeyUpdateFailed:          {Key: ErrKeyUpdateFailed, Message: "Failed to update zone"},
 	})
@@ -119,6 +121,7 @@ func init() {
 		ErrKeyInvalidTarget:         http.StatusUnprocessableEntity,
 		ErrKeyPermissionDenied:      http.StatusForbidden,
 		ErrKeyDomainNotFound:        http.StatusNotFound,
+		ErrKeyInvalidPathID:         http.StatusBadRequest,
 		ErrKeyDeleteFailed:          http.StatusInternalServerError,
 		ErrKeyUpdateFailed:          http.StatusInternalServerError,
 	})
