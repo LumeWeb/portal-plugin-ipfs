@@ -9,6 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/samber/lo"
 	"go.lumeweb.com/httputil"
+	"go.lumeweb.com/ipfs-sdk/dnsname"
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
 	queryutilHttp "go.lumeweb.com/queryutil/http"
@@ -511,7 +512,7 @@ func (a *API) bulkDeleteRecords(c echo.Context) error {
 // Returns an error for invalid names like "subdomain.@" where @ is misplaced.
 func validateRecordName(name string) error {
 	// @ is only valid as the sole character (apex shorthand)
-	nameNoDot := strings.TrimSuffix(name, ".")
+	nameNoDot := dnsname.TrimDot(name)
 	if strings.Contains(nameNoDot, "@") && nameNoDot != "@" {
 		return fmt.Errorf("\"@\" must be used alone for apex records")
 	}

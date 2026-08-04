@@ -14,6 +14,7 @@ import (
 
 	dane "go.lumeweb.com/dane"
 	danehns "go.lumeweb.com/dane/hns"
+	"go.lumeweb.com/ipfs-sdk/dnsname"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
 
@@ -149,7 +150,7 @@ var hnsDomainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 func (p *HNSProvider) Validate(domain string) error {
 	domain = strings.TrimSuffix(domain, "/")
-	domain = strings.TrimSuffix(domain, ".")
+	domain = dnsname.TrimDot(domain)
 	domain = strings.ToLower(domain)
 	if domain == "" {
 		return fmt.Errorf("domain is required")
@@ -169,7 +170,7 @@ func (p *HNSProvider) Validate(domain string) error {
 func (p *HNSProvider) BuildDelegation(ctx context.Context, zoneID uint,
 	domain string, website *pluginDb.Website, config json.RawMessage) (any, error) {
 
-	zoneName := domain + "."
+	zoneName := dnsname.EnsureFQDN(domain)
 
 	var cfg HNSDelegationConfig
 	if len(config) > 0 {
@@ -268,7 +269,7 @@ func (p *HNSProvider) enableDNSSECAndDS(ctx context.Context, zoneID uint, zoneNa
 		return nil, fmt.Errorf("compute ds: %w", err)
 	}
 
-	dsStr := dane.FormatDSRecord(strings.TrimSuffix(zoneName, "."), ds)
+	dsStr := dane.FormatDSRecord(dnsname.TrimDot(zoneName), ds)
 	return []Record{{
 		Type:  "DS",
 		Value: dsStr,
@@ -286,7 +287,7 @@ func (p *HNSProvider) buildDelegated(zoneName string, nsRecords []string, tlsa s
 	}
 
 	if cfg.NameserverHost != "" && (cfg.NameserverIPv4 != "" || cfg.NameserverIPv6 != "") {
-		if strings.HasSuffix(strings.TrimSuffix(cfg.NameserverHost, "."), strings.TrimSuffix(zoneName, ".")) {
+		if strings.HasSuffix(dnsname.TrimDot(cfg.NameserverHost), dnsname.TrimDot(zoneName)) {
 			if cfg.NameserverIPv4 != "" {
 				parent = append(parent, glue4Record(cfg.NameserverHost, cfg.NameserverIPv4))
 			}
@@ -359,7 +360,7 @@ func (p *HNSProvider) buildHNSInline(zoneName string, nsRecords []string, tlsa s
 }
 
 func (p *HNSProvider) buildTLSA(ctx context.Context, zoneName string) (string, error) {
-	domain := strings.TrimSuffix(zoneName, ".")
+	domain := dnsname.TrimDot(zoneName)
 
 	p.tlsaMu.RLock()
 	certPEM, ok := p.tlsaSource.Certs[domain]
@@ -405,7 +406,7 @@ func (p *HNSProvider) VerifyDelegation(ctx context.Context, domain string,
 		},
 	}
 
-	nss, err := resolver.LookupNS(ctx, domain+".")
+	nss, err := resolver.LookupNS(ctx, dnsname.EnsureFQDN(domain))
 	if err != nil {
 		return false, fmt.Errorf("HNS resolver query failed: %w", err)
 	}
@@ -413,7 +414,7 @@ func (p *HNSProvider) VerifyDelegation(ctx context.Context, domain string,
 	expectedNS := p.Nameservers()
 	for _, ns := range nss {
 		for _, expected := range expectedNS {
-			if strings.TrimSuffix(ns.Host, ".") == strings.TrimSuffix(expected, ".") {
+			if dnsname.Equal(ns.Host, expected) {
 				return true, nil
 			}
 		}

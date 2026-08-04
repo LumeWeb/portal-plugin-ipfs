@@ -47,3 +47,10 @@ type WebsiteDomain struct {
 func (WebsiteDomain) TableName() string {
 	return "website_domains"
 }
+
+// BeforeSave normalizes the bound domain to its canonical apex form on every
+// write so a www.-prefixed hostname can never be persisted.
+func (wd *WebsiteDomain) BeforeSave(_ *gorm.DB) error {
+	wd.Domain = NormalizeDomain(wd.Domain)
+	return nil
+}

@@ -22,6 +22,7 @@ import (
 	pluginEvent "go.lumeweb.com/portal-plugin-ipfs/internal/event"
 	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 
+	"go.lumeweb.com/ipfs-sdk/dnsname"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
@@ -312,7 +313,7 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 							zap.Uint("dns_zone_id", dnsZone.ID))
 
 						// Only attempt zone cleanup if we created this zone (not reusing a parent)
-						if dnsZone.Domain == website.Domain {
+						if dnsname.Equal(dnsZone.Domain, website.Domain) {
 							if cleanupErr := s.dnsSvc.DeleteZone(ctx, dnsZone.ID); cleanupErr != nil {
 								s.Logger().Error("Failed to clean up orphaned DNS zone",
 									zap.Error(cleanupErr),
@@ -848,7 +849,7 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 				zap.Error(err),
 				zap.Uint("website_id", website.ID))
 			// Only attempt zone cleanup if we created this zone (not reusing a parent)
-			if dnsZone.Domain == website.Domain {
+			if dnsname.Equal(dnsZone.Domain, website.Domain) {
 				_ = s.dnsSvc.DeleteZone(ctx, dnsZone.ID)
 			}
 			return fmt.Errorf("failed to associate DNS zone with website: %w", err)
@@ -1782,6 +1783,10 @@ func (s *WebsiteServiceDefault) notifyUserStatusChanged(ctx context.Context, web
 func (s *WebsiteServiceDefault) UpdateSSLStatus(ctx context.Context, domain string, status pluginDb.SSLStatus, sslError string, timestamp *time.Time) (*pluginDb.Website, error) {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.UpdateSSLStatus")
 	defer span.End()
+
+	// Normalize so that a www.-prefixed hostname (e.g. the CDN/certificate
+	// hostname) resolves to the stored apex domain record.
+	domain = domsvc.NormalizeDomain(domain)
 
 	var website pluginDb.Website
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
