@@ -791,7 +791,7 @@ func TestAPI_GetWebsite(t *testing.T) {
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites/invalid", token, nil)
 
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
 		}, TestOptions)
 	})
 
@@ -935,7 +935,7 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 			reqBody := fmt.Sprintf(`{"domain":"%s","target_type":"ipfs","target_hash":"%s"}`, TestDomain, TestCID)
 			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/invalid", token, []byte(reqBody))
 
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
 		}, TestOptions)
 	})
 
@@ -1042,7 +1042,7 @@ func TestAPI_DeleteWebsite(t *testing.T) {
 
 			rec := helper.makeAuthenticatedRequest(http.MethodDelete, "/api/websites/invalid", token, nil)
 
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
 		}, TestOptions)
 	})
 
@@ -1146,7 +1146,7 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/invalid/validate", token, nil)
 
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
 		}, TestOptions)
 	})
 

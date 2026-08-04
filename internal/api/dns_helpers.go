@@ -11,8 +11,8 @@ import (
 	"github.com/samber/lo"
 	"go.lumeweb.com/httputil"
 	mcontext "go.lumeweb.com/portal-middleware/context"
-	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal/core"
 	"gorm.io/gorm"
 )
 
@@ -82,7 +82,7 @@ func parseZoneIDParam(c echo.Context) (uint, error) {
 func parseZoneIDParamWithResponse(c echo.Context) (uint, error) {
 	zoneIDRaw, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
-		apiErr := NewError(ErrKeyInvalidIdentifier, nil)
+		apiErr := NewError(ErrKeyInvalidPathID, nil)
 		return 0, apiErr
 	}
 	return uint(zoneIDRaw), nil
