@@ -238,10 +238,8 @@ func (c *PowerDNSClient) EnableDNSSEC(ctx context.Context, zoneID string) (strin
 	}
 
 	var result struct {
-		DNSKey string `json:"dnskey"`
-		DS    []struct {
-			Digest string `json:"digest"`
-		} `json:"ds"`
+		DNSKey string   `json:"dnskey"`
+		DS     []string `json:"ds"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("decode cryptokey response: %w", err)

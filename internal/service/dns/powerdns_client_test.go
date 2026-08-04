@@ -1035,6 +1035,63 @@ func TestIsDuplicateKeyError(t *testing.T) {
 
 // Helper functions
 
+func TestEnableDNSSEC(t *testing.T) {
+	t.Run("decodes cryptokey response with ds as string array", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				t.Errorf("expected POST request, got %s", r.Method)
+			}
+			if r.URL.Path != "/servers/localhost/zones/lumeweb./cryptokeys" {
+				t.Errorf("unexpected path: %s", r.URL.Path)
+			}
+			// PowerDNS returns ds as an array of DS record strings.
+			body := `{"dnskey":"257 3 13 AwEAAaX9pZzY3eiw==","ds":["45688 13 2 1F287B0F9E0C1A2B3C4D5E6F7A8B9C0D1E2F3A4B5C6D7E8F9A0B1C2D3E4F5"]}`
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(body))
+		}))
+		defer server.Close()
+
+		logger := zap.NewNop()
+		coreLogger := &core.Logger{Logger: logger}
+		client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+		if err != nil {
+			t.Fatalf("NewPowerDNSClient failed: %v", err)
+		}
+
+		dnskey, err := client.EnableDNSSEC(context.Background(), "lumeweb.")
+		if err != nil {
+			t.Fatalf("EnableDNSSEC returned error: %v", err)
+		}
+		if dnskey != "257 3 13 AwEAAaX9pZzY3eiw==" {
+			t.Errorf("unexpected dnskey: %q", dnskey)
+		}
+	})
+
+	t.Run("propagates non-2xx response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error": "zone not found"}`))
+		}))
+		defer server.Close()
+
+		logger := zap.NewNop()
+		coreLogger := &core.Logger{Logger: logger}
+		client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+		if err != nil {
+			t.Fatalf("NewPowerDNSClient failed: %v", err)
+		}
+
+		_, err = client.EnableDNSSEC(context.Background(), "lumeweb.")
+		if err == nil {
+			t.Fatal("expected error for non-2xx response, got nil")
+		}
+		if !strings.Contains(err.Error(), "status 400") {
+			t.Errorf("expected status 400 in error, got: %v", err)
+		}
+	})
+}
+
 func intPtr(i int) *int {
 	return &i
 }
