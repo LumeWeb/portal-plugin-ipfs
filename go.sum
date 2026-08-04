@@ -639,6 +639,8 @@ github.com/knadh/koanf/parsers/yaml v1.1.0 h1:3ltfm9ljprAHt4jxgeYLlFPmUaunuCgu1y
 github.com/knadh/koanf/parsers/yaml v1.1.0/go.mod h1:HHmcHXUrp9cOPcuC+2wrr44GTUB0EC+PyfN3HZD9tFg=
 github.com/knadh/koanf/providers/confmap v1.0.0 h1:mHKLJTE7iXEys6deO5p6olAiZdG5zwp8Aebir+/EaRE=
 github.com/knadh/koanf/providers/confmap v1.0.0/go.mod h1:txHYHiI2hAtF0/0sCmcuol4IDcuQbKTybiB1nOcUo1A=
+github.com/knadh/koanf/providers/confmap v1.0.1 h1:L15hbvMqlvhwUuCtL9BkL+rqiMAjk6cZc8O9XoDtE3A=
+github.com/knadh/koanf/providers/confmap v1.0.1/go.mod h1:txHYHiI2hAtF0/0sCmcuol4IDcuQbKTybiB1nOcUo1A=
 github.com/knadh/koanf/providers/file v1.2.1 h1:bEWbtQwYrA+W2DtdBrQWyXqJaJSG3KrP3AESOJYp9wM=
 github.com/knadh/koanf/providers/file v1.2.1/go.mod h1:bp1PM5f83Q+TOUu10J/0ApLBd9uIzg+n9UgthfY+nRA=
 github.com/knadh/koanf/providers/rawbytes v1.0.0 h1:MrKDh/HksJlKJmaZjgs4r8aVBb/zsJyc/8qaSnzcdNI=
@@ -1150,6 +1152,8 @@ go.lumeweb.com/portal v0.5.2-0.20260804143626-0d9ed24e8002 h1:9gVVNfL47zAYA4+wnN
 go.lumeweb.com/portal v0.5.2-0.20260804143626-0d9ed24e8002/go.mod h1:+qhh36pe2yhFUuwOryXLleNGgwFgQ3RlbYYpldx5DtY=
 go.lumeweb.com/portal v0.5.2-0.20260804153219-795424150cb1 h1:TxeJJ0ZfYD43v+PNTf0jurn+RqRRUCxElBbkilIQhu0=
 go.lumeweb.com/portal v0.5.2-0.20260804153219-795424150cb1/go.mod h1:YtUJpDmLT1/h3gkglA7tDmm6OYlTx3LVIs1AgY+YLzQ=
+go.lumeweb.com/portal v0.5.2-0.20260804180928-67971e95c5ad h1:IqiBXyBYxQ5OwoQHUsawXU4pUblGuqK3PD5LyX26MaU=
+go.lumeweb.com/portal v0.5.2-0.20260804180928-67971e95c5ad/go.mod h1:9bHHYOwn87iB6Z/IZwBMLpFpn6N4eD10gH1XhqQhVxk=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.1.0 h1:bHHJ7oZrBKmBvdUFutr3Dx6FdwvSg/ZeF33QaRM0DKU=
@@ -1233,6 +1237,8 @@ go.sia.tech/coreutils v0.23.5 h1:KrkaV5MgFcsx3Aqma4qymWStTZKRz8JTuRQUl/PBfx0=
 go.sia.tech/coreutils v0.23.5/go.mod h1:DN3dIRWJaS8ITrIuDx/Z6AlPneD2KjxVjIjnMYtl7D4=
 go.sia.tech/coreutils v0.23.6-0.20260730084356-d53a68fc6403 h1:3VACZtKJLwfkRGWOYbGKJynn5RMRUQnQ4nGheAu4Uwc=
 go.sia.tech/coreutils v0.23.6-0.20260730084356-d53a68fc6403/go.mod h1:NBgXY8LA+F0UV10U0UlnQoKC6JkpHTLhSa9Tk0dHl9k=
+go.sia.tech/coreutils v0.23.6-0.20260804151259-4b4ff132419a h1:F92m55WZ56zV4cgpSzvtTdtzKOqyVe4SKsOTZWCFPWk=
+go.sia.tech/coreutils v0.23.6-0.20260804151259-4b4ff132419a/go.mod h1:NBgXY8LA+F0UV10U0UlnQoKC6JkpHTLhSa9Tk0dHl9k=
 go.sia.tech/indexd v0.4.0 h1:omnE0ittOheSQror1PN6BM16vbBC7PBH19kdg8B5ZUY=
 go.sia.tech/indexd v0.4.0/go.mod h1:hBozyI4EMzGerAxv3YmB3vAG3PByQnaE1UUyJaIFL/w=
 go.sia.tech/indexd v0.4.1 h1:QMWgK+zaICjVIKRYyV4y5x6XCuG6ooMnJ2xWZsSUr4A=
@@ -1247,6 +1253,8 @@ go.sia.tech/siastorage v0.1.1-0.20260730113653-ca2ffd94f7a0 h1:lY6G42Hz9wd63xLr8
 go.sia.tech/siastorage v0.1.1-0.20260730113653-ca2ffd94f7a0/go.mod h1:o9tWCYGM4sJMwJTWUxh51fSep89lkmZOV7Q1aOMluec=
 go.sia.tech/siastorage v0.1.1-0.20260803093037-bdc99fd71dc9 h1:c6a0iCENK7XxgXBTr/UflPmRPNE/jrp4KtoT+W/o+es=
 go.sia.tech/siastorage v0.1.1-0.20260803093037-bdc99fd71dc9/go.mod h1:o9tWCYGM4sJMwJTWUxh51fSep89lkmZOV7Q1aOMluec=
+go.sia.tech/siastorage v0.1.1-0.20260804083514-3943fdaf4fd6 h1:n0ZlcFrpOIEhTx0bHdUEqNjz8sTGK9Lz6mgAnWfC5pw=
+go.sia.tech/siastorage v0.1.1-0.20260804083514-3943fdaf4fd6/go.mod h1:o9tWCYGM4sJMwJTWUxh51fSep89lkmZOV7Q1aOMluec=
 go.uber.org/atomic v1.11.0 h1:ZvwS0R+56ePWxUNi+Atn9dWONBPp/AUETXlHW0DxSjE=
 go.uber.org/atomic v1.11.0/go.mod h1:LUxbIzbOniOlMKjJjyPfpl4v+PKK2cNJn91OQbhoJI0=
 go.uber.org/dig v1.19.0 h1:BACLhebsYdpQ7IROQ1AGPjrXcP5dF80U3gKoFzbaq/4=
