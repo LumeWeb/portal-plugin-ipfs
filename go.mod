@@ -46,13 +46,13 @@ require (
 	go.lumeweb.com/dane v0.0.2
 	go.lumeweb.com/httputil v0.5.7
 	go.lumeweb.com/ipfs-content v0.1.17
-	go.lumeweb.com/portal v0.5.2-0.20260805131618-cfe75fb616af
+	go.lumeweb.com/portal v0.5.2-0.20260805184328-27bc425a0829
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.1.0
 	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260728211030-fa71bb5211dc
 	go.lumeweb.com/portal-plugin-quota v0.1.0
 	go.lumeweb.com/portal-router v0.7.7
-	go.lumeweb.com/queryutil v0.3.17
+	go.lumeweb.com/queryutil v0.3.18
 	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260722190812-27c8d53607dd
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.54.0
