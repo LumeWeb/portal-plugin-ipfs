@@ -27,14 +27,15 @@ func newTestReprovider(t *testing.T) (*Reprovider, *mocks.MockProvider, *mocks.M
 	logger, _ := zap.NewDevelopment()
 
 	cfg := config.IPFSProvider{
-		BatchSize:     10,
-		Interval:      1 * time.Second,
-		PerCIDTimeout: 0,
-		TriggerDelay:  100 * time.Millisecond,
-		NotReadySleep: 50 * time.Millisecond,
-		EmptySleep:    10 * time.Minute,
-		ErrorSleep:    time.Minute,
-		BacklogSleep:  time.Minute,
+		BatchSize:          10,
+		Interval:           1 * time.Second,
+		PerCIDTimeout:      0,
+		TriggerDelay:       100 * time.Millisecond,
+		NotReadySleep:      50 * time.Millisecond,
+		EmptySleep:         10 * time.Minute,
+		ErrorSleep:         time.Minute,
+		BacklogSleep:       time.Minute,
+		ProvideManyTimeout: 3 * time.Second,
 	}
 
 	return NewReprovider(mockProvider, mockStore, logger, cfg), mockProvider, mockStore
@@ -228,13 +229,14 @@ func TestNewReprovider(t *testing.T) {
 
 func newTestReproviderCfg(interval time.Duration, batchSize int) config.IPFSProvider {
 	return config.IPFSProvider{
-		BatchSize:     batchSize,
-		Interval:      interval,
-		TriggerDelay:  100 * time.Millisecond,
-		NotReadySleep: 50 * time.Millisecond,
-		EmptySleep:    10 * time.Minute,
-		ErrorSleep:    time.Minute,
-		BacklogSleep:  time.Minute,
+		BatchSize:          batchSize,
+		Interval:           interval,
+		TriggerDelay:       100 * time.Millisecond,
+		NotReadySleep:      50 * time.Millisecond,
+		EmptySleep:         10 * time.Minute,
+		ErrorSleep:         time.Minute,
+		BacklogSleep:       time.Minute,
+		ProvideManyTimeout: 1 * time.Second,
 	}
 }
 
@@ -748,5 +750,3 @@ func mustMultihash(t *testing.T, data string) multihash.Multihash {
 	require.NoError(t, err)
 	return h
 }
-
-
