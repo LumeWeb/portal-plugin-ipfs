@@ -272,7 +272,12 @@ func (p *HNSProvider) enableDNSSECAndDS(ctx context.Context, zoneID uint, zoneNa
 		return nil, fmt.Errorf("compute ds: %w", err)
 	}
 
-	dsStr := dane.FormatDSRecord(dnsname.TrimDot(zoneName), ds)
+	// The DS VALUE carries only the RDATA (key tag, algorithm, digest type,
+	// digest) per RFC 4034 §5.3 — the owner name and record-type token belong
+	// to the table's domain/type context, not the value. Use ds.String()
+	// (RDATA presentation) rather than dane.FormatDSRecord, which would
+	// prefix "<owner> DS " onto the value.
+	dsStr := ds.String()
 	return []Record{{
 		Type:  "DS",
 		Value: dsStr,
