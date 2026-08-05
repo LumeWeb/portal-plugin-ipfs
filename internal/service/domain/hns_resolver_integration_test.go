@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -35,8 +36,14 @@ import (
 // ephemeral port on loopback. The handler answers NS queries for `name` with
 // the given nameservers and increments a counter so the test can assert the
 // query actually reached this server.
-func startCustomPortDNSServer(t *testing.T, name string, nsRecords []string) (addr string, served *atomicCounter) {
+func startCustomPortDNSServer(t *testing.T, name string, nsRecords []string, dsRecord ...string) (addr string, served *atomicCounter) {
 	t.Helper()
+
+	// The single DS record the server serves, if any.
+	var servedDS string
+	if len(dsRecord) > 0 {
+		servedDS = dsRecord[0]
+	}
 
 	served = &atomicCounter{}
 	handler := dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
@@ -44,13 +51,33 @@ func startCustomPortDNSServer(t *testing.T, name string, nsRecords []string) (ad
 		m := new(dns.Msg)
 		m.SetReply(req)
 		m.Authoritative = true
-		if len(req.Question) > 0 && req.Question[0].Qtype == dns.TypeNS {
-			for _, ns := range nsRecords {
-				rr := &dns.NS{
-					Hdr: dns.RR_Header{Name: name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 300},
-					Ns:  ns,
+		if len(req.Question) > 0 {
+			qtype := req.Question[0].Qtype
+			switch qtype {
+			case dns.TypeNS:
+				for _, ns := range nsRecords {
+					rr := &dns.NS{
+						Hdr: dns.RR_Header{Name: name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 300},
+						Ns:  ns,
+					}
+					m.Answer = append(m.Answer, rr)
 				}
-				m.Answer = append(m.Answer, rr)
+			case dns.TypeDS:
+				if servedDS != "" {
+					// Parse "keytag alg digesttype digest" into a DS record.
+					parts := strings.Fields(servedDS)
+					keyTag, _ := strconv.Atoi(parts[0])
+					alg, _ := strconv.Atoi(parts[1])
+					digType, _ := strconv.Atoi(parts[2])
+					rr := &dns.DS{
+						Hdr:        dns.RR_Header{Name: name, Rrtype: dns.TypeDS, Class: dns.ClassINET, Ttl: 300},
+						KeyTag:     uint16(keyTag),
+						Algorithm:  uint8(alg),
+						DigestType: uint8(digType),
+						Digest:     parts[3],
+					}
+					m.Answer = append(m.Answer, rr)
+				}
 			}
 		}
 		_ = w.WriteMsg(m)
@@ -286,4 +313,97 @@ func TestHNSProvider_VerifyDelegation_ErrorSurfacesActualResolverAddr(t *testing
 	assert.Contains(t, err.Error(), "HNS resolver query failed",
 		"error must retain the operation context")
 	t.Logf("resolver error surfaces actual dial target: %v", err)
+}
+
+// A platform-managed zone carries the DS the portal generated from its
+// PowerDNS DNSKEY. It must NOT be marked verified until that exact DS is
+// served by the parent zone (the "root takes effect" step). When the parent
+// does not yet serve the DS, VerifyDelegation must return false even though
+// the NS delegation is already visible.
+func TestHNSProvider_VerifyDelegation_Managed_RequiresServedDS(t *testing.T) {
+	const domain = "lumeweb."
+	const dsRdata = "44451 13 2 cb6c0f5bbf0ca4391b008cfe56f8e072d3f3f21d4b3bfb40b46f5c5b35a0b1e1"
+
+	// Server serves the NS delegation but NOT the DS (pre-propagation state).
+	addr, _ := startCustomPortDNSServer(t, domain, []string{"ns1.lumeweb.", "ns2.lumeweb."})
+
+	p := NewHNSProvider(addr, []string{"ns1.lumeweb.", "ns2.lumeweb."}, TLSASource{})
+
+	// Delegation data is the platform-generated bundle: it carries the DS the
+	// portal computed (managed zone).
+	managedDelegation := json.RawMessage(`{
+		"mode": "delegated",
+		"parent_records": [
+			{"type": "NS", "value": "ns1.lumeweb.,ns2.lumeweb."},
+			{"type": "DS", "value": "` + dsRdata + `"}
+		]
+	}`)
+
+	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", managedDelegation)
+	require.NoError(t, err)
+	assert.False(t, verified,
+		"managed zone must not verify before the portal's DS is served by the parent zone")
+}
+
+// Once the parent zone actually serves the portal's generated DS, a managed
+// zone becomes verified: NS delegation visible AND the DS has taken effect.
+func TestHNSProvider_VerifyDelegation_Managed_VerifiedWhenDSServed(t *testing.T) {
+	const domain = "lumeweb."
+	const dsRdata = "44451 13 2 cb6c0f5bbf0ca4391b008cfe56f8e072d3f3f21d4b3bfb40b46f5c5b35a0b1e1"
+
+	// Server serves both the NS delegation and the matching DS.
+	addr, served := startCustomPortDNSServer(t, domain, []string{"ns1.lumeweb.", "ns2.lumeweb."}, dsRdata)
+
+	p := NewHNSProvider(addr, []string{"ns1.lumeweb.", "ns2.lumeweb."}, TLSASource{})
+
+	managedDelegation := json.RawMessage(`{
+		"mode": "delegated",
+		"parent_records": [
+			{"type": "NS", "value": "ns1.lumeweb.,ns2.lumeweb."},
+			{"type": "DS", "value": "` + dsRdata + `"}
+		]
+	}`)
+
+	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", managedDelegation)
+	require.NoError(t, err)
+	assert.True(t, verified,
+		"managed zone must verify once NS delegation is visible AND the portal's DS is served")
+	assert.Greater(t, served.value(), 0, "resolver must have received the DS query")
+}
+
+// A self-managed zone has no DS the portal generated, so validation stays on
+// NS visibility alone (only the name owner knows their own DNSKEY/DS).
+func TestHNSProvider_VerifyDelegation_SelfManaged_NSOnly(t *testing.T) {
+	const domain = "lumeweb."
+
+	addr, _ := startCustomPortDNSServer(t, domain, []string{"ns1.lumeweb.", "ns2.lumeweb."})
+	p := NewHNSProvider(addr, []string{"ns1.lumeweb.", "ns2.lumeweb."}, TLSASource{})
+
+	// No parent DS record -> self-managed.
+	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", json.RawMessage(`{
+		"mode": "delegated",
+		"parent_records": [{"type": "NS", "value": "ns1.lumeweb.,ns2.lumeweb."}]
+	}`))
+	require.NoError(t, err)
+	assert.True(t, verified, "self-managed zone validates on NS visibility alone")
+}
+
+// delegationExpectedDS normalizes both plain RDATA and legacy
+// "<owner> DS <rdata>" persisted values down to the DS RDATA.
+func TestDelegationExpectedDS(t *testing.T) {
+	raw := json.RawMessage(`{
+		"parent_records": [
+			{"type": "NS", "value": "ns1.lumeweb."},
+			{"type": "DS", "value": "44451 13 2 cb6c0f5b"}
+		]
+	}`)
+	assert.Equal(t, "44451 13 2 cb6c0f5b", delegationExpectedDS(raw))
+
+	legacy := json.RawMessage(`{
+		"parent_records": [{"type": "DS", "value": "lumeweb. 3600 IN DS 44451 13 2 cb6c0f5b"}]
+	}`)
+	assert.Equal(t, "44451 13 2 cb6c0f5b", delegationExpectedDS(legacy))
+
+	assert.Equal(t, "", delegationExpectedDS(json.RawMessage(`{}`)))
+	assert.Equal(t, "", delegationExpectedDS(json.RawMessage(`{"parent_records":[]}`)))
 }
