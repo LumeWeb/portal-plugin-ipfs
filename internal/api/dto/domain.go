@@ -38,15 +38,16 @@ type DNSDelegationRecord struct {
 }
 
 // DNSDelegation carries the namespace-specific records a user must publish to
-// complete domain delegation, plus human-readable instructions.
+// complete domain delegation.
 //
 // Parent records (NS + optional GLUE/SYNTH + DS) are published in the parent
 // namespace — for HNS that is the HNS wallet/resource; for ICANN it is the
 // registrar. Authoritative records (NS + TLSA) are configured on the
-// authoritative DNS server. Nameservers is the ICANN shortcut.
+// authoritative DNS server. Nameservers is the ICANN shortcut. Clients render
+// their own guidance from the namespace, mode, and record data that the server
+// returns.
 type DNSDelegation struct {
 	Mode                 string                `json:"mode,omitempty"`
-	Instructions         string                `json:"instructions,omitempty"`
 	Nameservers          []string              `json:"nameservers,omitempty"`
 	DS                   string                `json:"ds,omitempty"`
 	ParentRecords        []DNSDelegationRecord `json:"parent_records,omitempty"`
@@ -85,9 +86,9 @@ func (r *DomainResponse) FromModel(m *db.WebsiteDomain) error {
 }
 
 // mapDNSDelegation converts the raw provider DelegationData (JSON) into the
-// typed DNSDelegation. HNS emits a DelegationBundle with parent_records,
-// authoritative_records and instructions; ICANN emits nameservers + instructions.
-// It returns nil when the payload cannot be interpreted.
+// typed DNSDelegation. HNS emits a DelegationBundle with parent_records and
+// authoritative_records; ICANN emits nameservers. It returns nil when the
+// payload cannot be interpreted.
 func mapDNSDelegation(raw []byte) *DNSDelegation {
 	if len(raw) == 0 {
 		return nil
@@ -96,7 +97,6 @@ func mapDNSDelegation(raw []byte) *DNSDelegation {
 	// Try the HNS DelegationBundle shape first.
 	var hns struct {
 		Mode                 string                `json:"mode"`
-		Instructions         string                `json:"instructions"`
 		ParentRecords        []DNSDelegationRecord `json:"parent_records"`
 		AuthoritativeRecords []DNSDelegationRecord `json:"authoritative_records"`
 	}
@@ -105,7 +105,6 @@ func mapDNSDelegation(raw []byte) *DNSDelegation {
 
 		d := &DNSDelegation{
 			Mode:                 hns.Mode,
-			Instructions:         hns.Instructions,
 			ParentRecords:        hns.ParentRecords,
 			AuthoritativeRecords: hns.AuthoritativeRecords,
 		}
@@ -121,13 +120,11 @@ func mapDNSDelegation(raw []byte) *DNSDelegation {
 
 	// Fall back to the ICANN shape.
 	var icann struct {
-		Nameservers  []string `json:"nameservers"`
-		Instructions string   `json:"instructions"`
+		Nameservers []string `json:"nameservers"`
 	}
 	if err := json.Unmarshal(raw, &icann); err == nil && len(icann.Nameservers) > 0 {
 		return &DNSDelegation{
-			Nameservers:  icann.Nameservers,
-			Instructions: icann.Instructions,
+			Nameservers: icann.Nameservers,
 		}
 	}
 

@@ -107,7 +107,6 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 					"authoritative_records": []map[string]any{
 						{"type": "NS", "value": "ns1.lumeweb\nns2.lumeweb"},
 					},
-					"instructions": "Publish the parent_records in your HNS wallet.",
 				},
 			}
 			require.NoError(t, ctx.DB().Create(wd).Error)

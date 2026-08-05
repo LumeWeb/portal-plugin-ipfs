@@ -106,7 +106,6 @@ type DelegationBundle struct {
 	Mode                 string   `json:"mode"`
 	ParentRecords        []Record `json:"parent_records"`
 	AuthoritativeRecords []Record `json:"authoritative_records"`
-	Instructions         string   `json:"instructions"`
 }
 
 // HNSProvider implements DomainProvider for the Handshake (HNS) namespace.
@@ -316,7 +315,6 @@ func (p *HNSProvider) buildDelegated(zoneName string, nsRecords []string, tlsa s
 		Mode:                 string(HNSModeDelegated),
 		ParentRecords:        parent,
 		AuthoritativeRecords: auth,
-		Instructions:         "Publish the parent_records (NS + optional GLUE) in your HNS wallet. Configure the authoritative_records on your DNS server.",
 	}
 }
 
@@ -363,7 +361,6 @@ func (p *HNSProvider) buildHNSInline(zoneName string, nsRecords []string, tlsa s
 		Mode:                 string(HNSModeInline),
 		ParentRecords:        parent,
 		AuthoritativeRecords: auth,
-		Instructions:         "Publish the SYNTH records in your HNS wallet. The authoritative side uses synthetic nameserver names derived from the IPs.",
 	}, nil
 }
 

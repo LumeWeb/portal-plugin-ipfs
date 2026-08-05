@@ -12,8 +12,7 @@ import (
 // ICANNDelegation is the typed result for ICANN BuildDelegation.
 // Replaces loose map[string]interface{}.
 type ICANNDelegation struct {
-	Nameservers  []string `json:"nameservers"`
-	Instructions string   `json:"instructions"`
+	Nameservers []string `json:"nameservers"`
 }
 type ICANNProvider struct {
 	nameservers []string
@@ -42,8 +41,7 @@ func (p *ICANNProvider) BuildDelegation(ctx context.Context, zoneID uint,
 	domain string, website *pluginDb.Website, config json.RawMessage) (any, error) {
 
 	return ICANNDelegation{
-		Nameservers:  p.nameservers,
-		Instructions: fmt.Sprintf("Configure these NS records at your registrar for %s", domain),
+		Nameservers: p.nameservers,
 	}, nil
 }
 
