@@ -98,6 +98,12 @@ func TestUpdateTLSAFromCert_PersistsAndReusesKey(t *testing.T) {
 		require.NoError(tb, err)
 		assert.Equal(tb, keyPEM, got2.PrivateKeyPEM, "existing key must not be overwritten")
 		assert.Equal(tb, cert2, got2.CertPEM, "cached cert should refresh to the latest push")
+
+		// The row's UpdatedAt must advance on each push so cache invalidation /
+		// admin ordering / renewal monitoring see fresh timestamps.
+		var after pluginDb.WebsiteDomain
+		require.NoError(tb, db.Where("domain = ? AND namespace = ?", "example", pluginDb.DomainNamespaceHNS).First(&after).Error)
+		assert.False(tb, after.UpdatedAt.Before(stored.UpdatedAt), "updated_at should advance on push")
 	}, keyTestOptions)
 }
 

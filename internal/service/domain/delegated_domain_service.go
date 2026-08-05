@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	dane "go.lumeweb.com/dane"
 	"go.lumeweb.com/ipfs-sdk/dnsname"
@@ -329,12 +330,14 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 		}
 
 		// Persist the updated JSON maps scoped by primary key (avoids the locked
-		// read's WHERE clause making the UPDATE column ambiguous).
+		// read's WHERE clause making the UPDATE column ambiguous). GORM's struct
+		// auto-update of UpdatedAt is bypassed by map updates, so set it explicitly.
 		return tx.Model(&pluginDb.WebsiteDomain{}).
 			Where("id = ?", wd.ID).
 			Updates(map[string]any{
 				"protocol_data":   wd.ProtocolData,
 				"delegation_data": wd.DelegationData,
+				"updated_at":      time.Now(),
 			}).Error
 	})
 	if txErr != nil {
