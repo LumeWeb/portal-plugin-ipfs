@@ -210,9 +210,9 @@ func (a *API) verifyDomain(c echo.Context) error {
 }
 
 // domainDNSRequirements returns the DNS delegation requirements (DS/NS/GLUE/TLSA
-// parent + authoritative records and instructions) for a bound domain so a
-// client can render DNS/DNSSEC setup guidance after binding. It reuses the same
-// typed DomainResponse as create/verify so clients share one renderer.
+// parent + authoritative records) for a bound domain so a client can render
+// DNS/DNSSEC setup guidance after binding. It reuses the same typed
+// DomainResponse as create/verify so clients share one renderer.
 func (a *API) domainDNSRequirements(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()

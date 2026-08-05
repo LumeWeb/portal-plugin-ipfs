@@ -24,7 +24,6 @@ func TestDomainResponse_FromModel_HNS(t *testing.T) {
 			{"type": "NS", "value": "ns1.lumeweb\nns2.lumeweb"},
 			{"type": "TLSA", "value": "_443._tcp.lumeweb. 3600 IN TLSA 3 1 1 <hash>"},
 		},
-		"instructions": "Publish the parent_records in your HNS wallet. Configure the authoritative_records on your DNS server.",
 	}
 
 	model := &pluginDb.WebsiteDomain{
@@ -50,7 +49,6 @@ func TestDomainResponse_FromModel_HNS(t *testing.T) {
 
 	require.NotNil(t, resp.Delegation, "delegation should be populated for HNS")
 	assert.Equal(t, "delegated", resp.Delegation.Mode)
-	assert.Equal(t, "Publish the parent_records in your HNS wallet. Configure the authoritative_records on your DNS server.", resp.Delegation.Instructions)
 
 	// DS promoted to first-class field.
 	assert.Equal(t, "lumeweb. 3600 IN DS 12345 13 2 <digest>", resp.Delegation.DS)
@@ -71,8 +69,7 @@ func TestDomainResponse_FromModel_HNS(t *testing.T) {
 // projected into the typed shape.
 func TestDomainResponse_FromModel_ICANN(t *testing.T) {
 	delegation := datatypes.JSONMap{
-		"nameservers":  []string{"ns1.example.com", "ns2.example.com"},
-		"instructions": "Configure these NS records at your registrar for example.com",
+		"nameservers": []string{"ns1.example.com", "ns2.example.com"},
 	}
 
 	model := &pluginDb.WebsiteDomain{
@@ -91,7 +88,6 @@ func TestDomainResponse_FromModel_ICANN(t *testing.T) {
 
 	require.NotNil(t, resp.Delegation)
 	assert.Equal(t, []string{"ns1.example.com", "ns2.example.com"}, resp.Delegation.Nameservers)
-	assert.Equal(t, "Configure these NS records at your registrar for example.com", resp.Delegation.Instructions)
 	assert.Empty(t, resp.Delegation.DS)
 	assert.Empty(t, resp.Delegation.ParentRecords)
 }
