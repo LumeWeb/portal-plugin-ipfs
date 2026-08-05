@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 
 	mock "github.com/stretchr/testify/mock"
+	"go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
 
@@ -37,6 +38,50 @@ type MockDomainProvider_Expecter struct {
 
 func (_m *MockDomainProvider) EXPECT() *MockDomainProvider_Expecter {
 	return &MockDomainProvider_Expecter{mock: &_m.Mock}
+}
+
+// ApexRecordType provides a mock function for the type MockDomainProvider
+func (_mock *MockDomainProvider) ApexRecordType() core.RecordType {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for ApexRecordType")
+	}
+
+	var r0 core.RecordType
+	if returnFunc, ok := ret.Get(0).(func() core.RecordType); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Get(0).(core.RecordType)
+	}
+	return r0
+}
+
+// MockDomainProvider_ApexRecordType_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ApexRecordType'
+type MockDomainProvider_ApexRecordType_Call struct {
+	*mock.Call
+}
+
+// ApexRecordType is a helper method to define mock.On call
+func (_e *MockDomainProvider_Expecter) ApexRecordType() *MockDomainProvider_ApexRecordType_Call {
+	return &MockDomainProvider_ApexRecordType_Call{Call: _e.mock.On("ApexRecordType")}
+}
+
+func (_c *MockDomainProvider_ApexRecordType_Call) Run(run func()) *MockDomainProvider_ApexRecordType_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockDomainProvider_ApexRecordType_Call) Return(recordType core.RecordType) *MockDomainProvider_ApexRecordType_Call {
+	_c.Call.Return(recordType)
+	return _c
+}
+
+func (_c *MockDomainProvider_ApexRecordType_Call) RunAndReturn(run func() core.RecordType) *MockDomainProvider_ApexRecordType_Call {
+	_c.Call.Return(run)
+	return _c
 }
 
 // BuildDelegation provides a mock function for the type MockDomainProvider
@@ -78,7 +123,7 @@ type MockDomainProvider_BuildDelegation_Call struct {
 //   - domain string
 //   - website *db.Website
 //   - config json.RawMessage
-func (_e *MockDomainProvider_Expecter) BuildDelegation(ctx interface{}, zoneID interface{}, domain interface{}, website interface{}, config interface{}) *MockDomainProvider_BuildDelegation_Call {
+func (_e *MockDomainProvider_Expecter) BuildDelegation(ctx any, zoneID any, domain any, website any, config any) *MockDomainProvider_BuildDelegation_Call {
 	return &MockDomainProvider_BuildDelegation_Call{Call: _e.mock.On("BuildDelegation", ctx, zoneID, domain, website, config)}
 }
 
@@ -197,7 +242,7 @@ type MockDomainProvider_OnCertAvailable_Call struct {
 //   - ctx context.Context
 //   - domain string
 //   - certPEM string
-func (_e *MockDomainProvider_Expecter) OnCertAvailable(ctx interface{}, domain interface{}, certPEM interface{}) *MockDomainProvider_OnCertAvailable_Call {
+func (_e *MockDomainProvider_Expecter) OnCertAvailable(ctx any, domain any, certPEM any) *MockDomainProvider_OnCertAvailable_Call {
 	return &MockDomainProvider_OnCertAvailable_Call{Call: _e.mock.On("OnCertAvailable", ctx, domain, certPEM)}
 }
 
@@ -302,7 +347,7 @@ type MockDomainProvider_Validate_Call struct {
 
 // Validate is a helper method to define mock.On call
 //   - domain string
-func (_e *MockDomainProvider_Expecter) Validate(domain interface{}) *MockDomainProvider_Validate_Call {
+func (_e *MockDomainProvider_Expecter) Validate(domain any) *MockDomainProvider_Validate_Call {
 	return &MockDomainProvider_Validate_Call{Call: _e.mock.On("Validate", domain)}
 }
 
@@ -364,7 +409,7 @@ type MockDomainProvider_VerifyDelegation_Call struct {
 //   - ctx context.Context
 //   - domain string
 //   - delegationData json.RawMessage
-func (_e *MockDomainProvider_Expecter) VerifyDelegation(ctx interface{}, domain interface{}, delegationData interface{}) *MockDomainProvider_VerifyDelegation_Call {
+func (_e *MockDomainProvider_Expecter) VerifyDelegation(ctx any, domain any, delegationData any) *MockDomainProvider_VerifyDelegation_Call {
 	return &MockDomainProvider_VerifyDelegation_Call{Call: _e.mock.On("VerifyDelegation", ctx, domain, delegationData)}
 }
 

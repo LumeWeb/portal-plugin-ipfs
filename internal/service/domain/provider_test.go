@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 )
 
@@ -56,4 +57,14 @@ func TestNormalizeDomain(t *testing.T) {
 			assert.Equal(t, tt.expected, got)
 		})
 	}
+}
+
+func TestHNSProvider_ApexRecordType(t *testing.T) {
+	p := NewHNSProvider("", nil, TLSASource{})
+	assert.Equal(t, pluginCore.RecordTypeA, p.ApexRecordType())
+}
+
+func TestICANNProvider_ApexRecordType(t *testing.T) {
+	p := NewICANNProvider(nil)
+	assert.Equal(t, pluginCore.RecordTypeALIAS, p.ApexRecordType())
 }

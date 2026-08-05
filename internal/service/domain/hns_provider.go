@@ -16,6 +16,7 @@ import (
 	dane "go.lumeweb.com/dane"
 	danehns "go.lumeweb.com/dane/hns"
 	"go.lumeweb.com/ipfs-sdk/dnsname"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 
 	"github.com/miekg/dns"
@@ -146,6 +147,13 @@ func (p *HNSProvider) SetDNSService(dns DNSZoneService) {
 
 func (p *HNSProvider) Protocol() string {
 	return "hns"
+}
+
+// ApexRecordType returns RecordTypeA: HNS zones are DNSSEC-signed at the apex,
+// so the apex must be a real A record that carries an RRSIG. PowerDNS cannot
+// sign a synthetic ALIAS at the apex.
+func (p *HNSProvider) ApexRecordType() pluginCore.RecordType {
+	return pluginCore.RecordTypeA
 }
 
 var hnsDomainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)

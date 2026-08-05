@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	dane "go.lumeweb.com/dane"
 	danehns "go.lumeweb.com/dane/hns"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
 
@@ -195,7 +196,7 @@ func (f *fakeDNSZoneService) DeleteZone(ctx context.Context, zoneID uint) error 
 func (f *fakeDNSZoneService) CreateDNSLinkRecord(ctx context.Context, zoneID uint, target string) error {
 	panic("unused")
 }
-func (f *fakeDNSZoneService) CreateALIASRecord(ctx context.Context, zoneID uint, gatewayHost string) error {
+func (f *fakeDNSZoneService) CreateApexRecord(ctx context.Context, zoneID uint, recordType pluginCore.RecordType, content string) error {
 	panic("unused")
 }
 func (f *fakeDNSZoneService) EnableDNSSEC(ctx context.Context, zoneID uint) (string, error) {

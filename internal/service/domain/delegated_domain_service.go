@@ -29,7 +29,10 @@ type DNSZoneService interface {
 	CreateZone(ctx context.Context, domain string, userID uint) (*pluginDb.DNSZone, error)
 	DeleteZone(ctx context.Context, zoneID uint) error
 	CreateDNSLinkRecord(ctx context.Context, zoneID uint, target string) error
-	CreateALIASRecord(ctx context.Context, zoneID uint, gatewayHost string) error
+	// CreateApexRecord creates the apex (root) record for a zone of the given
+	// record type (e.g. RecordTypeA or RecordTypeALIAS). content is the raw
+	// value: an IP address for A, a gateway hostname for ALIAS.
+	CreateApexRecord(ctx context.Context, zoneID uint, recordType pluginCore.RecordType, content string) error
 	// EnableDNSSEC enables DNSSEC on a zone and returns the DNSKEY.
 	EnableDNSSEC(ctx context.Context, zoneID uint) (dnskey string, err error)
 }
@@ -62,6 +65,19 @@ func (s *DelegatedDomainService) gatewayHost() string {
 		return ""
 	}
 	return dnsCfg.GatewayDomain
+}
+
+// gatewayIP returns the configured gateway IP published as the apex A
+// record for DNSSEC-signed alt-root zones, read from the DNS service config.
+func (s *DelegatedDomainService) gatewayIP() string {
+	if s.BaseComponent == nil {
+		return ""
+	}
+	dnsCfg := core.GetServiceConfig[*pluginConfig.DnsConfig](s.Context(), pluginCore.DNS_SERVICE)
+	if dnsCfg == nil {
+		return ""
+	}
+	return dnsCfg.GatewayIP
 }
 
 func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
@@ -118,14 +134,29 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		return nil, fmt.Errorf("dnslink creation failed: %w", err)
 	}
 
-	// Create apex ALIAS record pointing to the gateway host.
-	if gatewayHost := s.gatewayHost(); gatewayHost != "" {
-		if err := s.dnsSvc.CreateALIASRecord(ctx, zone.ID, gatewayHost); err != nil {
+	// Create apex record pointing to the gateway. DNSSEC-signed alt-root
+	// providers (e.g. HNS) need a real A record (gateway IP) so the apex
+	// carries an RRSIG; otherwise use an ALIAS to the gateway hostname.
+	apexType := provider.ApexRecordType()
+	var apexContent string
+	if apexType == pluginCore.RecordTypeA {
+		apexContent = s.gatewayIP()
+		if apexContent == "" {
 			s.DB().WithContext(ctx).Unscoped().Delete(wd)
 			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
-			return nil, fmt.Errorf("alias creation failed: %w", err)
+			return nil, fmt.Errorf("gateway_ip not configured: alt-root apex requires a real A record and cannot fall back to ALIAS (set dns.gateway_ip, e.g. to the gateway IP)")
 		}
-		wd.GatewayHost = gatewayHost
+	} else if gatewayHost := s.gatewayHost(); gatewayHost != "" {
+		apexContent = gatewayHost
+	}
+
+	if apexContent != "" {
+		if err := s.dnsSvc.CreateApexRecord(ctx, zone.ID, apexType, apexContent); err != nil {
+			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+			return nil, fmt.Errorf("apex record creation failed: %w", err)
+		}
+		wd.GatewayHost = apexContent
 	}
 
 	// Build delegation after zone is created (needs zone ID).

@@ -24,6 +24,19 @@ func TestIntegration_CreateAndVerifyHNSDomain(t *testing.T) {
 		t.Skipf("dane.GenerateSelfSignedECDSA not usable: %v", certErr)
 	}
 
+	// Gateway IP is injected via env so the fixture does not hardcode a
+	// production address; defaults to a loopback-safe value for CI.
+	gatewayIP := os.Getenv("TEST_GATEWAY_IP")
+	if gatewayIP == "" {
+		gatewayIP = "127.0.0.1"
+	}
+
+	intOpts := coreTesting.CombineOptions(
+		TestOptions,
+		coreTesting.WithConfig("plugin.ipfs.service.dns.gateway_domain", "ipfs.pub"),
+		coreTesting.WithConfig("plugin.ipfs.service.dns.gateway_ip", gatewayIP),
+	)
+
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 
@@ -56,6 +69,7 @@ func TestIntegration_CreateAndVerifyHNSDomain(t *testing.T) {
 		mockDNS.EXPECT().CreateZone(mock.Anything, "example", uint(1)).
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: "example"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(1), pluginCore.RecordTypeA, gatewayIP).Return(nil).Once()
 		mockDNS.EXPECT().EnableDNSSEC(mock.Anything, uint(1)).Return("257 3 13 dGVzdA==", nil).Maybe()
 
 		// Create domain
@@ -63,5 +77,5 @@ func TestIntegration_CreateAndVerifyHNSDomain(t *testing.T) {
 		require.NoError(tb, err)
 		require.NotNil(tb, wd)
 		assert.Equal(tb, pluginDb.DomainStatusRecordsGenerated, wd.Status)
-	}, TestOptions)
+	}, intOpts)
 }

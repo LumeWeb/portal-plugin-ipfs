@@ -153,9 +153,11 @@ func (s *DNSServiceDefault) CreateDNSLinkRecord(ctx context.Context, zoneID uint
 	return err
 }
 
-// CreateALIASRecord creates an ALIAS/CNAME apex record in a zone (adapter for domain.DNSZoneService)
-func (s *DNSServiceDefault) CreateALIASRecord(ctx context.Context, zoneID uint, gatewayHost string) error {
-	_, err := s.CreateRecord(ctx, zoneID, "", "ALIAS", gatewayHost, 300)
+// CreateApexRecord creates the apex (root) record in a zone (adapter for
+// domain.DNSZoneService). content is raw: an IP for A, a gateway hostname for
+// ALIAS/CNAME.
+func (s *DNSServiceDefault) CreateApexRecord(ctx context.Context, zoneID uint, recordType pluginCore.RecordType, content string) error {
+	_, err := s.CreateRecord(ctx, zoneID, "", string(recordType), content, 300)
 	return err
 }
 
