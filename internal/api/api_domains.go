@@ -208,3 +208,48 @@ func (a *API) verifyDomain(c echo.Context) error {
 	}
 	return httputil.EncodeResponse(ctx, &wd, &resp)
 }
+
+// domainDNSRequirements returns the DNS delegation requirements (DS/NS/GLUE/TLSA
+// parent + authoritative records and instructions) for a bound domain so a
+// client can render DNS/DNSSEC setup guidance after binding. It reuses the same
+// typed DomainResponse as create/verify so clients share one renderer.
+func (a *API) domainDNSRequirements(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	userID, err := mcontext.GetUserID(c)
+	if err != nil {
+		return ctx.Error(err, http.StatusUnauthorized)
+	}
+
+	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	domainID, err := strconv.ParseUint(c.Param("domain_id"), 10, 64)
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid domain ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	var wd pluginDb.WebsiteDomain
+	if err := a.DB().WithContext(reqCtx).
+		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+		First(&wd).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			apiErr := NewError(ErrKeyDomainNotFound, errors.New("domain not found"))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	resp := dto.DomainResponse{}
+	if err := resp.FromModel(&wd); err != nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	return httputil.EncodeResponse(ctx, &wd, &resp)
+}
