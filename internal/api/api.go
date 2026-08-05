@@ -806,6 +806,17 @@ See also:.*`),
 				router.WithSuccessResponse(http.StatusOK, "Verification result", router.WithJSONContent(dto.DomainResponse{})),
 			),
 		),
+		router.NewRoute(http.MethodGet, "/websites/:id/domains/:domain_id/dns-requirements", a.domainDNSRequirements,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Get domain DNS delegation requirements"),
+				router.WithDescription(`Returns the DNS records a user must publish to complete domain delegation for a bound domain. For HNS this includes the DS/NS/GLUE parent records (publish in the HNS wallet) and authoritative NS/TLSA records; for ICANN it returns the nameservers.`),
+				router.WithTags("Websites", "Domains"),
+				router.WithPathParam("id", "Website ID", ""),
+				router.WithPathParam("domain_id", "Domain ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Domain DNS requirements", router.WithJSONContent(dto.DomainResponse{})),
+			),
+		),
 	)
 
 	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), websiteRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {

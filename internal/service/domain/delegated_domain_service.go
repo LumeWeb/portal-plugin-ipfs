@@ -282,7 +282,14 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 							zone = canonicalZoneName(domain)
 						}
 						auth[i].Value = formatFullTLSARecord(tlsa, zone)
-						wd.DelegationData["authoritative_records"], _ = json.Marshal(auth)
+						// Store the updated records as a real JSON structure, not the raw
+						// marshaled []byte. JSONMap encodes []byte as base64 on save, which
+						// silently breaks DTO projection (json.Unmarshal into []delegationRecord).
+						raw, _ := json.Marshal(auth)
+						var out any
+						if json.Unmarshal(raw, &out) == nil {
+							wd.DelegationData["authoritative_records"] = out
+						}
 						break
 					}
 				}
