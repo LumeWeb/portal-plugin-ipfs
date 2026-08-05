@@ -400,16 +400,26 @@ func (p *HNSProvider) Nameservers() []string {
 	return p.nsRecords
 }
 
-// VerifyDelegation checks if the expected NS records for a HNS name are visible
-// via the configured HNS resolver. HNS names are resolved against the Handshake
+// VerifyDelegation checks whether a HNS name's delegation is live via the
+// configured HNS resolver. HNS names are resolved against the Handshake
 // blockchain; this requires an HNS-aware resolver (not the system default).
-// For ICANN, verification is intentionally a no-op.
+//
+// For platform-managed zones the portal generated (and stored) the DS record
+// from the zone's PowerDNS DNSKEY. Such a zone is only considered live when
+// BOTH the expected NS delegation is visible AND the DS the portal generated
+// is actually served by the parent zone (i.e. the root has taken effect).
+// Requiring the DS prevents a domain from being marked Active before the
+// DNSSEC chain of trust is in place. Self-managed zones (no DS the portal
+// generated) are validated on NS visibility alone, since only the name owner
+// knows their own DNSKEY/DS.
 func (p *HNSProvider) VerifyDelegation(ctx context.Context, domain string,
 	delegationData json.RawMessage) (bool, error) {
 
 	if p.resolverAddr == "" {
 		return false, fmt.Errorf("HNS resolver not configured (DnsConfig.HNSResolver); standard resolvers cannot resolve HNS names")
 	}
+
+	expectedNS := p.Nameservers()
 
 	nss, err := queryNS(ctx, p.resolverAddr, dnsname.EnsureFQDN(domain))
 	if err != nil {
@@ -422,16 +432,79 @@ func (p *HNSProvider) VerifyDelegation(ctx context.Context, domain string,
 		return false, fmt.Errorf("HNS resolver query failed (resolver %q): %w", p.resolverAddr, err)
 	}
 
-	expectedNS := p.Nameservers()
+	nsVisible := false
 	for _, ns := range nss {
 		for _, expected := range expectedNS {
 			if dnsname.Equal(ns, expected) {
-				return true, nil
+				nsVisible = true
+				break
 			}
 		}
+		if nsVisible {
+			break
+		}
+	}
+	if !nsVisible {
+		return false, nil
 	}
 
+	// Platform-generated DS: if the stored delegation carries a DS record the
+	// portal computed (managed/PowerDNS-signed zone), require that exact DS to
+	// be served by the parent zone before considering the delegation live.
+	expectedDS := delegationExpectedDS(delegationData)
+	if expectedDS == "" {
+		// Self-managed zone: the name owner publishes a DS from their own
+		// DNSKEY, which the portal cannot know. NS visibility is sufficient.
+		return true, nil
+	}
+
+	servedDS, err := queryDS(ctx, p.resolverAddr, dnsname.EnsureFQDN(domain))
+	if err != nil {
+		// A failed DS query means the DS is not yet resolvable from the parent
+		// zone; treat the delegation as not-yet-live (DNSSEC chain not in
+		// place) rather than an error the caller surfaces as a soft failure.
+		return false, nil
+	}
+	for _, served := range servedDS {
+		if dsEqual(served, expectedDS) {
+			return true, nil
+		}
+	}
 	return false, nil
+}
+
+// delegationExpectedDS extracts the platform-generated DS value (RDATA, e.g.
+// "44451 13 2 c359...") from a stored delegation bundle, or "" when the
+// portal did not generate a DS (self-managed zone).
+func delegationExpectedDS(delegationData json.RawMessage) string {
+	var bundle DelegationBundle
+	if len(delegationData) > 0 {
+		_ = json.Unmarshal(delegationData, &bundle)
+	}
+	for _, rec := range bundle.ParentRecords {
+		if rec.Type == "DS" && rec.Value != "" {
+			// DS values may carry a leading owner/token from older persisted
+			// data ("<owner> DS <rdata>"); normalize to RDATA.
+			if idx := strings.Index(rec.Value, " DS "); idx >= 0 {
+				return rec.Value[idx+len(" DS "):]
+			}
+			return rec.Value
+		}
+	}
+	return ""
+}
+
+// dsEqual compares two DS RDATA presentation strings ignoring the leading
+// owner-name/token prefix and collapsing whitespace.
+func dsEqual(a, b string) bool {
+	return canonicalDS(a) == canonicalDS(b)
+}
+
+func canonicalDS(s string) string {
+	if idx := strings.Index(s, " DS "); idx >= 0 {
+		s = s[idx+len(" DS "):]
+	}
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }
 
 // queryNS performs an NS query for the absolute FQDN `name` against the DNS
@@ -444,19 +517,69 @@ func (p *HNSProvider) VerifyDelegation(ctx context.Context, domain string,
 // exists. miekg/dns reads both sections, so this returns the delegation
 // correctly. It tries UDP first, then TCP on failure or truncation (RFC 5966).
 func queryNS(ctx context.Context, addr, name string) ([]string, error) {
+	r, err := queryResolver(ctx, addr, name, dns.TypeNS)
+	if err != nil {
+		return nil, err
+	}
+	var nss []string
+	for _, rr := range r.Answer {
+		if ns, ok := rr.(*dns.NS); ok {
+			nss = append(nss, ns.Ns)
+		}
+	}
+	// NS records may also appear in the authority section for non-authoritative
+	// responses; include them rather than only the answer section.
+	for _, rr := range r.Ns {
+		if ns, ok := rr.(*dns.NS); ok {
+			nss = append(nss, ns.Ns)
+		}
+	}
+	return nss, nil
+}
+
+// queryDS performs a DS query for the absolute FQDN `name` against the DNS
+// server at `addr` using raw miekg/dns, returning the DS RDATA strings served
+// by the parent zone (answer and authority sections). This is how
+// VerifyDelegation confirms the platform-generated DS has propagated: a DS
+// only appears once the parent zone (HSD root for HNS) actually serves it.
+func queryDS(ctx context.Context, addr, name string) ([]string, error) {
+	r, err := queryResolver(ctx, addr, name, dns.TypeDS)
+	if err != nil {
+		return nil, err
+	}
+	var dss []string
+	for _, rr := range append(append([]dns.RR{}, r.Answer...), r.Ns...) {
+		if ds, ok := rr.(*dns.DS); ok {
+			// RDATA presentation (RFC 4034 §5.3): key tag, algorithm, digest
+			// type, digest. Built from the structured fields so it matches the
+			// persisted dane-computed DS RDATA, with a lowercased digest so the
+			// comparison is not tripped by miekg's uppercase String() hex.
+			dss = append(dss, strings.Join([]string{
+				strconv.Itoa(int(ds.KeyTag)),
+				strconv.Itoa(int(ds.Algorithm)),
+				strconv.Itoa(int(ds.DigestType)),
+				strings.ToLower(ds.Digest),
+			}, " "))
+		}
+	}
+	return dss, nil
+}
+
+// queryResolver issues a single DNS query of the given record type against the
+// server at `addr` and returns the full reply, handling the UDP-then-TCP
+// fallback on failure or truncation (RFC 5966) shared by all resolver queries.
+// If the TCP retry fails we must not fall through to a truncated UDP response,
+// which would silently drop records that didn't fit in the UDP packet.
+func queryResolver(ctx context.Context, addr, name string, qtype uint16) (*dns.Msg, error) {
 	c := &dns.Client{
 		Net:     "udp",
 		Timeout: 5 * time.Second,
 	}
 	m := new(dns.Msg)
-	m.SetQuestion(name, dns.TypeNS)
+	m.SetQuestion(name, qtype)
 
 	r, _, err := c.ExchangeContext(ctx, m, addr)
 	if err == nil && r.Truncated {
-		// Retry over TCP on truncation (RFC 5966). If the TCP retry fails, we
-		// must not fall through to the truncated UDP response — returning it
-		// silently drops nameservers that didn't fit in the UDP packet and makes
-		// VerifyDelegation return false for a valid delegation.
 		tc := &dns.Client{Net: "tcp", Timeout: 5 * time.Second}
 		tr, _, terr := tc.ExchangeContext(ctx, m, addr)
 		if terr != nil {
@@ -475,21 +598,7 @@ func queryNS(ctx context.Context, addr, name string) ([]string, error) {
 			IsNotFound: r.Rcode == dns.RcodeNameError,
 		}
 	}
-
-	var nss []string
-	for _, rr := range r.Answer {
-		if ns, ok := rr.(*dns.NS); ok {
-			nss = append(nss, ns.Ns)
-		}
-	}
-	// NS records may also appear in the authority section for non-authoritative
-	// responses; include them rather than only the answer section.
-	for _, rr := range r.Ns {
-		if ns, ok := rr.(*dns.NS); ok {
-			nss = append(nss, ns.Ns)
-		}
-	}
-	return nss, nil
+	return r, nil
 }
 
 // OnCertAvailable updates the TLSA source when a cert is pushed from the
