@@ -408,7 +408,11 @@ func (p *HNSProvider) VerifyDelegation(ctx context.Context, domain string,
 
 	nss, err := resolver.LookupNS(ctx, dnsname.EnsureFQDN(domain))
 	if err != nil {
-		return false, fmt.Errorf("HNS resolver query failed: %w", err)
+		// Go's net.Resolver stamps the error with the /etc/resolv.conf server
+		// (e.g. "on 127.0.0.11:53") even when the custom Dial targets a different
+		// host:port. Surface the actual resolver we dialed so operators aren't
+		// misled into thinking the config was ignored.
+		return false, fmt.Errorf("HNS resolver query failed (resolver %q): %w", p.resolverAddr, err)
 	}
 
 	expectedNS := p.Nameservers()
