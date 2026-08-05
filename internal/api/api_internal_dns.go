@@ -12,6 +12,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.lumeweb.com/httputil"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"gorm.io/gorm"
 )
 
@@ -24,7 +25,9 @@ func (a *API) updateTLSA(c echo.Context) error {
 		return nil
 	}
 
-	return a.handleInternalTLSA(c, req.Namespace, req.Domain, req.CertPEM)
+	// The TLSA update endpoint carries no private key — key persistence is a
+	// cert-push concern.
+	return a.handleInternalTLSA(c, req.Namespace, req.Domain, req.CertPEM, "")
 }
 
 func (a *API) pushCert(c echo.Context) error {
@@ -35,12 +38,56 @@ func (a *API) pushCert(c echo.Context) error {
 		return nil
 	}
 
-	return a.handleInternalTLSA(c, req.Namespace, req.Domain, req.CertPEM)
+	return a.handleInternalTLSA(c, req.Namespace, req.Domain, req.CertPEM, req.PrivateKeyPEM)
 }
+
+// getCert returns the stored DANE key material for a domain so Caddy can
+// re-issue a certificate around the persisted key (stable SPKI). Returns 404
+// when no identity is persisted yet (first bootstrap).
+func (a *API) getCert(c echo.Context) error {
+	ctx := httputil.Context(c)
+
+	domain := c.Param("domain")
+	if domain == "" {
+		apiErr := NewError(ErrKeyInvalidPathID, fmt.Errorf("missing domain"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	namespace := c.QueryParam("namespace")
+	if namespace == "" {
+		namespace = string(pluginDb.DomainNamespaceHNS)
+	}
+
+	if a.delegatedDomainSvc == nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service not available"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	stored, err := a.delegatedDomainSvc.GetCertificateKey(ctx.Request().Context(), namespace, domain)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		apiErr := NewError(ErrKeyDomainNotFound, nil)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	if err != nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	resp := dto.CertGetResponse{
+		OK:            true,
+		Domain:        domain,
+		Namespace:     namespace,
+		PrivateKeyPEM: stored.PrivateKeyPEM,
+		CertPEM:       stored.CertPEM,
+		TLSA:          stored.TLSA,
+		OwnerName:     stored.OwnerName,
+	}
+	return httputil.EncodeResponse(ctx, resp, &resp)
+}
+
 // handleInternalTLSA handles the common logic for both /internal/dns/tlsa
 // and cert push endpoints. It requires delegatedDomainSvc (returns error if
 // not present — this is a DANE/alt-root feature endpoint).
-func (a *API) handleInternalTLSA(c echo.Context, namespace, domain, certPEM string) error {
+func (a *API) handleInternalTLSA(c echo.Context, namespace, domain, certPEM, privateKeyPEM string) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
 
@@ -49,7 +96,7 @@ func (a *API) handleInternalTLSA(c echo.Context, namespace, domain, certPEM stri
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	tlsa, ownerName, err := a.delegatedDomainSvc.UpdateTLSAFromCert(reqCtx, namespace, domain, certPEM)
+	tlsa, ownerName, err := a.delegatedDomainSvc.UpdateTLSAFromCert(reqCtx, namespace, domain, certPEM, privateKeyPEM)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// Domain not bound yet: compute TLSA best-effort for Caddy.

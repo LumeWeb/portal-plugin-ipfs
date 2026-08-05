@@ -1157,6 +1157,16 @@ Requires X-Gateway-Secret header for authentication.`),
 				router.WithSuccessResponse(http.StatusOK, "TLSA computed", router.WithJSONContent(dto.CertPushResponse{})),
 			),
 		),
+		router.NewRoute(http.MethodGet, "/internal/dns/cert/:domain", a.getCert,
+			router.WithSwagger(
+				router.WithSummary("Fetch existing DANE certificate and key"),
+				router.WithDescription("Internal endpoint for Caddy to fetch the stored DANE key/cert. Returns 404 if none exists yet."),
+				router.WithTags("Gateway", "DNS"),
+				router.WithQueryParam("namespace", "Namespace: hns or icann", "hns"),
+				router.WithPathParam("domain", "Domain to fetch", ""),
+				router.WithSuccessResponse(http.StatusOK, "Existing DANE key and cert", router.WithJSONContent(dto.CertGetResponse{})),
+			),
+		),
 	)
 
 	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), internalDNSRoutes, router.WithMiddlewares(gatewayAuthMw), router.WithCors()); err != nil {

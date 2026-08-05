@@ -15,6 +15,7 @@ import (
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
+	"go.uber.org/zap"
 )
 
 type DelegatedDomainService struct {
@@ -230,8 +231,12 @@ func jsonToMap(raw json.RawMessage) datatypes.JSONMap {
 	return m
 }
 
-// UpdateTLSAFromCert computes TLSA from a pushed cert and stores it.
-func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespace, domain, certPEM string) (tlsa, ownerName string, err error) {
+// UpdateTLSAFromCert computes TLSA from a pushed cert and stores it. When
+// privateKeyPEM is non-empty and the domain has no persisted key yet, the
+// private key is encrypted at rest and stored so Caddy can later fetch the same
+// key (stable SPKI) and re-issue certs around it without touching DNS. The key
+// is only ever persisted when absent — it is never overwritten by a later push.
+func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespace, domain, certPEM, privateKeyPEM string) (tlsa, ownerName string, err error) {
 	provider := s.registry.Get(namespace)
 	if provider == nil {
 		return "", "", fmt.Errorf("unsupported namespace: %s", namespace)
@@ -268,6 +273,24 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 	}
 	wd.ProtocolData["tlsa"] = tlsa
 	wd.ProtocolData["owner_name"] = ownerName
+
+	// Persist the per-domain DANE private key at rest, but ONLY if we don't
+	// already have one. The key is the source of truth for the SPKI that DANE
+	// TLSA (selector 1) pins — silently overwriting it on a later push would
+	// rotate the published pin and break every DANE-validating client.
+	if privateKeyPEM != "" && wd.TLSPrivateKey == "" {
+		enc, encErr := s.encryptPrivateKey(ctx, privateKeyPEM)
+		if encErr != nil {
+			s.Logger().Warn("dane key not persisted (encryption key not configured?)",
+				zap.String("domain", domain), zap.Error(encErr))
+		} else {
+			wd.TLSPrivateKey = enc
+			wd.TLSCertPEM = certPEM
+		}
+	} else if privateKeyPEM != "" && wd.TLSPrivateKey != "" {
+		s.Logger().Warn("dane key push ignored: a key already exists for domain (not overwriting)",
+			zap.String("domain", domain))
+	}
 
 	// sync TLSA for HNS
 	if namespace == string(pluginDb.DomainNamespaceHNS) && wd.DelegationData != nil {
@@ -350,6 +373,46 @@ func (s *DelegatedDomainService) GetWebsiteDomainByDomainAndNamespace(ctx contex
 		return nil, err
 	}
 	return &wd, nil
+}
+
+// StoredCert holds the decrypted DANE key material returned to a Caddy cert
+// getter so it can re-issue a certificate around the persisted key (stable SPKI).
+type StoredCert struct {
+	PrivateKeyPEM string
+	CertPEM       string
+	TLSA          string
+	OwnerName     string
+}
+
+// GetCertificateKey returns the stored DANE key material for a domain,
+// decrypting the private key at rest. Returns gorm.ErrRecordNotFound when the
+// domain has no persisted key yet (i.e. first bootstrap).
+func (s *DelegatedDomainService) GetCertificateKey(ctx context.Context, namespace, domain string) (*StoredCert, error) {
+	ns := pluginDb.DomainNamespace(namespace)
+	wd, err := s.GetWebsiteDomainByDomainAndNamespace(ctx, domain, ns)
+	if err != nil {
+		return nil, err // includes gorm.ErrRecordNotFound
+	}
+	if wd.TLSPrivateKey == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	keyPEM, err := s.decryptPrivateKey(ctx, wd.TLSPrivateKey)
+	if err != nil {
+		return nil, err
+	}
+	result := &StoredCert{
+		PrivateKeyPEM: keyPEM,
+		CertPEM:       wd.TLSCertPEM,
+	}
+	if wd.ProtocolData != nil {
+		if v, ok := wd.ProtocolData["tlsa"].(string); ok {
+			result.TLSA = v
+		}
+		if v, ok := wd.ProtocolData["owner_name"].(string); ok {
+			result.OwnerName = v
+		}
+	}
+	return result, nil
 }
 
 // GetActiveWebsiteDomainByDomain finds an active domain across all namespaces.

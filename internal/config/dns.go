@@ -40,6 +40,11 @@ type DnsConfig struct {
 	// Verification token key used as the subdomain label for validation TXT records
 	VerificationTokenKey string `config:"verification_token_key"`
 
+	// DANEKeyEncryptionKey is the base64-encoded 32-byte AES-256 key used to
+	// encrypt per-domain DANE private keys at rest in the portal DB. Must be 32
+	// bytes when base64-decoded. If empty, DANE key persistence is skipped.
+	DANEKeyEncryptionKey string `config:"dane_key_encryption_key"`
+
 	// Nameserver validation job configuration
 	NameserverValidationInterval time.Duration `config:"nameserver_validation_interval"`
 }
@@ -54,6 +59,7 @@ func (c DnsConfig) Defaults() map[string]any {
 		"HNSResolver":                  "",
 		"GatewayDomain":                "",
 		"VerificationTokenKey":         "lumeweb-verify",
+		"DANEKeyEncryptionKey":         "",
 		"NameserverValidationInterval": 5 * time.Minute,
 	}
 }
