@@ -187,6 +187,81 @@ func TestHNSProvider_VerifyDelegation_CustomPort_ErrorStillProvesDial(t *testing
 	assert.NotEqual(t, 53, port, "test resolver must run on a custom (non-default) port")
 }
 
+// startTruncatedUDPServer binds a UDP-only server that answers any NS query
+// with a TRUNCATED response (TC bit set, only a partial list of NS records).
+// No TCP listener is bound on the same addr, so any TCP retry fails — which is
+// exactly the scenario the queryNS truncation fallback must handle.
+//
+// Regression: if UDP succeeds with a truncated response but the TCP retry
+// fails, queryNS must return the TCP error rather than silently parse the
+// truncated (incomplete) UDP data. Silently returning the partial data would
+// drop nameservers that didn't fit in the UDP packet and make VerifyDelegation
+// report the wrong result.
+func startTruncatedUDPServer(t *testing.T, name string, partialNS []string) (addr string) {
+	t.Helper()
+
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr = pc.LocalAddr().String()
+
+	handler := dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(req)
+		// Simulate a response too large for UDP: set TC and only include a
+		// partial set of the records (the rest would be dropped by the client).
+		m.Truncated = true
+		if len(req.Question) > 0 && req.Question[0].Qtype == dns.TypeNS {
+			for _, ns := range partialNS {
+				rr := &dns.NS{
+					Hdr: dns.RR_Header{Name: name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 300},
+					Ns:  ns,
+				}
+				m.Answer = append(m.Answer, rr)
+			}
+		}
+		_ = w.WriteMsg(m)
+	})
+
+	srv := &dns.Server{PacketConn: pc, Handler: handler}
+	go func() { _ = srv.ActivateAndServe() }()
+	t.Cleanup(func() { _ = srv.Shutdown() })
+
+	// Readiness probe (A query). Deliberately NOT bound to a TCP listener.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c := &dns.Client{Net: "udp", Timeout: 200 * time.Millisecond}
+		m := new(dns.Msg)
+		m.SetQuestion(name, dns.TypeA)
+		if _, _, err := c.Exchange(m, addr); err == nil {
+			return addr
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("truncated UDP server did not become ready at %s", addr)
+	return ""
+}
+
+func TestHNSProvider_VerifyDelegation_TruncatedUDP_TCPRetryFails(t *testing.T) {
+	const domain = "lumeweb."
+	const ns1 = "ns1.lumeweb."
+	const ns2 = "ns2.lumeweb."
+
+	// UDP-only server that returns a TRUNCATED response containing only the
+	// first NS record. The matching NS1 would, pre-fix, let the buggy code fall
+	// through and report verified=true (silently dropping ns2). No TCP listener
+	// exists, so the RFC 5966 retry must fail — and the error must propagate.
+	addr := startTruncatedUDPServer(t, domain, []string{ns1})
+
+	p := NewHNSProvider(addr, []string{ns1, ns2}, TLSASource{})
+
+	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", json.RawMessage(`{}`))
+	require.Error(t, err,
+		"must not silently succeed on truncated UDP data when the TCP retry fails")
+	assert.Contains(t, err.Error(), "TCP retry after UDP truncation failed",
+		"error must identify the failed TCP fallback, got: %v", err)
+	assert.False(t, verified, "delegation must not verify from truncated data")
+}
+
 // The error returned on lookup failure must surface the ACTUAL resolver address
 // we dial, not Go's misleading /etc/resolv.conf server label ("on 127.0.0.11:53").
 // Go hardcodes the DNSError.Server field from the system DNS config and never

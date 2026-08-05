@@ -443,11 +443,16 @@ func queryNS(ctx context.Context, addr, name string) ([]string, error) {
 
 	r, _, err := c.ExchangeContext(ctx, m, addr)
 	if err == nil && r.Truncated {
-		// Retry over TCP on truncation (RFC 5966).
+		// Retry over TCP on truncation (RFC 5966). If the TCP retry fails, we
+		// must not fall through to the truncated UDP response — returning it
+		// silently drops nameservers that didn't fit in the UDP packet and makes
+		// VerifyDelegation return false for a valid delegation.
 		tc := &dns.Client{Net: "tcp", Timeout: 5 * time.Second}
-		if tr, _, terr := tc.ExchangeContext(ctx, m, addr); terr == nil {
-			r, err = tr, nil
+		tr, _, terr := tc.ExchangeContext(ctx, m, addr)
+		if terr != nil {
+			return nil, fmt.Errorf("TCP retry after UDP truncation failed: %w", terr)
 		}
+		r, err = tr, nil
 	}
 	if err != nil {
 		return nil, err
