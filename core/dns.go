@@ -59,8 +59,10 @@ type DNSService interface {
 	// CreateDNSLinkRecord creates a DNSLink _dnslink.<domain> TXT record
 	CreateDNSLinkRecord(ctx context.Context, zoneID uint, target string) error
 
-	// CreateALIASRecord creates an ALIAS / CNAME apex record pointing to gateway
-	CreateALIASRecord(ctx context.Context, zoneID uint, gatewayHost string) error
+	// CreateApexRecord creates an apex (root) record pointing to the gateway.
+	// recordType is e.g. RecordTypeA (IP content for DNSSEC-signed alt-root)
+	// or RecordTypeALIAS (gateway hostname content).
+	CreateApexRecord(ctx context.Context, zoneID uint, recordType RecordType, content string) error
 
 	// CreateRecord creates a new DNS record in PowerDNS via RRSet
 	// name: the record name (e.g., "www")

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/samber/lo"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
 
@@ -23,6 +24,12 @@ type DomainProvider interface {
 	// differ from ICANN's; these are operator-provided, not user-provided.
 	// Returns the namespace's nameservers, or nil/empty when none are set.
 	Nameservers() []string
+	// ApexRecordType returns the DNS record type used for the zone apex.
+	// DNSSEC-signed alt-root providers (e.g. HNS) must return RecordTypeA so
+	// the apex is a real, signable RRset, which PowerDNS cannot provide for a
+	// synthetic ALIAS/CNAME record at the apex. Providers whose apex is not
+	// separately signed return RecordTypeALIAS.
+	ApexRecordType() pluginCore.RecordType
 }
 
 type Registry struct {

@@ -8,6 +8,7 @@ import (
 	"context"
 
 	mock "github.com/stretchr/testify/mock"
+	"go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
 
@@ -38,37 +39,38 @@ func (_m *MockDNSZoneService) EXPECT() *MockDNSZoneService_Expecter {
 	return &MockDNSZoneService_Expecter{mock: &_m.Mock}
 }
 
-// CreateALIASRecord provides a mock function for the type MockDNSZoneService
-func (_mock *MockDNSZoneService) CreateALIASRecord(ctx context.Context, zoneID uint, gatewayHost string) error {
-	ret := _mock.Called(ctx, zoneID, gatewayHost)
+// CreateApexRecord provides a mock function for the type MockDNSZoneService
+func (_mock *MockDNSZoneService) CreateApexRecord(ctx context.Context, zoneID uint, recordType core.RecordType, content string) error {
+	ret := _mock.Called(ctx, zoneID, recordType, content)
 
 	if len(ret) == 0 {
-		panic("no return value specified for CreateALIASRecord")
+		panic("no return value specified for CreateApexRecord")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string) error); ok {
-		r0 = returnFunc(ctx, zoneID, gatewayHost)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, core.RecordType, string) error); ok {
+		r0 = returnFunc(ctx, zoneID, recordType, content)
 	} else {
 		r0 = ret.Error(0)
 	}
 	return r0
 }
 
-// MockDNSZoneService_CreateALIASRecord_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CreateALIASRecord'
-type MockDNSZoneService_CreateALIASRecord_Call struct {
+// MockDNSZoneService_CreateApexRecord_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CreateApexRecord'
+type MockDNSZoneService_CreateApexRecord_Call struct {
 	*mock.Call
 }
 
-// CreateALIASRecord is a helper method to define mock.On call
+// CreateApexRecord is a helper method to define mock.On call
 //   - ctx context.Context
 //   - zoneID uint
-//   - gatewayHost string
-func (_e *MockDNSZoneService_Expecter) CreateALIASRecord(ctx any, zoneID any, gatewayHost any) *MockDNSZoneService_CreateALIASRecord_Call {
-	return &MockDNSZoneService_CreateALIASRecord_Call{Call: _e.mock.On("CreateALIASRecord", ctx, zoneID, gatewayHost)}
+//   - recordType core.RecordType
+//   - content string
+func (_e *MockDNSZoneService_Expecter) CreateApexRecord(ctx any, zoneID any, recordType any, content any) *MockDNSZoneService_CreateApexRecord_Call {
+	return &MockDNSZoneService_CreateApexRecord_Call{Call: _e.mock.On("CreateApexRecord", ctx, zoneID, recordType, content)}
 }
 
-func (_c *MockDNSZoneService_CreateALIASRecord_Call) Run(run func(ctx context.Context, zoneID uint, gatewayHost string)) *MockDNSZoneService_CreateALIASRecord_Call {
+func (_c *MockDNSZoneService_CreateApexRecord_Call) Run(run func(ctx context.Context, zoneID uint, recordType core.RecordType, content string)) *MockDNSZoneService_CreateApexRecord_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -78,25 +80,30 @@ func (_c *MockDNSZoneService_CreateALIASRecord_Call) Run(run func(ctx context.Co
 		if args[1] != nil {
 			arg1 = args[1].(uint)
 		}
-		var arg2 string
+		var arg2 core.RecordType
 		if args[2] != nil {
-			arg2 = args[2].(string)
+			arg2 = args[2].(core.RecordType)
+		}
+		var arg3 string
+		if args[3] != nil {
+			arg3 = args[3].(string)
 		}
 		run(
 			arg0,
 			arg1,
 			arg2,
+			arg3,
 		)
 	})
 	return _c
 }
 
-func (_c *MockDNSZoneService_CreateALIASRecord_Call) Return(err error) *MockDNSZoneService_CreateALIASRecord_Call {
+func (_c *MockDNSZoneService_CreateApexRecord_Call) Return(err error) *MockDNSZoneService_CreateApexRecord_Call {
 	_c.Call.Return(err)
 	return _c
 }
 
-func (_c *MockDNSZoneService_CreateALIASRecord_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, gatewayHost string) error) *MockDNSZoneService_CreateALIASRecord_Call {
+func (_c *MockDNSZoneService_CreateApexRecord_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, recordType core.RecordType, content string) error) *MockDNSZoneService_CreateApexRecord_Call {
 	_c.Call.Return(run)
 	return _c
 }

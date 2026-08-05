@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
 
@@ -24,6 +25,13 @@ func NewICANNProvider(nameservers []string) *ICANNProvider {
 
 func (p *ICANNProvider) Protocol() string {
 	return "icann"
+}
+
+// ApexRecordType returns RecordTypeALIAS: ICANN apex is served through the
+// gateway and is not separately DNSSEC-signed at the apex in our setup, so a
+// synthetic ALIAS is acceptable.
+func (p *ICANNProvider) ApexRecordType() pluginCore.RecordType {
+	return pluginCore.RecordTypeALIAS
 }
 
 func (p *ICANNProvider) Validate(domain string) error {

@@ -37,6 +37,13 @@ type DnsConfig struct {
 	// Gateway domain for ALIAS records (auto-wiring)
 	GatewayDomain string `config:"gateway_domain"`
 
+	// GatewayIP is the IP address to publish as the apex A record for
+	// DNSSEC-signed alt-root (e.g. HNS) zones. Alt-root apexes must be real
+	// A records (not ALIAS) so they carry an RRSIG; PowerDNS cannot sign a
+	// synthetic ALIAS at the apex. This should match where GatewayDomain
+	// currently resolves. Keep it in sync when the gateway IP changes.
+	GatewayIP string `config:"gateway_ip"`
+
 	// Verification token key used as the subdomain label for validation TXT records
 	VerificationTokenKey string `config:"verification_token_key"`
 
@@ -58,6 +65,7 @@ func (c DnsConfig) Defaults() map[string]any {
 		"HNSNameservers":               []string{},
 		"HNSResolver":                  "",
 		"GatewayDomain":                "",
+		"GatewayIP":                    "",
 		"VerificationTokenKey":         "lumeweb-verify",
 		"DANEKeyEncryptionKey":         "",
 		"NameserverValidationInterval": 5 * time.Minute,
