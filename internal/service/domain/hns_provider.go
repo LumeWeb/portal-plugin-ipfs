@@ -504,7 +504,7 @@ func canonicalDS(s string) string {
 	if idx := strings.Index(s, " DS "); idx >= 0 {
 		s = s[idx+len(" DS "):]
 	}
-	return strings.Join(strings.Fields(s), " ")
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }
 
 // queryNS performs an NS query for the absolute FQDN `name` against the DNS

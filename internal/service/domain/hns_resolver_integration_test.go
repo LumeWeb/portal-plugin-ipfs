@@ -407,3 +407,17 @@ func TestDelegationExpectedDS(t *testing.T) {
 	assert.Equal(t, "", delegationExpectedDS(json.RawMessage(`{}`)))
 	assert.Equal(t, "", delegationExpectedDS(json.RawMessage(`{"parent_records":[]}`)))
 }
+
+// dsEqual must normalize case on both sides: the served digest is lowercased
+// (queryDS), but the persisted dane.computed DS RDATA may carry an uppercase
+// digest. Without normalizing the expected side, a valid managed zone would be
+// left in WaitingDelegation forever.
+func TestDSEqualCaseInsensitive(t *testing.T) {
+	lower := "44451 13 2 cb6c0f5bbf0ca4391b008cfe56f8e072d3f3f21d4b3bfb40b46f5c5b35a0b1e1"
+	upper := "44451 13 2 CB6C0F5BBF0CA4391B008CFE56F8E072D3F3F21D4B3BFB40B46F5C5B35A0B1E1"
+
+	assert.True(t, dsEqual(upper, lower), "dsEqual must ignore digest case")
+	assert.True(t, dsEqual(lower, upper), "dsEqual must ignore digest case")
+	assert.True(t, dsEqual(lower, lower))
+	assert.False(t, dsEqual(lower, "44451 13 2 0000000000000000000000000000000000000000000000000000000000000000"))
+}
