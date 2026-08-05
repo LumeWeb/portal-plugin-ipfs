@@ -11,11 +11,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	dane "go.lumeweb.com/dane"
 	danehns "go.lumeweb.com/dane/hns"
 	"go.lumeweb.com/ipfs-sdk/dnsname"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+
+	"github.com/miekg/dns"
 )
 
 const (
@@ -398,33 +401,80 @@ func (p *HNSProvider) VerifyDelegation(ctx context.Context, domain string,
 		return false, fmt.Errorf("HNS resolver not configured (DnsConfig.HNSResolver); standard resolvers cannot resolve HNS names")
 	}
 
-	resolver := &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{}
-			return d.DialContext(ctx, network, p.resolverAddr)
-		},
-	}
-
-	nss, err := resolver.LookupNS(ctx, dnsname.EnsureFQDN(domain))
+	nss, err := queryNS(ctx, p.resolverAddr, dnsname.EnsureFQDN(domain))
 	if err != nil {
-		// Go's net.Resolver stamps the error with the /etc/resolv.conf server
-		// (e.g. "on 127.0.0.11:53") even when the custom Dial targets a different
-		// host:port. Surface the actual resolver we dialed so operators aren't
-		// misled into thinking the config was ignored.
+		// We query the configured HNS resolver with raw miekg/dns rather than
+		// Go's net.Resolver.LookupNS: HSD answers NS queries as a REFERRAL, with
+		// the NS records in the authority section (not the answer). Go's LookupNS
+		// only parses the answer section, so it sees "no NS records" and reports
+		// a spurious NXDOMAIN even though the resolver has the delegation. Raw
+		// miekg/dns reads both sections and returns the records correctly.
 		return false, fmt.Errorf("HNS resolver query failed (resolver %q): %w", p.resolverAddr, err)
 	}
 
 	expectedNS := p.Nameservers()
 	for _, ns := range nss {
 		for _, expected := range expectedNS {
-			if dnsname.Equal(ns.Host, expected) {
+			if dnsname.Equal(ns, expected) {
 				return true, nil
 			}
 		}
 	}
 
 	return false, nil
+}
+
+// queryNS performs an NS query for the absolute FQDN `name` against the DNS
+// server at `addr` using raw miekg/dns, returning the nameserver hostnames from
+// both the answer and authority sections. This is the fix for Go's
+// net.Resolver.LookupNS, which only ever parses the ANSWER section. HSD (and
+// alt-root resolvers in general) answer NS queries as a referral, placing the
+// NS records in the AUTHORITY section; net.Resolver.LookupNS therefore reads
+// the answer as empty and returns a spurious NXDOMAIN even when the delegation
+// exists. miekg/dns reads both sections, so this returns the delegation
+// correctly. It tries UDP first, then TCP on failure or truncation (RFC 5966).
+func queryNS(ctx context.Context, addr, name string) ([]string, error) {
+	c := &dns.Client{
+		Net:     "udp",
+		Timeout: 5 * time.Second,
+	}
+	m := new(dns.Msg)
+	m.SetQuestion(name, dns.TypeNS)
+
+	r, _, err := c.ExchangeContext(ctx, m, addr)
+	if err == nil && r.Truncated {
+		// Retry over TCP on truncation (RFC 5966).
+		tc := &dns.Client{Net: "tcp", Timeout: 5 * time.Second}
+		if tr, _, terr := tc.ExchangeContext(ctx, m, addr); terr == nil {
+			r, err = tr, nil
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if r.Rcode != dns.RcodeSuccess {
+		return nil, &net.DNSError{
+			Err:        dns.RcodeToString[r.Rcode],
+			Name:       name,
+			Server:     addr,
+			IsNotFound: r.Rcode == dns.RcodeNameError,
+		}
+	}
+
+	var nss []string
+	for _, rr := range r.Answer {
+		if ns, ok := rr.(*dns.NS); ok {
+			nss = append(nss, ns.Ns)
+		}
+	}
+	// NS records may also appear in the authority section for non-authoritative
+	// responses; include them rather than only the answer section.
+	for _, rr := range r.Ns {
+		if ns, ok := rr.(*dns.NS); ok {
+			nss = append(nss, ns.Ns)
+		}
+	}
+	return nss, nil
 }
 
 // OnCertAvailable updates the TLSA source when a cert is pushed from the
