@@ -40,18 +40,6 @@ type WebsiteDomain struct {
 	DelegationData datatypes.JSONMap `gorm:"type:json"`
 	ProtocolData   datatypes.JSONMap `gorm:"type:json"`
 
-	// TLSPrivateKey holds the encrypted per-domain DANE private key. It is the
-	// durable source of truth: DANE TLSA (selector 1) pins the SPKI derived from
-	// this key, so keeping it stable across Caddy restarts/renewals means the
-	// published TLSA record never needs to change. It is AES-256-GCM encrypted
-	// at rest and must never appear in logs or API responses except via the
-	// authenticated internal channel.
-	TLSPrivateKey string `gorm:"type:text" json:"-"`
-	// TLSCertPEM caches the last issued certificate for this key. It is NOT a
-	// source of truth — a cert may be freely re-issued from the same private
-	// key (identical SPKI) without touching DNS.
-	TLSCertPEM string `gorm:"type:text" json:"-"`
-
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`

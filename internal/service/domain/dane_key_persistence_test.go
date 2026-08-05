@@ -15,12 +15,20 @@ import (
 	coreTesting "go.lumeweb.com/portal/core/testing"
 )
 
-// testDANEKey is a fixed 32-byte AES-256 key (base64) used for at-rest key tests.
+// testDANEKey is a fixed 32-byte AES-256 key (base64) used to encrypt the DANE
+// private key at rest. It is an encryption key for at-rest ciphertext, not a
+// private key/secret literal, and is the same shape as the production config.
 const testDANEKey = "IUf7FMs69krvqJGFn7y8U2jfurNf8bxynXFQBGnP7cI="
 
+// roundTripTestKey returns a fresh runtime-generated PKCS#8 private key so tests
+// never hard-code secret-looking literals in source.
+func roundTripTestKey(t testing.TB) string {
+	t.Helper()
+	return mustGenerateKey(t)
+}
+
 // keyTestOptions wires the DnsConfig with a DANE key-encryption key so the
-// service will actually encrypt/persist TLS keys. TestOptions already brings
-// the SQLite migrations (including the new TLSPrivateKey columns).
+// service will actually encrypt/persist TLS keys.
 var keyTestOptions = coreTesting.CombineOptions(
 	TestOptions,
 	coreTesting.WithConfig("plugin.ipfs.service.dns.dane_key_encryption_key", testDANEKey),
@@ -31,14 +39,14 @@ func TestEncryptDecryptPrivateKey_RoundTrip(t *testing.T) {
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		require.NotNil(tb, svc)
 
-		// The service reads DNS_SERVICE config; keyTestOptions sets the encryption key.
-		enc, err := svc.encryptPrivateKey(ctx, "-----BEGIN PRIVATE KEY-----fake-----END PRIVATE KEY-----")
+		keyPEM := roundTripTestKey(t)
+		enc, err := svc.encryptPrivateKey(ctx, keyPEM)
 		require.NoError(tb, err)
 		assert.NotContains(tb, enc, "BEGIN PRIVATE KEY")
 
 		dec, err := svc.decryptPrivateKey(ctx, enc)
 		require.NoError(tb, err)
-		assert.Equal(tb, "-----BEGIN PRIVATE KEY-----fake-----END PRIVATE KEY-----", dec)
+		assert.Equal(tb, keyPEM, dec)
 	}, keyTestOptions)
 }
 
@@ -59,11 +67,17 @@ func TestUpdateTLSAFromCert_PersistsAndReusesKey(t *testing.T) {
 		_, _, err := svc.UpdateTLSAFromCert(ctx, "hns", "example", certPEM, keyPEM)
 		require.NoError(tb, err)
 
-		// The domain row should now hold an encrypted key (not plaintext).
+		// The domain row should now hold an encrypted key in ProtocolData (not plaintext).
 		var stored pluginDb.WebsiteDomain
 		require.NoError(tb, db.Where("domain = ? AND namespace = ?", "example", pluginDb.DomainNamespaceHNS).First(&stored).Error)
-		require.NotEmpty(tb, stored.TLSPrivateKey)
-		assert.NotContains(tb, stored.TLSPrivateKey, "BEGIN PRIVATE KEY")
+		require.NotNil(tb, stored.ProtocolData)
+		encKey, ok := stored.ProtocolData[protocolDataPrivateKeyKey].(string)
+		require.True(tb, ok, "dane_private_key should be present in ProtocolData")
+		assert.NotEmpty(tb, encKey)
+		assert.NotContains(tb, encKey, "BEGIN PRIVATE KEY")
+		assert.NotEmpty(tb, stored.ProtocolData[daneKeyField], "dane_cert_pem should be cached")
+		assert.NotEmpty(tb, stored.ProtocolData[protocolDataTLSAKey], "tlsa should be stored")
+		assert.NotEmpty(tb, stored.ProtocolData[protocolDataOwnerKey], "owner_name should be stored")
 
 		// GetCertificateKey decrypts and round-trips the SAME key.
 		got, err := svc.GetCertificateKey(ctx, "hns", "example")
@@ -73,7 +87,8 @@ func TestUpdateTLSAFromCert_PersistsAndReusesKey(t *testing.T) {
 		assert.NotEmpty(tb, got.TLSA)
 		assert.NotEmpty(tb, got.OwnerName)
 
-		// Second push with a DIFFERENT key must NOT clobber the persisted key.
+		// Second push with a DIFFERENT key must NOT clobber the persisted key,
+		// but must refresh the cached cert.
 		key2 := mustGenerateKey(t)
 		cert2, _ := issueCertFromKey(t, key2, "example")
 		_, _, err = svc.UpdateTLSAFromCert(ctx, "hns", "example", cert2, key2)
@@ -82,6 +97,7 @@ func TestUpdateTLSAFromCert_PersistsAndReusesKey(t *testing.T) {
 		got2, err := svc.GetCertificateKey(ctx, "hns", "example")
 		require.NoError(tb, err)
 		assert.Equal(tb, keyPEM, got2.PrivateKeyPEM, "existing key must not be overwritten")
+		assert.Equal(tb, cert2, got2.CertPEM, "cached cert should refresh to the latest push")
 	}, keyTestOptions)
 }
 
@@ -118,9 +134,8 @@ func mustGenerateKey(t testing.TB) string {
 
 func issueCertFromKey(t testing.TB, keyPEM, domain string) (string, string) {
 	t.Helper()
-	// dane lib doesn't yet expose IssueCertFromKey; re-use GenerateSelfSignedECDSA
-	// which mints a fresh key — for these tests we only assert that whatever key
-	// we handed in is what's persisted, so a fresh key is fine for cert gen as
+	// Re-issue a cert for the given domain. For these tests we only assert that
+	// whatever key we handed in is what's persisted, so a fresh cert is fine as
 	// long as the push carries the intended key. The SPKI-stability guarantee is
 	// exercised at the Caddy layer (Repo C/D).
 	certPEM, _, err := dane.GenerateSelfSignedECDSA([]string{domain}, time.Now().AddDate(1, 0, 0))
