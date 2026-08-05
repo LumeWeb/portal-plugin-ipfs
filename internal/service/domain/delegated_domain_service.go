@@ -3,18 +3,20 @@ package domain
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"time"
 
 	dane "go.lumeweb.com/dane"
 	"go.lumeweb.com/ipfs-sdk/dnsname"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
+	"go.uber.org/zap"
 )
 
 type DelegatedDomainService struct {
@@ -230,8 +232,12 @@ func jsonToMap(raw json.RawMessage) datatypes.JSONMap {
 	return m
 }
 
-// UpdateTLSAFromCert computes TLSA from a pushed cert and stores it.
-func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespace, domain, certPEM string) (tlsa, ownerName string, err error) {
+// UpdateTLSAFromCert computes TLSA from a pushed cert and stores it. When
+// privateKeyPEM is non-empty and the domain has no persisted key yet, the
+// private key is encrypted at rest and stored so Caddy can later fetch the same
+// key (stable SPKI) and re-issue certs around it without touching DNS. The key
+// is only ever persisted when absent — it is never overwritten by a later push.
+func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespace, domain, certPEM, privateKeyPEM string) (tlsa, ownerName string, err error) {
 	provider := s.registry.Get(namespace)
 	if provider == nil {
 		return "", "", fmt.Errorf("unsupported namespace: %s", namespace)
@@ -255,50 +261,87 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 	}
 
 	ns := pluginDb.DomainNamespace(namespace)
-	wd, err := s.GetWebsiteDomainByDomainAndNamespace(ctx, domain, ns)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return tlsa, ownerName, gorm.ErrRecordNotFound
+
+	// Persist the per-domain DANE state under a row lock so concurrent cert
+	// pushes serialize. The private key is the source of truth for the SPKI that
+	// DANE TLSA (selector 1) pins — it is written at most once and never
+	// overwritten, since a later push with a different key would rotate the
+	// published pin and break every DANE-validating client. The cert, TLSA, and
+	// owner name, by contrast, are refreshed on every push (a cert may be freely
+	// re-issued from the same key with an identical SPKI).
+	txErr := s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Lock the target row so concurrent cert pushes serialize per-domain.
+		locked := tx.Clauses(clause.Locking{Strength: "UPDATE"})
+		var wd pluginDb.WebsiteDomain
+		if err := locked.Where("domain = ? AND namespace = ?", domain, ns).First(&wd).Error; err != nil {
+			return err // includes gorm.ErrRecordNotFound
 		}
-		return "", "", fmt.Errorf("lookup domain: %w", err)
-	}
+		if wd.ProtocolData == nil {
+			wd.ProtocolData = make(datatypes.JSONMap)
+		}
 
-	if wd.ProtocolData == nil {
-		wd.ProtocolData = make(datatypes.JSONMap)
-	}
-	wd.ProtocolData["tlsa"] = tlsa
-	wd.ProtocolData["owner_name"] = ownerName
+		// Always refresh the cert + TLSA + owner name on every push.
+		wd.ProtocolData[daneKeyField] = certPEM
+		wd.ProtocolData[protocolDataTLSAKey] = tlsa
+		wd.ProtocolData[protocolDataOwnerKey] = ownerName
 
-	// sync TLSA for HNS
-	if namespace == string(pluginDb.DomainNamespaceHNS) && wd.DelegationData != nil {
-		if rawAuth, ok := wd.DelegationData["authoritative_records"]; ok {
-			data, _ := json.Marshal(rawAuth)
-			var auth []delegationRecord
-			if json.Unmarshal(data, &auth) == nil {
-				for i := range auth {
-					if auth[i].Type == "TLSA" {
-						zone := wd.ZoneName
-						if zone == "" {
-							zone = canonicalZoneName(domain)
+		// Persist the private key only when we don't already have one.
+		if privateKeyPEM != "" {
+			if _, exists := wd.ProtocolData[protocolDataPrivateKeyKey]; !exists {
+				enc, encErr := s.encryptPrivateKey(ctx, privateKeyPEM)
+				if encErr != nil {
+					s.Logger().Warn("dane key not persisted (encryption key not configured?)",
+						zap.String("domain", domain), zap.Error(encErr))
+				} else {
+					wd.ProtocolData[protocolDataPrivateKeyKey] = enc
+				}
+			} else {
+				s.Logger().Warn("dane key push ignored: a key already exists for domain (not overwriting)",
+					zap.String("domain", domain))
+			}
+		}
+
+		// sync TLSA for HNS
+		if namespace == string(pluginDb.DomainNamespaceHNS) && wd.DelegationData != nil {
+			if rawAuth, ok := wd.DelegationData["authoritative_records"]; ok {
+				data, _ := json.Marshal(rawAuth)
+				var auth []delegationRecord
+				if json.Unmarshal(data, &auth) == nil {
+					for i := range auth {
+						if auth[i].Type == "TLSA" {
+							zone := wd.ZoneName
+							if zone == "" {
+								zone = canonicalZoneName(domain)
+							}
+							auth[i].Value = formatFullTLSARecord(tlsa, zone)
+							// Store the updated records as a real JSON structure, not the raw
+							// marshaled []byte. JSONMap encodes []byte as base64 on save, which
+							// silently breaks DTO projection (json.Unmarshal into []delegationRecord).
+							raw, _ := json.Marshal(auth)
+							var out any
+							if json.Unmarshal(raw, &out) == nil {
+								wd.DelegationData["authoritative_records"] = out
+							}
+							break
 						}
-						auth[i].Value = formatFullTLSARecord(tlsa, zone)
-						// Store the updated records as a real JSON structure, not the raw
-						// marshaled []byte. JSONMap encodes []byte as base64 on save, which
-						// silently breaks DTO projection (json.Unmarshal into []delegationRecord).
-						raw, _ := json.Marshal(auth)
-						var out any
-						if json.Unmarshal(raw, &out) == nil {
-							wd.DelegationData["authoritative_records"] = out
-						}
-						break
 					}
 				}
 			}
 		}
-	}
 
-	if err := s.DB().WithContext(ctx).Save(wd).Error; err != nil {
-		return "", "", fmt.Errorf("save domain tlsa: %w", err)
+		// Persist the updated JSON maps scoped by primary key (avoids the locked
+		// read's WHERE clause making the UPDATE column ambiguous). GORM's struct
+		// auto-update of UpdatedAt is bypassed by map updates, so set it explicitly.
+		return tx.Model(&pluginDb.WebsiteDomain{}).
+			Where("id = ?", wd.ID).
+			Updates(map[string]any{
+				"protocol_data":   wd.ProtocolData,
+				"delegation_data": wd.DelegationData,
+				"updated_at":      time.Now(),
+			}).Error
+	})
+	if txErr != nil {
+		return "", "", fmt.Errorf("save domain tlsa: %w", txErr)
 	}
 
 	return tlsa, ownerName, nil
@@ -350,6 +393,60 @@ func (s *DelegatedDomainService) GetWebsiteDomainByDomainAndNamespace(ctx contex
 		return nil, err
 	}
 	return &wd, nil
+}
+
+// ProtocolData keys for DANE TLS identity. All DANE state for a domain lives in
+// the WebsiteDomain.ProtocolData JSON map (the per-protocol data store), keeping
+// the key, cert, TLSA, and owner name together as one per-protocol unit.
+const (
+	daneKeyField              = "dane_cert_pem" // last pushed cert (not a source of truth)
+	protocolDataPrivateKeyKey = "dane_private_key" // encrypted at rest, written once
+	protocolDataTLSAKey       = "tlsa"
+	protocolDataOwnerKey      = "owner_name"
+)
+
+// StoredCert holds the decrypted DANE key material returned to a Caddy cert
+// getter so it can re-issue a certificate around the persisted key (stable SPKI).
+type StoredCert struct {
+	PrivateKeyPEM string
+	CertPEM       string
+	TLSA          string
+	OwnerName     string
+}
+
+// GetCertificateKey returns the stored DANE key material for a domain,
+// decrypting the private key at rest. Returns gorm.ErrRecordNotFound when the
+// domain has no persisted key yet (i.e. first bootstrap).
+func (s *DelegatedDomainService) GetCertificateKey(ctx context.Context, namespace, domain string) (*StoredCert, error) {
+	ns := pluginDb.DomainNamespace(namespace)
+	wd, err := s.GetWebsiteDomainByDomainAndNamespace(ctx, domain, ns)
+	if err != nil {
+		return nil, err // includes gorm.ErrRecordNotFound
+	}
+	if wd.ProtocolData == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	encKey, ok := wd.ProtocolData[protocolDataPrivateKeyKey].(string)
+	if !ok || encKey == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	keyPEM, err := s.decryptPrivateKey(ctx, encKey)
+	if err != nil {
+		return nil, err
+	}
+	result := &StoredCert{
+		PrivateKeyPEM: keyPEM,
+	}
+	if v, ok := wd.ProtocolData[daneKeyField].(string); ok {
+		result.CertPEM = v
+	}
+	if v, ok := wd.ProtocolData[protocolDataTLSAKey].(string); ok {
+		result.TLSA = v
+	}
+	if v, ok := wd.ProtocolData[protocolDataOwnerKey].(string); ok {
+		result.OwnerName = v
+	}
+	return result, nil
 }
 
 // GetActiveWebsiteDomainByDomain finds an active domain across all namespaces.

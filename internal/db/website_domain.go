@@ -39,9 +39,10 @@ type WebsiteDomain struct {
 	Status         DomainStatus
 	DelegationData datatypes.JSONMap `gorm:"type:json"`
 	ProtocolData   datatypes.JSONMap `gorm:"type:json"`
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	DeletedAt      gorm.DeletedAt `gorm:"index"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
 func (WebsiteDomain) TableName() string {
