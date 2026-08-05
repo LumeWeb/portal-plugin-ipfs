@@ -1114,6 +1114,8 @@ go.lumeweb.com/configmanager v0.3.29 h1:e3AK5oombWk48K5NFEbJ2MB+GqXst13YzrRhUFSW
 go.lumeweb.com/configmanager v0.3.29/go.mod h1:yjPAWbJjipfYjabiAIEY/mIMXjeWa6H3ZGHIJ6Tj1rg=
 go.lumeweb.com/dane v0.0.1 h1:ochYl7Irj20VmkgaP7CwLelX9tw2L6ESKye047ORW2w=
 go.lumeweb.com/dane v0.0.1/go.mod h1:aFK5LQjqOA+6B72PH3DbcgdvGtdOvtCzPuKACKJg0sU=
+go.lumeweb.com/dane v0.0.2 h1:hQuJQi2QuJR2ZleMIxJWP8wHaVdhitSWJY8q4b8Z0KE=
+go.lumeweb.com/dane v0.0.2/go.mod h1:QkE1dVX2IJtUeEywNkFNPzFpOrYVLTPGNIK1mJHfAgU=
 go.lumeweb.com/event/v2 v2.1.0 h1:pVWRzrHAkjhXa+owzhDTtaxBHbnxrsIpDHFZwEUxKoY=
 go.lumeweb.com/event/v2 v2.1.0/go.mod h1:e1Ss7iATIrP1b2Ojwbp1wdF0VTuxFXHdI7szkAG40AI=
 go.lumeweb.com/gswagger v0.20.12 h1:FNSrDAeMQVAGIogzJ4SQX+X8U/FMeWQ80yxdyfsM2/M=
