@@ -751,6 +751,8 @@ github.com/mattn/go-isatty v0.0.4/go.mod h1:M+lRXTBqGeGNdLjl/ufCoiOlB5xdOkqRJdNx
 github.com/mattn/go-isatty v0.0.5/go.mod h1:Iq45c/XA43vh69/j3iqttzPXn0bhXyGjM0Hdxcsrc5s=
 github.com/mattn/go-isatty v0.0.23 h1:cYwCQTQf3HB6xUC+BtyCLZNr7IzbOmoZbmssVNzSyiQ=
 github.com/mattn/go-isatty v0.0.23/go.mod h1:nMCL3Zebbrt45jsMDgnfIwz6ydEQApk5oEI3HqDio6A=
+github.com/mattn/go-isatty v0.0.24 h1:tGZZoVgT/KiqK1c8ocVLeDS8BSWMRd47J3Lbz7vsReI=
+github.com/mattn/go-isatty v0.0.24/go.mod h1:nMCL3Zebbrt45jsMDgnfIwz6ydEQApk5oEI3HqDio6A=
 github.com/mattn/go-runewidth v0.0.20 h1:WcT52H91ZUAwy8+HUkdM3THM6gXqXuLJi9O3rjcQQaQ=
 github.com/mattn/go-runewidth v0.0.20/go.mod h1:XBkDxAl56ILZc9knddidhrOlY5R/pDhgLpndooCuJAs=
 github.com/mattn/go-sqlite3 v1.14.48 h1:7XHIgl0a8HwOaiK4E47ozLkST78rR9+OtNGx27D/TFs=
@@ -1158,6 +1160,8 @@ go.lumeweb.com/portal v0.5.2-0.20260804180928-67971e95c5ad h1:IqiBXyBYxQ5OwoQHUs
 go.lumeweb.com/portal v0.5.2-0.20260804180928-67971e95c5ad/go.mod h1:9bHHYOwn87iB6Z/IZwBMLpFpn6N4eD10gH1XhqQhVxk=
 go.lumeweb.com/portal v0.5.2-0.20260805130111-3e79be4aacf6 h1:n6Vz2qNTfCd2Nd7HwbCYzZ320BoVL/437Q3P/GmnMj4=
 go.lumeweb.com/portal v0.5.2-0.20260805130111-3e79be4aacf6/go.mod h1:thz7T6R1L8KRvLOPh0D1+BAH0xy+6irCvQgjwSFC0X4=
+go.lumeweb.com/portal v0.5.2-0.20260805131618-cfe75fb616af h1:dIz+/UGlIW/qVmZWAMwerPLNQVaBDSO/Z9wm6+ETIBc=
+go.lumeweb.com/portal v0.5.2-0.20260805131618-cfe75fb616af/go.mod h1:Z+YMP66B5qM5QvOonBFxxrsFEivcviIISkboKOhgJso=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.1.0 h1:bHHJ7oZrBKmBvdUFutr3Dx6FdwvSg/ZeF33QaRM0DKU=
@@ -1199,6 +1203,8 @@ go.opentelemetry.io/contrib/bridges/otelzap v0.20.0 h1:wgsHT2HLf1KEZtCkd6ZGynPde
 go.opentelemetry.io/contrib/bridges/otelzap v0.20.0/go.mod h1:NZCU/Hi3EdSS6LxcNJOO39Y5z95R9QY5iQ2Ym6IOFTU=
 go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.69.0 h1:p2oor9jp8aT5uqVuN9p0GCntXn5VX8qXdOH098hgLu4=
 go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.69.0/go.mod h1:NOiuETZRg7aNSNFPWqf4dAszhyFMVdKYXW4V0/DtbNA=
+go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.70.0 h1:oMggYXR/U2pQ21mHjLvvlqetHGHj26FnaT98hKkPUJg=
+go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.70.0/go.mod h1:/ADF+ECZdX77byxCPsxu/k+MYuL8YMe8+IPwl9o99Gs=
 go.opentelemetry.io/contrib/propagators/b3 v1.44.0 h1:1IFH4oFKK8KupzIelCl3u+bkxpGRps1oWRjQI2+TTWs=
 go.opentelemetry.io/contrib/propagators/b3 v1.44.0/go.mod h1:JqWFXsc7VDaqIyubFhEd2cPHqsrzqP0Lvn783SUwyro=
 go.opentelemetry.io/otel v1.44.0 h1:JjwHmHpA4iZ3wBxluu2fbbE7j4kqlE8jXyAyPXH7HqU=
@@ -1211,8 +1217,12 @@ go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.21.0 h1:WseeVYf5d
 go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.21.0/go.mod h1:SiLZnQS6Qk2eCpvr2CH/XMAOa64TWGXxEZJZCpD2Lmc=
 go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.44.0 h1:4YsVu3B8+3qtWYYrsUYgn0OG78pN0rnNPRGX4SbokQI=
 go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.44.0/go.mod h1:+wnlSn0mD1ADVMe3v9Z/WIaiz6q6gL2J/ejaAmdmv80=
+go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0 h1:QRefszxJmfPdjXUUm3j6iDzY03mTPXMjqErFqQ67vUg=
+go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0/go.mod h1:Tiz03lTBVBrm7eWZBOidzEaYaJa8tjwGUGv6d8mlTyk=
 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.44.0 h1:qazEJlUOQzhCpzQpFETGby7EdqjI1wsd0W+6Gg1SCTU=
 go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.44.0/go.mod h1:fOD2Yefuxixkx3ahVNf0O/PERb6r4OlbxfATVnYvzCo=
+go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0 h1:fG5MCxGz8+2VtrN/WgqSpJFctVz24gpxj8CxkKmc8Ww=
+go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0/go.mod h1:BmAYTn+3ysbRe+IU2msxmf5Rx3g6DHvex+tWI3LdhYI=
 go.opentelemetry.io/otel/log v0.20.0 h1:/5i0vuHxCLWUfChWG41K9wkM0jafruPw9NU1/RCJirs=
 go.opentelemetry.io/otel/log v0.20.0/go.mod h1:wOcMcjsZpG8x7Bak7IhSi/lg8wscV2C1VdrKCLPlt0E=
 go.opentelemetry.io/otel/log v0.21.0 h1:SLsVDGmtyBrdw8/a2Z0bOIxou/+bN4z56GebH7T0LvA=
