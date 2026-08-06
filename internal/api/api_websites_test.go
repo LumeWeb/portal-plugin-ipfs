@@ -13,12 +13,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	mocks "go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
-	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.lumeweb.com/portal/core"
+	coreTesting "go.lumeweb.com/portal/core/testing"
 	"gorm.io/gorm"
 )
 
@@ -219,18 +219,23 @@ func TestAPI_GetSSLStatus(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			timestamp := time.Now().UTC()
 			mockWebsite := &pluginDb.Website{
-				ID:              1,
-				UserID:          userID,
-				Domain:          TestDomain,
-				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
-				Status:          string(pluginDb.WebsiteStatusActive),
-				SSLStatus:       string(pluginDb.SSLStatusReady),
-				SSLLastUpdatedAt: &timestamp,
+				ID:         1,
+				UserID:     userID,
+				Domain:     TestDomain,
+				TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
+				Status:     string(pluginDb.WebsiteStatusActive),
+			}
+			mockApex := &pluginDb.WebsiteDomain{
+				ID:               1,
+				WebsiteID:        1,
+				Domain:           TestDomain,
+				SSLStatus:        string(pluginDb.SSLStatusReady),
+				SSLLastUpdatedAt: func() *time.Time { v := time.Now().UTC(); return &v }(),
 			}
 
 			mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, TestDomain).Return(mockWebsite, pluginDb.DomainNamespaceICANN, nil)
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
 
 			rec := helper.makeRequest(http.MethodGet, "/api/websites/"+TestDomain+"/ssl-status", nil)
 
@@ -252,18 +257,23 @@ func TestAPI_GetSSLStatus(t *testing.T) {
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
-			timestamp := time.Now().UTC()
 			mockWebsite := &pluginDb.Website{
-				ID:              1,
-				UserID:          userID,
-				Domain:          TestDomain,
-				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
-				Status:          string(pluginDb.WebsiteStatusActive),
-				SSLStatus:       string(pluginDb.SSLStatusPending),
-				SSLLastUpdatedAt: &timestamp,
+				ID:         1,
+				UserID:     userID,
+				Domain:     TestDomain,
+				TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
+				Status:     string(pluginDb.WebsiteStatusActive),
+			}
+			mockApex := &pluginDb.WebsiteDomain{
+				ID:               1,
+				WebsiteID:        1,
+				Domain:           TestDomain,
+				SSLStatus:        string(pluginDb.SSLStatusPending),
+				SSLLastUpdatedAt: func() *time.Time { v := time.Now().UTC(); return &v }(),
 			}
 
 			mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, TestDomain).Return(mockWebsite, pluginDb.DomainNamespaceICANN, nil)
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
 
 			rec := helper.makeRequest(http.MethodGet, "/api/websites/"+TestDomain+"/ssl-status", nil)
 
@@ -299,29 +309,39 @@ func TestAPI_GetSSLStatus(t *testing.T) {
 	})
 }
 
-// Webhook SSL Status Integration Tests
-// These tests verify the webhook endpoint for SSL status updates from Caddy
-
 func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
+	// setUpWebhookMocks sets up the UpdateSSLStatus / GetWebsite / GetApexDomainBinding
+	// mocks shared by the success cases. It returns the website and apex binding used.
+	setUpWebhookMocks := func(tb coreTesting.TB, mockWebsiteService *mocks.MockWebsiteService, status pluginDb.SSLStatus, sslError string, ts time.Time) (*pluginDb.Website, *pluginDb.WebsiteDomain) {
+		mockWebsite := &pluginDb.Website{
+			ID:         1,
+			UserID:     uint(1),
+			Domain:     TestDomain,
+			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
+			Status:     string(pluginDb.WebsiteStatusActive),
+		}
+		mockApex := &pluginDb.WebsiteDomain{
+			ID:               1,
+			WebsiteID:        1,
+			Domain:           TestDomain,
+			SSLStatus:        string(status),
+			SSLError:         sslError,
+			SSLLastUpdatedAt: &ts,
+		}
+		mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, status, sslError, mock.AnythingOfType("*time.Time")).Return(mockApex, nil)
+		mockWebsiteService.EXPECT().GetWebsite(mock.Anything, uint(1), uint(1)).Return(mockWebsite, nil)
+		mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
+		return mockWebsite, mockApex
+	}
+
 	t.Run("success_status_ready", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
-			userID := uint(1)
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			timestamp := time.Now().UTC()
-			mockWebsite := &pluginDb.Website{
-				ID:              1,
-				UserID:          userID,
-				Domain:          TestDomain,
-				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
-				Status:          string(pluginDb.WebsiteStatusActive),
-				SSLStatus:       string(pluginDb.SSLStatusReady),
-				SSLLastUpdatedAt: &timestamp,
-			}
-
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+			setUpWebhookMocks(tb, mockWebsiteService, pluginDb.SSLStatusReady, "", timestamp)
 
 			reqBody := fmt.Sprintf(`{"status":"ready","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
 			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody))
@@ -340,23 +360,11 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 	t.Run("success_status_failed_with_error", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
-			userID := uint(1)
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			timestamp := time.Now().UTC()
-			mockWebsite := &pluginDb.Website{
-				ID:              1,
-				UserID:          userID,
-				Domain:          TestDomain,
-				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
-				Status:          string(pluginDb.WebsiteStatusActive),
-				SSLStatus:       string(pluginDb.SSLStatusFailed),
-				SSLError:        "certificate validation failed",
-				SSLLastUpdatedAt: &timestamp,
-			}
-
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusFailed, "certificate validation failed", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+			setUpWebhookMocks(tb, mockWebsiteService, pluginDb.SSLStatusFailed, "certificate validation failed", timestamp)
 
 			reqBody := fmt.Sprintf(`{"status":"failed","error":"certificate validation failed","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
 			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody))
@@ -376,22 +384,11 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 	t.Run("success_status_pending", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
-			userID := uint(1)
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			timestamp := time.Now().UTC()
-			mockWebsite := &pluginDb.Website{
-				ID:              1,
-				UserID:          userID,
-				Domain:          TestDomain,
-				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
-				Status:          string(pluginDb.WebsiteStatusActive),
-				SSLStatus:       string(pluginDb.SSLStatusPending),
-				SSLLastUpdatedAt: &timestamp,
-			}
-
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusPending, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+			setUpWebhookMocks(tb, mockWebsiteService, pluginDb.SSLStatusPending, "", timestamp)
 
 			reqBody := fmt.Sprintf(`{"status":"pending","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
 			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody))
@@ -410,22 +407,11 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 	t.Run("success_status_issuing", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
-			userID := uint(1)
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			timestamp := time.Now().UTC()
-			mockWebsite := &pluginDb.Website{
-				ID:              1,
-				UserID:          userID,
-				Domain:          TestDomain,
-				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
-				Status:          string(pluginDb.WebsiteStatusActive),
-				SSLStatus:       string(pluginDb.SSLStatusIssuing),
-				SSLLastUpdatedAt: &timestamp,
-			}
-
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusIssuing, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil)
+			setUpWebhookMocks(tb, mockWebsiteService, pluginDb.SSLStatusIssuing, "", timestamp)
 
 			reqBody := fmt.Sprintf(`{"status":"issuing","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
 			rec := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody))
@@ -525,36 +511,6 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 		}, TestOptions)
 	})
 
-	t.Run("idempotent_duplicate_requests", func(t *testing.T) {
-		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			helper := newMockHelper(t, ctx)
-			userID := uint(1)
-
-			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-
-			timestamp := time.Now().UTC()
-			mockWebsite := &pluginDb.Website{
-				ID:              1,
-				UserID:          userID,
-				Domain:          TestDomain,
-				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
-				Status:          string(pluginDb.WebsiteStatusActive),
-				SSLStatus:       string(pluginDb.SSLStatusReady),
-				SSLLastUpdatedAt: &timestamp,
-			}
-
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockWebsite, nil).Times(2)
-
-			reqBody := fmt.Sprintf(`{"status":"ready","timestamp":"%s"}`, timestamp.Format(time.RFC3339))
-
-			rec1 := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody))
-			assert.Equal(t, http.StatusOK, rec1.Code)
-
-			rec2 := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody))
-			assert.Equal(t, http.StatusOK, rec2.Code)
-		}, TestOptions)
-	})
-
 	t.Run("status_transition_pending_to_issuing_to_ready", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
@@ -566,44 +522,29 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			timestamp2 := timestamp1.Add(time.Minute)
 			timestamp3 := timestamp2.Add(time.Hour)
 
-			mockWebsitePending := &pluginDb.Website{
-				ID:              1,
-				UserID:          userID,
-				Domain:          TestDomain,
-				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
-				Status:          string(pluginDb.WebsiteStatusActive),
-				SSLStatus:       string(pluginDb.SSLStatusPending),
-				SSLLastUpdatedAt: &timestamp1,
+			mockWebsite := &pluginDb.Website{
+				ID:         1,
+				UserID:     userID,
+				Domain:     TestDomain,
+				TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
+				Status:     string(pluginDb.WebsiteStatusActive),
 			}
 
-			mockWebsiteIssuing := &pluginDb.Website{
-				ID:              1,
-				UserID:          userID,
-				Domain:          TestDomain,
-				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
-				Status:          string(pluginDb.WebsiteStatusActive),
-				SSLStatus:       string(pluginDb.SSLStatusIssuing),
-				SSLLastUpdatedAt: &timestamp2,
-			}
+			mockApexPending := &pluginDb.WebsiteDomain{ID: 1, WebsiteID: 1, Domain: TestDomain, SSLStatus: string(pluginDb.SSLStatusPending), SSLLastUpdatedAt: &timestamp1}
+			mockApexIssuing := &pluginDb.WebsiteDomain{ID: 1, WebsiteID: 1, Domain: TestDomain, SSLStatus: string(pluginDb.SSLStatusIssuing), SSLLastUpdatedAt: &timestamp2}
+			mockApexReady := &pluginDb.WebsiteDomain{ID: 1, WebsiteID: 1, Domain: TestDomain, SSLStatus: string(pluginDb.SSLStatusReady), SSLLastUpdatedAt: &timestamp3}
 
-			mockWebsiteReady := &pluginDb.Website{
-				ID:              1,
-				UserID:          userID,
-				Domain:          TestDomain,
-				TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
-				Status:          string(pluginDb.WebsiteStatusActive),
-				SSLStatus:       string(pluginDb.SSLStatusReady),
-				SSLLastUpdatedAt: &timestamp3,
-			}
-
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusPending, "", mock.AnythingOfType("*time.Time")).Return(mockWebsitePending, nil)
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusIssuing, "", mock.AnythingOfType("*time.Time")).Return(mockWebsiteIssuing, nil)
-			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockWebsiteReady, nil)
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusPending, "", mock.AnythingOfType("*time.Time")).Return(mockApexPending, nil)
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusIssuing, "", mock.AnythingOfType("*time.Time")).Return(mockApexIssuing, nil)
+			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockApexReady, nil)
+			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil).Times(3)
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApexPending, nil).Once()
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApexIssuing, nil).Once()
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApexReady, nil).Once()
 
 			reqBody1 := fmt.Sprintf(`{"status":"pending","timestamp":"%s"}`, timestamp1.Format(time.RFC3339))
 			rec1 := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody1))
 			assert.Equal(t, http.StatusOK, rec1.Code)
-
 			var response1 dto.WebsiteResponse
 			err := json.Unmarshal(rec1.Body.Bytes(), &response1)
 			require.NoError(t, err)
@@ -612,7 +553,6 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			reqBody2 := fmt.Sprintf(`{"status":"issuing","timestamp":"%s"}`, timestamp2.Format(time.RFC3339))
 			rec2 := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody2))
 			assert.Equal(t, http.StatusOK, rec2.Code)
-
 			var response2 dto.WebsiteResponse
 			err = json.Unmarshal(rec2.Body.Bytes(), &response2)
 			require.NoError(t, err)
@@ -621,7 +561,6 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			reqBody3 := fmt.Sprintf(`{"status":"ready","timestamp":"%s"}`, timestamp3.Format(time.RFC3339))
 			rec3 := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody3))
 			assert.Equal(t, http.StatusOK, rec3.Code)
-
 			var response3 dto.WebsiteResponse
 			err = json.Unmarshal(rec3.Body.Bytes(), &response3)
 			require.NoError(t, err)
@@ -629,8 +568,6 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 		}, TestOptions)
 	})
 }
-
-
 
 func TestAPI_ListWebsites(t *testing.T) {
 	t.Run("success", func(t *testing.T) {

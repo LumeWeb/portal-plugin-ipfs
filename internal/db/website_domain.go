@@ -28,10 +28,10 @@ const (
 
 // WebsiteDomain binds a domain (by namespace) to a website.
 type WebsiteDomain struct {
-	ID             uint              `gorm:"primaryKey"`
+	ID             uint `gorm:"primaryKey"`
 	WebsiteID      uint
 	UserID         uint
-	Domain         string `gorm:"index:idx_domain_namespace,unique"`
+	Domain         string          `gorm:"index:idx_domain_namespace,unique"`
 	Namespace      DomainNamespace `gorm:"index:idx_domain_namespace,unique"`
 	ZoneName       string
 	GatewayHost    string
@@ -39,6 +39,14 @@ type WebsiteDomain struct {
 	Status         DomainStatus
 	DelegationData datatypes.JSONMap `gorm:"type:json"`
 	ProtocolData   datatypes.JSONMap `gorm:"type:json"`
+
+	// SSL certificate state for this specific domain binding. SSL is a
+	// per-hostname property (each bound domain may hold its own cert), so it
+	// lives here rather than on the owning Website.
+	SSLStatus        string     `gorm:"column:ssl_status;type:varchar(50);index:idx_website_domains_ssl_status;default:'pending'"`
+	SSLError         string     `gorm:"column:ssl_error;type:text"`
+	SSLIssuedAt      *time.Time `gorm:"column:ssl_issued_at;index:idx_website_domains_ssl_issued_at"`
+	SSLLastUpdatedAt *time.Time `gorm:"column:ssl_last_updated_at;index:idx_website_domains_ssl_last_updated_at"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -53,5 +61,8 @@ func (WebsiteDomain) TableName() string {
 // write so a www.-prefixed hostname can never be persisted.
 func (wd *WebsiteDomain) BeforeSave(_ *gorm.DB) error {
 	wd.Domain = NormalizeDomain(wd.Domain)
+	if wd.SSLStatus == "" {
+		wd.SSLStatus = string(SSLStatusPending)
+	}
 	return nil
 }

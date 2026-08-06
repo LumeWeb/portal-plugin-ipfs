@@ -101,19 +101,15 @@ type Website struct {
 	Domain              string         `gorm:"type:varchar(255);index:idx_ipfs_websites_domain;not null"`
 	TargetType          string         `gorm:"type:varchar(50);index:idx_ipfs_websites_status;not null"` // WebsiteTargetTypeIPFS or WebsiteTargetTypeIPNS
 	TargetMultihash     mh.Multihash   `gorm:"type:varbinary(64);not null"`                              // CID multihash (IPFS) or peer ID multihash (IPNS)
-	CIDVersion          *uint8         `gorm:"column:cid_version;type:tinyint unsigned"`                // 0 = CIDv0, 1 = CIDv1; NULL for IPNS
-	CIDType             *uint8         `gorm:"column:cid_type;type:tinyint unsigned"`                  // CID codec type (e.g., 85=Raw, 113=DagCBOR); NULL for IPNS or v0
+	CIDVersion          *uint8         `gorm:"column:cid_version;type:tinyint unsigned"`                 // 0 = CIDv0, 1 = CIDv1; NULL for IPNS
+	CIDType             *uint8         `gorm:"column:cid_type;type:tinyint unsigned"`                    // CID codec type (e.g., 85=Raw, 113=DagCBOR); NULL for IPNS or v0
 	Status              string         `gorm:"type:varchar(50);index:idx_ipfs_websites_status;not null"` // pending_validation, active, broken
 	ValidationToken     string         `gorm:"type:varchar(255);not null"`
 	ValidationExpiresAt *time.Time     `gorm:"index"`
 	LastCheckedAt       *time.Time     `gorm:"index:idx_ipfs_websites_last_checked_at"`
-	DNSZoneID           *uint          `gorm:"column:dns_zone_id;index:idx_ipfs_websites_dns_zone_id"`    // Foreign key to DNS zone (if DNS hosting enabled)
-	IPNSKeyID           *uint          `gorm:"column:ipns_key_id;index:idx_ipfs_websites_ipns_key_id"`     // Foreign key to IPNS key (if auto-created for managed DNS)
-	Enabled             bool           `gorm:"column:dns_enabled;default:false"`                // Whether DNS hosting is enabled
-	SSLStatus           string         `gorm:"column:ssl_status;type:varchar(50);index:idx_ipfs_websites_ssl_status;default:'pending'"`
-	SSLError            string         `gorm:"column:ssl_error;type:text"`
-	SSLIssuedAt         *time.Time     `gorm:"column:ssl_issued_at;index:idx_ipfs_websites_ssl_issued_at"`
-	SSLLastUpdatedAt    *time.Time     `gorm:"column:ssl_last_updated_at;index:idx_ipfs_websites_ssl_last_updated_at"`
+	DNSZoneID           *uint          `gorm:"column:dns_zone_id;index:idx_ipfs_websites_dns_zone_id"` // Foreign key to DNS zone (if DNS hosting enabled)
+	IPNSKeyID           *uint          `gorm:"column:ipns_key_id;index:idx_ipfs_websites_ipns_key_id"` // Foreign key to IPNS key (if auto-created for managed DNS)
+	Enabled             bool           `gorm:"column:dns_enabled;default:false"`                       // Whether DNS hosting is enabled
 	CreatedAt           time.Time      `gorm:"autoCreateTime"`
 	UpdatedAt           time.Time      `gorm:"autoUpdateTime"`
 	DeletedAt           gorm.DeletedAt `gorm:"index:idx_ipfs_websites_deleted_at"`
@@ -140,14 +136,6 @@ func (w *Website) BeforeSave(_ *gorm.DB) error {
 	// Validate status
 	if _, ok := validWebsiteStatuses[WebsiteStatus(w.Status)]; !ok {
 		return fmt.Errorf("%s: %s", errors.ErrInvalidWebsiteStatus, w.Status)
-	}
-
-	// Validate SSL status
-	if w.SSLStatus == "" {
-		w.SSLStatus = string(SSLStatusPending)
-	}
-	if _, ok := validSSLStatuses[SSLStatus(w.SSLStatus)]; !ok {
-		return fmt.Errorf("%s: %s", errors.ErrInvalidSSLStatus, w.SSLStatus)
 	}
 
 	// Validate multihash is set
