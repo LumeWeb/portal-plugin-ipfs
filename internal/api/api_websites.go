@@ -499,6 +499,10 @@ func (a *API) updateSSLStatus(c echo.Context) error {
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
+	if website == nil {
+		apiErr := NewError(pluginEvents.ErrWebsiteNotFound, fmt.Errorf("website not found: %s", domain))
+		return ctx.Error(apiErr, http.StatusNotFound)
+	}
 
 	resp := &dto.WebsiteResponse{}
 	resp.GatewayDomain = a.gatewayDomain()
