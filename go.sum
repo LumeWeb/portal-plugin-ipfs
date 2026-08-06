@@ -1198,6 +1198,8 @@ go.lumeweb.com/portal v0.5.2-0.20260805184328-27bc425a0829 h1:c4us6L0vbAxin5K/ee
 go.lumeweb.com/portal v0.5.2-0.20260805184328-27bc425a0829/go.mod h1:WkOcMPpjNOiIdqSjW1ElwLIise01scfPWL6AMh/r0+s=
 go.lumeweb.com/portal v0.5.2-0.20260805233714-c89f65624cc1 h1:dYs5K0hfBfd8vPYuQl48lsIBSxl/9ilEmoY/lHr04iU=
 go.lumeweb.com/portal v0.5.2-0.20260805233714-c89f65624cc1/go.mod h1:vqaxjJ0BdvuIN+wiTRlTAsy84OvLFy+9Cxzjscqt+3o=
+go.lumeweb.com/portal v0.5.2-0.20260806141942-0320eb07a00a h1:sjiInLYS0lreGzbzCMQ8eUBs8TcXIGxfuLZosk+a0/4=
+go.lumeweb.com/portal v0.5.2-0.20260806141942-0320eb07a00a/go.mod h1:5tyhR5sDmFKpSkRz4ZP58pVK0SCZQ7RTmW6li2gyZdc=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.1.0 h1:bHHJ7oZrBKmBvdUFutr3Dx6FdwvSg/ZeF33QaRM0DKU=
@@ -1302,6 +1304,8 @@ go.sia.tech/coreutils v0.23.6-0.20260730084356-d53a68fc6403 h1:3VACZtKJLwfkRGWOY
 go.sia.tech/coreutils v0.23.6-0.20260730084356-d53a68fc6403/go.mod h1:NBgXY8LA+F0UV10U0UlnQoKC6JkpHTLhSa9Tk0dHl9k=
 go.sia.tech/coreutils v0.23.6-0.20260804151259-4b4ff132419a h1:F92m55WZ56zV4cgpSzvtTdtzKOqyVe4SKsOTZWCFPWk=
 go.sia.tech/coreutils v0.23.6-0.20260804151259-4b4ff132419a/go.mod h1:NBgXY8LA+F0UV10U0UlnQoKC6JkpHTLhSa9Tk0dHl9k=
+go.sia.tech/coreutils v0.24.0 h1:xz3CJ3SS38cGTF6WVxmZ4dR6t+2LostNscyZ6n2hbOI=
+go.sia.tech/coreutils v0.24.0/go.mod h1:xNzCC31sJkKXVnEjv12aHXutRfc4nPDl53sVJQhw6+k=
 go.sia.tech/indexd v0.4.0 h1:omnE0ittOheSQror1PN6BM16vbBC7PBH19kdg8B5ZUY=
 go.sia.tech/indexd v0.4.0/go.mod h1:hBozyI4EMzGerAxv3YmB3vAG3PByQnaE1UUyJaIFL/w=
 go.sia.tech/indexd v0.4.1 h1:QMWgK+zaICjVIKRYyV4y5x6XCuG6ooMnJ2xWZsSUr4A=

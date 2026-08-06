@@ -46,7 +46,7 @@ require (
 	go.lumeweb.com/dane v0.0.2
 	go.lumeweb.com/httputil v0.5.7
 	go.lumeweb.com/ipfs-content v0.1.17
-	go.lumeweb.com/portal v0.5.2-0.20260805233714-c89f65624cc1
+	go.lumeweb.com/portal v0.5.2-0.20260806141942-0320eb07a00a
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.1.0
 	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260728211030-fa71bb5211dc
@@ -350,7 +350,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	go.shabbyrobe.org/gocovmerge v0.0.0-20230507111327-fa4f82cfbf4d // indirect
 	go.sia.tech/core v0.21.7 // indirect
-	go.sia.tech/coreutils v0.23.6-0.20260804151259-4b4ff132419a // indirect
+	go.sia.tech/coreutils v0.24.0 // indirect
 	go.sia.tech/jape v0.14.1 // indirect
 	go.sia.tech/mux v1.5.3 // indirect
 	go.uber.org/dig v1.19.0 // indirect
