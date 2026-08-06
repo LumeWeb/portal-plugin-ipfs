@@ -46,7 +46,7 @@ require (
 	go.lumeweb.com/dane v0.0.2
 	go.lumeweb.com/httputil v0.5.7
 	go.lumeweb.com/ipfs-content v0.1.17
-	go.lumeweb.com/portal v0.5.2-0.20260806141942-0320eb07a00a
+	go.lumeweb.com/portal v0.5.2-0.20260806145912-88ce1aa51b10
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.1.0
 	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260728211030-fa71bb5211dc
@@ -92,7 +92,7 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.70.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.21.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0 // indirect
-	go.sia.tech/indexd v0.4.1 // indirect
+	go.sia.tech/indexd v0.4.2 // indirect
 	go.sia.tech/siastorage v0.1.1-0.20260804083514-3943fdaf4fd6 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
