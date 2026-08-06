@@ -9,7 +9,7 @@
 -- +goose StatementBegin
 ALTER TABLE website_domains
     ADD COLUMN ssl_status VARCHAR(50) NOT NULL DEFAULT 'pending',
-    ADD COLUMN ssl_error TEXT NULL,
+    ADD COLUMN ssl_error TEXT,
     ADD COLUMN ssl_issued_at TIMESTAMP NULL DEFAULT NULL,
     ADD COLUMN ssl_last_updated_at TIMESTAMP NULL DEFAULT NULL;
 -- +goose StatementEnd
@@ -31,10 +31,8 @@ SET wd.ssl_status = w.ssl_status,
     wd.ssl_last_updated_at = w.ssl_last_updated_at;
 -- +goose StatementEnd
 
--- +goose StatementBegin
--- 3. Remove the now-migrated SSL columns from ipfs_websites (split into two
---    ALTERs: drop the indexes first, then the columns, for MySQL ordering.
--- +goose StatementEnd
+-- 3. Remove the now-migrated SSL columns from ipfs_websites (drop the indexes
+--    first, then the columns, for MySQL ordering).
 ALTER TABLE ipfs_websites
     DROP INDEX idx_ipfs_websites_ssl_status,
     DROP INDEX idx_ipfs_websites_ssl_issued_at,
@@ -51,7 +49,7 @@ ALTER TABLE ipfs_websites
 -- 1. Re-add the SSL columns to ipfs_websites.
 ALTER TABLE ipfs_websites
     ADD COLUMN ssl_status VARCHAR(50) NOT NULL DEFAULT 'pending',
-    ADD COLUMN ssl_error TEXT NULL,
+    ADD COLUMN ssl_error TEXT,
     ADD COLUMN ssl_issued_at TIMESTAMP NULL DEFAULT NULL,
     ADD COLUMN ssl_last_updated_at TIMESTAMP NULL DEFAULT NULL,
     ADD KEY idx_ipfs_websites_ssl_status (ssl_status),
@@ -70,14 +68,14 @@ SET w.ssl_status = wd.ssl_status,
 -- +goose StatementEnd
 
 -- +goose StatementBegin
--- 3. Drop the per-domain SSL columns from website_domains.
-DROP INDEX IF EXISTS idx_website_domains_ssl_status ON website_domains;
-DROP INDEX IF EXISTS idx_website_domains_ssl_issued_at ON website_domains;
-DROP INDEX IF EXISTS idx_website_domains_ssl_last_updated_at ON website_domains;
--- +goose StatementEnd
-
+-- 3. Drop the per-domain SSL columns from website_domains (indexes first, then
+--    the columns, in a single ALTER for MySQL).
 ALTER TABLE website_domains
+    DROP INDEX idx_website_domains_ssl_status,
+    DROP INDEX idx_website_domains_ssl_issued_at,
+    DROP INDEX idx_website_domains_ssl_last_updated_at,
     DROP COLUMN ssl_status,
     DROP COLUMN ssl_error,
     DROP COLUMN ssl_issued_at,
     DROP COLUMN ssl_last_updated_at;
+-- +goose StatementEnd
