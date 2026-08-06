@@ -48,13 +48,13 @@ func (r *IPNSKeyRequest) ToModel() (*db.IPFSIPNSKey, error) {
 
 // IPNSKeyResponse represents an IPNS key response
 type IPNSKeyResponse struct {
-	ID               uint       `json:"id"`
-	Name             string     `json:"name"`
-	IPNSName         string     `json:"ipns_name"`
-	PeerID           string     `json:"peer_id"`
-	Value            string     `json:"value,omitempty"`
-	LastPublishedAt  *time.Time `json:"last_published_at,omitempty"`
-	Created          time.Time  `json:"created"`
+	ID              uint       `json:"id"`
+	Name            string     `json:"name"`
+	IPNSName        string     `json:"ipns_name"`
+	PeerID          string     `json:"peer_id"`
+	Value           string     `json:"value,omitempty"`
+	LastPublishedAt *time.Time `json:"last_published_at,omitempty"`
+	Created         time.Time  `json:"created"`
 }
 
 func (r *IPNSKeyResponse) FromModel(model *db.IPFSIPNSKey) error {
@@ -70,13 +70,13 @@ func (r *IPNSKeyResponse) FromModel(model *db.IPFSIPNSKey) error {
 
 // IPNSKeyListResponse represents an IPNS key in a list response
 type IPNSKeyListResponse struct {
-	ID               uint       `json:"id"`
-	Name             string     `json:"name"`
-	IPNSName         string     `json:"ipns_name"`
-	PeerID           string     `json:"peer_id"`
-	Value            string     `json:"value,omitempty"`
-	LastPublishedAt  *time.Time `json:"last_published_at,omitempty"`
-	Created          time.Time  `json:"created"`
+	ID              uint       `json:"id"`
+	Name            string     `json:"name"`
+	IPNSName        string     `json:"ipns_name"`
+	PeerID          string     `json:"peer_id"`
+	Value           string     `json:"value,omitempty"`
+	LastPublishedAt *time.Time `json:"last_published_at,omitempty"`
+	Created         time.Time  `json:"created"`
 }
 
 func (r *IPNSKeyListResponse) FromModel(model *db.IPFSIPNSKey) error {
@@ -177,10 +177,10 @@ func (r *IPNSRepublishResponse) FromModel(any) error {
 
 // WebsiteRequest represents a request to create a website
 type WebsiteRequest struct {
-	Domain          string              `json:"domain"`
-	TargetType      db.WebsiteTargetType `json:"target_type"` // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
-	TargetHash      string              `json:"target_hash"` // CID or IPNS peer ID
-	DNSEnabled      *bool               `json:"dns_hosting_enabled,omitempty"` // Whether DNS hosting is enabled for this website (defaults to true if not specified)
+	Domain     string               `json:"domain"`
+	TargetType db.WebsiteTargetType `json:"target_type"`                   // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
+	TargetHash string               `json:"target_hash"`                   // CID or IPNS peer ID
+	DNSEnabled *bool                `json:"dns_hosting_enabled,omitempty"` // Whether DNS hosting is enabled for this website (defaults to true if not specified)
 }
 
 func (r WebsiteRequest) Schema() *zog.StructSchema {
@@ -274,10 +274,10 @@ func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 // WebsiteUpdateRequest represents a request to update a website
 // All fields are optional — only provided fields will be updated
 type WebsiteUpdateRequest struct {
-	Domain     *string              `json:"domain,omitempty"`
+	Domain     *string               `json:"domain,omitempty"`
 	TargetType *db.WebsiteTargetType `json:"target_type,omitempty"`
-	TargetHash *string              `json:"target_hash,omitempty"`
-	DNSEnabled *bool                `json:"dns_hosting_enabled,omitempty"`
+	TargetHash *string               `json:"target_hash,omitempty"`
+	DNSEnabled *bool                 `json:"dns_hosting_enabled,omitempty"`
 }
 
 // HasUpdates returns true if at least one field is set
@@ -361,46 +361,46 @@ func (r *WebsiteUpdateRequest) ToModel() (*db.Website, error) {
 
 // SSLStatusInfo represents SSL certificate status information
 type SSLStatusInfo struct {
-	Status         string     `json:"status"`
-	Error          string     `json:"error,omitempty"`
-	IssuedAt       *time.Time `json:"issued_at,omitempty"`
-	LastUpdatedAt  *time.Time `json:"last_updated_at,omitempty"`
+	Status        string     `json:"status"`
+	Error         string     `json:"error,omitempty"`
+	IssuedAt      *time.Time `json:"issued_at,omitempty"`
+	LastUpdatedAt *time.Time `json:"last_updated_at,omitempty"`
 }
 
 // WebsiteResponse represents a website response
 type WebsiteResponse struct {
-	ID                  uint           `json:"id"`
-	Domain              string         `json:"domain"`
+	ID     uint   `json:"id"`
+	Domain string `json:"domain"`
 	// IPFS or IPNS
-	TargetType          string         `json:"target_type"`
+	TargetType string `json:"target_type"`
 	// CID (IPFS) or peer ID (IPNS)
-	TargetHash          string         `json:"target_hash"`
+	TargetHash string `json:"target_hash"`
 	// FK to the linked IPNS key (set when DNS hosting auto-creates a key)
-	IPNSKeyID           *uint          `json:"ipns_key_id,omitempty"`
+	IPNSKeyID *uint `json:"ipns_key_id,omitempty"`
 	// The currently-published IPFS content CID (distinct from target_hash when target is IPNS)
-	ActiveCID           string         `json:"active_cid,omitempty"`
-	Status              string         `json:"status"`
+	ActiveCID string `json:"active_cid,omitempty"`
+	Status    string `json:"status"`
 	// The full TXT record value (e.g. "lumeweb-verify=abc123...")
-	ValidationToken       string     `json:"validation_token"`
+	ValidationToken string `json:"validation_token"`
 	// The DNS hostname for the TXT record (e.g. "lumeweb-verify.example.com")
-	ValidationRecordHost  string     `json:"validation_record_host,omitempty"`
-	ValidationExpiresAt *time.Time     `json:"validation_expires_at,omitempty"`
-	LastCheckedAt       *time.Time     `json:"last_checked_at,omitempty"`
+	ValidationRecordHost string     `json:"validation_record_host,omitempty"`
+	ValidationExpiresAt  *time.Time `json:"validation_expires_at,omitempty"`
+	LastCheckedAt        *time.Time `json:"last_checked_at,omitempty"`
 	// FK to the DNS zone hosting this website's records
-	DNSZoneID           *uint          `json:"dns_zone_id,omitempty"`
+	DNSZoneID *uint `json:"dns_zone_id,omitempty"`
 	// Whether DNS hosting (zone + records) is enabled for this website
-	Enabled             bool           `json:"dns_hosting_enabled"`
+	Enabled bool `json:"dns_hosting_enabled"`
 	// True if domain is a subdomain of a shared DNS zone
-	IsSubdomain         bool           `json:"is_subdomain"`
+	IsSubdomain bool `json:"is_subdomain"`
 	// Gateway domain for constructing public URLs (e.g. ipfs.example.com)
-	GatewayDomain       string         `json:"gateway_domain,omitempty"`
-	Created             time.Time      `json:"created"`
-	Updated             time.Time      `json:"updated"`
+	GatewayDomain string    `json:"gateway_domain,omitempty"`
+	Created       time.Time `json:"created"`
+	Updated       time.Time `json:"updated"`
 	// Whether validation token has expired
-	Expired             bool            `json:"expired"`
-	SSL                 *SSLStatusInfo  `json:"ssl,omitempty"`
+	Expired bool           `json:"expired"`
+	SSL     *SSLStatusInfo `json:"ssl,omitempty"`
 	// Set by SetValidationRecordInfo; consumed by FromModel to format ValidationToken/ValidationRecordHost
-	tokenKey            string
+	tokenKey string
 }
 
 func (r *WebsiteResponse) FromModel(model *db.Website) error {
@@ -423,25 +423,6 @@ func (r *WebsiteResponse) FromModel(model *db.Website) error {
 		r.ValidationRecordHost = r.tokenKey + "." + model.Domain
 	} else {
 		r.ValidationToken = model.ValidationToken
-	}
-
-	if model.SSLStatus != "" {
-		var lastUpdated *time.Time
-		if model.SSLLastUpdatedAt != nil {
-			v := *model.SSLLastUpdatedAt
-			lastUpdated = &v
-		}
-		var issuedAt *time.Time
-		if model.SSLIssuedAt != nil {
-			v := *model.SSLIssuedAt
-			issuedAt = &v
-		}
-		r.SSL = &SSLStatusInfo{
-			Status:        model.SSLStatus,
-			Error:         model.SSLError,
-			IssuedAt:      issuedAt,
-			LastUpdatedAt: lastUpdated,
-		}
 	}
 
 	return nil
@@ -501,9 +482,9 @@ type WebsiteItemResponse struct {
 
 // WebsiteFilter represents filtering options for website listings
 type WebsiteFilter struct {
-	Domain     *string              `json:"domain,omitempty" query:"domain"`
+	Domain     *string               `json:"domain,omitempty" query:"domain"`
 	TargetType *db.WebsiteTargetType `json:"target_type,omitempty" query:"target_type"`
-	Status     *db.WebsiteStatus    `json:"status,omitempty" query:"status"`
+	Status     *db.WebsiteStatus     `json:"status,omitempty" query:"status"`
 }
 
 func (f WebsiteFilter) Schema() *zog.StructSchema {
@@ -561,7 +542,7 @@ func (r SSLStatusUpdateRequest) Schema() *zog.StructSchema {
 			db.SSLStatusReady,
 			db.SSLStatusFailed,
 		}).Required(),
-		"Error":     zog.String().Optional().Max(1000),
+		"Error": zog.String().Optional().Max(1000),
 		"Timestamp": zog.String().Optional().Transform(func(val *string, ctx zog.Ctx) error {
 			if *val == "" {
 				return fmt.Errorf("timestamp cannot be an empty string")

@@ -13,7 +13,6 @@ import (
 
 	dnslink "github.com/dnslink-std/go"
 	"github.com/ipfs/go-cid"
-	"golang.org/x/sync/errgroup"
 	"github.com/libp2p/go-libp2p/core/peer"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
@@ -21,6 +20,7 @@ import (
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	pluginEvent "go.lumeweb.com/portal-plugin-ipfs/internal/event"
 	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
+	"golang.org/x/sync/errgroup"
 
 	"go.lumeweb.com/ipfs-sdk/dnsname"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
@@ -34,8 +34,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const sslCertValidity = 90 * 24 * time.Hour
-
 func (s *WebsiteServiceDefault) verificationTokenKey() string {
 	if s.dnsConfig != nil && s.dnsConfig.VerificationTokenKey != "" {
 		return s.dnsConfig.VerificationTokenKey
@@ -44,11 +42,11 @@ func (s *WebsiteServiceDefault) verificationTokenKey() string {
 }
 
 const (
-	msgTokenExpired = "Validation token expired for %s — a new token has been generated. Please add the updated TXT record at %s.%s to your DNS configuration"
-	msgDNSMissing   = "No DNS records found for %s. Please add the required TXT records to your DNS configuration"
-	msgDNSMismatch  = "DNS validation failed: missing or incorrect dnslink record (expected: %s, found: %s)"
-	msgTokenMissing = "DNS validation failed: missing validation token at %s.%s for %s"
-	msgValidated    = "DNS validation successful for %s"
+	msgTokenExpired      = "Validation token expired for %s — a new token has been generated. Please add the updated TXT record at %s.%s to your DNS configuration"
+	msgDNSMissing        = "No DNS records found for %s. Please add the required TXT records to your DNS configuration"
+	msgDNSMismatch       = "DNS validation failed: missing or incorrect dnslink record (expected: %s, found: %s)"
+	msgTokenMissing      = "DNS validation failed: missing validation token at %s.%s for %s"
+	msgValidated         = "DNS validation successful for %s"
 	msgDelegationPending = "Domain delegation not yet published"
 )
 
@@ -96,6 +94,7 @@ type delegatedDomainService interface {
 	GetWebsiteDomainByName(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error)
 	GetPendingWebsiteDomainsPaginated(ctx context.Context, status pluginDb.DomainStatus, limit, offset int) ([]pluginDb.WebsiteDomain, error)
 }
+
 // resolverForDomain returns the appropriate DNSResolver for the given domain.
 // Different roots (ICANN vs HNS etc.) may require different DNS resolvers
 // because alt-root records are not visible to the system default resolver.
@@ -119,7 +118,6 @@ func (s *WebsiteServiceDefault) resolverForDomain(domain string) DNSResolver {
 	return NewLiveResolver("")
 }
 
-
 // NewWebsiteService creates a new website service
 func NewWebsiteService() (core.Service, []core.ContextBuilderOption, error) {
 	svc := &WebsiteServiceDefault{}
@@ -131,9 +129,9 @@ func NewWebsiteService() (core.Service, []core.ContextBuilderOption, error) {
 			svc.mailerSvc = core.GetService[core.MailerService](ctx, core.MAILER_SERVICE)
 			svc.dnsSvc = core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
 			var dds *domsvc.DelegatedDomainService = core.GetServiceOptional[*domsvc.DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
-		if dds != nil {
-			svc.delegatedDomainSvc = dds
-		}
+			if dds != nil {
+				svc.delegatedDomainSvc = dds
+			}
 
 			// Load configuration from service config
 			svc.config = core.GetServiceConfig[*pluginConfig.WebsiteConfig](ctx, pluginCore.WEBSITE_SERVICE)
@@ -202,23 +200,6 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 			}
 			if existing != nil {
 				return nil, fmt.Errorf("domain already exists: %s", website.Domain)
-			}
-
-			// Inherit SSL state from soft-deleted website if cert is still valid
-			var deletedWebsite pluginDb.Website
-			err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				return tx.Unscoped().
-					Where("domain = ? AND deleted_at IS NOT NULL", website.Domain).
-					Where("ssl_status = ?", string(pluginDb.SSLStatusReady)).
-					Order("deleted_at DESC").
-					First(&deletedWebsite)
-			})
-			if err == nil && deletedWebsite.SSLIssuedAt != nil {
-				if time.Since(*deletedWebsite.SSLIssuedAt) < sslCertValidity {
-					website.SSLStatus = string(pluginDb.SSLStatusReady)
-					website.SSLIssuedAt = deletedWebsite.SSLIssuedAt
-					website.SSLLastUpdatedAt = deletedWebsite.SSLLastUpdatedAt
-				}
 			}
 
 			// Generate validation token
@@ -1779,8 +1760,12 @@ func (s *WebsiteServiceDefault) notifyUserStatusChanged(ctx context.Context, web
 	return nil
 }
 
-// UpdateSSLStatus updates the SSL certificate status for a website domain
-func (s *WebsiteServiceDefault) UpdateSSLStatus(ctx context.Context, domain string, status pluginDb.SSLStatus, sslError string, timestamp *time.Time) (*pluginDb.Website, error) {
+// UpdateSSLStatus updates the SSL certificate status for a domain. SSL state is
+// a per-domain property, so the update resolves the domain binding (handling
+// both the primary and additional-domain records on a website) and persists the
+// state on the WebsiteDomain row. The updated binding is returned as the source
+// of truth for certificate status.
+func (s *WebsiteServiceDefault) UpdateSSLStatus(ctx context.Context, domain string, status pluginDb.SSLStatus, sslError string, timestamp *time.Time) (*pluginDb.WebsiteDomain, error) {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.UpdateSSLStatus")
 	defer span.End()
 
@@ -1788,17 +1773,19 @@ func (s *WebsiteServiceDefault) UpdateSSLStatus(ctx context.Context, domain stri
 	// hostname) resolves to the stored apex domain record.
 	domain = domsvc.NormalizeDomain(domain)
 
-	var website pluginDb.Website
+	var wd pluginDb.WebsiteDomain
+
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		// Lock row for update
+		// Lock the domain binding row for update. The binding is the SSL context:
+		// each bound hostname carries its own certificate lifecycle.
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("domain = ?", domain).
-			First(&website).Error; err != nil {
+			First(&wd).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
 				_ = tx.AddError(fmt.Errorf("website not found"))
 				return tx
 			}
-			_ = tx.AddError(fmt.Errorf("failed to get website: %w", err))
+			_ = tx.AddError(fmt.Errorf("failed to get website domain: %w", err))
 			return tx
 		}
 
@@ -1815,12 +1802,12 @@ func (s *WebsiteServiceDefault) UpdateSSLStatus(ctx context.Context, domain stri
 		}
 
 		// Set issued_at only when transitioning to ready
-		if status == pluginDb.SSLStatusReady && website.SSLStatus != string(pluginDb.SSLStatusReady) {
+		if status == pluginDb.SSLStatusReady && wd.SSLStatus != string(pluginDb.SSLStatusReady) {
 			updates["SSLIssuedAt"] = &updateTime
 		}
 
 		// Clear issued_at when transitioning away from ready
-		if status != pluginDb.SSLStatusReady && website.SSLStatus == string(pluginDb.SSLStatusReady) {
+		if status != pluginDb.SSLStatusReady && wd.SSLStatus == string(pluginDb.SSLStatusReady) {
 			updates["SSLIssuedAt"] = nil
 		}
 
@@ -1831,15 +1818,15 @@ func (s *WebsiteServiceDefault) UpdateSSLStatus(ctx context.Context, domain stri
 			updates["SSLError"] = ""
 		}
 
-		// Update website
-		if err := tx.Model(&website).Updates(updates).Error; err != nil {
+		// Update the domain binding (source of truth for per-domain SSL).
+		if err := tx.Model(&wd).Updates(updates).Error; err != nil {
 			_ = tx.AddError(fmt.Errorf("failed to update SSL status: %w", err))
 			return tx
 		}
 
-		// Reload the website to get updated values
-		if err := tx.First(&website, website.ID).Error; err != nil {
-			_ = tx.AddError(fmt.Errorf("failed to reload website after update: %w", err))
+		// Reload the binding to get updated values.
+		if err := tx.First(&wd, wd.ID).Error; err != nil {
+			_ = tx.AddError(fmt.Errorf("failed to reload website domain after update: %w", err))
 			return tx
 		}
 
@@ -1854,5 +1841,28 @@ func (s *WebsiteServiceDefault) UpdateSSLStatus(ctx context.Context, domain stri
 		return nil, fmt.Errorf("failed to update SSL status: %w", err)
 	}
 
-	return &website, nil
+	return &wd, nil
+}
+
+// GetApexDomainBinding returns the website's primary/apex domain binding. The
+// apex binding is the one whose domain matches the website's primary domain; its
+// SSL state is synthesized onto the website-level response for backward
+// compatibility. If the delegated domain service is unavailable or no binding
+// matches, it returns gorm.ErrRecordNotFound.
+func (s *WebsiteServiceDefault) GetApexDomainBinding(ctx context.Context, websiteID uint) (*pluginDb.WebsiteDomain, error) {
+	var website pluginDb.Website
+	if err := s.DB().WithContext(ctx).Where("id = ?", websiteID).First(&website).Error; err != nil {
+		return nil, err
+	}
+	if s.delegatedDomainSvc == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	apex, err := s.delegatedDomainSvc.GetWebsiteDomainByName(ctx, website.Domain)
+	if err != nil {
+		return nil, err
+	}
+	if apex.DeletedAt.Valid {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return apex, nil
 }

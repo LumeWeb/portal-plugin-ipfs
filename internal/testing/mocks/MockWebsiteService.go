@@ -437,6 +437,74 @@ func (_c *MockWebsiteService_DeleteWebsite_Call) RunAndReturn(run func(ctx conte
 	return _c
 }
 
+// GetApexDomainBinding provides a mock function for the type MockWebsiteService
+func (_mock *MockWebsiteService) GetApexDomainBinding(ctx context.Context, websiteID uint) (*db.WebsiteDomain, error) {
+	ret := _mock.Called(ctx, websiteID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetApexDomainBinding")
+	}
+
+	var r0 *db.WebsiteDomain
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint) (*db.WebsiteDomain, error)); ok {
+		return returnFunc(ctx, websiteID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint) *db.WebsiteDomain); ok {
+		r0 = returnFunc(ctx, websiteID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.WebsiteDomain)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uint) error); ok {
+		r1 = returnFunc(ctx, websiteID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockWebsiteService_GetApexDomainBinding_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetApexDomainBinding'
+type MockWebsiteService_GetApexDomainBinding_Call struct {
+	*mock.Call
+}
+
+// GetApexDomainBinding is a helper method to define mock.On call
+//   - ctx context.Context
+//   - websiteID uint
+func (_e *MockWebsiteService_Expecter) GetApexDomainBinding(ctx any, websiteID any) *MockWebsiteService_GetApexDomainBinding_Call {
+	return &MockWebsiteService_GetApexDomainBinding_Call{Call: _e.mock.On("GetApexDomainBinding", ctx, websiteID)}
+}
+
+func (_c *MockWebsiteService_GetApexDomainBinding_Call) Run(run func(ctx context.Context, websiteID uint)) *MockWebsiteService_GetApexDomainBinding_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockWebsiteService_GetApexDomainBinding_Call) Return(websiteDomain *db.WebsiteDomain, err error) *MockWebsiteService_GetApexDomainBinding_Call {
+	_c.Call.Return(websiteDomain, err)
+	return _c
+}
+
+func (_c *MockWebsiteService_GetApexDomainBinding_Call) RunAndReturn(run func(ctx context.Context, websiteID uint) (*db.WebsiteDomain, error)) *MockWebsiteService_GetApexDomainBinding_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetConfig provides a mock function for the type MockWebsiteService
 func (_mock *MockWebsiteService) GetConfig() (any, error) {
 	ret := _mock.Called()
@@ -1040,23 +1108,23 @@ func (_c *MockWebsiteService_UnblockWebsite_Call) RunAndReturn(run func(ctx cont
 }
 
 // UpdateSSLStatus provides a mock function for the type MockWebsiteService
-func (_mock *MockWebsiteService) UpdateSSLStatus(ctx context.Context, domain string, status db.SSLStatus, sslError string, timestamp *time.Time) (*db.Website, error) {
+func (_mock *MockWebsiteService) UpdateSSLStatus(ctx context.Context, domain string, status db.SSLStatus, sslError string, timestamp *time.Time) (*db.WebsiteDomain, error) {
 	ret := _mock.Called(ctx, domain, status, sslError, timestamp)
 
 	if len(ret) == 0 {
 		panic("no return value specified for UpdateSSLStatus")
 	}
 
-	var r0 *db.Website
+	var r0 *db.WebsiteDomain
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, db.SSLStatus, string, *time.Time) (*db.Website, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, db.SSLStatus, string, *time.Time) (*db.WebsiteDomain, error)); ok {
 		return returnFunc(ctx, domain, status, sslError, timestamp)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, db.SSLStatus, string, *time.Time) *db.Website); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, db.SSLStatus, string, *time.Time) *db.WebsiteDomain); ok {
 		r0 = returnFunc(ctx, domain, status, sslError, timestamp)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*db.Website)
+			r0 = ret.Get(0).(*db.WebsiteDomain)
 		}
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string, db.SSLStatus, string, *time.Time) error); ok {
@@ -1115,12 +1183,12 @@ func (_c *MockWebsiteService_UpdateSSLStatus_Call) Run(run func(ctx context.Cont
 	return _c
 }
 
-func (_c *MockWebsiteService_UpdateSSLStatus_Call) Return(website *db.Website, err error) *MockWebsiteService_UpdateSSLStatus_Call {
-	_c.Call.Return(website, err)
+func (_c *MockWebsiteService_UpdateSSLStatus_Call) Return(websiteDomain *db.WebsiteDomain, err error) *MockWebsiteService_UpdateSSLStatus_Call {
+	_c.Call.Return(websiteDomain, err)
 	return _c
 }
 
-func (_c *MockWebsiteService_UpdateSSLStatus_Call) RunAndReturn(run func(ctx context.Context, domain string, status db.SSLStatus, sslError string, timestamp *time.Time) (*db.Website, error)) *MockWebsiteService_UpdateSSLStatus_Call {
+func (_c *MockWebsiteService_UpdateSSLStatus_Call) RunAndReturn(run func(ctx context.Context, domain string, status db.SSLStatus, sslError string, timestamp *time.Time) (*db.WebsiteDomain, error)) *MockWebsiteService_UpdateSSLStatus_Call {
 	_c.Call.Return(run)
 	return _c
 }

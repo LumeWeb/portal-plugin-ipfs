@@ -68,8 +68,15 @@ type WebsiteService interface {
 	// CheckStatus checks the status of a website by validating its target
 	CheckStatus(ctx context.Context, website *pluginDb.Website) (pluginDb.WebsiteStatus, error)
 
-	// UpdateSSLStatus updates the SSL certificate status for a website domain
-	UpdateSSLStatus(ctx context.Context, domain string, status pluginDb.SSLStatus, sslError string, timestamp *time.Time) (*pluginDb.Website, error)
+	// UpdateSSLStatus updates the SSL certificate status for a domain binding.
+	// SSL state is a per-domain property, so it returns the updated
+	// WebsiteDomain (the source of truth for certificate status).
+	UpdateSSLStatus(ctx context.Context, domain string, status pluginDb.SSLStatus, sslError string, timestamp *time.Time) (*pluginDb.WebsiteDomain, error)
+
+	// GetApexDomainBinding returns the website's primary/apex domain binding,
+	// whose SSL state is presented at the website level for backward-compatible
+	// site-level SSL synthesis.
+	GetApexDomainBinding(ctx context.Context, websiteID uint) (*pluginDb.WebsiteDomain, error)
 
 	// WaitForPublishes blocks until all in-flight async publish operations complete
 	WaitForPublishes()

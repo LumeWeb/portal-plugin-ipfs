@@ -17,7 +17,7 @@ func TestSSLStatusUpdateRequest_Schema(t *testing.T) {
 	t.Run("schema returns non-nil struct schema", func(t *testing.T) {
 		req := SSLStatusUpdateRequest{}
 		schema := req.Schema()
-		
+
 		require.NotNil(t, schema, "Schema() should return non-nil schema")
 		assert.IsType(t, &zog.StructSchema{}, schema, "Schema() should return *zog.StructSchema")
 	})
@@ -72,7 +72,7 @@ func TestSSLStatusUpdateRequest_StatusValidation(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		// Verify the schema is properly configured
 		// The actual validation logic is in the Schema() method
 	})
@@ -167,7 +167,7 @@ func TestSSLStatusUpdateRequest_InvalidStatusValues(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		// The Schema() method uses config.ZogStringLike[db.SSLStatus]().OneOf()
 		// which validates that status is one of the allowed values
 		assert.Equal(t, db.SSLStatusReady, req.Status)
@@ -180,7 +180,7 @@ func TestSSLStatusUpdateRequest_InvalidStatusValues(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		// Verify the schema is configured with OneOf validation
 		// The actual validation happens at runtime via httputil.DecodeAndValidateRequest
 	})
@@ -192,7 +192,7 @@ func TestSSLStatusUpdateRequest_InvalidStatusValues(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		// Status field is marked as Required() in the schema
 		assert.Equal(t, db.SSLStatusReady, req.Status)
 	})
@@ -207,7 +207,7 @@ func TestSSLStatusUpdateRequest_InvalidTimestampFormat(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		// The Schema() method includes a Transform() that validates RFC3339 format
 		assert.Equal(t, "2024-02-24T12:00:00Z", req.Timestamp)
 	})
@@ -220,7 +220,7 @@ func TestSSLStatusUpdateRequest_InvalidTimestampFormat(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		// Transform function validates RFC3339 format in the schema
 		assert.Equal(t, "2024-02-24T12:00:00-08:00", req.Timestamp)
 	})
@@ -233,7 +233,7 @@ func TestSSLStatusUpdateRequest_InvalidTimestampFormat(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		// Timestamp is Optional() and Transform() allows empty string
 		assert.Equal(t, "", req.Timestamp)
 	})
@@ -245,7 +245,7 @@ func TestSSLStatusUpdateRequest_InvalidTimestampFormat(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		// Timestamp field is marked as Optional() in the schema
 		assert.Equal(t, "", req.Timestamp)
 	})
@@ -260,7 +260,7 @@ func TestSSLStatusUpdateRequest_OptionalFields(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		// Error field is marked as Optional() in the schema
 		assert.Equal(t, "", req.Error)
 	})
@@ -272,7 +272,7 @@ func TestSSLStatusUpdateRequest_OptionalFields(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		assert.Equal(t, "", req.Error)
 	})
 
@@ -284,7 +284,7 @@ func TestSSLStatusUpdateRequest_OptionalFields(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		// Error field has Max(1000) validation
 		assert.Equal(t, "Certificate issuance failed: timeout waiting for ACME challenge", req.Error)
 	})
@@ -298,7 +298,7 @@ func TestSSLStatusUpdateRequest_OptionalFields(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		// All fields are properly configured
 		assert.Equal(t, db.SSLStatusFailed, req.Status)
 		assert.Equal(t, "Certificate issuance failed: timeout", req.Error)
@@ -312,7 +312,7 @@ func TestSSLStatusUpdateRequest_OptionalFields(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		assert.Equal(t, db.SSLStatusReady, req.Status)
 		assert.Equal(t, "", req.Error)
 		assert.Equal(t, "", req.Timestamp)
@@ -326,7 +326,7 @@ func TestSSLStatusUpdateRequest_OptionalFields(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		assert.Equal(t, db.SSLStatusFailed, req.Status)
 		assert.Equal(t, "Certificate issuance failed", req.Error)
 		assert.Equal(t, "", req.Timestamp)
@@ -340,7 +340,7 @@ func TestSSLStatusUpdateRequest_OptionalFields(t *testing.T) {
 
 		schema := req.Schema()
 		require.NotNil(t, schema)
-		
+
 		assert.Equal(t, db.SSLStatusReady, req.Status)
 		assert.Equal(t, "", req.Error)
 		assert.Equal(t, "2024-02-24T12:00:00Z", req.Timestamp)
@@ -350,7 +350,7 @@ func TestSSLStatusUpdateRequest_OptionalFields(t *testing.T) {
 func TestSSLStatusUpdateRequest_StructFields(t *testing.T) {
 	t.Run("struct has required fields", func(t *testing.T) {
 		req := SSLStatusUpdateRequest{}
-		
+
 		// Verify the struct has the expected fields
 		assert.IsType(t, db.SSLStatus(""), req.Status, "Status should be SSLStatus type")
 		assert.IsType(t, "", req.Error, "Error should be string")
@@ -363,7 +363,7 @@ func TestSSLStatusUpdateRequest_StructFields(t *testing.T) {
 			Error:     "error",
 			Timestamp: "2024-01-01T00:00:00Z",
 		}
-		
+
 		// Verify the struct can be used for JSON marshaling
 		// The actual JSON tags are defined in the struct definition
 		assert.Equal(t, db.SSLStatusReady, req.Status)
@@ -374,126 +374,25 @@ func TestSSLStatusUpdateRequest_StructFields(t *testing.T) {
 
 // Test WebsiteResponse SSL field population
 
-func TestWebsiteResponse_FromModel_SSL_Populated(t *testing.T) {
-	t.Run("populates SSL field when SSL status is set", func(t *testing.T) {
+func TestWebsiteResponse_FromModel_DoesNotSetSSL(t *testing.T) {
+	// SSL presentation moved to the API layer (applyApexSSLStatus), which reads
+	// the apex WebsiteDomain binding. FromModel no longer synthesizes SSL on the
+	// website response itself.
+	t.Run("leaves SSL nil", func(t *testing.T) {
 		now := time.Now()
-		issuedAt := now.Add(-24 * time.Hour)
-		lastUpdated := now.Add(-1 * time.Hour)
-
 		model := &db.Website{
-			ID:                  1,
-			Domain:              "example.com",
-			TargetType:          string(db.WebsiteTargetTypeIPFS),
-			Status:              string(db.WebsiteStatusActive),
-			ValidationToken:     "token123",
-			ValidationExpiresAt: nil,
-			LastCheckedAt:       &now,
-			CreatedAt:           now,
-			UpdatedAt:           now,
-			SSLStatus:           string(db.SSLStatusReady),
-			SSLError:            "",
-			SSLIssuedAt:         &issuedAt,
-			SSLLastUpdatedAt:    &lastUpdated,
+			ID:              1,
+			Domain:          "example.com",
+			TargetType:      string(db.WebsiteTargetTypeIPFS),
+			Status:          string(db.WebsiteStatusActive),
+			ValidationToken: "token123",
+			CreatedAt:       now,
+			UpdatedAt:       now,
 		}
-
 		var resp WebsiteResponse
 		err := resp.FromModel(model)
-
 		require.NoError(t, err)
-		assert.NotNil(t, resp.SSL, "SSL field should be populated")
-		assert.Equal(t, string(db.SSLStatusReady), resp.SSL.Status)
-		assert.Equal(t, "", resp.SSL.Error)
-		assert.Equal(t, issuedAt, *resp.SSL.IssuedAt)
-		assert.Equal(t, &lastUpdated, resp.SSL.LastUpdatedAt)
-	})
-
-	t.Run("populates SSL field with error when SSL failed", func(t *testing.T) {
-		now := time.Now()
-		lastUpdated := now.Add(-1 * time.Hour)
-
-		model := &db.Website{
-			ID:                  1,
-			Domain:              "example.com",
-			TargetType:          string(db.WebsiteTargetTypeIPFS),
-			Status:              string(db.WebsiteStatusActive),
-			ValidationToken:     "token123",
-			ValidationExpiresAt: nil,
-			LastCheckedAt:       &now,
-			CreatedAt:           now,
-			UpdatedAt:           now,
-			SSLStatus:           string(db.SSLStatusFailed),
-			SSLError:            "Certificate issuance failed: timeout",
-			SSLIssuedAt:         nil,
-			SSLLastUpdatedAt:    &lastUpdated,
-		}
-
-		var resp WebsiteResponse
-		err := resp.FromModel(model)
-
-		require.NoError(t, err)
-		assert.NotNil(t, resp.SSL, "SSL field should be populated")
-		assert.Equal(t, string(db.SSLStatusFailed), resp.SSL.Status)
-		assert.Equal(t, "Certificate issuance failed: timeout", resp.SSL.Error)
-		assert.Nil(t, resp.SSL.IssuedAt, "IssuedAt should be nil when SSL failed")
-		assert.Equal(t, &lastUpdated, resp.SSL.LastUpdatedAt)
-	})
-
-	t.Run("populates SSL field for issuing status", func(t *testing.T) {
-		now := time.Now()
-		lastUpdated := now.Add(-30 * time.Minute)
-
-		model := &db.Website{
-			ID:                  1,
-			Domain:              "example.com",
-			TargetType:          string(db.WebsiteTargetTypeIPFS),
-			Status:              string(db.WebsiteStatusActive),
-			ValidationToken:     "token123",
-			ValidationExpiresAt: nil,
-			LastCheckedAt:       &now,
-			CreatedAt:           now,
-			UpdatedAt:           now,
-			SSLStatus:           string(db.SSLStatusIssuing),
-			SSLError:            "",
-			SSLIssuedAt:         nil,
-			SSLLastUpdatedAt:    &lastUpdated,
-		}
-
-		var resp WebsiteResponse
-		err := resp.FromModel(model)
-
-		require.NoError(t, err)
-		assert.NotNil(t, resp.SSL, "SSL field should be populated")
-		assert.Equal(t, string(db.SSLStatusIssuing), resp.SSL.Status)
-		assert.Equal(t, "", resp.SSL.Error)
-		assert.Nil(t, resp.SSL.IssuedAt, "IssuedAt should be nil when SSL is issuing")
-		assert.Equal(t, &lastUpdated, resp.SSL.LastUpdatedAt)
-	})
-
-	t.Run("handles nil SSLLastUpdatedAt when SSL status is set", func(t *testing.T) {
-		now := time.Now()
-
-		model := &db.Website{
-			ID:                  1,
-			Domain:              "example.com",
-			TargetType:          string(db.WebsiteTargetTypeIPFS),
-			Status:              string(db.WebsiteStatusActive),
-			ValidationToken:     "token123",
-			ValidationExpiresAt: nil,
-			LastCheckedAt:       &now,
-			CreatedAt:           now,
-			UpdatedAt:           now,
-			SSLStatus:           string(db.SSLStatusIssuing),
-			SSLError:            "",
-			SSLIssuedAt:         nil,
-			SSLLastUpdatedAt:    nil,
-		}
-
-		var resp WebsiteResponse
-		err := resp.FromModel(model)
-
-		require.NoError(t, err)
-		assert.NotNil(t, resp.SSL, "SSL field should be populated")
-		assert.Nil(t, resp.SSL.LastUpdatedAt, "LastUpdatedAt should be nil when model field is nil")
+		assert.Nil(t, resp.SSL, "FromModel should not synthesize SSL; it is applied by the API layer")
 	})
 }
 
@@ -605,63 +504,6 @@ func TestWebsiteUpdateRequest_ToModel_IPNS_WithValidPeerID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, string(db.WebsiteTargetTypeIPNS), model.TargetType)
 	assert.Nil(t, model.CIDVersion, "CIDVersion should be nil for valid IPNS target")
-}
-
-func TestWebsiteResponse_FromModel_SSL_NotPopulated(t *testing.T) {
-	t.Run("does not populate SSL field when SSL status is empty", func(t *testing.T) {
-		now := time.Now()
-
-		model := &db.Website{
-			ID:                  1,
-			Domain:              "example.com",
-			TargetType:          string(db.WebsiteTargetTypeIPFS),
-			Status:              string(db.WebsiteStatusActive),
-			ValidationToken:     "token123",
-			ValidationExpiresAt: nil,
-			LastCheckedAt:       &now,
-			CreatedAt:           now,
-			UpdatedAt:           now,
-			SSLStatus:           "", // Empty SSL status
-			SSLError:            "",
-			SSLIssuedAt:         nil,
-			SSLLastUpdatedAt:    nil,
-		}
-
-		var resp WebsiteResponse
-		err := resp.FromModel(model)
-
-		require.NoError(t, err)
-		assert.Nil(t, resp.SSL, "SSL field should be nil when SSL status is empty")
-	})
-
-	t.Run("populates all other fields when SSL is not populated", func(t *testing.T) {
-		now := time.Now()
-
-		model := &db.Website{
-			ID:                  1,
-			Domain:              "example.com",
-			TargetType:          string(db.WebsiteTargetTypeIPFS),
-			Status:              string(db.WebsiteStatusActive),
-			ValidationToken:     "token123",
-			ValidationExpiresAt: nil,
-			LastCheckedAt:       &now,
-			CreatedAt:           now,
-			UpdatedAt:           now,
-			SSLStatus:           "",
-		}
-
-		var resp WebsiteResponse
-		err := resp.FromModel(model)
-
-		require.NoError(t, err)
-		assert.Equal(t, uint(1), resp.ID)
-		assert.Equal(t, "example.com", resp.Domain)
-		assert.Equal(t, string(db.WebsiteTargetTypeIPFS), resp.TargetType)
-		assert.Equal(t, string(db.WebsiteStatusActive), resp.Status)
-		assert.Equal(t, "token123", resp.ValidationToken)
-		assert.Equal(t, now, resp.Created)
-		assert.Equal(t, now, resp.Updated)
-	})
 }
 
 func TestWebsiteResponse_SetValidationRecordInfo(t *testing.T) {

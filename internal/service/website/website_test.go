@@ -72,21 +72,21 @@ func setupIPNSAutoCreationMocks(t *testing.T, mockIPNS *mocks.MockIPNSKeyService
 	testPeerIDStr := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
 	testPeerID, _ := parsePeerID(testPeerIDStr)
 	testPeerIDMultihash := mh.Multihash(testPeerID)
-	
+
 	testIPNSKey := &pluginDb.IPFSIPNSKey{
 		ID:              testKeyID,
 		UserID:          userID,
 		Name:            expectedKeyName,
 		PeerIDMultihash: testPeerIDMultihash,
 	}
-	
+
 	// Mock key listing (returns empty for new website)
 	mockIPNS.EXPECT().ListKeys(mock.Anything, userID).Return([]pluginDb.IPFSIPNSKey{}, nil).Once()
 	// Mock key creation
 	mockIPNS.EXPECT().CreateKey(mock.Anything, userID, expectedKeyName, 1).Return(testIPNSKey, nil).Once()
 	// Mock CID publishing
 	mockIPNS.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
-	
+
 	return testIPNSKey
 }
 
@@ -129,7 +129,6 @@ func createTestIPFSWebsite(userID uint, domain string, cidStr string) *pluginDb.
 		TargetMultihash: c.Hash(),
 		CIDVersion:      &version,
 		CIDType:         &codec,
-		SSLStatus:       string(pluginDb.SSLStatusPending),
 	}
 }
 
@@ -144,7 +143,19 @@ func createTestIPNSWebsite(userID uint, domain string, ipnsStr string) *pluginDb
 		TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
 		TargetMultihash: target.ToMultihash(),
 		CIDVersion:      nil,
-		SSLStatus:       string(pluginDb.SSLStatusPending),
+	}
+}
+
+// createTestWebsiteDomain creates a domain binding for a website. SSL state is
+// stored per-domain on WebsiteDomain, so tests that exercise SSL updates must
+// create a binding first.
+func createTestWebsiteDomain(websiteID uint, domain string) *pluginDb.WebsiteDomain {
+	return &pluginDb.WebsiteDomain{
+		WebsiteID: websiteID,
+		UserID:    testUserID1,
+		Domain:    domain,
+		Namespace: pluginDb.DomainNamespaceICANN,
+		Status:    pluginDb.DomainStatusDraft,
 	}
 }
 
@@ -232,6 +243,9 @@ func TestWebsiteService_SSLStatusDoesNotAffectWebsiteStatus(t *testing.T) {
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
+		// Create a domain binding (per-domain SSL source of truth).
+		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
+
 		// Get initial website status before SSL update
 		initialStatus := createdWebsite.Status
 
@@ -239,13 +253,15 @@ func TestWebsiteService_SSLStatusDoesNotAffectWebsiteStatus(t *testing.T) {
 		_, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusFailed, "cert validation failed", nil)
 		require.NoError(tb, err)
 
-		// Act & Assert - Verify SSL status is failed and website status is unchanged
+		// Act & Assert - binding SSL is failed and website status is unchanged
+		var binding pluginDb.WebsiteDomain
+		require.NoError(tb, ctx.DB().Where("domain = ?", createdWebsite.Domain).First(&binding).Error)
+		assert.Equal(tb, string(pluginDb.SSLStatusFailed), binding.SSLStatus)
+		assert.Equal(tb, "cert validation failed", binding.SSLError)
+
 		finalWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
-
 		assert.Equal(tb, initialStatus, finalWebsite.Status, "website status should not be affected by SSL transitions")
-		assert.Equal(tb, string(pluginDb.SSLStatusFailed), finalWebsite.SSLStatus)
-		assert.Equal(tb, "cert validation failed", finalWebsite.SSLError)
 	}, TestOptions)
 }
 
@@ -262,29 +278,32 @@ func TestWebsiteService_SSLStatusTransitionsIndependently(t *testing.T) {
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
+		// Create a domain binding for the website.
+		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
+
 		// Act - Simulate SSL status transitions
 		now := time.Now()
 
 		// pending -> issuing
-		updatedWebsite, err := websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusIssuing, "", &now)
+		wd, err := websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusIssuing, "", &now)
 		require.NoError(tb, err)
-		assert.Equal(tb, string(pluginDb.SSLStatusIssuing), updatedWebsite.SSLStatus)
-		assert.Nil(tb, updatedWebsite.SSLIssuedAt)
+		assert.Equal(tb, string(pluginDb.SSLStatusIssuing), wd.SSLStatus)
+		assert.Nil(tb, wd.SSLIssuedAt)
 
 		// issuing -> ready
 		now2 := time.Now().Add(time.Minute)
-		updatedWebsite, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusReady, "", &now2)
+		wd, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusReady, "", &now2)
 		require.NoError(tb, err)
-		assert.Equal(tb, string(pluginDb.SSLStatusReady), updatedWebsite.SSLStatus)
-		assert.NotNil(tb, updatedWebsite.SSLIssuedAt)
-		assert.Equal(tb, "", updatedWebsite.SSLError)
+		assert.Equal(tb, string(pluginDb.SSLStatusReady), wd.SSLStatus)
+		assert.NotNil(tb, wd.SSLIssuedAt)
+		assert.Equal(tb, "", wd.SSLError)
 
 		// ready -> failed (simulating certificate expiration)
 		now3 := time.Now().Add(2 * time.Minute)
-		updatedWebsite, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusFailed, "certificate expired", &now3)
+		wd, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusFailed, "certificate expired", &now3)
 		require.NoError(tb, err)
-		assert.Equal(tb, string(pluginDb.SSLStatusFailed), updatedWebsite.SSLStatus)
-		assert.Equal(tb, "certificate expired", updatedWebsite.SSLError)
+		assert.Equal(tb, string(pluginDb.SSLStatusFailed), wd.SSLStatus)
+		assert.Equal(tb, "certificate expired", wd.SSLError)
 
 		// Assert - Website status should not have changed
 		finalWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
@@ -306,24 +325,30 @@ func TestWebsiteService_WebsiteCanBeBrokenRegardlessOfSSLStatus(t *testing.T) {
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
+		// Create a domain binding for the website.
+		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
+
 		// Set SSL status to ready
 		_, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusReady, "", nil)
 		require.NoError(tb, err)
 
-		// Verify SSL is ready
-		websiteWithSSL, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
-		require.NoError(tb, err)
-		assert.Equal(tb, string(pluginDb.SSLStatusReady), websiteWithSSL.SSLStatus)
+		// Verify SSL is ready on the binding
+		var binding pluginDb.WebsiteDomain
+		require.NoError(tb, ctx.DB().Where("domain = ?", createdWebsite.Domain).First(&binding).Error)
+		assert.Equal(tb, string(pluginDb.SSLStatusReady), binding.SSLStatus)
 
 		// Act - Update website status to broken
 		updates := map[string]interface{}{"status": string(pluginDb.WebsiteStatusBroken)}
 		_, err = websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
 		require.NoError(tb, err)
 
-		// Assert - SSL status remains ready, website status is now broken
+		// Assert - SSL status remains ready on the binding, website status is now broken
+		var finalBinding pluginDb.WebsiteDomain
+		require.NoError(tb, ctx.DB().Where("domain = ?", createdWebsite.Domain).First(&finalBinding).Error)
+		assert.Equal(t, string(pluginDb.SSLStatusReady), finalBinding.SSLStatus, "SSL status should not be affected by website status change")
+
 		finalWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
-		assert.Equal(t, string(pluginDb.SSLStatusReady), finalWebsite.SSLStatus, "SSL status should not be affected by website status change")
 		assert.Equal(t, string(pluginDb.WebsiteStatusBroken), finalWebsite.Status, "Website status should be broken")
 	}, TestOptions)
 }
@@ -378,7 +403,6 @@ func TestWebsiteService_CreateWebsite_IPNSTargetWithPlainCID_AutoConvert(t *test
 			TargetMultihash: c.Hash(),
 			CIDVersion:      &version,
 			CIDType:         &codec,
-			SSLStatus:       string(pluginDb.SSLStatusPending),
 		}
 
 		// Set up IPNS key mocks for auto-conversion
@@ -386,7 +410,7 @@ func TestWebsiteService_CreateWebsite_IPNSTargetWithPlainCID_AutoConvert(t *test
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 
 		// Assert
 		require.NoError(tb, err)
@@ -1069,11 +1093,11 @@ func TestWebsiteService_UpdateSSLStatus_WebsiteNotFound(t *testing.T) {
 		require.NotNil(tb, websiteService)
 
 		// Act - Try to update SSL status for non-existent domain
-		updatedWebsite, err := websiteService.UpdateSSLStatus(context.Background(), "nonexistent.com", pluginDb.SSLStatusReady, "", nil)
+		wd, err := websiteService.UpdateSSLStatus(context.Background(), "nonexistent.com", pluginDb.SSLStatusReady, "", nil)
 
 		// Assert
 		assert.Error(tb, err)
-		assert.Nil(tb, updatedWebsite)
+		assert.Nil(tb, wd)
 		assert.Contains(tb, err.Error(), "website not found")
 	}, TestOptions)
 }
@@ -1089,36 +1113,33 @@ func TestWebsiteService_UpdateSSLStatus_IssuedAtSetOnlyOnReadyTransition(t *test
 		website := createTestIPFSWebsite(testUserID1, "ssl-issuedat-test.com", testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
+
+		lookupBinding := func(tb coreTesting.TB) pluginDb.WebsiteDomain {
+			var wd pluginDb.WebsiteDomain
+			require.NoError(tb, ctx.DB().Where("domain = ?", createdWebsite.Domain).First(&wd).Error)
+			return wd
+		}
 
 		// Act - Update to issuing (should not set issued_at)
 		_, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusIssuing, "", nil)
 		require.NoError(tb, err)
-
-		// Check website after first update
-		websiteAfterIssuing, _, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
-		require.NoError(tb, err)
-		assert.Nil(tb, websiteAfterIssuing.SSLIssuedAt)
+		assert.Nil(tb, lookupBinding(tb).SSLIssuedAt)
 
 		// Act - Update to ready (should set issued_at)
 		_, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusReady, "", nil)
 		require.NoError(tb, err)
-
-		// Check website after ready transition
-		websiteAfterReady, _, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
-		require.NoError(tb, err)
-		assert.NotNil(tb, websiteAfterReady.SSLIssuedAt)
+		afterReady := lookupBinding(tb)
+		assert.NotNil(tb, afterReady.SSLIssuedAt)
 
 		// Act - Update to ready again (should not change issued_at)
-		originalIssuedAt := websiteAfterReady.SSLIssuedAt
+		originalIssuedAt := afterReady.SSLIssuedAt
 		time.Sleep(10 * time.Millisecond)
 		_, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusReady, "", nil)
 		require.NoError(tb, err)
-
-		// Check website after second ready update
-		websiteAfterSecondReady, _, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
-		require.NoError(tb, err)
-		assert.NotNil(tb, websiteAfterSecondReady.SSLIssuedAt)
-		assert.Equal(tb, originalIssuedAt.Unix(), websiteAfterSecondReady.SSLIssuedAt.Unix(), "issued_at should not change when already ready")
+		afterSecondReady := lookupBinding(tb)
+		assert.NotNil(tb, afterSecondReady.SSLIssuedAt)
+		assert.Equal(tb, originalIssuedAt.Unix(), afterSecondReady.SSLIssuedAt.Unix(), "issued_at should not change when already ready")
 	}, TestOptions)
 }
 
@@ -1133,17 +1154,18 @@ func TestWebsiteService_UpdateSSLStatus_ErrorSetOnFailed(t *testing.T) {
 		website := createTestIPFSWebsite(testUserID1, "ssl-error-test.com", testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
 
 		testErrorMsg := "certificate validation failed"
 
 		// Act - Update SSL status to failed with error message
-		updatedWebsite, err := websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusFailed, testErrorMsg, nil)
+		wd, err := websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusFailed, testErrorMsg, nil)
 
 		// Assert
 		require.NoError(tb, err)
-		assert.NotNil(tb, updatedWebsite)
-		assert.Equal(tb, string(pluginDb.SSLStatusFailed), updatedWebsite.SSLStatus)
-		assert.Equal(tb, testErrorMsg, updatedWebsite.SSLError)
+		assert.NotNil(tb, wd)
+		assert.Equal(tb, string(pluginDb.SSLStatusFailed), wd.SSLStatus)
+		assert.Equal(tb, testErrorMsg, wd.SSLError)
 	}, TestOptions)
 }
 
@@ -1158,25 +1180,26 @@ func TestWebsiteService_UpdateSSLStatus_ErrorClearedOnStatusChange(t *testing.T)
 		website := createTestIPFSWebsite(testUserID1, "ssl-clear-error-test.com", testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
 
 		// Set status to failed with error
 		testErrorMsg := "certificate validation failed"
 		_, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusFailed, testErrorMsg, nil)
 		require.NoError(tb, err)
 
-		// Verify error is set
-		websiteAfterFailed, _, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
-		require.NoError(tb, err)
-		assert.Equal(tb, testErrorMsg, websiteAfterFailed.SSLError)
+		// Verify error is set on the binding
+		var binding pluginDb.WebsiteDomain
+		require.NoError(tb, ctx.DB().Where("domain = ?", createdWebsite.Domain).First(&binding).Error)
+		assert.Equal(tb, testErrorMsg, binding.SSLError)
 
 		// Act - Update to pending (should clear error)
-		updatedWebsite, err := websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusPending, "", nil)
+		wd, err := websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusPending, "", nil)
 
 		// Assert
 		require.NoError(tb, err)
-		assert.NotNil(tb, updatedWebsite)
-		assert.Equal(tb, string(pluginDb.SSLStatusPending), updatedWebsite.SSLStatus)
-		assert.Empty(tb, updatedWebsite.SSLError, "Error should be cleared when status changes away from failed")
+		assert.NotNil(tb, wd)
+		assert.Equal(tb, string(pluginDb.SSLStatusPending), wd.SSLStatus)
+		assert.Empty(tb, wd.SSLError, "Error should be cleared when status changes away from failed")
 	}, TestOptions)
 }
 
@@ -1196,64 +1219,55 @@ func TestWebsiteService_UpdateSSLStatus_AtomicUpdates(t *testing.T) {
 		website := createTestIPFSWebsite(testUserID1, "ssl-atomic-test.com", testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
 
 		// Act - Perform concurrent updates to test atomicity
 		numGoroutines := 3
 		errChan := make(chan error, numGoroutines)
 
-		// Launch multiple goroutines updating SSL status concurrently
 		for i := 0; i < numGoroutines; i++ {
 			go func(index int) {
 				var status pluginDb.SSLStatus
 				var errorMsg string
-
 				switch index % 4 {
 				case 0:
 					status = pluginDb.SSLStatusIssuing
-					errorMsg = ""
 				case 1:
 					status = pluginDb.SSLStatusReady
-					errorMsg = ""
 				case 2:
 					status = pluginDb.SSLStatusFailed
 					errorMsg = "concurrent test error"
 				case 3:
 					status = pluginDb.SSLStatusPending
-					errorMsg = ""
 				}
-
 				_, err := websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, status, errorMsg, nil)
 				errChan <- err
 			}(i)
 		}
 
-		// Wait for all goroutines to complete
 		for i := 0; i < numGoroutines; i++ {
 			err := <-errChan
 			require.NoError(tb, err, "concurrent update should not fail")
 		}
 
 		// Assert - Final state should be consistent (no data corruption)
-		finalWebsite, _, err := websiteService.GetWebsiteByDomain(context.Background(), createdWebsite.Domain)
-		require.NoError(tb, err)
-		assert.NotNil(tb, finalWebsite)
+		var finalBinding pluginDb.WebsiteDomain
+		require.NoError(tb, ctx.DB().Where("domain = ?", createdWebsite.Domain).First(&finalBinding).Error)
 
-		// Verify final state is consistent and adheres to state transition rules
-		switch pluginDb.SSLStatus(finalWebsite.SSLStatus) {
+		switch pluginDb.SSLStatus(finalBinding.SSLStatus) {
 		case pluginDb.SSLStatusReady:
-			assert.NotNil(tb, finalWebsite.SSLIssuedAt, "SSLIssuedAt should be set for Ready status")
-			assert.Empty(tb, finalWebsite.SSLError, "SSLError should be empty for Ready status")
+			assert.NotNil(tb, finalBinding.SSLIssuedAt, "SSLIssuedAt should be set for Ready status")
+			assert.Empty(tb, finalBinding.SSLError, "SSLError should be empty for Ready status")
 		case pluginDb.SSLStatusFailed:
-			assert.NotEmpty(tb, finalWebsite.SSLError, "SSLError should be set for Failed status")
+			assert.NotEmpty(tb, finalBinding.SSLError, "SSLError should be set for Failed status")
 		case pluginDb.SSLStatusPending, pluginDb.SSLStatusIssuing:
-			assert.Empty(tb, finalWebsite.SSLError, "SSLError should be empty for non-failed status")
-			assert.Nil(tb, finalWebsite.SSLIssuedAt, "SSLIssuedAt should be nil for non-ready status")
+			assert.Empty(tb, finalBinding.SSLError, "SSLError should be empty for non-failed status")
+			assert.Nil(tb, finalBinding.SSLIssuedAt, "SSLIssuedAt should be nil for non-ready status")
 		default:
-			tb.Fatalf("unexpected final SSL status: %s", finalWebsite.SSLStatus)
+			tb.Fatalf("unexpected final SSL status: %s", finalBinding.SSLStatus)
 		}
 
-		// Verify last_updated_at was set
-		assert.NotNil(tb, finalWebsite.SSLLastUpdatedAt)
+		assert.NotNil(tb, finalBinding.SSLLastUpdatedAt)
 	}, TestOptions)
 }
 
@@ -1285,7 +1299,7 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreatedWhenEnabled(t *testing.T) {
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 
 		// Assert
 		require.NoError(tb, err)
@@ -1345,7 +1359,7 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreated(t *testing.T) {
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 
 		// Assert
 		require.NoError(tb, err)
@@ -1424,7 +1438,7 @@ func TestWebsiteService_DeleteWebsite_DNSRecordsCleanedUp(t *testing.T) {
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 
@@ -1471,7 +1485,7 @@ func TestWebsiteService_DeleteWebsite_DNSCleanupFailureDoesNotPreventDeletion(t 
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 
@@ -1586,7 +1600,7 @@ func TestWebsiteService_CreateWebsite_DNSHostingEnabled_CreatesZoneAndRecords(t 
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 
 		// Assert
 		require.NoError(tb, err)
@@ -1628,7 +1642,7 @@ func TestWebsiteService_UpdateWebsite_DNSHostingEnabled_NoDNSUpdateWhenTargetUnc
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 
 		// Act - Update website without changing target (should NOT update DNS records)
@@ -1675,7 +1689,7 @@ func TestWebsiteService_DeleteWebsite_DNSHostingEnabled_ZoneRemainsAfterDeletion
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 
 		// Mock DNS records deletion
@@ -1829,7 +1843,7 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreationFailure_ContinuesWithoutDNS
 
 		// Act - Create website with DNS zone creation failure
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 
 		// Assert - Website should still be created despite DNS failure
 		require.NoError(tb, err)
@@ -1876,7 +1890,7 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreationFailure_ContinuesWithout
 
 		// Act - Create website with DNS records creation failure
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 
 		// Assert - Website should still be created with zone ID set
 		require.NoError(tb, err)
@@ -1939,7 +1953,7 @@ func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing
 		website1 := createTestIPFSWebsite(testUserID1, domain, testCID.String())
 		website1.Enabled = true // Enable DNS hosting
 		createdWebsite1, err := websiteService.CreateWebsite(context.Background(), website1)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 
 		// Assert - IPNS key was created
@@ -2087,12 +2101,12 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingTransition(t *testing.T) 
 
 		// Set up IPNS key mocks for auto-creation
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
-		
+
 		// Mock DNS operations for initial website creation with DNS enabled
 		setupDNSZoneCreationMocks(t, mockDNS, testZoneID, domain, testUserID1)
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 		assert.True(t, createdWebsite.Enabled)
@@ -2211,7 +2225,7 @@ func TestWebsiteService_UpdateWebsite_DNSEnableToggleOffOn(t *testing.T) {
 		setupDNSZoneCreationMocks(t, mockDNS, testZoneID, domain, testUserID1)
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 		assert.True(t, createdWebsite.Enabled)
@@ -2263,7 +2277,7 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingDeleteZoneFails(t *testin
 		setupDNSZoneCreationMocks(t, mockDNS, testZoneID, domain, testUserID1)
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 		assert.NotNil(t, createdWebsite.DNSZoneID)
@@ -2281,109 +2295,6 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingDeleteZoneFails(t *testin
 		assert.False(t, updatedWebsite.Enabled)
 		assert.NotNil(t, updatedWebsite.DNSZoneID, "dns_zone_id should be preserved when DeleteZone fails")
 		assert.Equal(t, *createdWebsite.DNSZoneID, *updatedWebsite.DNSZoneID)
-	}, TestOptions)
-}
-
-func TestWebsiteService_CreateWebsite_InheritsSSLFromSoftDeletedWebsite(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		require.NotNil(tb, websiteService)
-
-		testCID := util.GenerateTestCID(t, "test data")
-		domain := "ssl-inherit-test.com"
-
-		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-		require.NoError(tb, err)
-
-		now := time.Now()
-		_, err = websiteService.UpdateSSLStatus(context.Background(), domain, pluginDb.SSLStatusReady, "", &now)
-		require.NoError(tb, err)
-
-		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
-		require.NoError(tb, err)
-
-		_, _, err = websiteService.GetWebsiteByDomain(context.Background(), domain)
-		require.NoError(tb, err)
-
-		newWebsite := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		recreatedWebsite, err := websiteService.CreateWebsite(context.Background(), newWebsite)
-		require.NoError(tb, err)
-
-		assert.Equal(tb, string(pluginDb.SSLStatusReady), recreatedWebsite.SSLStatus)
-		assert.NotNil(tb, recreatedWebsite.SSLIssuedAt)
-		assert.NotNil(tb, recreatedWebsite.SSLLastUpdatedAt)
-	}, TestOptions)
-}
-
-func TestWebsiteService_CreateWebsite_DoesNotInheritExpiredSSLCert(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		require.NotNil(tb, websiteService)
-
-		testCID := util.GenerateTestCID(t, "test data")
-		domain := "ssl-expired-inherit-test.com"
-
-		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-		require.NoError(tb, err)
-
-		oldIssuedAt := time.Now().Add(-91 * 24 * time.Hour)
-		_, err = websiteService.UpdateSSLStatus(context.Background(), domain, pluginDb.SSLStatusReady, "", &oldIssuedAt)
-		require.NoError(tb, err)
-
-		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
-		require.NoError(tb, err)
-
-		newWebsite := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		recreatedWebsite, err := websiteService.CreateWebsite(context.Background(), newWebsite)
-		require.NoError(tb, err)
-
-		assert.Equal(tb, string(pluginDb.SSLStatusPending), recreatedWebsite.SSLStatus)
-		assert.Nil(tb, recreatedWebsite.SSLIssuedAt)
-	}, TestOptions)
-}
-
-func TestWebsiteService_CreateWebsite_DoesNotInheritFailedSSL(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		require.NotNil(tb, websiteService)
-
-		testCID := util.GenerateTestCID(t, "test data")
-		domain := "ssl-failed-inherit-test.com"
-
-		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-		require.NoError(tb, err)
-
-		_, err = websiteService.UpdateSSLStatus(context.Background(), domain, pluginDb.SSLStatusFailed, "cert failed", nil)
-		require.NoError(tb, err)
-
-		err = websiteService.DeleteWebsite(context.Background(), testUserID1, createdWebsite.ID)
-		require.NoError(tb, err)
-
-		newWebsite := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		recreatedWebsite, err := websiteService.CreateWebsite(context.Background(), newWebsite)
-		require.NoError(tb, err)
-
-		assert.Equal(tb, string(pluginDb.SSLStatusPending), recreatedWebsite.SSLStatus)
-	}, TestOptions)
-}
-
-func TestWebsiteService_CreateWebsite_NoInheritWithoutSoftDeletedWebsite(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		require.NotNil(tb, websiteService)
-
-		testCID := util.GenerateTestCID(t, "test data")
-		domain := "ssl-no-inherit-test.com"
-
-		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-		require.NoError(tb, err)
-
-		assert.Equal(tb, string(pluginDb.SSLStatusPending), createdWebsite.SSLStatus)
-		assert.Nil(tb, createdWebsite.SSLIssuedAt)
 	}, TestOptions)
 }
 
@@ -2419,7 +2330,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPNSToIPFS_UpdatesDNSRecords(t *tes
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType)
@@ -2492,7 +2403,7 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPNS_NoDNSUpdate(t *testing.T) {
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 
@@ -2554,7 +2465,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
 		require.NotNil(tb, createdWebsite.DNSZoneID)
@@ -2649,7 +2560,7 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone(t *testing.T) {
 		}
 
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 
 		require.NoError(tb, err)
 		require.NotNil(tb, updatedWebsite)
@@ -2700,7 +2611,7 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone_DNSRecordsUpdated(t *t
 		).Return(nil).Once()
 
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 
 		require.NoError(tb, err)
 		require.NotNil(tb, updatedWebsite)
@@ -2738,7 +2649,7 @@ func TestWebsiteService_UpdateWebsite_IPNSTargetTypeWithCID(t *testing.T) {
 		}
 
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 
 		require.NoError(tb, err)
 		require.NotNil(tb, updatedWebsite)
@@ -2773,7 +2684,7 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPFSWithoutCID(t *testing.T) {
 		).Return(nil).Once()
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-  websiteService.WaitForPublishes()
+		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType)
 

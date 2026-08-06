@@ -63,6 +63,9 @@ type DomainResponse struct {
 	ZoneName    string         `json:"zone_name,omitempty"`
 	GatewayHost string         `json:"gateway_host,omitempty"`
 	Delegation  *DNSDelegation `json:"delegation,omitempty"`
+	// Per-domain SSL certificate state. SSL is a per-domain property, so it is
+	// exposed on the domain record (not the website).
+	SSL *SSLStatusInfo `json:"ssl,omitempty"`
 }
 
 func (r *DomainResponse) FromModel(m *db.WebsiteDomain) error {
@@ -72,6 +75,21 @@ func (r *DomainResponse) FromModel(m *db.WebsiteDomain) error {
 	r.Status = string(m.Status)
 	r.ZoneName = m.ZoneName
 	r.GatewayHost = m.GatewayHost
+
+	if m.SSLStatus != "" {
+		r.SSL = &SSLStatusInfo{
+			Status: m.SSLStatus,
+			Error:  m.SSLError,
+		}
+		if m.SSLIssuedAt != nil {
+			v := *m.SSLIssuedAt
+			r.SSL.IssuedAt = &v
+		}
+		if m.SSLLastUpdatedAt != nil {
+			v := *m.SSLLastUpdatedAt
+			r.SSL.LastUpdatedAt = &v
+		}
+	}
 
 	// Project the heterogeneous, provider-emitted DelegationData into the typed,
 	// provider-agnostic shape. If it fails to map, leave Delegation nil rather

@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWebsiteSSLFields(t *testing.T) {
-	t.Run("Website struct has SSL status fields", func(t *testing.T) {
-		w := Website{}
+func TestWebsiteDomainSSLFields(t *testing.T) {
+	t.Run("WebsiteDomain struct has SSL status fields", func(t *testing.T) {
+		w := WebsiteDomain{}
 		assert.IsType(t, "", w.SSLStatus)
 		assert.IsType(t, "", w.SSLError)
 		assert.IsType(t, (*time.Time)(nil), w.SSLIssuedAt)
@@ -18,7 +18,7 @@ func TestWebsiteSSLFields(t *testing.T) {
 	})
 
 	t.Run("SSLStatus field can be set to valid values", func(t *testing.T) {
-		w := Website{
+		w := WebsiteDomain{
 			SSLStatus: string(SSLStatusPending),
 		}
 		assert.Equal(t, string(SSLStatusPending), w.SSLStatus)
@@ -34,7 +34,7 @@ func TestWebsiteSSLFields(t *testing.T) {
 	})
 
 	t.Run("SSLError field can store error messages", func(t *testing.T) {
-		w := Website{
+		w := WebsiteDomain{
 			SSLError: "certificate validation failed",
 		}
 		assert.Equal(t, "certificate validation failed", w.SSLError)
@@ -45,7 +45,7 @@ func TestWebsiteSSLFields(t *testing.T) {
 
 	t.Run("SSLIssuedAt field can store timestamp", func(t *testing.T) {
 		now := time.Now()
-		w := Website{
+		w := WebsiteDomain{
 			SSLIssuedAt: &now,
 		}
 		assert.NotNil(t, w.SSLIssuedAt)
@@ -57,7 +57,7 @@ func TestWebsiteSSLFields(t *testing.T) {
 
 	t.Run("SSLLastUpdatedAt field can store timestamp", func(t *testing.T) {
 		now := time.Now()
-		w := Website{
+		w := WebsiteDomain{
 			SSLLastUpdatedAt: &now,
 		}
 		assert.NotNil(t, w.SSLLastUpdatedAt)
@@ -70,7 +70,7 @@ func TestWebsiteSSLFields(t *testing.T) {
 	t.Run("SSL fields work together", func(t *testing.T) {
 		issuedAt := time.Now().Add(-24 * time.Hour)
 		updatedAt := time.Now()
-		w := Website{
+		w := WebsiteDomain{
 			SSLStatus:        string(SSLStatusReady),
 			SSLError:         "",
 			SSLIssuedAt:      &issuedAt,
@@ -148,16 +148,12 @@ func TestSSLStatus(t *testing.T) {
 	})
 }
 
-func TestWebsiteBeforeSaveSSLValidation(t *testing.T) {
+func TestWebsiteDomainBeforeSaveSSLValidation(t *testing.T) {
 	t.Run("BeforeSave accepts empty SSL status", func(t *testing.T) {
-		w := &Website{
-			UserID:          1,
-			Domain:          "example.com",
-			TargetType:      string(WebsiteTargetTypeIPFS),
-			TargetMultihash: []byte("test"),
-			CIDVersion:      uint8Ptr(1),
-			Status:          string(WebsiteStatusPendingValidation),
-			SSLStatus:       "",
+		w := &WebsiteDomain{
+			Domain:    "lumeweb",
+			Namespace: DomainNamespaceHNS,
+			SSLStatus: "",
 		}
 
 		err := w.BeforeSave(nil)
@@ -166,84 +162,15 @@ func TestWebsiteBeforeSaveSSLValidation(t *testing.T) {
 		assert.Equal(t, string(SSLStatusPending), w.SSLStatus)
 	})
 
-	t.Run("BeforeSave rejects invalid SSL status", func(t *testing.T) {
-		w := &Website{
-			UserID:          1,
-			Domain:          "example.com",
-			TargetType:      string(WebsiteTargetTypeIPFS),
-			TargetMultihash: []byte("test"),
-			CIDVersion:      uint8Ptr(1),
-			Status:          string(WebsiteStatusPendingValidation),
-			SSLStatus:       "invalid_status",
-		}
-
-		err := w.BeforeSave(nil)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "INVALID_SSL_STATUS")
-	})
-
-	t.Run("BeforeSave accepts valid SSL status 'pending'", func(t *testing.T) {
-		w := &Website{
-			UserID:          1,
-			Domain:          "example.com",
-			TargetType:      string(WebsiteTargetTypeIPFS),
-			TargetMultihash: []byte("test"),
-			CIDVersion:      uint8Ptr(1),
-			Status:          string(WebsiteStatusPendingValidation),
-			SSLStatus:       string(SSLStatusPending),
+	t.Run("BeforeSave preserves an explicit non-pending SSL status", func(t *testing.T) {
+		w := &WebsiteDomain{
+			Domain:    "lumeweb",
+			Namespace: DomainNamespaceHNS,
+			SSLStatus: string(SSLStatusReady),
 		}
 
 		err := w.BeforeSave(nil)
 		assert.NoError(t, err)
+		assert.Equal(t, string(SSLStatusReady), w.SSLStatus)
 	})
-
-	t.Run("BeforeSave accepts valid SSL status 'issuing'", func(t *testing.T) {
-		w := &Website{
-			UserID:          1,
-			Domain:          "example.com",
-			TargetType:      string(WebsiteTargetTypeIPFS),
-			TargetMultihash: []byte("test"),
-			CIDVersion:      uint8Ptr(1),
-			Status:          string(WebsiteStatusPendingValidation),
-			SSLStatus:       string(SSLStatusIssuing),
-		}
-
-		err := w.BeforeSave(nil)
-		assert.NoError(t, err)
-	})
-
-	t.Run("BeforeSave accepts valid SSL status 'ready'", func(t *testing.T) {
-		w := &Website{
-			UserID:          1,
-			Domain:          "example.com",
-			TargetType:      string(WebsiteTargetTypeIPFS),
-			TargetMultihash: []byte("test"),
-			CIDVersion:      uint8Ptr(1),
-			Status:          string(WebsiteStatusPendingValidation),
-			SSLStatus:       string(SSLStatusReady),
-		}
-
-		err := w.BeforeSave(nil)
-		assert.NoError(t, err)
-	})
-
-	t.Run("BeforeSave accepts valid SSL status 'failed'", func(t *testing.T) {
-		w := &Website{
-			UserID:          1,
-			Domain:          "example.com",
-			TargetType:      string(WebsiteTargetTypeIPFS),
-			TargetMultihash: []byte("test"),
-			CIDVersion:      uint8Ptr(1),
-			Status:          string(WebsiteStatusPendingValidation),
-			SSLStatus:       string(SSLStatusFailed),
-		}
-
-		err := w.BeforeSave(nil)
-		assert.NoError(t, err)
-	})
-}
-
-// Helper function to get a pointer to uint8
-func uint8Ptr(v uint8) *uint8 {
-	return &v
 }

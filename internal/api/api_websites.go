@@ -422,7 +422,39 @@ func (a *API) getSSLStatus(c echo.Context) error {
 	resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
 	resp.SetValidationRecordInfo(a.verificationTokenKey())
 	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, website.UserID, website)
+	a.applyApexSSLStatus(reqCtx, resp, website)
 	return httputil.EncodeResponse(ctx, website, resp)
+}
+
+// applyApexSSLStatus synthesizes the website-level SSL status from the apex
+// (primary) domain binding, preserving backward-compatible site-level SSL
+// presentation now that the source of truth lives per-domain on WebsiteDomain.
+func (a *API) applyApexSSLStatus(ctx context.Context, resp *dto.WebsiteResponse, website *pluginDb.Website) {
+	if website == nil {
+		return
+	}
+	apex, err := a.websiteService.GetApexDomainBinding(ctx, website.ID)
+	if err != nil || apex == nil || apex.SSLStatus == "" {
+		return
+	}
+	resp.SSL = sslStatusInfoFromDomain(apex)
+}
+
+// sslStatusInfoFromDomain converts a domain binding's SSL state to the DTO.
+func sslStatusInfoFromDomain(wd *pluginDb.WebsiteDomain) *dto.SSLStatusInfo {
+	info := &dto.SSLStatusInfo{
+		Status: wd.SSLStatus,
+		Error:  wd.SSLError,
+	}
+	if wd.SSLIssuedAt != nil {
+		v := *wd.SSLIssuedAt
+		info.IssuedAt = &v
+	}
+	if wd.SSLLastUpdatedAt != nil {
+		v := *wd.SSLLastUpdatedAt
+		info.LastUpdatedAt = &v
+	}
+	return info
 }
 
 func (a *API) updateSSLStatus(c echo.Context) error {
@@ -450,7 +482,7 @@ func (a *API) updateSSLStatus(c echo.Context) error {
 		timestamp = &parsed
 	}
 
-	website, err := a.websiteService.UpdateSSLStatus(reqCtx, domain, req.Status, req.Error, timestamp)
+	wd, err := a.websiteService.UpdateSSLStatus(reqCtx, domain, req.Status, req.Error, timestamp)
 	if err != nil {
 		if strings.Contains(err.Error(), "website not found") {
 			apiErr := NewError(pluginEvents.ErrWebsiteNotFound, err)
@@ -461,10 +493,22 @@ func (a *API) updateSSLStatus(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
+	website, err := a.websiteService.GetWebsite(reqCtx, wd.UserID, wd.WebsiteID)
+	if err != nil {
+		a.Logger().Error("Failed to load website for SSL response", zap.Error(err), zap.String("domain", domain))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	if website == nil {
+		apiErr := NewError(pluginEvents.ErrWebsiteNotFound, fmt.Errorf("website not found: %s", domain))
+		return ctx.Error(apiErr, http.StatusNotFound)
+	}
+
 	resp := &dto.WebsiteResponse{}
 	resp.GatewayDomain = a.gatewayDomain()
 	resp.SetSubdomainInfo(a.zoneDomain(reqCtx, website.DNSZoneID))
 	resp.SetValidationRecordInfo(a.verificationTokenKey())
 	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, website.UserID, website)
+	a.applyApexSSLStatus(reqCtx, resp, website)
 	return httputil.EncodeResponse(ctx, website, resp)
 }
