@@ -96,6 +96,13 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 			helper := newMockHelper(t, ctx)
 			token, userID, testCID, _ := helper.SetupAuthenticatedTest()
 
+			// The DS is computed live from PowerDNS on demand, not stored. Stub
+			// the current active signing key's DS so the handler injects it.
+			mockDNS := helper.SetupDNSServiceMocks()
+			mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, uint(0)).Return(
+				"60776 13 2 3b35deed97def5fbb5ce939cd5b9036f12db0ccc2e1cb40bb4c565c168c66116", nil,
+			).Maybe()
+
 			website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
 			require.NoError(t, ctx.DB().Create(website).Error)
 
@@ -111,6 +118,7 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 					"mode": "delegated",
 					"parent_records": []map[string]any{
 						{"type": "NS", "value": "ns1.lumeweb,ns2.lumeweb"},
+						// Stale stored DS — must be REPLACED by the live value.
 						{"type": "DS", "value": "lumeweb. 3600 IN DS 12345 13 2 <digest>"},
 					},
 					"authoritative_records": []map[string]any{
@@ -129,9 +137,13 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 			assert.Equal(t, "hns", resp.Namespace)
 			require.NotNil(t, resp.Delegation)
 			assert.Equal(t, "delegated", resp.Delegation.Mode)
-			assert.Equal(t, "lumeweb. 3600 IN DS 12345 13 2 <digest>", resp.Delegation.DS)
+			// No first-class DS field — the live DS is injected into
+			// parent_records, replacing the stale stored DS entry.
 			require.Len(t, resp.Delegation.ParentRecords, 2)
 			assert.Equal(t, "NS", resp.Delegation.ParentRecords[0].Type)
+			dsRec := resp.Delegation.ParentRecords[1]
+			assert.Equal(t, "DS", dsRec.Type)
+			assert.Equal(t, "60776 13 2 3b35deed97def5fbb5ce939cd5b9036f12db0ccc2e1cb40bb4c565c168c66116", dsRec.Value)
 		}, TestOptions)
 	})
 

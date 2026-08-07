@@ -49,7 +49,6 @@ type DNSDelegationRecord struct {
 type DNSDelegation struct {
 	Mode                 string                `json:"mode,omitempty"`
 	Nameservers          []string              `json:"nameservers,omitempty"`
-	DS                   string                `json:"ds,omitempty"`
 	ParentRecords        []DNSDelegationRecord `json:"parent_records,omitempty"`
 	AuthoritativeRecords []DNSDelegationRecord `json:"authoritative_records,omitempty"`
 }
@@ -184,10 +183,10 @@ func mapDNSDelegation(raw []byte) *DNSDelegation {
 			ParentRecords:        hns.ParentRecords,
 			AuthoritativeRecords: hns.AuthoritativeRecords,
 		}
-		// The DS is NOT promoted from stored parent_records: the DS is a
-		// derivative of the live PowerDNS signing key and is computed on the
-		// fly (see API.domainDNSRequirements -> GetActiveDNSSECDS), never
-		// persisted. A stored DS would go stale on key rotation.
+		// The DS is carried as a parent_records entry, not as a first-class
+		// field: it is a derivative of the live PowerDNS signing key computed
+		// on the fly (API.domainDNSRequirements -> GetActiveDNSSECDS), and is
+		// never read back from stored delegation data.
 		return d
 	}
 

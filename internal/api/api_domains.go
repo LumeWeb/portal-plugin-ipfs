@@ -255,10 +255,11 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 	// The DS to publish is computed live from PowerDNS's current active signing
 	// key rather than read from stored delegation data (which would go stale on
 	// key rotation). Only portal-managed, DNSSEC-signed namespaces (e.g. HNS)
-	// yield a DS; ICANN domains have no parent DS and this is a no-op.
+	// yield a DS; ICANN domains have no parent DS and this is a no-op. The live
+	// DS is injected into parent_records (which renderers draw from); there is
+	// no separate DS field that could otherwise sit empty.
 	if resp.Delegation != nil && a.dnsService != nil {
 		if ds, dsErr := a.dnsService.GetActiveDNSSECDS(reqCtx, wd.ZoneID); dsErr == nil && ds != "" {
-			resp.Delegation.DS = ds
 			// Ensure the rendered parent_records carries the live DS so CLI
 			// renderers that draw from parent_records show the current value
 			// (replace any stale stored DS entry, else append).
