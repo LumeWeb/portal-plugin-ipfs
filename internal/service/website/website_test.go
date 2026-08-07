@@ -152,7 +152,9 @@ func bindPrimaryDomain(tb coreTesting.TB, ctx coreTesting.TestContext, websiteID
 	wd := createTestWebsiteDomain(websiteID, domain)
 	wd.DNSHostingEnabled = dnsHostingEnabled
 	require.NoError(tb, ctx.DB().Create(wd).Error)
-	require.NoError(tb, ctx.DB().Model(&pluginDb.Website{ID: websiteID}).Update("primary_domain_id", wd.ID).Error)
+	// Use UpdateColumn so Website.BeforeSave (target validation on a bare
+	// Website{ID:...}) is not triggered on this partial update.
+	require.NoError(tb, ctx.DB().Model(&pluginDb.Website{ID: websiteID}).UpdateColumn("primary_domain_id", wd.ID).Error)
 	return wd
 }
 
