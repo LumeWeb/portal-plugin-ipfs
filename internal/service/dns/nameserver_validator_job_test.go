@@ -24,7 +24,7 @@ var NameserverValidatorTestOptions = coreTesting.CombineOptions(
 	testopts.NewBaseMockPluginBuilder().WithService(pluginCore.DNS_SERVICE, func() (core.Service, []core.ContextBuilderOption, error) {
 		logger := zap.NewNop()
 		coreLogger := &core.Logger{Logger: logger}
-		pdnsClient, err := NewPowerDNSClient("http://localhost:8081", "test-api-key", coreLogger)
+		pdnsClient, err := NewPowerDNSClient("http://localhost:8081", testAPIKey(), coreLogger)
 		if err != nil {
 			return nil, nil, err
 		}

@@ -14,6 +14,11 @@ type DnsConfig struct {
 	Enabled bool `config:"enabled"`
 
 	// PowerDNS configuration
+	// NOTE: SOA serial propagation for API-managed zones works out of the box —
+	// PowerDNS sets SOA-EDIT-API metadata to DEFAULT for API-created zones, which
+	// auto-increments the serial on RRset edits so secondaries re-transfer. No
+	// SOA-EDIT config is required. (Per-zone SOA-EDIT/SOA-EDIT-API are domain
+	// metadata, not pdns.conf settings.)
 	PowerDNSAPIURL string `config:"powerdns_api_url"`
 	PowerDNSAPIKey string `config:"powerdns_api_key"`
 

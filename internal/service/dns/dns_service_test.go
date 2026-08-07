@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/samber/lo"
@@ -147,29 +148,44 @@ func getTestOptions() coreTesting.TestContextBuilderOption {
 func TestDNSServiceCreateZone(t *testing.T) {
 	// Create a mock HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify request method and path
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST request, got %s", r.Method)
-		}
-
-		if r.URL.Path != "/servers/localhost/zones" {
-			t.Errorf("expected path /servers/localhost/zones, got %s", r.URL.Path)
-		}
-
-		// Verify API key header
-		apiKey := r.Header.Get("X-API-Key")
-		if apiKey != testAPIKey() {
-			t.Errorf("expected API key %q, got %q", testAPIKey(), apiKey)
-		}
-
-		// Return success response
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(powerdns.Zone{
-			Id:   new("example.com."),
-			Name: new("example.com."),
-			Kind: (*powerdns.ZoneKind)(new("Native")),
-		})
+		switch r.Method {
+		case http.MethodPost:
+			// Verify request method and path
+			if r.URL.Path != "/servers/localhost/zones" {
+				t.Errorf("expected path /servers/localhost/zones, got %s", r.URL.Path)
+			}
+
+			// Verify API key header
+			apiKey := r.Header.Get("X-API-Key")
+			if apiKey != testAPIKey() {
+				t.Errorf("expected API key %q, got %q", testAPIKey(), apiKey)
+			}
+
+			// Return success response
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(powerdns.Zone{
+				Id:   new("example.com."),
+				Name: new("example.com."),
+				Kind: (*powerdns.ZoneKind)(new("Native")),
+			})
+		case http.MethodGet:
+			// GetZone (called by the MNAME fix): return the zone (empty rrsets
+			// means no SOA to correct, so no PATCH follows).
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(powerdns.Zone{
+				Id:     new("example.com."),
+				Name:   new("example.com."),
+				Kind:   (*powerdns.ZoneKind)(new("Native")),
+				Rrsets: &[]powerdns.RRSet{},
+			})
+		case http.MethodPatch:
+			// UpdateZoneRRSets: 204 No Content.
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
 	}))
 	defer server.Close()
 
@@ -1176,7 +1192,7 @@ func TestDNSServiceCreateZoneRestoresSoftDeletedZoneWithNewPowerDNSZoneID(t *tes
 			})
 			return
 		}
-		if r.Method == http.MethodGet && r.URL.Path == "/servers/localhost/zones/pdns-zone-1." {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/zones/pdns-zone-") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(powerdns.Zone{
