@@ -2120,11 +2120,15 @@ func (s *WebsiteServiceDefault) SetDomainDNSEnabled(ctx context.Context, userID,
 		return nil, fmt.Errorf("domain lookup failed: %w", err)
 	}
 
-	// Already in the requested state with nothing left to reconcile. Guard on
-	// both the flag and the zone so a disable is not skipped for a binding that
-	// is flagged false but still carries a dns_zone_id (e.g. left by an earlier
-	// partial enable) — skipping would orphan-leak the zone with no recovery.
-	if wd.DNSHostingEnabled == enabled && (enabled || wd.DNSZoneID == nil) {
+	// Already in the desired state with nothing left to reconcile. For enable
+	// (enabled=true) this additionally requires the zone to be present: a
+	// binding flagged DNS-managed (true) with DNSZoneID=nil is a partial-enable
+	// orphan that must be re-reconciled, not skipped. Such a state arises when
+	// UpdateWebsite persists the flag before the transition and the transition
+	// rolls the zone back on failure without reverting the flag. Requiring the
+	// zone lets a retry enable (or a disable) recover it instead of silently
+	// orphaning the binding.
+	if wd.DNSHostingEnabled == enabled && (wd.DNSZoneID != nil || !enabled) {
 		return &wd, nil
 	}
 
