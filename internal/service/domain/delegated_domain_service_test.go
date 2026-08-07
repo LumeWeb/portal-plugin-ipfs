@@ -209,10 +209,8 @@ func TestDelegatedDomainService_VerifyDomain_SelfHealsDNSSEC(t *testing.T) {
 		}, TestOptions)
 	})
 
-	// The SOA MNAME self-heal is NOT tied to DANE/DNSSEC: it applies to any
-	// portal-managed PowerDNS zone. An ICANN-hosted binding (ZoneID set) must
-	// therefore get its SOA MNAME re-ensured on verify even though DNSSEC
-	// enablement is skipped (ICANN is not portal-managed for DNSSEC).
+	// The SOA MNAME self-heal applies to any portal-managed PowerDNS zone, so
+	// an ICANN-hosted binding gets its SOA re-ensured on verify too.
 	t.Run("icann_soa_healed_dnssec_skipped", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			db := ctx.DB()

@@ -298,29 +298,24 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 
 // selfHealZone re-ensures the portal-managed-zone invariants that are
 // otherwise only established at bind/create time, so verification recovers a
-// zone that slipped past (or drifted from) those one-time setup steps — without
-// requiring the user to re-bind. The two invariants are independent and gated
-// independently:
+// zone that slipped past (or drifted from) those one-time setup steps without
+// requiring the user to re-bind. The two invariants are gated independently:
 //
-//  1. DNSSEC active signing key (fatal). Gated on UsesManagedZoneTLSA() — the
-//     namespaces whose portal-managed zone is DNSSEC-signed (e.g. HNS). ICANN
-//     zones are not portal-managed for DNSSEC, so this never runs for them. A
-//     "no active key" result (("", nil)) means DNSSEC was never enabled or the
-//     key was rotated away: EnableDNSSEC is idempotent (reuses an active key,
-//     mints one only when none exists), then the live DS is re-read. Failure is
-//     fatal: a managed zone without a key cannot be safely verified. The error
-//     path (GetActiveDNSSECDS errored, not empty) is NOT healed — that state is
-//     indeterminate (PowerDNS down / key rollover) and must fail loudly rather
-//     than mint keys.
+//  1. DNSSEC active signing key (fatal). For managed-DNSSEC namespaces
+//     (UsesManagedZoneTLSA, e.g. HNS). A "no active key" result (("", nil))
+//     means DNSSEC was never enabled or the key was rotated away: EnableDNSSEC
+//     is idempotent (reuses an active key, mints one only when none exists),
+//     then the live DS is re-read. Failure is fatal — a managed zone without a
+//     key cannot be safely verified. The error path (GetActiveDNSSECDS errored,
+//     not empty) is left to fail loudly: that state is indeterminate (PowerDNS
+//     down / key rollover), so we do not mint keys on it.
 //
-//  2. SOA MNAME (best-effort). Gated on the zone being portal-managed in
-//     PowerDNS (wd.ZoneID != 0 — every hosted binding, HNS and ICANN, gets a
-//     portal DNSZone). PowerDNS seeds new zones with a placeholder MNAME that
-//     is only corrected once at create; this re-ensures it idempotently for ALL
-//     portal-managed zones, not just DANE namespaces. It is deliberately
-//     non-fatal: the SOA MNAME is a secondary authoritative pointer (delegation
-//     is carried by the NS record), so a failed correction is logged, not
-//     raised.
+//  2. SOA MNAME (best-effort). For any portal-managed PowerDNS zone
+//     (wd.ZoneID != 0 — every hosted binding, HNS and ICANN). PowerDNS seeds
+//     new zones with a placeholder MNAME that is only corrected once at create;
+//     this re-ensures it idempotently for all portal-managed zones. Non-fatal:
+//     the SOA MNAME is a secondary authoritative pointer (delegation is carried
+//     by the NS record), so a failed correction is logged, not raised.
 //
 // It returns the (possibly healed) expected DS and a fatal error, or nil.
 func (s *DelegatedDomainService) selfHealZone(ctx context.Context, provider DomainProvider, wd *pluginDb.WebsiteDomain, expectedDS string) (string, error) {
