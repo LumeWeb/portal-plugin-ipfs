@@ -259,7 +259,14 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 	// DS is injected into parent_records (which renderers draw from); there is
 	// no separate DS field that could otherwise sit empty.
 	if resp.Delegation != nil && a.dnsService != nil {
-		if ds, dsErr := a.dnsService.GetActiveDNSSECDS(reqCtx, wd.ZoneID); dsErr == nil && ds != "" {
+		ds, dsErr := a.dnsService.GetActiveDNSSECDS(reqCtx, wd.ZoneID)
+		if dsErr != nil {
+			// PowerDNS unavailable or a key rollover is in progress: the live
+			// DS cannot be resolved. Log it rather than silently falling
+			// through to show whatever stale parent_records may hold.
+			a.Logger().Warn("could not resolve live DS for dns-requirements",
+				zap.Uint("zone_id", wd.ZoneID), zap.Error(dsErr))
+		} else if ds != "" {
 			// Ensure the rendered parent_records carries the live DS so CLI
 			// renderers that draw from parent_records show the current value
 			// (replace any stale stored DS entry, else append).
