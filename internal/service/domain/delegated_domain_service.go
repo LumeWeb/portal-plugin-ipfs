@@ -96,6 +96,14 @@ func (s *DelegatedDomainService) gatewayIP() string {
 func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	namespace, domain string, websiteID, userID uint, config json.RawMessage) (*pluginDb.WebsiteDomain, error) {
 
+	// Require a database connection up front: many call sites feed through a
+	// service that may not be wired to a DB (e.g. the website-create API when
+	// only the website service is exercised), and using s.DB() below without a
+	// guard would panic with a nil pointer dereference.
+	if s.DB() == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+
 	provider := s.registry.Get(namespace)
 	if provider == nil {
 		return nil, fmt.Errorf("unsupported namespace: %s", namespace)
@@ -112,12 +120,6 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		Where("user_id = ? AND id = ?", userID, websiteID).
 		First(&website).Error; err != nil {
 		return nil, fmt.Errorf("website lookup failed: %w", err)
-	}
-
-	// Persist WebsiteDomain first so external DNS side effects are only
-	// created for committed rows. Require DB to be available.
-	if s.DB() == nil {
-		return nil, fmt.Errorf("database not available")
 	}
 
 	wd := &pluginDb.WebsiteDomain{
