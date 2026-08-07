@@ -72,7 +72,7 @@ func TestIntegration_CreateAndVerifyHNSDomain(t *testing.T) {
 		mockDNS.EXPECT().EnableDNSSEC(mock.Anything, uint(1)).Return("257 3 13 dGVzdA==", nil).Maybe()
 
 		// Create domain
-		wd, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, nil)
+		wd, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, true, nil)
 		require.NoError(tb, err)
 		require.NotNil(tb, wd)
 		assert.Equal(tb, pluginDb.DomainStatusRecordsGenerated, wd.Status)

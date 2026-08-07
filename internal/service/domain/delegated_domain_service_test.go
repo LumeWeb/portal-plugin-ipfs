@@ -62,12 +62,14 @@ func TestDelegatedDomainService_CreateDomain(t *testing.T) {
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: "example.com"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything).Return(nil).Once()
 
-		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, nil)
+		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, true, nil)
 		assert.NoError(tb, err)
 		assert.NotNil(tb, wd)
 		assert.Equal(tb, "example.com", wd.Domain)
 		assert.Equal(tb, pluginDb.DomainNamespaceICANN, wd.Namespace)
 		assert.Equal(tb, uint(1), wd.ZoneID)
+		// Managed-DNS binding: the flag is persisted to match the created zone.
+		assert.True(tb, wd.DNSHostingEnabled)
 	}, TestOptions)
 }
 
@@ -76,7 +78,7 @@ func TestDelegatedDomainService_CreateDomain_UnsupportedNamespace(t *testing.T) 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		require.NotNil(tb, svc)
 
-		_, err := svc.CreateDomain(context.Background(), "ens", "example.eth", 1, 1, nil)
+		_, err := svc.CreateDomain(context.Background(), "ens", "example.eth", 1, 1, true, nil)
 		assert.Error(tb, err)
 		assert.Contains(tb, err.Error(), "unsupported namespace")
 	}, TestOptions)

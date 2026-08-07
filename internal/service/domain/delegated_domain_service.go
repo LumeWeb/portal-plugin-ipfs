@@ -103,7 +103,8 @@ func (s *DelegatedDomainService) gatewayIP() string {
 }
 
 func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
-	namespace, domain string, websiteID, userID uint, config json.RawMessage) (*pluginDb.WebsiteDomain, error) {
+	namespace, domain string, websiteID, userID uint, dnsHostingEnabled bool,
+	config json.RawMessage) (*pluginDb.WebsiteDomain, error) {
 
 	// Require a database connection up front: many call sites feed through a
 	// service that may not be wired to a DB (e.g. the website-create API when
@@ -138,6 +139,11 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		Namespace: pluginDb.DomainNamespace(namespace),
 		ZoneName:  canonicalZoneName(domain),
 		Status:    pluginDb.DomainStatusDraft,
+		// The per-domain DNS hosting flag is threaded from the bind request
+		// (default true). It gates whether this flow provisions a PowerDNS
+		// zone; when false, no zone is created and the binding is self-hosted
+		// DNS (see the zone-creation decision below).
+		DNSHostingEnabled: dnsHostingEnabled,
 	}
 
 	// Soft deletes leave a tombstone row that still occupies the
@@ -216,9 +222,10 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	wd.Status = pluginDb.DomainStatusRecordsGenerated
 	wd.DelegationData = jsonToMap(delegationBytes)
 	if err := s.DB().WithContext(ctx).Model(wd).Updates(map[string]any{
-		"zone_id":         zone.ID,
-		"status":          pluginDb.DomainStatusRecordsGenerated,
-		"delegation_data": wd.DelegationData,
+		"zone_id":             zone.ID,
+		"status":              pluginDb.DomainStatusRecordsGenerated,
+		"delegation_data":     wd.DelegationData,
+		"dns_hosting_enabled": wd.DNSHostingEnabled,
 	}).Error; err != nil {
 		return nil, fmt.Errorf("failed to finalize domain record: %w", err)
 	}

@@ -10,15 +10,20 @@ import (
 
 // DomainRequest binds a domain to a website.
 type DomainRequest struct {
-	Domain    string         `json:"domain"`
-	Namespace string         `json:"namespace"` // e.g. "icann", "hns"
-	Config    map[string]any `json:"config,omitempty"`
+	Domain    string `json:"domain"`
+	Namespace string `json:"namespace"` // e.g. "icann", "hns"
+	// DNSHostingEnabled controls whether the portal manages DNS for this
+	// binding. Managed-by-default: when omitted (nil), the binding is created
+	// DNS-hosted, matching the creation of its authoritative zone.
+	DNSHostingEnabled *bool          `json:"dns_hosting_enabled,omitempty"`
+	Config            map[string]any `json:"config,omitempty"`
 }
 
 func (r DomainRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
-		"Domain":    zog.String().Required().Min(1).Max(255),
-		"Namespace": zog.String().Required().OneOf([]string{string(db.DomainNamespaceICANN), string(db.DomainNamespaceHNS)}),
+		"Domain":            zog.String().Required().Min(1).Max(255),
+		"Namespace":         zog.String().Required().OneOf([]string{string(db.DomainNamespaceICANN), string(db.DomainNamespaceHNS)}),
+		"DNSHostingEnabled": zog.Ptr(zog.Bool()),
 		// Config is intentionally unvalidated here; the namespace provider validates its contents.
 	})
 }

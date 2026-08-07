@@ -49,7 +49,15 @@ func (a *API) createDomain(c echo.Context) error {
 		configRaw, _ = json.Marshal(req.Config)
 	}
 
-	wd, err := a.delegatedDomainSvc.CreateDomain(reqCtx, req.Namespace, req.Domain, uint(websiteID), userID, configRaw)
+	// Managed-DNS by default: bindings are created DNS-hosted unless the
+	// request explicitly opts out. Pass the resolved flag so CreateDomain
+	// provisions (or skips) the authoritative zone accordingly.
+	dnsHostingEnabled := true
+	if req.DNSHostingEnabled != nil {
+		dnsHostingEnabled = *req.DNSHostingEnabled
+	}
+
+	wd, err := a.delegatedDomainSvc.CreateDomain(reqCtx, req.Namespace, req.Domain, uint(websiteID), userID, dnsHostingEnabled, configRaw)
 	if err != nil {
 		a.Logger().Error("Failed to create domain", zap.Error(err))
 		apiErr := NewError(ErrKeyValidationFailed, err)

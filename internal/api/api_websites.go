@@ -149,7 +149,7 @@ func (a *API) createWebsite(c echo.Context) error {
 			namespace = string(*req.Namespace)
 		}
 		var cfgRaw json.RawMessage
-		if _, err := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, req.Domain, website.ID, user, cfgRaw); err != nil {
+		if _, err := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, req.Domain, website.ID, user, dnsEnabled, cfgRaw); err != nil {
 			a.Logger().Error("Failed to create primary domain for website",
 				zap.Uint("website_id", website.ID), zap.String("domain", req.Domain), zap.Error(err))
 			apiErr := NewError(ErrKeyFileProcessingFailed, err)
@@ -402,7 +402,12 @@ func (a *API) updateWebsite(c echo.Context) error {
 			namespace = string(*req.Namespace)
 		}
 		var cfgRaw json.RawMessage
-		wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, cfgRaw)
+		// Managed-DNS by default; explicit DNSEnabled override flows through.
+		newDomainDNS := true
+		if req.DNSEnabled != nil {
+			newDomainDNS = *req.DNSEnabled
+		}
+		wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, cfgRaw)
 		if derr != nil {
 			a.Logger().Error("Failed to create primary domain for website",
 				zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Error(derr))
