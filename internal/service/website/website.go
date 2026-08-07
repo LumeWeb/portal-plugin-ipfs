@@ -2100,10 +2100,13 @@ func (s *WebsiteServiceDefault) SetDomainDNSEnabled(ctx context.Context, userID,
 	}
 
 	wd.DNSHostingEnabled = enabled
-	if err := s.DB().WithContext(ctx).Model(&wd).Update("dns_hosting_enabled", enabled).Error; err != nil {
-		return nil, fmt.Errorf("failed to set dns_hosting_enabled: %w", err)
-	}
 
+	// Run the transition first and persist the flag only after it fully
+	// succeeds. handleDNSEnabledTransition performs the external DNS/IPNS side
+	// effects (zone setup, website DNS records); writing dns_hosting_enabled
+	// before it could leave the binding marked DNS-managed with no (or partial)
+	// setup applied if the transition fails, and the line-2098 idempotency
+	// guard would then make a retry no-op instead of finishing the setup.
 	if enabled {
 		if err := s.handleDNSEnabledTransition(ctx, &wd); err != nil {
 			return nil, err
@@ -2112,6 +2115,10 @@ func (s *WebsiteServiceDefault) SetDomainDNSEnabled(ctx context.Context, userID,
 		if err := s.handleDNSDisabledTransition(ctx, &wd); err != nil {
 			return nil, err
 		}
+	}
+
+	if err := s.DB().WithContext(ctx).Model(&wd).Update("dns_hosting_enabled", enabled).Error; err != nil {
+		return nil, fmt.Errorf("failed to set dns_hosting_enabled: %w", err)
 	}
 
 	// Reload to pick up any zone/IPNS mutations from the transition.

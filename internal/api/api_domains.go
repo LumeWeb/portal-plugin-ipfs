@@ -119,15 +119,14 @@ func (a *API) updateDomain(c echo.Context) error {
 
 	var primary *pluginDb.WebsiteDomain
 
-	// Order matters for atomicity when both fields are set. SetDomainDNSEnabled
-	// is the side-effect-heavy, fallible operation (it runs the zone/IPNS/record
-	// transition in handleDNSEnabledTransition) while SetPrimaryDomain is a
-	// lightweight metadata write. Run the DNS transition FIRST so that, if it
-	// fails, nothing has been persisted yet (SetPrimaryDomain has not run) and
-	// the domain is not left inconsistently repointed-with-DNS-off. Only after
-	// the transition succeeds do we promote the binding to primary. Conversely,
-	// a failure of SetPrimaryDomain (a pure DB error) leaves DNS already enabled
-	// but is idempotent and recoverable — the reverse failure mode.
+	// Order matters when both fields are set. SetDomainDNSEnabled runs the
+	// side-effect-heavy DNS transition (zone/IPNS/records) and only persists
+	// dns_hosting_enabled after that transition fully succeeds, so a transition
+	// failure returns an error with DNS state unchanged. SetPrimaryDomain is a
+	// lightweight metadata write. Run the DNS transition first so a successful
+	// primary promotion is never coupled to a transition that could have failed.
+	// A failure of SetPrimaryDomain (a pure DB error) leaves DNS already enabled
+	// but is idempotent and recoverable — the less severe reverse failure mode.
 	if req.DNSHostingEnabled != nil {
 		d, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, userID, uint(websiteID), uint(domainID), *req.DNSHostingEnabled)
 		if derr != nil {
