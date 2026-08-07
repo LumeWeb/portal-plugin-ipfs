@@ -107,10 +107,12 @@ type Website struct {
 	ValidationExpiresAt *time.Time     `gorm:"index"`
 	LastCheckedAt       *time.Time     `gorm:"index:idx_ipfs_websites_last_checked_at"`
 	// PrimaryDomainID is the FK to the WebsiteDomain that owns DNS hosting for
-	// this site. The website no longer stores a denormalized domain string; all
-	// DNS concerns (dns_hosting_enabled, dns_zone_id, ipns_key_id, validation
-	// records) live on the primary (apex) WebsiteDomain binding.
+	// this site. The website no longer stores a denormalized domain string; the
+	// DNS concerns (dns_hosting_enabled, dns_zone_id) live on the primary (apex)
+	// WebsiteDomain binding, while the IPNS key stays on the website (it belongs
+	// to the target, not the domain).
 	PrimaryDomainID *uint          `gorm:"column:primary_domain_id;index:idx_ipfs_websites_primary_domain_id"`
+	IPNSKeyID       *uint          `gorm:"column:ipns_key_id;index:idx_ipfs_websites_ipns_key_id"` // FK to IPNS key (auto-created for managed DNS target)
 	CreatedAt       time.Time      `gorm:"autoCreateTime"`
 	UpdatedAt       time.Time      `gorm:"autoUpdateTime"`
 	DeletedAt       gorm.DeletedAt `gorm:"index:idx_ipfs_websites_deleted_at"`

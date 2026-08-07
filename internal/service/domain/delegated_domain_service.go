@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -197,6 +198,17 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		return nil, fmt.Errorf("failed to finalize domain record: %w", err)
 	}
 
+	// If the owning website has no primary domain yet, make this binding the
+	// primary so Website.PrimaryDomainID never dangles after the first domain
+	// is added. This is how a website created with a transparent primary domain
+	// (and additional domains added later) keeps its FK consistent.
+	if website.PrimaryDomainID == nil {
+		if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", wd.ID).Error; err != nil {
+			return nil, fmt.Errorf("failed to set primary domain: %w", err)
+		}
+		website.PrimaryDomainID = &wd.ID
+	}
+
 	return wd, nil
 }
 
@@ -253,6 +265,44 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 // DeleteDomain deletes a WebsiteDomain row scoped by id, website_id, and user_id.
 // Returns gorm.ErrRecordNotFound if no row was deleted.
 func (s *DelegatedDomainService) DeleteDomain(ctx context.Context, domainID, websiteID, userID uint) error {
+	// If the domain being deleted is the website's primary, repoint
+	// Website.PrimaryDomainID to the next remaining active binding (or clear it)
+	// so the FK never dangles. Do this before the delete so we can read the
+	// remaining bindings accurately.
+	var wd pluginDb.WebsiteDomain
+	if err := s.DB().WithContext(ctx).
+		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+		First(&wd).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return gorm.ErrRecordNotFound
+		}
+		return err
+	}
+
+	var website pluginDb.Website
+	if err := s.DB().WithContext(ctx).Where("id = ?", websiteID).First(&website).Error; err == nil &&
+		website.PrimaryDomainID != nil && *website.PrimaryDomainID == wd.ID {
+
+		// Pick the next active (non-deleted) binding on this website.
+		var next pluginDb.WebsiteDomain
+		nextErr := s.DB().WithContext(ctx).
+			Where("website_id = ? AND id != ? AND deleted_at IS NULL", websiteID, wd.ID).
+			Order("id ASC").
+			First(&next).Error
+		if errors.Is(nextErr, gorm.ErrRecordNotFound) {
+			// No other binding remains: clear the primary FK.
+			if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", nil).Error; err != nil {
+				return fmt.Errorf("failed to clear primary domain: %w", err)
+			}
+		} else if nextErr != nil {
+			return nextErr
+		} else {
+			if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", next.ID).Error; err != nil {
+				return fmt.Errorf("failed to repoint primary domain: %w", err)
+			}
+		}
+	}
+
 	res := s.DB().WithContext(ctx).
 		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
 		Delete(&pluginDb.WebsiteDomain{})

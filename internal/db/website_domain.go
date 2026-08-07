@@ -40,14 +40,14 @@ type WebsiteDomain struct {
 	DelegationData datatypes.JSONMap `gorm:"type:json"`
 	ProtocolData   datatypes.JSONMap `gorm:"type:json"`
 
-	// DNS hosting is a per-domain property. DNSHostingEnabled, DNSZoneID, and
-	// IPNSKeyID own the PowerDNS hosting lifecycle for this binding, having
-	// moved off the owning Website (which now only references this domain via
-	// Website.PrimaryDomainID). DNSZoneID is the PowerDNS hosting zone; keep it
-	// distinct from ZoneID (the delegation/alt-root zone above).
+	// DNS hosting is a per-domain property. DNSHostingEnabled and DNSZoneID own
+	// the PowerDNS hosting lifecycle for this binding, having moved off the
+	// owning Website (which now only references this domain via
+	// Website.PrimaryDomainID). The IPNS key stays on the Website (it belongs to
+	// the site's target, not the domain). DNSZoneID is the PowerDNS hosting
+	// zone; keep it distinct from ZoneID (the delegation/alt-root zone above).
 	DNSHostingEnabled bool  `gorm:"column:dns_hosting_enabled;default:false"`
 	DNSZoneID         *uint `gorm:"column:dns_zone_id;index:idx_website_domains_dns_zone_id"`
-	IPNSKeyID         *uint `gorm:"column:ipns_key_id;index:idx_website_domains_ipns_key_id"`
 
 	// SSL certificate state for this specific domain binding. SSL is a
 	// per-hostname property (each bound domain may hold its own cert), so it
