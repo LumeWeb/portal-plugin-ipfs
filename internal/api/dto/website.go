@@ -384,8 +384,8 @@ type WebsiteResponse struct {
 	ValidationRecordHost string     `json:"validation_record_host,omitempty"`
 	ValidationExpiresAt  *time.Time `json:"validation_expires_at,omitempty"`
 	LastCheckedAt        *time.Time `json:"last_checked_at,omitempty"`
-	// FK to the DNS zone hosting this website's records
-	DNSZoneID *uint `json:"dns_zone_id,omitempty"`
+	// Canonical PowerDNS zone hosting this website's records (0 = none)
+	ZoneID *uint `json:"zone_id,omitempty"`
 	// Whether DNS hosting (zone + records) is enabled for this website
 	Enabled bool `json:"dns_hosting_enabled"`
 	// True if domain is a subdomain of a shared DNS zone
@@ -429,12 +429,17 @@ func (r *WebsiteResponse) FromModel(model *db.Website) error {
 func (r *WebsiteResponse) SetPrimaryDomain(primary *db.WebsiteDomain) {
 	if primary == nil {
 		r.Domain = ""
-		r.DNSZoneID = nil
+		r.ZoneID = nil
 		r.Enabled = false
 		return
 	}
 	r.Domain = primary.Domain
-	r.DNSZoneID = primary.DNSZoneID
+	// The zone is canonicalized on WebsiteDomain.ZoneID.
+	if primary.ZoneID != 0 {
+		r.ZoneID = &primary.ZoneID
+	} else {
+		r.ZoneID = nil
+	}
 	r.Enabled = primary.DNSHostingEnabled
 	if r.tokenKey != "" && r.ValidationToken != "" {
 		r.ValidationRecordHost = r.tokenKey + "." + primary.Domain

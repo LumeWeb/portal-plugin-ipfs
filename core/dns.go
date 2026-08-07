@@ -45,9 +45,17 @@ type DNSService interface {
 	// websiteDomain is the full domain of the website (may differ from the zone's domain for subdomain websites).
 	UpdateWebsiteDNSRecords(ctx context.Context, zoneID uint, websiteDomain string, targetHash string, targetType pluginDb.WebsiteTargetType) error
 
-	// DeleteWebsiteDNSRecords removes DNS records for a website.
-	// websiteDomain is the full domain of the website (may differ from the zone's domain for subdomain websites).
+	// DeleteWebsiteDNSRecords removes website-owned DNS records. It is unsafe for
+	// delegation-owned bindings because it also removes shared DNSLink/apex records.
 	DeleteWebsiteDNSRecords(ctx context.Context, zoneID uint, websiteDomain string) error
+
+	// CreateWebsiteValidationRecord creates or replaces only the website validation TXT record.
+	// Safe when the zone is also used by domain delegation.
+	CreateWebsiteValidationRecord(ctx context.Context, zoneID uint, websiteDomain string, validationToken string) error
+
+	// DeleteWebsiteValidationRecord removes only website's validation TXT record.
+	// Safe when the zone is also used by domain delegation.
+	DeleteWebsiteValidationRecord(ctx context.Context, zoneID uint, websiteDomain string) error
 
 	// GetZoneRecords retrieves DNS records for a zone from PowerDNS
 	// Returns list of DNSRecord DTOs representing PowerDNS RRSets with filtering applied

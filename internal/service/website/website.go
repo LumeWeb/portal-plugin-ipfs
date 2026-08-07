@@ -22,7 +22,6 @@ import (
 	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"golang.org/x/sync/errgroup"
 
-	"go.lumeweb.com/ipfs-sdk/dnsname"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
@@ -119,7 +118,7 @@ func (s *WebsiteServiceDefault) resolverForDomain(domain string) DNSResolver {
 }
 
 // primaryWebsiteDomain resolves the website's primary (apex) WebsiteDomain
-// binding, which owns the DNS hosting state (dns_hosting_enabled, dns_zone_id)
+// binding, which owns the DNS hosting state (dns_hosting_enabled, zone_id)
 // for the site. It resolves via Website.PrimaryDomainID when set, otherwise
 // falls back to the oldest active binding for safety. Returns
 // gorm.ErrRecordNotFound when the website has no primary binding.
@@ -286,72 +285,90 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				return nil, fmt.Errorf("failed to create website: %w", err)
 			}
 
-			// Create DNS zone if hosting is enabled on the primary domain.
+			// Create website DNS records if hosting is enabled on the primary
+			// domain. Reuse an existing canonical ZoneID; only resolve/create a
+			// zone when the binding does not have one yet.
 			if primaryWD != nil && primaryWD.DNSHostingEnabled && s.dnsSvc != nil {
 				var dnsZone *pluginDb.DNSZone
+				zoneCreated := false
 
-				// Check if a parent zone already exists for this user (e.g. pinner.xyz for docs.pinner.xyz)
-				if parentDomain := extractParentDomain(primaryDomain); parentDomain != "" {
-					existingZone, err := s.dnsSvc.GetZoneByDomain(ctx, parentDomain)
-					if err == nil && existingZone != nil && existingZone.UserID == website.UserID {
-						dnsZone = existingZone
-						s.Logger().Info("Reusing existing parent zone for subdomain website",
-							zap.String("domain", primaryDomain),
-							zap.String("parent_zone_domain", parentDomain),
-							zap.Uint("zone_id", existingZone.ID))
-					}
-				}
-
-				// No parent zone found — create one for this domain
-				if dnsZone == nil {
-					var err error
-					dnsZone, err = s.dnsSvc.CreateZone(ctx, primaryDomain, website.UserID)
+				if primaryWD.ZoneID != 0 {
+					dnsZone, err = s.dnsSvc.GetZone(ctx, primaryWD.ZoneID)
 					if err != nil {
-						s.Logger().Warn("Failed to create DNS zone for website",
+						s.Logger().Warn("Failed to load existing DNS zone for website",
 							zap.Error(err),
-							zap.String("domain", primaryDomain))
-						// Continue without DNS zone - website is still created
+							zap.Uint("website_id", website.ID),
+							zap.Uint("zone_id", primaryWD.ZoneID))
 						dnsZone = nil
+					}
+				} else {
+					// Check if a parent zone already exists for this user (e.g.
+					// pinner.xyz for docs.pinner.xyz).
+					if parentDomain := extractParentDomain(primaryDomain); parentDomain != "" {
+						existingZone, lookupErr := s.dnsSvc.GetZoneByDomain(ctx, parentDomain)
+						if lookupErr == nil && existingZone != nil && existingZone.UserID == website.UserID {
+							dnsZone = existingZone
+							s.Logger().Info("Reusing existing parent zone for subdomain website",
+								zap.String("domain", primaryDomain),
+								zap.String("parent_zone_domain", parentDomain),
+								zap.Uint("zone_id", existingZone.ID))
+						}
+					}
+
+					// No parent zone found — create one for this domain.
+					if dnsZone == nil {
+						var createErr error
+						dnsZone, createErr = s.dnsSvc.CreateZone(ctx, primaryDomain, website.UserID)
+						if createErr != nil {
+							s.Logger().Warn("Failed to create DNS zone for website",
+								zap.Error(createErr),
+								zap.String("domain", primaryDomain))
+							// Continue without DNS zone - website is still created.
+							dnsZone = nil
+						} else {
+							zoneCreated = true
+						}
 					}
 				}
 
 				if dnsZone != nil {
-					// Associate the zone with the primary domain binding.
-					primaryWD.DNSZoneID = &dnsZone.ID
-					err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-						return tx.Model(primaryWD).Update("dns_zone_id", dnsZone.ID)
-					})
-					if err != nil {
-						s.Logger().Error("Failed to update website with DNS zone ID, attempting to clean up DNS zone",
-							zap.Error(err),
-							zap.Uint("website_id", website.ID),
-							zap.Uint("dns_zone_id", dnsZone.ID))
+					// Persist association only for a binding that had no canonical
+					// zone. Existing ZoneID must never be overwritten.
+					if primaryWD.ZoneID == 0 {
+						err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+							return tx.Model(primaryWD).Update("zone_id", dnsZone.ID)
+						})
+						if err != nil {
+							s.Logger().Error("Failed to update website with DNS zone ID, attempting to clean up DNS zone",
+								zap.Error(err),
+								zap.Uint("website_id", website.ID),
+								zap.Uint("zone_id", dnsZone.ID))
 
-						// Only attempt zone cleanup if we created this zone (not reusing a parent)
-						if dnsname.Equal(dnsZone.Domain, primaryDomain) {
-							if cleanupErr := s.dnsSvc.DeleteZone(ctx, dnsZone.ID); cleanupErr != nil {
-								s.Logger().Error("Failed to clean up orphaned DNS zone",
-									zap.Error(cleanupErr),
-									zap.Uint("dns_zone_id", dnsZone.ID))
-								return nil, fmt.Errorf("failed to associate DNS zone with website (and cleanup failed: %w): %w", cleanupErr, err)
+							if zoneCreated {
+								if cleanupErr := s.dnsSvc.DeleteZone(ctx, dnsZone.ID); cleanupErr != nil {
+									s.Logger().Error("Failed to clean up orphaned DNS zone",
+										zap.Error(cleanupErr),
+										zap.Uint("zone_id", dnsZone.ID))
+									return nil, fmt.Errorf("failed to associate DNS zone with website (and cleanup failed: %w): %w", cleanupErr, err)
+								}
 							}
-						}
 
-						return nil, fmt.Errorf("failed to associate DNS zone with website: %w", err)
+							return nil, fmt.Errorf("failed to associate DNS zone with website: %w", err)
+						}
+						primaryWD.ZoneID = dnsZone.ID
 					}
 
-					s.Logger().Info("DNS zone associated with website",
+					s.Logger().Info("DNS zone available for website",
 						zap.Uint("website_id", website.ID),
-						zap.Uint("dns_zone_id", dnsZone.ID),
+						zap.Uint("zone_id", dnsZone.ID),
 						zap.String("domain", primaryDomain))
 
-					// Create DNS records for the website
-					if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, dnsZone.ID, primaryDomain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), fmt.Sprintf("%s=%s", s.verificationTokenKey(), website.ValidationToken)); err != nil {
+					if err := s.createWebsiteDNSRecords(ctx, primaryWD, website, website.ValidationToken); err != nil {
 						s.Logger().Error("Failed to create DNS records for website",
 							zap.Error(err),
 							zap.Uint("website_id", website.ID),
-							zap.Uint("dns_zone_id", dnsZone.ID))
-						// Continue without DNS records - website is still created
+							zap.Uint("zone_id", dnsZone.ID))
+						// Continue without DNS records - website is still created.
 					}
 				}
 			}
@@ -789,15 +806,15 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				// Update DNS records if target changed and DNS hosting is enabled
 				// on the primary domain.
 				// Note: Skip DNS only when staying as IPNS (peer ID doesn't change)
-				if targetHashChanged && primaryWD != nil && primaryWD.DNSHostingEnabled && primaryWD.DNSZoneID != nil && s.dnsSvc != nil {
+				if targetHashChanged && primaryWD != nil && primaryWD.DNSHostingEnabled && primaryWD.ZoneID != 0 && !primaryWD.DelegationRecordsOwned() && s.dnsSvc != nil {
 					newTargetType := pluginDb.WebsiteTargetType(website.TargetType)
 					if oldTargetType != pluginDb.WebsiteTargetTypeIPNS || newTargetType != pluginDb.WebsiteTargetTypeIPNS {
 						newTargetHash := website.TargetHash()
-						if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *primaryWD.DNSZoneID, primaryDomain, newTargetHash, newTargetType); err != nil {
+						if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, primaryWD.ZoneID, primaryDomain, newTargetHash, newTargetType); err != nil {
 							s.Logger().Warn("Failed to update DNS records for website",
 								zap.Error(err),
 								zap.Uint("website_id", websiteID),
-								zap.Uint("dns_zone_id", *primaryWD.DNSZoneID))
+								zap.Uint("zone_id", primaryWD.ZoneID))
 						}
 					}
 				}
@@ -884,7 +901,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 }
 
 // handleDNSEnabledTransition handles the transition when DNS hosting is enabled
-// for the website's primary domain binding. DNS state (dns_zone_id) lives on the
+// for the website's primary domain binding. DNS state (zone_id) lives on the
 // WebsiteDomain; the website still supplies the target and validation token.
 func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, wd *pluginDb.WebsiteDomain) error {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.handleDNSEnabledTransition")
@@ -896,10 +913,11 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 		return fmt.Errorf("failed to load website for DNS hosting transition: %w", err)
 	}
 
-	// Tracks whether this enable transition created the zone itself (vs.
-	// reusing an existing parent zone). Used to roll back a freshly-created
-	// zone if a later step (record creation) fails, so we never orphan it.
+	// Track zone lifecycle for rollback. A failed enable detaches any zone
+	// reference this transition attached, but deletes the PowerDNS zone only
+	// when this transition created it (reused parent zones may have consumers).
 	zoneCreated := false
+	zoneAttached := false
 
 	// Auto-convert a plain-CID IPNS target (target_type=ipns with a raw IPFS
 	// CID) to an IPNS key now that a primary domain binding exists. On the web
@@ -930,8 +948,10 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 		zap.Uint("website_id", website.ID),
 		zap.String("domain", wd.Domain))
 
-	// Create DNS zone if it doesn't exist
-	if wd.DNSZoneID == nil && s.dnsSvc != nil {
+	// Associate the binding with the PowerDNS zone. The zone is canonicalized
+	// on ZoneID (set by CreateDomain via resolveManagedZone; a legacy binding
+	// may still hold ZoneID == 0 and need one resolved/created here).
+	if wd.ZoneID == 0 && s.dnsSvc != nil {
 		var dnsZone *pluginDb.DNSZone
 
 		// Check if a parent zone already exists for this user (e.g. pinner.xyz for docs.pinner.xyz)
@@ -956,9 +976,9 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 			zoneCreated = true
 		}
 
-		// Associate the zone with the primary domain binding.
+		// Persist the canonical zone reference on the binding.
 		err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-			return tx.Model(wd).Update("dns_zone_id", dnsZone.ID)
+			return tx.Model(wd).Update("zone_id", dnsZone.ID)
 		})
 		if err != nil {
 			s.Logger().Error("Failed to update website with DNS zone ID",
@@ -971,15 +991,16 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 			return fmt.Errorf("failed to associate DNS zone with website: %w", err)
 		}
 
-		wd.DNSZoneID = &dnsZone.ID
+		zoneAttached = true
+		wd.ZoneID = dnsZone.ID
 		s.Logger().Info("DNS zone associated with website",
 			zap.Uint("website_id", website.ID),
-			zap.Uint("dns_zone_id", dnsZone.ID),
+			zap.Uint("zone_id", dnsZone.ID),
 			zap.String("domain", wd.Domain))
 	}
 
 	// Create DNS records if zone exists
-	if wd.DNSZoneID != nil && s.dnsSvc != nil {
+	if wd.ZoneID != 0 && s.dnsSvc != nil {
 		// Regenerate validation token if expired or not set
 		var newToken string
 		if website.IsExpired() || website.ValidationToken == "" {
@@ -992,28 +1013,34 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 			newToken = website.ValidationToken
 		}
 
-		// Create DNS records
-		err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *wd.DNSZoneID, wd.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), fmt.Sprintf("%s=%s", s.verificationTokenKey(), newToken))
+		// Delegation owns shared DNSLink and apex records. Use the
+		// ownership-aware writer so website hosting cannot replace them.
+		err := s.createWebsiteDNSRecords(ctx, wd, &website, newToken)
 		if err != nil {
-			// Roll back the partially-created DNS state so the binding is not
-			// left pointing at a zone with no (or partial) records: delete any
-			// records created for this domain, delete the zone if this
-			// transition created it, and clear dns_zone_id. Without this a
-			// failed enable orphans the zone and a later disable no-ops (flag
-			// already false), leaking the zone with no recovery path.
+			// Roll back the partially-created DNS state. Delegation-owned
+			// bindings share DNSLink and apex records with delegation, so only
+			// the website validation record may be removed. Non-delegated
+			// bindings own the complete website record set. A newly-created
+			// non-delegated zone is deleted and its binding reference cleared.
 			s.Logger().Error("Failed to create DNS records, rolling back DNS setup",
 				zap.Error(err),
 				zap.Uint("website_id", website.ID),
-				zap.Uint("dns_zone_id", *wd.DNSZoneID),
+				zap.Uint("zone_id", wd.ZoneID),
 				zap.String("domain", wd.Domain))
-			_ = s.dnsSvc.DeleteWebsiteDNSRecords(ctx, *wd.DNSZoneID, wd.Domain)
-			if zoneCreated {
-				_ = s.dnsSvc.DeleteZone(ctx, *wd.DNSZoneID)
+			if wd.DelegationRecordsOwned() {
+				_ = s.dnsSvc.DeleteWebsiteValidationRecord(ctx, wd.ZoneID, wd.Domain)
+			} else {
+				_ = s.dnsSvc.DeleteWebsiteDNSRecords(ctx, wd.ZoneID, wd.Domain)
 			}
-			_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				return tx.Model(wd).Update("dns_zone_id", nil)
-			})
-			wd.DNSZoneID = nil
+			if !wd.DelegationRecordsOwned() && zoneAttached {
+				if zoneCreated {
+					_ = s.dnsSvc.DeleteZone(ctx, wd.ZoneID)
+				}
+				_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+					return tx.Model(wd).Update("zone_id", 0)
+				})
+				wd.ZoneID = 0
+			}
 			return fmt.Errorf("failed to create DNS records: %w", err)
 		}
 
@@ -1042,7 +1069,7 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 }
 
 // handleDNSDisabledTransition handles the transition when DNS hosting is disabled
-// for the website's primary domain binding. DNS state (dns_zone_id) lives on the
+// for the website's primary domain binding. DNS state (zone_id) lives on the
 // WebsiteDomain; the website status is reset to pending_validation.
 func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context, wd *pluginDb.WebsiteDomain) error {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.handleDNSDisabledTransition")
@@ -1058,37 +1085,53 @@ func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context,
 		zap.Uint("website_id", website.ID),
 		zap.String("domain", wd.Domain))
 
+	// A delegation-owned binding holds its PowerDNS zone for alt-root
+	// delegation (DS/DNSSEC/apex), not just website hosting. The website DNS
+	// hosting disable path must not tear down that zone — deleting the zone or
+	// its records would break the delegation (VerifyDomain, EnableDNSSEC,
+	// GetActiveDNSSECDS, and republish all read zone_id / the zone records).
+	// For such a binding, disabling website DNS hosting is a no-op for the
+	// zone: only the website's validation state is reset and the hosting flag
+	// is cleared (lines 2081-2169), leaving the delegation ownership intact.
+	if wd.DelegationRecordsOwned() {
+		s.Logger().Info("Skipping DNS zone teardown: zone is delegation-owned",
+			zap.Uint("website_id", website.ID),
+			zap.String("domain", wd.Domain),
+			zap.Uint("zone_id", wd.ZoneID))
+		return s.resetWebsiteValidationState(ctx, website)
+	}
+
 	recordsDeleted := false
 
 	// Delete DNS records for this website (not the zone — other websites may share it)
-	if wd.DNSZoneID != nil && s.dnsSvc != nil {
-		err := s.dnsSvc.DeleteWebsiteDNSRecords(ctx, *wd.DNSZoneID, wd.Domain)
+	if wd.ZoneID != 0 && s.dnsSvc != nil {
+		err := s.dnsSvc.DeleteWebsiteDNSRecords(ctx, wd.ZoneID, wd.Domain)
 		if err != nil {
 			s.Logger().Warn("Failed to delete DNS records for website",
 				zap.Error(err),
 				zap.Uint("website_id", website.ID),
-				zap.Uint("dns_zone_id", *wd.DNSZoneID))
+				zap.Uint("zone_id", wd.ZoneID))
 		} else {
 			recordsDeleted = true
 			s.Logger().Info("DNS records deleted for website",
 				zap.Uint("website_id", website.ID),
-				zap.Uint("dns_zone_id", *wd.DNSZoneID))
+				zap.Uint("zone_id", wd.ZoneID))
 		}
 	}
 
 	// Check if any other domain bindings still reference this zone
 	zoneIsEmpty := false
-	if recordsDeleted && wd.DNSZoneID != nil {
+	if recordsDeleted && wd.ZoneID != 0 {
 		var count int64
 		err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 			return tx.Model(&pluginDb.WebsiteDomain{}).
-				Where("dns_zone_id = ? AND id != ? AND deleted_at IS NULL", *wd.DNSZoneID, wd.ID).
+				Where("zone_id = ? AND id != ? AND deleted_at IS NULL", wd.ZoneID, wd.ID).
 				Count(&count)
 		})
 		if err != nil {
 			s.Logger().Warn("Failed to count domain bindings sharing DNS zone",
 				zap.Error(err),
-				zap.Uint("dns_zone_id", *wd.DNSZoneID))
+				zap.Uint("zone_id", wd.ZoneID))
 		} else {
 			zoneIsEmpty = count == 0
 		}
@@ -1096,24 +1139,52 @@ func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context,
 
 	// Only delete the zone if no other domain bindings are using it
 	zoneDeleted := false
-	if zoneIsEmpty && wd.DNSZoneID != nil && s.dnsSvc != nil {
-		err := s.dnsSvc.DeleteZone(ctx, *wd.DNSZoneID)
+	if zoneIsEmpty && wd.ZoneID != 0 && s.dnsSvc != nil {
+		err := s.dnsSvc.DeleteZone(ctx, wd.ZoneID)
 		if err != nil {
 			s.Logger().Warn("Failed to delete DNS zone for website",
 				zap.Error(err),
 				zap.Uint("website_id", website.ID),
-				zap.Uint("dns_zone_id", *wd.DNSZoneID))
+				zap.Uint("zone_id", wd.ZoneID))
 		} else {
 			zoneDeleted = true
 			s.Logger().Info("DNS zone deleted (no other domain bindings using it)",
 				zap.Uint("website_id", website.ID),
-				zap.Uint("dns_zone_id", *wd.DNSZoneID))
+				zap.Uint("zone_id", wd.ZoneID))
 		}
 	}
 
 	// Reset website status to pending_validation.
-	// Only clear dns_zone_id on the primary binding if the zone was actually
+	// Only clear zone_id on the primary binding if the zone was actually
 	// deleted from PowerDNS.
+	if err := s.resetWebsiteValidationState(ctx, website); err != nil {
+		return err
+	}
+
+	if zoneDeleted {
+		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			return tx.Model(wd).Update("zone_id", 0)
+		}); err != nil {
+			s.Logger().Error("Failed to clear DNS zone ID on primary domain binding",
+				zap.Error(err),
+				zap.Uint("website_id", website.ID))
+			return fmt.Errorf("failed to clear DNS zone ID: %w", err)
+		}
+		wd.ZoneID = 0
+	}
+
+	s.Logger().Info("DNS hosting disabled, website reset to pending_validation",
+		zap.Uint("website_id", website.ID),
+		zap.String("domain", wd.Domain),
+		zap.Bool("zone_deleted", zoneDeleted))
+
+	return nil
+}
+
+// resetWebsiteValidationState resets a website's status to pending_validation
+// after DNS-hosting teardown. It is the part of handleDNSDisabledTransition
+// that also applies when the zone is delegation-owned and must be preserved.
+func (s *WebsiteServiceDefault) resetWebsiteValidationState(ctx context.Context, website pluginDb.Website) error {
 	updates := map[string]interface{}{
 		"status": string(pluginDb.WebsiteStatusPendingValidation),
 	}
@@ -1126,25 +1197,6 @@ func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context,
 			zap.Uint("website_id", website.ID))
 		return fmt.Errorf("failed to update website: %w", err)
 	}
-
-	if zoneDeleted {
-		err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-			return tx.Model(wd).Update("dns_zone_id", nil)
-		})
-		if err != nil {
-			s.Logger().Error("Failed to clear DNS zone ID on primary domain binding",
-				zap.Error(err),
-				zap.Uint("website_id", website.ID))
-			return fmt.Errorf("failed to clear DNS zone ID: %w", err)
-		}
-		wd.DNSZoneID = nil
-	}
-
-	s.Logger().Info("DNS hosting disabled, website reset to pending_validation",
-		zap.Uint("website_id", website.ID),
-		zap.String("domain", wd.Domain),
-		zap.Bool("zone_deleted", zoneDeleted))
-
 	return nil
 }
 
@@ -1158,8 +1210,9 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 		DeleteWebsiteTotal.WithLabelValues(LabelStatusError),
 		func() error {
 			var count int64
-			var dnsZoneID *uint
+			var dnsZoneID uint
 			var websiteDomain string
+			var dnsDelegationOwned bool
 
 			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 				// First, check if the website exists and is not blocked
@@ -1184,8 +1237,9 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 				// carries DNS state).
 				primaryWD, _ := s.primaryWebsiteDomain(ctx, &website)
 				if primaryWD != nil {
-					dnsZoneID = primaryWD.DNSZoneID
+					dnsZoneID = primaryWD.ZoneID
 					websiteDomain = primaryWD.Domain
+					dnsDelegationOwned = primaryWD.DelegationRecordsOwned()
 				}
 
 				// Perform the soft delete
@@ -1229,14 +1283,21 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 				ctx, websiteDomain, userID, websiteID,
 			))
 
-			// Clean up DNS records if DNS hosting was enabled
-			// Note: We do NOT delete the zone itself as zones are independent from websites
-			if dnsZoneID != nil && s.dnsSvc != nil {
-				if err := s.dnsSvc.DeleteWebsiteDNSRecords(ctx, *dnsZoneID, websiteDomain); err != nil {
+			if dnsZoneID != 0 && s.dnsSvc != nil {
+				var cleanupErr error
+				if dnsDelegationOwned {
+					// DNSLink/apex records are shared with delegation. Remove only
+					// website-owned validation state.
+					cleanupErr = s.dnsSvc.DeleteWebsiteValidationRecord(ctx, dnsZoneID, websiteDomain)
+				} else {
+					// Non-delegated bindings own their website DNS records.
+					cleanupErr = s.dnsSvc.DeleteWebsiteDNSRecords(ctx, dnsZoneID, websiteDomain)
+				}
+				if cleanupErr != nil {
 					s.Logger().Warn("Failed to delete DNS records for website",
-						zap.Error(err),
+						zap.Error(cleanupErr),
 						zap.Uint("website_id", websiteID),
-						zap.Uint("dns_zone_id", *dnsZoneID))
+						zap.Uint("zone_id", dnsZoneID))
 					// Continue despite DNS cleanup failure - website is already deleted
 				}
 			}
@@ -1569,17 +1630,34 @@ func (s *WebsiteServiceDefault) checkAttachedDelegations(ctx context.Context, we
 	return true, "", "", nil
 }
 
+// createWebsiteDNSRecords writes only the DNS records that website hosting owns.
+// Delegation-owned bindings share DNSLink and apex records with the delegation
+// service, so website lifecycle operations may update only validation TXT.
+func (s *WebsiteServiceDefault) createWebsiteDNSRecords(ctx context.Context, wd *pluginDb.WebsiteDomain, website *pluginDb.Website, validationToken string) error {
+	if s.dnsSvc == nil || wd.ZoneID == 0 {
+		return nil
+	}
+
+	tokenRecord := fmt.Sprintf("%s=%s", s.verificationTokenKey(), validationToken)
+	// HNS zones are DNSSEC-signed at the apex. The generic website writer's
+	// ALIAS apex path is unsafe there even before delegation reaches a status
+	// that makes DelegationOwned true. HNS delegation owns the shared records.
+	if wd.DelegationRecordsOwned() {
+		return s.dnsSvc.CreateWebsiteValidationRecord(ctx, wd.ZoneID, wd.Domain, tokenRecord)
+	}
+	return s.dnsSvc.CreateWebsiteDNSRecords(ctx, wd.ZoneID, wd.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), tokenRecord)
+}
+
 func (s *WebsiteServiceDefault) regenerateExpiredToken(ctx context.Context, website *pluginDb.Website, wd *pluginDb.WebsiteDomain) error {
 	newToken, err := s.generateValidationToken()
 	if err != nil {
 		return fmt.Errorf("failed to regenerate expired validation token: %w", err)
 	}
 
-	if wd.DNSZoneID != nil && s.dnsSvc != nil {
-		tokenRecord := fmt.Sprintf("%s=%s", s.verificationTokenKey(), newToken)
-		if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *wd.DNSZoneID, wd.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), tokenRecord); err != nil {
+	if wd.ZoneID != 0 && s.dnsSvc != nil {
+		if recordErr := s.createWebsiteDNSRecords(ctx, wd, website, newToken); recordErr != nil {
 			s.Logger().Warn("Failed to update DNS records with new validation token",
-				zap.Error(err),
+				zap.Error(recordErr),
 				zap.Uint("website_id", website.ID),
 				zap.String("domain", wd.Domain))
 		}
@@ -2125,15 +2203,21 @@ func (s *WebsiteServiceDefault) SetDomainDNSEnabled(ctx context.Context, userID,
 	// (true) binding has a zone, an unmanaged (false) binding has none. Any
 	// disagreement is an orphan left by a partial transition and must be
 	// re-reconciled rather than skipped:
-	//   - flag true, zone nil: enable-orphan (UpdateWebsite persists the flag
+	//   - flag true, zone 0: enable-orphan (UpdateWebsite persists the flag
 	//     before the transition; the transition may roll the zone back on
 	//     failure without reverting the flag).
-	//   - flag false, zone non-nil: disable-orphan (the disable transition
-	//     clears dns_zone_id only when PowerDNS actually deleted the zone, and
+	//   - flag false, zone non-zero: disable-orphan (the disable transition
+	//     clears zone_id only when PowerDNS actually deleted the zone, and
 	//     zone-deletion failures are non-fatal).
 	// Requiring agreement lets a retry (enable or disable) recover either
 	// orphan instead of silently leaking the DNS state.
-	if wd.DNSHostingEnabled == enabled && (wd.DNSHostingEnabled == (wd.DNSZoneID != nil)) {
+	//
+	// Exception: a delegation-owned binding legitimately holds its zone (zone_id
+	// != 0) for alt-root delegation even when dns_hosting_enabled is false — the
+	// website-DNS disable path preserves the delegation zone (see
+	// handleDNSDisabledTransition), so flag=false + zone!=0 is a valid steady
+	// state, not an orphan. Such bindings are always considered reconciled.
+	if wd.DNSHostingEnabled == enabled && (wd.DNSHostingEnabled == (wd.ZoneID != 0) || wd.DelegationRecordsOwned()) {
 		return &wd, nil
 	}
 
