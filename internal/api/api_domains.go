@@ -119,20 +119,15 @@ func (a *API) updateDomain(c echo.Context) error {
 
 	var primary *pluginDb.WebsiteDomain
 
-	// Make this binding the website's primary (apex) domain first, so any
-	// concurrent DNS-enable applies to it as the current primary.
-	if req.Primary != nil {
-		p, perr := a.websiteService.SetPrimaryDomain(reqCtx, userID, uint(websiteID), uint(domainID))
-		if perr != nil {
-			a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", uint(domainID)), zap.Error(perr))
-			apiErr := NewError(ErrKeyFileProcessingFailed, perr)
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-		primary = p
-	}
-
-	// Toggle DNS hosting on this binding (enable runs the zone/records/IPNS
-	// transition; disable tears it down).
+	// Order matters for atomicity when both fields are set. SetDomainDNSEnabled
+	// is the side-effect-heavy, fallible operation (it runs the zone/IPNS/record
+	// transition in handleDNSEnabledTransition) while SetPrimaryDomain is a
+	// lightweight metadata write. Run the DNS transition FIRST so that, if it
+	// fails, nothing has been persisted yet (SetPrimaryDomain has not run) and
+	// the domain is not left inconsistently repointed-with-DNS-off. Only after
+	// the transition succeeds do we promote the binding to primary. Conversely,
+	// a failure of SetPrimaryDomain (a pure DB error) leaves DNS already enabled
+	// but is idempotent and recoverable — the reverse failure mode.
 	if req.DNSHostingEnabled != nil {
 		d, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, userID, uint(websiteID), uint(domainID), *req.DNSHostingEnabled)
 		if derr != nil {
@@ -141,6 +136,17 @@ func (a *API) updateDomain(c echo.Context) error {
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
 		primary = d
+	}
+
+	// Promote to primary after DNS side effects have been confirmed applied.
+	if req.Primary != nil {
+		p, perr := a.websiteService.SetPrimaryDomain(reqCtx, userID, uint(websiteID), uint(domainID))
+		if perr != nil {
+			a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", uint(domainID)), zap.Error(perr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, perr)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		primary = p
 	}
 
 	// Reload the binding so the response reflects every applied change. Prefer
