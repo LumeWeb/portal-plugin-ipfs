@@ -10,8 +10,8 @@ import (
 )
 
 // TestDomainResponse_FromModel_HNS verifies a full HNS DelegationBundle is
-// projected into the typed DNSDelegation shape with the DS promoted to a
-// first-class field.
+// projected into the typed DNSDelegation shape with any stored DS entry
+// stripped (the DS is derived live, not served from persisted data).
 func TestDomainResponse_FromModel_HNS(t *testing.T) {
 	delegation := datatypes.JSONMap{
 		"mode": "delegated",
@@ -52,11 +52,12 @@ func TestDomainResponse_FromModel_HNS(t *testing.T) {
 
 	// No first-class DS field: the DS is a parent_records entry derived from
 	// the live PowerDNS key (computed on the fly in dns-requirements), never a
-	// stored/promoted value.
+	// stored/promoted value. A DS present in the stored delegation data is
+	// stale/leftover and is stripped at read time.
 	assert.NotContains(t, resp.Delegation.ParentRecords, "ds")
 
-	// Parent records preserved with type/ns/address.
-	require.Len(t, resp.Delegation.ParentRecords, 3)
+	// Parent records preserved (stored DS entry stripped); type/ns/address kept.
+	require.Len(t, resp.Delegation.ParentRecords, 2)
 	assert.Equal(t, "NS", resp.Delegation.ParentRecords[0].Type)
 	assert.Equal(t, "GLUE4", resp.Delegation.ParentRecords[1].Type)
 	assert.Equal(t, "ns1.lumeweb.", resp.Delegation.ParentRecords[1].NS)

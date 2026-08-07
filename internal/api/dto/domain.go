@@ -37,6 +37,27 @@ type DNSDelegationRecord struct {
 	Address string `json:"address,omitempty"`
 }
 
+// removeStoredDS returns the records with any DS entry stripped out. A DS is
+// a derivative of the live PowerDNS signing key, never something that should
+// be served from persisted delegation data (stored DS goes stale on key
+// rotation). It is stripped at read time so no endpoint ever surfaces a
+// leftover/stale DS from the DB; dns-requirements injects the live one.
+func removeStoredDS(records []DNSDelegationRecord) []DNSDelegationRecord {
+	if len(records) == 0 {
+		return records
+	}
+	out := records[:0]
+	for _, r := range records {
+		if r.Type != "DS" {
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // DNSDelegation carries the namespace-specific records a user must publish to
 // complete domain delegation.
 //
@@ -180,13 +201,15 @@ func mapDNSDelegation(raw []byte) *DNSDelegation {
 
 		d := &DNSDelegation{
 			Mode:                 hns.Mode,
-			ParentRecords:        hns.ParentRecords,
+			ParentRecords:        removeStoredDS(hns.ParentRecords),
 			AuthoritativeRecords: hns.AuthoritativeRecords,
 		}
 		// The DS is carried as a parent_records entry, not as a first-class
 		// field: it is a derivative of the live PowerDNS signing key computed
-		// on the fly (API.domainDNSRequirements -> GetActiveDNSSECDS), and is
-		// never read back from stored delegation data.
+		// on the fly (API.domainDNSRequirements -> GetActiveDNSSECDS). Any DS
+		// persisted in the stored delegation data is a stale snapshot that went
+		// out of sync on key rotation, so it is stripped here and never served
+		// from storage — the live DS is injected fresh by dns-requirements.
 		return d
 	}
 
