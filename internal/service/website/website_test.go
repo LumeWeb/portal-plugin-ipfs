@@ -161,6 +161,12 @@ func bindPrimaryDomain(tb coreTesting.TB, ctx coreTesting.TestContext, websiteID
 // CreateWebsite's DNS/IPNS side-effects run against the pre-existing binding.
 func prebindPrimaryDomain(tb coreTesting.TB, ctx coreTesting.TestContext, website *pluginDb.Website, domain string, dnsHostingEnabled bool) *pluginDb.WebsiteDomain {
 	require.NotZero(tb, website.ID, "website must carry an explicit ID before primary-domain prebind")
+	// Mirror the app's domain-bind guardrail: purge any prior soft-deleted
+	// tombstone for this (domain, namespace) so a fresh binding does not collide
+	// with the unique key (matching AddDomain in delegated_domain_service).
+	require.NoError(tb, ctx.DB().
+		Where("domain = ? AND namespace = ? AND deleted_at IS NOT NULL", domain, pluginDb.DomainNamespaceICANN).
+		Unscoped().Delete(&pluginDb.WebsiteDomain{}).Error)
 	wd := createTestWebsiteDomain(website.ID, domain)
 	wd.DNSHostingEnabled = dnsHostingEnabled
 	require.NoError(tb, ctx.DB().Create(wd).Error)

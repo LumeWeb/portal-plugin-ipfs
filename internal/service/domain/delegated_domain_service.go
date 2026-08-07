@@ -129,6 +129,20 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		Status:    pluginDb.DomainStatusDraft,
 	}
 
+	// Soft deletes leave a tombstone row that still occupies the
+	// (domain, namespace) unique key, so re-binding the same domain after a
+	// delete would violate the constraint. This app-level guardrail (matching
+	// the system's soft-delete semantics without relying on a partial index)
+	// purges any prior soft-deleted tombstone for this key before inserting,
+	// freeing it for a fresh binding. Only tombstones (deleted_at IS NOT NULL)
+	// are removed; a live same-key binding is a genuine conflict and left to the
+	// unique key to reject.
+	if err := s.DB().WithContext(ctx).
+		Where("domain = ? AND namespace = ? AND deleted_at IS NOT NULL", domain, namespace).
+		Unscoped().Delete(&pluginDb.WebsiteDomain{}).Error; err != nil {
+		return nil, fmt.Errorf("failed to purge stale domain binding: %w", err)
+	}
+
 	if err := s.DB().WithContext(ctx).Create(wd).Error; err != nil {
 		return nil, fmt.Errorf("persist failed: %w", err)
 	}

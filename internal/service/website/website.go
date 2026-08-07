@@ -1170,6 +1170,20 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 					return tx
 				}
 				count = result.RowsAffected
+
+				// Cascade soft-delete the website's domain bindings so the
+				// domain can be re-bound after this website is removed,
+				// matching the rest of the system's soft-delete semantics.
+				// The (domain, namespace) unique key would otherwise block a
+				// fresh binding; the app resolves this at bind time by purging
+				// the prior soft-deleted tombstone (see AddDomain guardrail)
+				// rather than relying on a partial index.
+				if count > 0 {
+					if derr := tx.Where("website_id = ?", websiteID).Delete(&pluginDb.WebsiteDomain{}).Error; derr != nil {
+						_ = tx.AddError(fmt.Errorf("failed to delete website domain bindings: %w", derr))
+						return tx
+					}
+				}
 				return tx
 			})
 
