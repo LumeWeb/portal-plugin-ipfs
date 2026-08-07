@@ -33,6 +33,13 @@ type DNSZoneService interface {
 	// record type (e.g. RecordTypeA or RecordTypeALIAS). content is the raw
 	// value: an IP address for A, a gateway hostname for ALIAS.
 	CreateApexRecord(ctx context.Context, zoneID uint, recordType pluginCore.RecordType, content string) error
+	// SetTLSARecord writes (or replaces) the DANE TLSA record for a zone's
+	// HTTPS/TCP owner `_443._tcp` pointing at the portal-managed authoritative
+	// zone. content is the TLSA rdata: "usage selector matching hash" (e.g.
+	// "3 1 1 <hex>")). For HNS managed zones this makes DANE validators resolve
+	// the TLSA against the portal's PowerDNS zone; without it, authoritative
+	// queries return NXDOMAIN.
+	SetTLSARecord(ctx context.Context, zoneID uint, content string) error
 	// EnableDNSSEC enables DNSSEC on a zone and returns the DNSKEY.
 	EnableDNSSEC(ctx context.Context, zoneID uint) (dnskey string, err error)
 }
@@ -300,6 +307,7 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 	// published pin and break every DANE-validating client. The cert, TLSA, and
 	// owner name, by contrast, are refreshed on every push (a cert may be freely
 	// re-issued from the same key with an identical SPKI).
+	var zoneID uint
 	txErr := s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Lock the target row so concurrent cert pushes serialize per-domain.
 		locked := tx.Clauses(clause.Locking{Strength: "UPDATE"})
@@ -307,6 +315,7 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 		if err := locked.Where("domain = ? AND namespace = ?", domain, ns).First(&wd).Error; err != nil {
 			return err // includes gorm.ErrRecordNotFound
 		}
+		zoneID = wd.ZoneID
 		if wd.ProtocolData == nil {
 			wd.ProtocolData = make(datatypes.JSONMap)
 		}
@@ -375,6 +384,21 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 		return "", "", fmt.Errorf("save domain tlsa: %w", txErr)
 	}
 
+	// Publish the TLSA to the portal-managed authoritative zone in PowerDNS.
+	// Without this, the TLSA was only stored in the DB (DelegationData) and
+	// never served, so DANE validators get NXDOMAIN for `_443._tcp.<domain>`.
+	// Only providers whose namespace uses DANE and whose zone the portal
+	// manages (e.g. HNS) do this; the decision is a provider capability, not
+	// a namespace string comparison, so any future DANE-capable namespace
+	// opts in here rather than via a hardcoded "hns" check.
+	if s.dnsSvc != nil && zoneID != 0 && provider.UsesManagedZoneTLSA() {
+		if err := s.dnsSvc.SetTLSARecord(ctx, zoneID, tlsa); err != nil {
+			// DNS publish failure is surfaced but the persisted cert/TLSA state
+			// is retained so a later cert push retries the publish.
+			return tlsa, ownerName, fmt.Errorf("publish tlsa to zone: %w", err)
+		}
+	}
+
 	return tlsa, ownerName, nil
 }
 
@@ -430,7 +454,7 @@ func (s *DelegatedDomainService) GetWebsiteDomainByDomainAndNamespace(ctx contex
 // the WebsiteDomain.ProtocolData JSON map (the per-protocol data store), keeping
 // the key, cert, TLSA, and owner name together as one per-protocol unit.
 const (
-	daneKeyField              = "dane_cert_pem" // last pushed cert (not a source of truth)
+	daneKeyField              = "dane_cert_pem"    // last pushed cert (not a source of truth)
 	protocolDataPrivateKeyKey = "dane_private_key" // encrypted at rest, written once
 	protocolDataTLSAKey       = "tlsa"
 	protocolDataOwnerKey      = "owner_name"

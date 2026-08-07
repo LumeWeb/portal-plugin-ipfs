@@ -161,6 +161,16 @@ func (s *DNSServiceDefault) CreateApexRecord(ctx context.Context, zoneID uint, r
 	return err
 }
 
+// SetTLSARecord writes (or replaces) the DANE TLSA record for a zone's
+// HTTPS/TCP owner `_443._tcp` in the portal-managed authoritative zone
+// (adapter for domain.DNSZoneService). content is the TLSA rdata, e.g.
+// "3 1 1 <sha256hex>". Publishing this is what lets DANE validators resolve the
+// TLSA against PowerDNS; without it authoritative queries return NXDOMAIN.
+func (s *DNSServiceDefault) SetTLSARecord(ctx context.Context, zoneID uint, content string) error {
+	_, err := s.CreateRecord(ctx, zoneID, "_443._tcp", "TLSA", content, 300)
+	return err
+}
+
 // EnableDNSSEC enables DNSSEC on a zone and returns the DNSKEY record content.
 // It delegates to the PowerDNS client's cryptokey API.
 func (s *DNSServiceDefault) EnableDNSSEC(ctx context.Context, zoneID uint) (string, error) {

@@ -64,6 +64,14 @@ type DNSService interface {
 	// or RecordTypeALIAS (gateway hostname content).
 	CreateApexRecord(ctx context.Context, zoneID uint, recordType RecordType, content string) error
 
+	// SetTLSARecord writes (or replaces) the DANE TLSA record for a zone's
+	// HTTPS/TCP owner `_443._tcp` in the portal-managed authoritative zone.
+	// content is the TLSA rdata: "usage selector matching hash" (e.g.
+	// "3 1 1 <hex>"). Without publishing the TLSA to the authoritative zone,
+	// DANE validators get NXDOMAIN for the TLSA owner and DANE cannot be
+	// established for portal-managed (DNSSEC-signed) domains.
+	SetTLSARecord(ctx context.Context, zoneID uint, content string) error
+
 	// CreateRecord creates a new DNS record in PowerDNS via RRSet
 	// name: the record name (e.g., "www")
 	// recordType: the record type (e.g., "A", "CNAME")

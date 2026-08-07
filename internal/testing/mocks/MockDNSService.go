@@ -239,6 +239,22 @@ func (_mock *MockDNSService) CreateApexRecord(ctx context.Context, zoneID uint, 
 	return r0
 }
 
+func (_mock *MockDNSService) SetTLSARecord(ctx context.Context, zoneID uint, content string) error {
+	ret := _mock.Called(ctx, zoneID, content)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetTLSARecord")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string) error); ok {
+		r0 = returnFunc(ctx, zoneID, content)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
 // MockDNSService_CreateApexRecord_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CreateApexRecord'
 type MockDNSService_CreateApexRecord_Call struct {
 	*mock.Call
@@ -287,6 +303,48 @@ func (_c *MockDNSService_CreateApexRecord_Call) Return(err error) *MockDNSServic
 }
 
 func (_c *MockDNSService_CreateApexRecord_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, recordType core0.RecordType, content string) error) *MockDNSService_CreateApexRecord_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// MockDNSService_SetTLSARecord_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetTLSARecord'
+type MockDNSService_SetTLSARecord_Call struct {
+	*mock.Call
+}
+
+// SetTLSARecord is a helper method to define mock.On call
+//   - ctx context.Context
+//   - zoneID uint
+//   - content string
+func (_e *MockDNSService_Expecter) SetTLSARecord(ctx any, zoneID any, content any) *MockDNSService_SetTLSARecord_Call {
+	return &MockDNSService_SetTLSARecord_Call{Call: _e.mock.On("SetTLSARecord", ctx, zoneID, content)}
+}
+
+func (_c *MockDNSService_SetTLSARecord_Call) Run(run func(ctx context.Context, zoneID uint, content string)) *MockDNSService_SetTLSARecord_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(arg0, arg1, arg2)
+	})
+	return _c
+}
+
+func (_c *MockDNSService_SetTLSARecord_Call) Return(err error) *MockDNSService_SetTLSARecord_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockDNSService_SetTLSARecord_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, content string) error) *MockDNSService_SetTLSARecord_Call {
 	_c.Call.Return(run)
 	return _c
 }

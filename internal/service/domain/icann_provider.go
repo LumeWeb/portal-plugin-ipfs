@@ -64,6 +64,12 @@ func (p *ICANNProvider) OnCertAvailable(ctx context.Context, domain string, cert
 	return nil
 }
 
+// UsesManagedZoneTLSA reports that ICANN does not use DANE, so no TLSA record
+// is published for ICANN domains.
+func (p *ICANNProvider) UsesManagedZoneTLSA() bool {
+	return false
+}
+
 // Nameservers returns the ICANN nameservers configured for the namespace.
 func (p *ICANNProvider) Nameservers() []string {
 	return p.nameservers

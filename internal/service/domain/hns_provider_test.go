@@ -199,6 +199,9 @@ func (f *fakeDNSZoneService) CreateDNSLinkRecord(ctx context.Context, zoneID uin
 func (f *fakeDNSZoneService) CreateApexRecord(ctx context.Context, zoneID uint, recordType pluginCore.RecordType, content string) error {
 	panic("unused")
 }
+func (f *fakeDNSZoneService) SetTLSARecord(ctx context.Context, zoneID uint, content string) error {
+	panic("unused")
+}
 func (f *fakeDNSZoneService) EnableDNSSEC(ctx context.Context, zoneID uint) (string, error) {
 	return f.dnskey, nil
 }

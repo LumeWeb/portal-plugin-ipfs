@@ -18,6 +18,12 @@ type DomainProvider interface {
 	// Providers can use it to update TLSA in delegation data or trigger
 	// namespace-specific protocol updates. Can be nil-safe by returning nil.
 	OnCertAvailable(ctx context.Context, domain string, certPEM string) error
+	// UsesManagedZoneTLSA reports whether this provider's TLS certs translate
+	// into a DANE TLSA record that the portal must publish into its
+	// portal-managed authoritative PowerDNS zone (e.g. an alt-root namespace
+	// whose zone the portal DNSSEC-signs). Providers that do not use DANE
+	// (e.g. ICANN) return false so no spurious _443._tcp TLSA is published.
+	UsesManagedZoneTLSA() bool
 	// Nameservers returns the nameservers this provider publishes and
 	// validates delegation against for its namespace. Alt-root providers
 	// (e.g. HNS) return their own namespace-specific nameservers, which
