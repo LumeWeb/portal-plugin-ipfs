@@ -207,6 +207,9 @@ func (f *fakeDNSZoneService) GetActiveDNSSECDS(ctx context.Context, zoneID uint)
 	// set it explicitly. Return empty (self-managed / no DS) by default.
 	return "", nil
 }
+func (f *fakeDNSZoneService) EnsureSOAMNAME(ctx context.Context, zoneID uint, domain string, nameservers []string) error {
+	return nil
+}
 
 func TestHNSProvider_BuildDelegation_NoDSRecord(t *testing.T) {
 	// Regression: the delegation bundle must NOT carry a DS record in
