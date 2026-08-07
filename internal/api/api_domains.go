@@ -372,6 +372,8 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 	// yield a DS and report DNSSEC state; ICANN domains have no parent DS and
 	// no portal DNSSEC, so this is a no-op that omits the DNSSEC fields
 	// entirely (per the DTO contract) and only defends against a stale DS.
+	// A self-hosted binding owns no delegation bundle, so resp.Delegation is
+	// nil and this block is naturally skipped.
 	managed := a.delegatedDomainSvc != nil && a.delegatedDomainSvc.NamespaceUsesManagedZoneTLSA(string(wd.Namespace))
 	if resp.Delegation != nil && a.dnsService != nil {
 		if managed {

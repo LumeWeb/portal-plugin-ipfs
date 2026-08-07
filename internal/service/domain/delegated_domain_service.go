@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	dane "go.lumeweb.com/dane"
@@ -28,6 +29,9 @@ type DelegatedDomainService struct {
 
 type DNSZoneService interface {
 	CreateZone(ctx context.Context, domain string, userID uint) (*pluginDb.DNSZone, error)
+	// GetZoneByDomain retrieves a zone by its domain name (including
+	// soft-deleted zones). Returns gorm.ErrRecordNotFound when none match.
+	GetZoneByDomain(ctx context.Context, domain string) (*pluginDb.DNSZone, error)
 	DeleteZone(ctx context.Context, zoneID uint) error
 	CreateDNSLinkRecord(ctx context.Context, zoneID uint, target string) error
 	// CreateApexRecord creates the apex (root) record for a zone of the given
@@ -102,6 +106,44 @@ func (s *DelegatedDomainService) gatewayIP() string {
 	return dnsCfg.GatewayIP
 }
 
+// resolveManagedZone returns the PowerDNS zone a managed binding's authoritative
+// records live in, applying the one-zone topology rule:
+//   - apex domains own their zone (create/reuse the zone for the domain).
+//   - subdomains reuse their parent's zone (no new zone for the subdomain).
+//
+// It returns the zone and whether this call created it (so callers can roll
+// back a freshly-created zone on a later step failure).
+func (s *DelegatedDomainService) resolveManagedZone(ctx context.Context, domain string, userID uint) (*pluginDb.DNSZone, bool, error) {
+	// A subdomain (e.g. docs.pinner.xyz) lives inside its parent's zone
+	// (pinner.xyz); only the apex owns a zone.
+	if parent := parentDomain(domain); parent != "" {
+		z, err := s.dnsSvc.GetZoneByDomain(ctx, parent)
+		if err == nil && z != nil && z.UserID == userID {
+			return z, false, nil
+		}
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return nil, false, fmt.Errorf("lookup parent zone %q: %w", parent, err)
+		}
+	}
+
+	z, err := s.dnsSvc.CreateZone(ctx, domain, userID)
+	if err != nil {
+		return nil, false, fmt.Errorf("zone creation failed: %w", err)
+	}
+	return z, true, nil
+}
+
+// parentDomain returns the domain's parent (everything after the first label),
+// or "" when the domain is an apex (single-label HNS, or a bare TLD-less ICANN
+// name). Mirrors the website service's extractParentDomain.
+func parentDomain(domain string) string {
+	parts := strings.Split(strings.TrimSuffix(domain, "."), ".")
+	if len(parts) <= 2 {
+		return ""
+	}
+	return strings.Join(parts[1:], ".")
+}
+
 func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	namespace, domain string, websiteID, userID uint, dnsHostingEnabled bool,
 	config json.RawMessage) (*pluginDb.WebsiteDomain, error) {
@@ -164,17 +206,35 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		return nil, fmt.Errorf("persist failed: %w", err)
 	}
 
-	// Create DNS resources only after the DB row is committed.
-	zone, err := s.dnsSvc.CreateZone(ctx, domain, userID)
+	// A self-hosted DNS binding owns no PowerDNS zone: the user runs the
+	// authoritative server, so the portal must not create a zone, DNSLink,
+	// apex, or generated delegation. The binding is marked self_hosted (bound,
+	// DNS not provisioned by Pinner); the user enables portal DNS hosting
+	// later via domain update (SetDomainDNSEnabled) if they want Pinner to
+	// host.
+	if !dnsHostingEnabled {
+		wd.Status = pluginDb.DomainStatusSelfHosted
+		if err := s.DB().WithContext(ctx).Model(wd).Update("status", pluginDb.DomainStatusSelfHosted).Error; err != nil {
+			return nil, fmt.Errorf("failed to finalize domain record: %w", err)
+		}
+		return wd, nil
+	}
+
+	// Managed DNS: create DNS resources only after the DB row is committed.
+	// The authoritative zone follows the one-zone rule — apex owns, subdomain
+	// reuses the parent's zone.
+	zone, zoneCreated, err := s.resolveManagedZone(ctx, domain, userID)
 	if err != nil {
 		s.DB().WithContext(ctx).Unscoped().Delete(wd)
-		return nil, fmt.Errorf("zone creation failed: %w", err)
+		return nil, fmt.Errorf("zone resolution failed: %w", err)
 	}
 
 	target := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
 	if err := s.dnsSvc.CreateDNSLinkRecord(ctx, zone.ID, target); err != nil {
 		s.DB().WithContext(ctx).Unscoped().Delete(wd)
-		_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+		if zoneCreated {
+			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+		}
 		return nil, fmt.Errorf("dnslink creation failed: %w", err)
 	}
 
@@ -187,7 +247,9 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		apexContent = s.gatewayIP()
 		if apexContent == "" {
 			s.DB().WithContext(ctx).Unscoped().Delete(wd)
-			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+			if zoneCreated {
+				_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+			}
 			return nil, fmt.Errorf("gateway_ip not configured: alt-root apex requires a real A record and cannot fall back to ALIAS (set dns.gateway_ip, e.g. to the gateway IP)")
 		}
 	} else if gatewayHost := s.gatewayHost(); gatewayHost != "" {
@@ -197,7 +259,9 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	if apexContent != "" {
 		if err := s.dnsSvc.CreateApexRecord(ctx, zone.ID, apexType, apexContent); err != nil {
 			s.DB().WithContext(ctx).Unscoped().Delete(wd)
-			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+			if zoneCreated {
+				_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+			}
 			return nil, fmt.Errorf("apex record creation failed: %w", err)
 		}
 		wd.GatewayHost = apexContent
@@ -251,6 +315,19 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 	provider := s.registry.Get(string(wd.Namespace))
 	if provider == nil {
 		return false, fmt.Errorf("unsupported namespace: %s", wd.Namespace)
+	}
+
+	// A self-hosted DNS binding owns no portal-managed zone to verify: the user
+	// runs the authoritative server and DNSSEC/DANE delegation is theirs. The
+	// binding is not part of the portal's lifecycle (no DS to reconcile, no
+	// SOA/DNSSEC to self-heal), so verification is a no-op that leaves the
+	// binding's existing status rather than querying PowerDNS for a zone that
+	// does not exist. The presence of a real PowerDNS zone (ZoneID != 0) is
+	// the authoritative marker of a portal-hosted binding, regardless of the
+	// dns_hosting_enabled flag (which may be false on legacy bindings that
+	// still hold a zone).
+	if wd.ZoneID == 0 {
+		return false, nil
 	}
 
 	// Expected DS is computed live from PowerDNS's current active signing key

@@ -189,6 +189,9 @@ type fakeDNSZoneService struct{ dnskey string }
 func (f *fakeDNSZoneService) CreateZone(ctx context.Context, domain string, userID uint) (*pluginDb.DNSZone, error) {
 	panic("unused")
 }
+func (f *fakeDNSZoneService) GetZoneByDomain(ctx context.Context, domain string) (*pluginDb.DNSZone, error) {
+	panic("unused")
+}
 func (f *fakeDNSZoneService) DeleteZone(ctx context.Context, zoneID uint) error { panic("unused") }
 func (f *fakeDNSZoneService) CreateDNSLinkRecord(ctx context.Context, zoneID uint, target string) error {
 	panic("unused")

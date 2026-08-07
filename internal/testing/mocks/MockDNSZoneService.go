@@ -503,6 +503,74 @@ func (_c *MockDNSZoneService_GetActiveDNSSECDS_Call) RunAndReturn(run func(ctx c
 	return _c
 }
 
+// GetZoneByDomain provides a mock function for the type MockDNSZoneService
+func (_mock *MockDNSZoneService) GetZoneByDomain(ctx context.Context, domain string) (*db.DNSZone, error) {
+	ret := _mock.Called(ctx, domain)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetZoneByDomain")
+	}
+
+	var r0 *db.DNSZone
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*db.DNSZone, error)); ok {
+		return returnFunc(ctx, domain)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) *db.DNSZone); ok {
+		r0 = returnFunc(ctx, domain)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.DNSZone)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = returnFunc(ctx, domain)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockDNSZoneService_GetZoneByDomain_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetZoneByDomain'
+type MockDNSZoneService_GetZoneByDomain_Call struct {
+	*mock.Call
+}
+
+// GetZoneByDomain is a helper method to define mock.On call
+//   - ctx context.Context
+//   - domain string
+func (_e *MockDNSZoneService_Expecter) GetZoneByDomain(ctx any, domain any) *MockDNSZoneService_GetZoneByDomain_Call {
+	return &MockDNSZoneService_GetZoneByDomain_Call{Call: _e.mock.On("GetZoneByDomain", ctx, domain)}
+}
+
+func (_c *MockDNSZoneService_GetZoneByDomain_Call) Run(run func(ctx context.Context, domain string)) *MockDNSZoneService_GetZoneByDomain_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockDNSZoneService_GetZoneByDomain_Call) Return(dNSZone *db.DNSZone, err error) *MockDNSZoneService_GetZoneByDomain_Call {
+	_c.Call.Return(dNSZone, err)
+	return _c
+}
+
+func (_c *MockDNSZoneService_GetZoneByDomain_Call) RunAndReturn(run func(ctx context.Context, domain string) (*db.DNSZone, error)) *MockDNSZoneService_GetZoneByDomain_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SetTLSARecord provides a mock function for the type MockDNSZoneService
 func (_mock *MockDNSZoneService) SetTLSARecord(ctx context.Context, zoneID uint, content string) error {
 	ret := _mock.Called(ctx, zoneID, content)
