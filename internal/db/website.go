@@ -98,7 +98,6 @@ var validSSLStatuses = map[SSLStatus]struct{}{
 type Website struct {
 	ID                  uint           `gorm:"primaryKey;autoIncrement"`
 	UserID              uint           `gorm:"index:idx_ipfs_websites_user_id;not null"`
-	Domain              string         `gorm:"type:varchar(255);index:idx_ipfs_websites_domain;not null"`
 	TargetType          string         `gorm:"type:varchar(50);index:idx_ipfs_websites_status;not null"` // WebsiteTargetTypeIPFS or WebsiteTargetTypeIPNS
 	TargetMultihash     mh.Multihash   `gorm:"type:varbinary(64);not null"`                              // CID multihash (IPFS) or peer ID multihash (IPNS)
 	CIDVersion          *uint8         `gorm:"column:cid_version;type:tinyint unsigned"`                 // 0 = CIDv0, 1 = CIDv1; NULL for IPNS
@@ -107,12 +106,14 @@ type Website struct {
 	ValidationToken     string         `gorm:"type:varchar(255);not null"`
 	ValidationExpiresAt *time.Time     `gorm:"index"`
 	LastCheckedAt       *time.Time     `gorm:"index:idx_ipfs_websites_last_checked_at"`
-	DNSZoneID           *uint          `gorm:"column:dns_zone_id;index:idx_ipfs_websites_dns_zone_id"` // Foreign key to DNS zone (if DNS hosting enabled)
-	IPNSKeyID           *uint          `gorm:"column:ipns_key_id;index:idx_ipfs_websites_ipns_key_id"` // Foreign key to IPNS key (if auto-created for managed DNS)
-	Enabled             bool           `gorm:"column:dns_enabled;default:false"`                       // Whether DNS hosting is enabled
-	CreatedAt           time.Time      `gorm:"autoCreateTime"`
-	UpdatedAt           time.Time      `gorm:"autoUpdateTime"`
-	DeletedAt           gorm.DeletedAt `gorm:"index:idx_ipfs_websites_deleted_at"`
+	// PrimaryDomainID is the FK to the WebsiteDomain that owns DNS hosting for
+	// this site. The website no longer stores a denormalized domain string; all
+	// DNS concerns (dns_hosting_enabled, dns_zone_id, ipns_key_id, validation
+	// records) live on the primary (apex) WebsiteDomain binding.
+	PrimaryDomainID *uint          `gorm:"column:primary_domain_id;index:idx_ipfs_websites_primary_domain_id"`
+	CreatedAt       time.Time      `gorm:"autoCreateTime"`
+	UpdatedAt       time.Time      `gorm:"autoUpdateTime"`
+	DeletedAt       gorm.DeletedAt `gorm:"index:idx_ipfs_websites_deleted_at"`
 
 	// Domains holds all domain bindings across protocols
 	Domains []WebsiteDomain `gorm:"foreignKey:WebsiteID"`
@@ -124,10 +125,6 @@ func (W Website) TableName() string {
 
 // BeforeSave hook to validate status, target type, and multihash
 func (w *Website) BeforeSave(_ *gorm.DB) error {
-	// Normalize the domain to its canonical apex form on every write so a
-	// www.-prefixed hostname can never be persisted.
-	w.Domain = NormalizeDomain(w.Domain)
-
 	// Validate target type
 	if _, ok := validTargetTypes[WebsiteTargetType(w.TargetType)]; !ok {
 		return fmt.Errorf("%s: %s", errors.ErrInvalidTargetType, w.TargetType)
