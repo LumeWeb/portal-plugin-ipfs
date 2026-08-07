@@ -1010,6 +1010,92 @@ func (_c *MockWebsiteService_SetDB_Call) RunAndReturn(run func(db1 *gorm.DB)) *M
 	return _c
 }
 
+// SetDomainDNSEnabled provides a mock function for the type MockWebsiteService
+func (_mock *MockWebsiteService) SetDomainDNSEnabled(ctx context.Context, userID uint, websiteID uint, domainID uint, enabled bool) (*db.WebsiteDomain, error) {
+	ret := _mock.Called(ctx, userID, websiteID, domainID, enabled)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetDomainDNSEnabled")
+	}
+
+	var r0 *db.WebsiteDomain
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, uint, uint, bool) (*db.WebsiteDomain, error)); ok {
+		return returnFunc(ctx, userID, websiteID, domainID, enabled)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, uint, uint, bool) *db.WebsiteDomain); ok {
+		r0 = returnFunc(ctx, userID, websiteID, domainID, enabled)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.WebsiteDomain)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uint, uint, uint, bool) error); ok {
+		r1 = returnFunc(ctx, userID, websiteID, domainID, enabled)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockWebsiteService_SetDomainDNSEnabled_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetDomainDNSEnabled'
+type MockWebsiteService_SetDomainDNSEnabled_Call struct {
+	*mock.Call
+}
+
+// SetDomainDNSEnabled is a helper method to define mock.On call
+//   - ctx context.Context
+//   - userID uint
+//   - websiteID uint
+//   - domainID uint
+//   - enabled bool
+func (_e *MockWebsiteService_Expecter) SetDomainDNSEnabled(ctx any, userID any, websiteID any, domainID any, enabled any) *MockWebsiteService_SetDomainDNSEnabled_Call {
+	return &MockWebsiteService_SetDomainDNSEnabled_Call{Call: _e.mock.On("SetDomainDNSEnabled", ctx, userID, websiteID, domainID, enabled)}
+}
+
+func (_c *MockWebsiteService_SetDomainDNSEnabled_Call) Run(run func(ctx context.Context, userID uint, websiteID uint, domainID uint, enabled bool)) *MockWebsiteService_SetDomainDNSEnabled_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		var arg2 uint
+		if args[2] != nil {
+			arg2 = args[2].(uint)
+		}
+		var arg3 uint
+		if args[3] != nil {
+			arg3 = args[3].(uint)
+		}
+		var arg4 bool
+		if args[4] != nil {
+			arg4 = args[4].(bool)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *MockWebsiteService_SetDomainDNSEnabled_Call) Return(websiteDomain *db.WebsiteDomain, err error) *MockWebsiteService_SetDomainDNSEnabled_Call {
+	_c.Call.Return(websiteDomain, err)
+	return _c
+}
+
+func (_c *MockWebsiteService_SetDomainDNSEnabled_Call) RunAndReturn(run func(ctx context.Context, userID uint, websiteID uint, domainID uint, enabled bool) (*db.WebsiteDomain, error)) *MockWebsiteService_SetDomainDNSEnabled_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SetLogger provides a mock function for the type MockWebsiteService
 func (_mock *MockWebsiteService) SetLogger(logger *core.Logger) {
 	_mock.Called(logger)

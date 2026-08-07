@@ -177,15 +177,20 @@ func (r *IPNSRepublishResponse) FromModel(any) error {
 
 // WebsiteRequest represents a request to create a website
 type WebsiteRequest struct {
-	Domain     string               `json:"domain"`
-	TargetType db.WebsiteTargetType `json:"target_type"`                   // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
-	TargetHash string               `json:"target_hash"`                   // CID or IPNS peer ID
-	DNSEnabled *bool                `json:"dns_hosting_enabled,omitempty"` // Whether DNS hosting is enabled for this website (defaults to true if not specified)
+	Domain     string               `json:"domain"`                         // primary domain (transparently created as a WebsiteDomain binding)
+	Namespace  *db.DomainNamespace  `json:"namespace,omitempty"`            // icann (default) or hns
+	TargetType db.WebsiteTargetType `json:"target_type"`                    // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
+	TargetHash string               `json:"target_hash"`                    // CID or IPNS peer ID
+	DNSEnabled *bool                `json:"dns_hosting_enabled,omitempty"`  // Whether DNS hosting is enabled for the primary domain (defaults to true if not specified)
 }
 
 func (r WebsiteRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
 		"Domain": zog.String().Required().Min(1).Max(255),
+		"Namespace": zog.Ptr(config.ZogStringLike[db.DomainNamespace]().OneOf([]db.DomainNamespace{
+			db.DomainNamespaceICANN,
+			db.DomainNamespaceHNS,
+		})),
 		"TargetType": config.ZogStringLike[db.WebsiteTargetType]().OneOf([]db.WebsiteTargetType{
 			db.WebsiteTargetTypeIPFS,
 			db.WebsiteTargetTypeIPNS,
@@ -206,16 +211,8 @@ func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 	}
 
 	website := &db.Website{
-		Domain:     r.Domain,
 		TargetType: string(r.TargetType),
 		Status:     string(db.WebsiteStatusPendingValidation),
-	}
-
-	// Set DNS hosting enabled flag (defaults to true if not specified)
-	if r.DNSEnabled != nil {
-		website.Enabled = *r.DNSEnabled
-	} else {
-		website.Enabled = DefaultWebsiteEnabled
 	}
 
 	// Validate and parse CID for IPFS targets
@@ -272,44 +269,34 @@ func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 }
 
 // WebsiteUpdateRequest represents a request to update a website
-// All fields are optional — only provided fields will be updated
+// All fields are optional — only provided fields will be updated.
+// Domain and DNS hosting are managed via the domains API (per-domain), so
+// they are intentionally NOT accepted here.
 type WebsiteUpdateRequest struct {
-	Domain     *string               `json:"domain,omitempty"`
 	TargetType *db.WebsiteTargetType `json:"target_type,omitempty"`
 	TargetHash *string               `json:"target_hash,omitempty"`
-	DNSEnabled *bool                 `json:"dns_hosting_enabled,omitempty"`
 }
 
 // HasUpdates returns true if at least one field is set
 func (r *WebsiteUpdateRequest) HasUpdates() bool {
-	return r.Domain != nil || r.TargetType != nil || r.TargetHash != nil || r.DNSEnabled != nil
+	return r.TargetType != nil || r.TargetHash != nil
 }
 
 func (r WebsiteUpdateRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
-		"Domain": zog.Ptr(zog.String().Required().Min(1).Max(255)),
 		"TargetType": zog.Ptr(config.ZogStringLike[db.WebsiteTargetType]().OneOf([]db.WebsiteTargetType{
 			db.WebsiteTargetTypeIPFS,
 			db.WebsiteTargetTypeIPNS,
 		})),
 		"TargetHash": zog.Ptr(zog.String().Required().Min(1).Max(255)),
-		"DNSEnabled": zog.Ptr(zog.Bool()),
 	})
 }
 
 func (r *WebsiteUpdateRequest) ToModel() (*db.Website, error) {
 	website := &db.Website{}
 
-	if r.Domain != nil {
-		website.Domain = *r.Domain
-	}
-
 	if r.TargetType != nil {
 		website.TargetType = string(*r.TargetType)
-	}
-
-	if r.DNSEnabled != nil {
-		website.Enabled = *r.DNSEnabled
 	}
 
 	if r.TargetHash != nil && r.TargetType != nil {
@@ -405,27 +392,42 @@ type WebsiteResponse struct {
 
 func (r *WebsiteResponse) FromModel(model *db.Website) error {
 	r.ID = model.ID
-	r.Domain = model.Domain
 	r.TargetType = model.TargetType
 	r.TargetHash = model.TargetHash() // helper generates string from multihash
 	r.Status = model.Status
+	r.IPNSKeyID = model.IPNSKeyID
 	r.ValidationExpiresAt = model.ValidationExpiresAt
 	r.LastCheckedAt = model.LastCheckedAt
-	r.DNSZoneID = model.DNSZoneID
-	r.IPNSKeyID = model.IPNSKeyID
-	r.Enabled = model.Enabled
 	r.Created = model.CreatedAt
 	r.Updated = model.UpdatedAt
 	r.Expired = model.IsExpired()
 
 	if r.tokenKey != "" && model.ValidationToken != "" {
 		r.ValidationToken = r.tokenKey + "=" + model.ValidationToken
-		r.ValidationRecordHost = r.tokenKey + "." + model.Domain
 	} else {
 		r.ValidationToken = model.ValidationToken
 	}
 
 	return nil
+}
+
+// SetPrimaryDomain populates the website-level domain/DNS fields from the
+// website's primary (apex) WebsiteDomain binding, which now owns DNS hosting
+// state. The Website record no longer carries a domain string. Callers resolve
+// the primary binding (via the website service) and call this after FromModel.
+func (r *WebsiteResponse) SetPrimaryDomain(primary *db.WebsiteDomain) {
+	if primary == nil {
+		r.Domain = ""
+		r.DNSZoneID = nil
+		r.Enabled = false
+		return
+	}
+	r.Domain = primary.Domain
+	r.DNSZoneID = primary.DNSZoneID
+	r.Enabled = primary.DNSHostingEnabled
+	if r.tokenKey != "" && r.ValidationToken != "" {
+		r.ValidationRecordHost = r.tokenKey + "." + primary.Domain
+	}
 }
 
 // IPNSKeyCIDResolver resolves the last-published CID for an IPNS key.

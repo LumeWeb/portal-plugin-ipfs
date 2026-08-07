@@ -78,6 +78,12 @@ type WebsiteService interface {
 	// site-level SSL synthesis.
 	GetApexDomainBinding(ctx context.Context, websiteID uint) (*pluginDb.WebsiteDomain, error)
 
+	// SetDomainDNSEnabled enables or disables DNS hosting for a specific domain
+	// binding (the per-domain primitive). Enabling runs the DNS hosting
+	// transition (zone/records/IPNS setup) for that domain; disabling tears it
+	// down. Returns the updated binding.
+	SetDomainDNSEnabled(ctx context.Context, userID, websiteID, domainID uint, enabled bool) (*pluginDb.WebsiteDomain, error)
+
 	// WaitForPublishes blocks until all in-flight async publish operations complete
 	WaitForPublishes()
 }

@@ -41,6 +41,8 @@ func (a *API) getGatewayWebsite(c echo.Context) error {
 	}
 
 	resp := &dto.GatewayWebsiteResponse{Namespace: ns}
+	_ = resp.FromModel(website)
+	resp.Domain = domain
 	return httputil.EncodeResponse(ctx, website, resp)
 }
 
@@ -75,7 +77,10 @@ func (a *API) getGatewayWebsiteStatus(c echo.Context) error {
 		})
 	}
 
-	return httputil.EncodeResponse(ctx, website, &dto.GatewayWebsiteStatusResponse{})
+	resp := &dto.GatewayWebsiteStatusResponse{}
+	_ = resp.FromModel(website)
+	resp.Domain = domain
+	return httputil.EncodeResponse(ctx, website, resp)
 }
 
 func (a *API) handlePing(c echo.Context) error {

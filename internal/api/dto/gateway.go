@@ -24,7 +24,8 @@ type GatewayWebsiteStatusResponse struct {
 }
 
 func (r *GatewayWebsiteResponse) FromModel(model *db.Website) error {
-	r.Domain = model.Domain
+	// Domain is set by the caller (the gateway handler looks up by domain
+	// string, so it already knows the domain; the Website no longer stores it).
 	r.TargetType = model.TargetType
 	r.TargetHash = model.TargetHash()
 	r.Status = model.Status
@@ -32,7 +33,7 @@ func (r *GatewayWebsiteResponse) FromModel(model *db.Website) error {
 }
 
 func (r *GatewayWebsiteStatusResponse) FromModel(model *db.Website) error {
-	r.Domain = model.Domain
+	// Domain is set by the caller (gateway handler looks up by domain string).
 	r.Status = model.Status
 	r.IsBroken = model.Status == string(db.WebsiteStatusBroken)
 	if model.LastCheckedAt != nil {
