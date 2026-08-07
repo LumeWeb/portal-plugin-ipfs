@@ -361,35 +361,42 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 	// The DS to publish is computed live from PowerDNS's current active signing
 	// key rather than read from stored delegation data (which would go stale on
 	// key rotation). Only portal-managed, DNSSEC-signed namespaces (e.g. HNS)
-	// yield a DS; ICANN domains have no parent DS and this is a no-op. The
-	// result of the live read is surfaced explicitly (DNSSEC enabled/disabled/
-	// error) so an absent DS is never a silent gap the user cannot diagnose.
-	// The live DS is injected into parent_records (which renderers draw from).
+	// yield a DS and report DNSSEC state; ICANN domains have no parent DS and
+	// no portal DNSSEC, so this is a no-op that omits the DNSSEC fields
+	// entirely (per the DTO contract) and only defends against a stale DS.
+	managed := a.delegatedDomainSvc != nil && a.delegatedDomainSvc.NamespaceUsesManagedZoneTLSA(string(wd.Namespace))
 	if resp.Delegation != nil && a.dnsService != nil {
-		ds, dsErr := a.dnsService.GetActiveDNSSECDS(reqCtx, wd.ZoneID)
-		switch {
-		case dsErr != nil:
-			// PowerDNS unavailable or a key rollover is in progress: the live
-			// DS cannot be resolved. Surface the error and drop any stored DS
-			// from parent_records so a stale value is never presented as
-			// current when there is no live DS to back it.
-			a.Logger().Warn("could not resolve live DS for dns-requirements",
-				zap.Uint("zone_id", wd.ZoneID), zap.Error(dsErr))
-			resp.Delegation.DNSSEC = "error"
-			resp.Delegation.DNSSECError = dsErr.Error()
-			resp.Delegation.ParentRecords = removeDSRecord(resp.Delegation.ParentRecords)
-		case ds != "":
-			// Active signing key present: DNSSEC is enabled and the live DS
-			// must be injected so CLI renderers show the current value.
-			resp.Delegation.DNSSEC = "enabled"
+		if managed {
+			ds, dsErr := a.dnsService.GetActiveDNSSECDS(reqCtx, wd.ZoneID)
+			switch {
+			case dsErr != nil:
+				// PowerDNS unavailable or a key rollover is in progress: the
+				// live DS cannot be resolved. Surface the error and drop any
+				// stored DS so a stale value is never presented as current.
+				a.Logger().Warn("could not resolve live DS for dns-requirements",
+					zap.Uint("zone_id", wd.ZoneID), zap.Error(dsErr))
+				resp.Delegation.DNSSEC = "error"
+				resp.Delegation.DNSSECError = dsErr.Error()
+				resp.Delegation.ParentRecords = removeDSRecord(resp.Delegation.ParentRecords)
+			case ds != "":
+				// Active signing key present: DNSSEC is enabled and the live
+				// DS must be injected so CLI renderers show the current value.
+				resp.Delegation.DNSSEC = "enabled"
+				resp.Delegation.DNSSECError = ""
+				resp.Delegation.ParentRecords = upsertDSRecord(resp.Delegation.ParentRecords, ds)
+			default:
+				// No active signing key (never enabled, or key rotated away).
+				// Surface "disabled" so the user knows DNSSEC isn't set up
+				// until a verify self-heal mints the key, not a bare missing DS.
+				resp.Delegation.DNSSEC = "disabled"
+				resp.Delegation.DNSSECError = "no active signing key - DNSSEC not enabled"
+				resp.Delegation.ParentRecords = removeDSRecord(resp.Delegation.ParentRecords)
+			}
+		} else {
+			// Not a portal-DNSSEC namespace (e.g. ICANN): omit the DNSSEC
+			// fields and ensure no stale DS leaks into parent_records.
+			resp.Delegation.DNSSEC = ""
 			resp.Delegation.DNSSECError = ""
-			resp.Delegation.ParentRecords = upsertDSRecord(resp.Delegation.ParentRecords, ds)
-		default:
-			// No active signing key (never enabled, or a key was rotated away).
-			// Surface "disabled" so the user knows DNSSEC isn't set up until a
-			// verify self-heal mints the key, instead of a bare missing DS.
-			resp.Delegation.DNSSEC = "disabled"
-			resp.Delegation.DNSSECError = "no active signing key - DNSSEC not enabled"
 			resp.Delegation.ParentRecords = removeDSRecord(resp.Delegation.ParentRecords)
 		}
 	}
