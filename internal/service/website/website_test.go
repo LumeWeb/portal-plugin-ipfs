@@ -124,7 +124,6 @@ func createTestIPFSWebsite(userID uint, domain string, cidStr string) *pluginDb.
 	codec := uint8(c.Type())
 	return &pluginDb.Website{
 		UserID:          userID,
-		Domain:          domain,
 		TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
 		TargetMultihash: c.Hash(),
 		CIDVersion:      &version,
@@ -139,11 +138,43 @@ func createTestIPNSWebsite(userID uint, domain string, ipnsStr string) *pluginDb
 	target, _ := pluginDb.NewIPNSTargetFromString(ipnsStr)
 	return &pluginDb.Website{
 		UserID:          userID,
-		Domain:          domain,
 		TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
 		TargetMultihash: target.ToMultihash(),
 		CIDVersion:      nil,
 	}
+}
+
+// bindPrimaryDomain creates a WebsiteDomain binding for a website and sets it
+// as the website's primary domain (Website.PrimaryDomainID). It mirrors the API
+// layer's transparent primary-domain creation. DNS hosting state is set on the
+// returned binding per the new per-domain model.
+func bindPrimaryDomain(tb coreTesting.TB, ctx coreTesting.TestContext, websiteID uint, domain string, dnsHostingEnabled bool) *pluginDb.WebsiteDomain {
+	wd := createTestWebsiteDomain(websiteID, domain)
+	wd.DNSHostingEnabled = dnsHostingEnabled
+	require.NoError(tb, ctx.DB().Create(wd).Error)
+	require.NoError(tb, ctx.DB().Model(&pluginDb.Website{ID: websiteID}).Update("primary_domain_id", wd.ID).Error)
+	return wd
+}
+
+// prebindPrimaryDomain binds a primary WebsiteDomain for a website that carries
+// an explicit ID and points website.PrimaryDomainID at it, so that
+// CreateWebsite's DNS/IPNS side-effects run against the pre-existing binding.
+func prebindPrimaryDomain(tb coreTesting.TB, ctx coreTesting.TestContext, website *pluginDb.Website, domain string, dnsHostingEnabled bool) *pluginDb.WebsiteDomain {
+	require.NotZero(tb, website.ID, "website must carry an explicit ID before primary-domain prebind")
+	wd := createTestWebsiteDomain(website.ID, domain)
+	wd.DNSHostingEnabled = dnsHostingEnabled
+	require.NoError(tb, ctx.DB().Create(wd).Error)
+	pid := wd.ID
+	website.PrimaryDomainID = &pid
+	return wd
+}
+
+// apexDomain helper resolves a website's primary domain name via the service.
+func apexDomain(tb coreTesting.TB, ctx coreTesting.TestContext, svc pluginCore.WebsiteService, websiteID uint) string {
+	wd, err := svc.GetApexDomainBinding(context.Background(), websiteID)
+	require.NoError(tb, err)
+	require.NotNil(tb, wd)
+	return wd.Domain
 }
 
 // createTestWebsiteDomain creates a domain binding for a website. SSL state is
@@ -201,16 +232,17 @@ func TestWebsiteService_CreateWebsite_IPFSTarget(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "test data")
 
-		website := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
-
-		// Act
-		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		testsite := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), testsite)
 
 		// Assert
 		require.NoError(tb, err)
 		assert.NotNil(tb, createdWebsite)
 		assert.Equal(tb, testUserID1, createdWebsite.UserID)
-		assert.Equal(tb, "example.com", createdWebsite.Domain)
+		// Bind the primary domain (per-domain model) and assert its name.
+		apex := bindPrimaryDomain(tb, ctx, createdWebsite.ID, "example.com", false)
+		assert.Equal(tb, "example.com", apex.Domain)
+		assert.Equal(tb, "example.com", apexDomain(tb, ctx, websiteService, createdWebsite.ID))
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPFS), createdWebsite.TargetType)
 
 		// Compare CIDs using Equals method instead of string comparison
@@ -244,18 +276,18 @@ func TestWebsiteService_SSLStatusDoesNotAffectWebsiteStatus(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Create a domain binding (per-domain SSL source of truth).
-		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
+		boundDomain := bindPrimaryDomain(tb, ctx, createdWebsite.ID, "example.com", false)
 
 		// Get initial website status before SSL update
 		initialStatus := createdWebsite.Status
 
 		// Update SSL status to failed
-		_, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusFailed, "cert validation failed", nil)
+		_, err = websiteService.UpdateSSLStatus(context.Background(), boundDomain.Domain, pluginDb.SSLStatusFailed, "cert validation failed", nil)
 		require.NoError(tb, err)
 
 		// Act & Assert - binding SSL is failed and website status is unchanged
 		var binding pluginDb.WebsiteDomain
-		require.NoError(tb, ctx.DB().Where("domain = ?", createdWebsite.Domain).First(&binding).Error)
+		require.NoError(tb, ctx.DB().Where("domain = ?", boundDomain.Domain).First(&binding).Error)
 		assert.Equal(tb, string(pluginDb.SSLStatusFailed), binding.SSLStatus)
 		assert.Equal(tb, "cert validation failed", binding.SSLError)
 
@@ -279,20 +311,20 @@ func TestWebsiteService_SSLStatusTransitionsIndependently(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Create a domain binding for the website.
-		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
+		boundDomain := bindPrimaryDomain(tb, ctx, createdWebsite.ID, "example.com", false)
 
 		// Act - Simulate SSL status transitions
 		now := time.Now()
 
 		// pending -> issuing
-		wd, err := websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusIssuing, "", &now)
+		wd, err := websiteService.UpdateSSLStatus(context.Background(), boundDomain.Domain, pluginDb.SSLStatusIssuing, "", &now)
 		require.NoError(tb, err)
 		assert.Equal(tb, string(pluginDb.SSLStatusIssuing), wd.SSLStatus)
 		assert.Nil(tb, wd.SSLIssuedAt)
 
 		// issuing -> ready
 		now2 := time.Now().Add(time.Minute)
-		wd, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusReady, "", &now2)
+		wd, err = websiteService.UpdateSSLStatus(context.Background(), boundDomain.Domain, pluginDb.SSLStatusReady, "", &now2)
 		require.NoError(tb, err)
 		assert.Equal(tb, string(pluginDb.SSLStatusReady), wd.SSLStatus)
 		assert.NotNil(tb, wd.SSLIssuedAt)
@@ -300,7 +332,7 @@ func TestWebsiteService_SSLStatusTransitionsIndependently(t *testing.T) {
 
 		// ready -> failed (simulating certificate expiration)
 		now3 := time.Now().Add(2 * time.Minute)
-		wd, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusFailed, "certificate expired", &now3)
+		wd, err = websiteService.UpdateSSLStatus(context.Background(), boundDomain.Domain, pluginDb.SSLStatusFailed, "certificate expired", &now3)
 		require.NoError(tb, err)
 		assert.Equal(tb, string(pluginDb.SSLStatusFailed), wd.SSLStatus)
 		assert.Equal(tb, "certificate expired", wd.SSLError)
@@ -326,15 +358,15 @@ func TestWebsiteService_WebsiteCanBeBrokenRegardlessOfSSLStatus(t *testing.T) {
 		require.NoError(tb, err)
 
 		// Create a domain binding for the website.
-		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
+		boundDomain := bindPrimaryDomain(tb, ctx, createdWebsite.ID, "example.com", false)
 
 		// Set SSL status to ready
-		_, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusReady, "", nil)
+		_, err = websiteService.UpdateSSLStatus(context.Background(), boundDomain.Domain, pluginDb.SSLStatusReady, "", nil)
 		require.NoError(tb, err)
 
 		// Verify SSL is ready on the binding
 		var binding pluginDb.WebsiteDomain
-		require.NoError(tb, ctx.DB().Where("domain = ?", createdWebsite.Domain).First(&binding).Error)
+		require.NoError(tb, ctx.DB().Where("domain = ?", boundDomain.Domain).First(&binding).Error)
 		assert.Equal(tb, string(pluginDb.SSLStatusReady), binding.SSLStatus)
 
 		// Act - Update website status to broken
@@ -344,7 +376,7 @@ func TestWebsiteService_WebsiteCanBeBrokenRegardlessOfSSLStatus(t *testing.T) {
 
 		// Assert - SSL status remains ready on the binding, website status is now broken
 		var finalBinding pluginDb.WebsiteDomain
-		require.NoError(tb, ctx.DB().Where("domain = ?", createdWebsite.Domain).First(&finalBinding).Error)
+		require.NoError(tb, ctx.DB().Where("domain = ?", boundDomain.Domain).First(&finalBinding).Error)
 		assert.Equal(t, string(pluginDb.SSLStatusReady), finalBinding.SSLStatus, "SSL status should not be affected by website status change")
 
 		finalWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
@@ -371,7 +403,8 @@ func TestWebsiteService_CreateWebsite_IPNSTarget(t *testing.T) {
 		require.NoError(tb, err)
 		assert.NotNil(tb, createdWebsite)
 		assert.Equal(tb, testUserID1, createdWebsite.UserID)
-		assert.Equal(tb, "ipns-example.com", createdWebsite.Domain)
+		bindPrimaryDomain(tb, ctx, createdWebsite.ID, "ipns-example.com", false)
+		assert.Equal(tb, "ipns-example.com", apexDomain(tb, ctx, websiteService, createdWebsite.ID))
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType)
 		// Verify the peer ID is the same, comparing by decoding from both formats
 		inputPeerID, _ := peer.Decode(ipnsName)
@@ -396,14 +429,18 @@ func TestWebsiteService_CreateWebsite_IPNSTargetWithPlainCID_AutoConvert(t *test
 		c := cid.MustParse(testCID.String())
 		version := uint8(c.Version())
 		codec := uint8(c.Type())
+
 		website := &pluginDb.Website{
 			UserID:          testUserID1,
-			Domain:          domain,
 			TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
 			TargetMultihash: c.Hash(),
 			CIDVersion:      &version,
 			CIDType:         &codec,
 		}
+		website.ID = 9901
+		// Bind the primary domain before creation so the IPNS auto-convert
+		// (which requires a primary domain) can name the key after it.
+		prebindPrimaryDomain(tb, ctx, website, domain, false)
 
 		// Set up IPNS key mocks for auto-conversion
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
@@ -424,53 +461,6 @@ func TestWebsiteService_CreateWebsite_IPNSTargetWithPlainCID_AutoConvert(t *test
 	}, TestOptions)
 }
 
-func TestWebsiteService_CreateWebsite_InvalidDomain(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Arrange
-		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		require.NotNil(tb, websiteService)
-
-		testCID := util.GenerateTestCID(t, "test data")
-
-		website := createTestIPFSWebsite(testUserID1, "invalid domain with spaces", testCID.String())
-		website.Status = "" // Clear for validation error test
-
-		// Act
-		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-
-		// Assert
-		assert.Error(tb, err)
-		assert.Nil(tb, createdWebsite)
-		assert.Contains(tb, err.Error(), "invalid domain")
-	}, TestOptions)
-}
-
-func TestWebsiteService_CreateWebsite_DuplicateDomain(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Arrange
-		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		require.NotNil(tb, websiteService)
-
-		testCID := util.GenerateTestCID(t, "test data")
-
-		website1 := createTestIPFSWebsite(testUserID1, "duplicate.com", testCID.String())
-
-		// Create first website
-		_, err := websiteService.CreateWebsite(context.Background(), website1)
-		require.NoError(tb, err)
-
-		website2 := createTestIPFSWebsite(testUserID1, "duplicate.com", testCID.String())
-
-		// Act - Try to create duplicate
-		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website2)
-
-		// Assert
-		assert.Error(tb, err)
-		assert.Nil(tb, createdWebsite)
-		assert.Contains(tb, err.Error(), "domain already exists")
-	}, TestOptions)
-}
-
 func TestWebsiteService_CreateWebsite_InvalidTargetType(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
@@ -479,7 +469,6 @@ func TestWebsiteService_CreateWebsite_InvalidTargetType(t *testing.T) {
 
 		website := &pluginDb.Website{
 			UserID:     testUserID1,
-			Domain:     "example.com",
 			TargetType: "invalid_type",
 		}
 
@@ -490,88 +479,6 @@ func TestWebsiteService_CreateWebsite_InvalidTargetType(t *testing.T) {
 		assert.Error(tb, err)
 		assert.Nil(tb, createdWebsite)
 		assert.Contains(tb, err.Error(), "invalid target")
-	}, TestOptions)
-}
-
-func TestWebsiteService_CreateWebsite_NormalizesWWWPrefix(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Arrange
-		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		require.NotNil(tb, websiteService)
-
-		testCID := util.GenerateTestCID(t, "test data")
-		website := createTestIPFSWebsite(testUserID1, "www.example.com", testCID.String())
-
-		// Act
-		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-
-		// Assert
-		require.NoError(tb, err)
-		assert.NotNil(tb, createdWebsite)
-		assert.Equal(tb, "example.com", createdWebsite.Domain)
-	}, TestOptions)
-}
-
-func TestWebsiteService_CreateWebsite_NormalizesCase(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Arrange
-		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		require.NotNil(tb, websiteService)
-
-		testCID := util.GenerateTestCID(t, "test data")
-		website := createTestIPFSWebsite(testUserID1, "WWW.Example.COM", testCID.String())
-
-		// Act
-		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-
-		// Assert
-		require.NoError(tb, err)
-		assert.NotNil(tb, createdWebsite)
-		assert.Equal(tb, "example.com", createdWebsite.Domain)
-	}, TestOptions)
-}
-
-func TestWebsiteService_CreateWebsite_WWWDuplicateRejected(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Arrange
-		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		require.NotNil(tb, websiteService)
-
-		testCID := util.GenerateTestCID(t, "test data")
-		website1 := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
-		_, err := websiteService.CreateWebsite(context.Background(), website1)
-		require.NoError(tb, err)
-
-		// Act - try to create with www. prefix of existing domain
-		website2 := createTestIPFSWebsite(testUserID1, "www.example.com", testCID.String())
-		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website2)
-
-		// Assert
-		assert.Error(tb, err)
-		assert.Nil(tb, createdWebsite)
-		assert.Contains(tb, err.Error(), "domain already exists")
-	}, TestOptions)
-}
-
-func TestWebsiteService_UpdateWebsite_NormalizesWWWPrefix(t *testing.T) {
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		// Arrange
-		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		require.NotNil(tb, websiteService)
-
-		testCID := util.GenerateTestCID(t, "test data")
-		website := createTestIPFSWebsite(testUserID1, "old-domain.com", testCID.String())
-		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
-		require.NoError(tb, err)
-
-		// Act - update domain to www.new-domain.com
-		updates := map[string]any{"domain": "www.new-domain.com"}
-		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
-
-		// Assert
-		require.NoError(tb, err)
-		assert.NotNil(tb, updatedWebsite)
-		assert.Equal(tb, "new-domain.com", updatedWebsite.Domain)
 	}, TestOptions)
 }
 
@@ -587,6 +494,7 @@ func TestWebsiteService_GetWebsite(t *testing.T) {
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		bindPrimaryDomain(tb, ctx, createdWebsite.ID, "get-test.com", false)
 
 		// Act
 		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
@@ -595,7 +503,7 @@ func TestWebsiteService_GetWebsite(t *testing.T) {
 		require.NoError(tb, err)
 		assert.NotNil(tb, retrievedWebsite)
 		assert.Equal(tb, createdWebsite.ID, retrievedWebsite.ID)
-		assert.Equal(tb, createdWebsite.Domain, retrievedWebsite.Domain)
+		assert.Equal(tb, apexDomain(tb, ctx, websiteService, createdWebsite.ID), apexDomain(tb, ctx, websiteService, retrievedWebsite.ID))
 		assert.Equal(tb, createdWebsite.TargetType, retrievedWebsite.TargetType)
 		// Compare target hashes - both should be the same normalized CID
 		createdCID, err := cid.Decode(createdWebsite.TargetHash())
@@ -635,6 +543,7 @@ func TestWebsiteService_GetWebsiteByDomain(t *testing.T) {
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		bindPrimaryDomain(tb, ctx, createdWebsite.ID, "domain-test.com", false)
 
 		// Act
 		retrievedWebsite, _, err := websiteService.GetWebsiteByDomain(context.Background(), "domain-test.com")
@@ -643,7 +552,7 @@ func TestWebsiteService_GetWebsiteByDomain(t *testing.T) {
 		require.NoError(tb, err)
 		assert.NotNil(tb, retrievedWebsite)
 		assert.Equal(tb, createdWebsite.ID, retrievedWebsite.ID)
-		assert.Equal(tb, "domain-test.com", retrievedWebsite.Domain)
+		assert.Equal(tb, "domain-test.com", apexDomain(tb, ctx, websiteService, retrievedWebsite.ID))
 	}, TestOptions)
 }
 
@@ -717,6 +626,7 @@ func TestWebsiteService_UpdateWebsite(t *testing.T) {
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		bindPrimaryDomain(tb, ctx, createdWebsite.ID, "update-test.com", false)
 
 		newCID := util.GenerateTestCID(t, "new data")
 		newVersion := uint8(newCID.Version())
@@ -740,7 +650,7 @@ func TestWebsiteService_UpdateWebsite(t *testing.T) {
 		assert.True(tb, newCID.Equals(updatedCID), "CID mismatch after update")
 
 		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), updatedWebsite.Status)
-		assert.Equal(tb, "update-test.com", updatedWebsite.Domain)
+		assert.Equal(tb, "update-test.com", apexDomain(tb, ctx, websiteService, updatedWebsite.ID))
 	}, TestOptions)
 }
 
@@ -1076,10 +986,10 @@ func TestWebsiteService_UpdateSSLStatus_SuccessfulUpdate(t *testing.T) {
 
 		// SSL state lives per-domain on WebsiteDomain, so a binding must exist
 		// before UpdateSSLStatus can find and update it.
-		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
+		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, "ssl-update-test.com")).Error)
 
 		// Act - Update SSL status to issuing
-		updatedWebsite, err := websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusIssuing, "", nil)
+		updatedWebsite, err := websiteService.UpdateSSLStatus(context.Background(), "ssl-update-test.com", pluginDb.SSLStatusIssuing, "", nil)
 
 		// Assert
 		require.NoError(tb, err)
@@ -1117,21 +1027,21 @@ func TestWebsiteService_UpdateSSLStatus_IssuedAtSetOnlyOnReadyTransition(t *test
 		website := createTestIPFSWebsite(testUserID1, "ssl-issuedat-test.com", testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
-		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
+		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, "ssl-issuedat-test.com")).Error)
 
 		lookupBinding := func(tb coreTesting.TB) pluginDb.WebsiteDomain {
 			var wd pluginDb.WebsiteDomain
-			require.NoError(tb, ctx.DB().Where("domain = ?", createdWebsite.Domain).First(&wd).Error)
+			require.NoError(tb, ctx.DB().Where("domain = ?", "ssl-issuedat-test.com").First(&wd).Error)
 			return wd
 		}
 
 		// Act - Update to issuing (should not set issued_at)
-		_, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusIssuing, "", nil)
+		_, err = websiteService.UpdateSSLStatus(context.Background(), "ssl-issuedat-test.com", pluginDb.SSLStatusIssuing, "", nil)
 		require.NoError(tb, err)
 		assert.Nil(tb, lookupBinding(tb).SSLIssuedAt)
 
 		// Act - Update to ready (should set issued_at)
-		_, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusReady, "", nil)
+		_, err = websiteService.UpdateSSLStatus(context.Background(), "ssl-issuedat-test.com", pluginDb.SSLStatusReady, "", nil)
 		require.NoError(tb, err)
 		afterReady := lookupBinding(tb)
 		assert.NotNil(tb, afterReady.SSLIssuedAt)
@@ -1139,7 +1049,7 @@ func TestWebsiteService_UpdateSSLStatus_IssuedAtSetOnlyOnReadyTransition(t *test
 		// Act - Update to ready again (should not change issued_at)
 		originalIssuedAt := afterReady.SSLIssuedAt
 		time.Sleep(10 * time.Millisecond)
-		_, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusReady, "", nil)
+		_, err = websiteService.UpdateSSLStatus(context.Background(), "ssl-issuedat-test.com", pluginDb.SSLStatusReady, "", nil)
 		require.NoError(tb, err)
 		afterSecondReady := lookupBinding(tb)
 		assert.NotNil(tb, afterSecondReady.SSLIssuedAt)
@@ -1158,12 +1068,12 @@ func TestWebsiteService_UpdateSSLStatus_ErrorSetOnFailed(t *testing.T) {
 		website := createTestIPFSWebsite(testUserID1, "ssl-error-test.com", testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
-		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
+		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, "ssl-error-test.com")).Error)
 
 		testErrorMsg := "certificate validation failed"
 
 		// Act - Update SSL status to failed with error message
-		wd, err := websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusFailed, testErrorMsg, nil)
+		wd, err := websiteService.UpdateSSLStatus(context.Background(), "ssl-error-test.com", pluginDb.SSLStatusFailed, testErrorMsg, nil)
 
 		// Assert
 		require.NoError(tb, err)
@@ -1184,20 +1094,20 @@ func TestWebsiteService_UpdateSSLStatus_ErrorClearedOnStatusChange(t *testing.T)
 		website := createTestIPFSWebsite(testUserID1, "ssl-clear-error-test.com", testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
-		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
+		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, "ssl-clear-error-test.com")).Error)
 
 		// Set status to failed with error
 		testErrorMsg := "certificate validation failed"
-		_, err = websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusFailed, testErrorMsg, nil)
+		_, err = websiteService.UpdateSSLStatus(context.Background(), "ssl-clear-error-test.com", pluginDb.SSLStatusFailed, testErrorMsg, nil)
 		require.NoError(tb, err)
 
 		// Verify error is set on the binding
 		var binding pluginDb.WebsiteDomain
-		require.NoError(tb, ctx.DB().Where("domain = ?", createdWebsite.Domain).First(&binding).Error)
+		require.NoError(tb, ctx.DB().Where("domain = ?", "ssl-clear-error-test.com").First(&binding).Error)
 		assert.Equal(tb, testErrorMsg, binding.SSLError)
 
 		// Act - Update to pending (should clear error)
-		wd, err := websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusPending, "", nil)
+		wd, err := websiteService.UpdateSSLStatus(context.Background(), "ssl-clear-error-test.com", pluginDb.SSLStatusPending, "", nil)
 
 		// Assert
 		require.NoError(tb, err)
@@ -1223,7 +1133,7 @@ func TestWebsiteService_UpdateSSLStatus_AtomicUpdates(t *testing.T) {
 		website := createTestIPFSWebsite(testUserID1, "ssl-atomic-test.com", testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
-		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
+		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, "ssl-atomic-test.com")).Error)
 
 		// Act - Perform concurrent updates to test atomicity
 		numGoroutines := 3
@@ -1244,7 +1154,7 @@ func TestWebsiteService_UpdateSSLStatus_AtomicUpdates(t *testing.T) {
 				case 3:
 					status = pluginDb.SSLStatusPending
 				}
-				_, err := websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, status, errorMsg, nil)
+				_, err := websiteService.UpdateSSLStatus(context.Background(), "ssl-atomic-test.com", status, errorMsg, nil)
 				errChan <- err
 			}(i)
 		}
@@ -1256,7 +1166,7 @@ func TestWebsiteService_UpdateSSLStatus_AtomicUpdates(t *testing.T) {
 
 		// Assert - Final state should be consistent (no data corruption)
 		var finalBinding pluginDb.WebsiteDomain
-		require.NoError(tb, ctx.DB().Where("domain = ?", createdWebsite.Domain).First(&finalBinding).Error)
+		require.NoError(tb, ctx.DB().Where("domain = ?", "ssl-atomic-test.com").First(&finalBinding).Error)
 
 		switch pluginDb.SSLStatus(finalBinding.SSLStatus) {
 		case pluginDb.SSLStatusReady:
@@ -1286,9 +1196,10 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreatedWhenEnabled(t *testing.T) {
 		domain := "dns-enabled-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
-
-		// Set up IPNS key mocks for auto-creation
+		website.ID = 8000
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
 		// Act - Expect DNS zone creation and DNS records creation
@@ -1308,9 +1219,11 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreatedWhenEnabled(t *testing.T) {
 		// Assert
 		require.NoError(tb, err)
 		assert.NotNil(tb, createdWebsite)
-		assert.NotNil(tb, createdWebsite.DNSZoneID)
-		assert.Equal(tb, testZoneID1, *createdWebsite.DNSZoneID)
-		assert.True(tb, createdWebsite.Enabled)
+		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.NotNil(tb, createdApex.DNSZoneID)
+		assert.Equal(tb, testZoneID1, *createdApex.DNSZoneID)
+		assert.True(tb, createdApex.DNSHostingEnabled)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType, "Should be converted to IPNS for managed DNS")
 		assert.NotNil(tb, createdWebsite.IPNSKeyID, "IPNS key ID should be set")
 
@@ -1332,9 +1245,10 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreated(t *testing.T) {
 		domain := "dns-records-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
-
-		// Set up IPNS key mocks for auto-creation
+		website.ID = 8001
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
 		// Act - Expect DNS zone and records to be created with specific parameters
@@ -1387,8 +1301,6 @@ func TestWebsiteService_UpdateWebsite_DNSRecordsUpdatedWhenTargetChanges(t *test
 		domain := "dns-update-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = false
-
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
@@ -1425,9 +1337,10 @@ func TestWebsiteService_DeleteWebsite_DNSRecordsCleanedUp(t *testing.T) {
 		domain := "dns-cleanup-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
-
-		// Set up IPNS key mocks for CreateWebsite
+		website.ID = 8002
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
 		// Create website with DNS enabled
@@ -1472,9 +1385,10 @@ func TestWebsiteService_DeleteWebsite_DNSCleanupFailureDoesNotPreventDeletion(t 
 		domain := "dns-cleanup-fail-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
-
-		// Set up IPNS key mocks for CreateWebsite
+		website.ID = 8003
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
 		// Create website with DNS enabled
@@ -1520,7 +1434,6 @@ func TestWebsiteService_DeleteWebsite_NoDNSZoneNoCleanup(t *testing.T) {
 		domain := "no-dns-zone-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = false // DNS disabled
 
 		// Act - Create website with DNS disabled (no zone created)
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -1552,7 +1465,10 @@ func TestWebsiteService_CreateWebsite_DNSHostingDisabledWhenEnabledFalse(t *test
 		domain := "dns-disabled-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = false
+		website.ID = 8003
+		// Bind a primary domain with DNS hosting disabled: the website owns a
+		// domain but no DNS-managed zone, so no DNS side-effects run on create.
+		prebindPrimaryDomain(tb, ctx, website, domain, false)
 
 		mockDNS, ok := dnsService.(*mocks.MockDNSService)
 		require.True(tb, ok, "DNS service should be a mock")
@@ -1563,8 +1479,11 @@ func TestWebsiteService_CreateWebsite_DNSHostingDisabledWhenEnabledFalse(t *test
 		// Assert
 		require.NoError(tb, err)
 		assert.NotNil(tb, createdWebsite)
-		assert.Nil(tb, createdWebsite.DNSZoneID, "DNS zone ID should be nil when DNS hosting is disabled")
-		assert.False(tb, createdWebsite.Enabled)
+		createdApex, apxErr := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
+		require.NoError(tb, apxErr)
+		require.NotNil(tb, createdApex)
+		assert.Nil(tb, createdApex.DNSZoneID, "DNS zone ID should be nil when DNS hosting is disabled")
+		assert.False(tb, createdApex.DNSHostingEnabled)
 
 		// Verify no DNS methods were called
 		mockDNS.AssertNotCalled(t, "CreateZone")
@@ -1586,7 +1505,10 @@ func TestWebsiteService_CreateWebsite_DNSHostingEnabled_CreatesZoneAndRecords(t 
 		targetHash := testCID.String()
 
 		website := createTestIPFSWebsite(testUserID1, domain, targetHash)
-		website.Enabled = true // DNS hosting enabled
+		website.ID = 8004
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 
 		// Set up IPNS key mocks for auto-creation
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, targetHash)
@@ -1609,10 +1531,12 @@ func TestWebsiteService_CreateWebsite_DNSHostingEnabled_CreatesZoneAndRecords(t 
 		// Assert
 		require.NoError(tb, err)
 		assert.NotNil(tb, createdWebsite)
-		assert.NotNil(tb, createdWebsite.DNSZoneID, "DNS zone ID should be set when DNS hosting is enabled")
-		assert.Equal(tb, testZoneID6, *createdWebsite.DNSZoneID)
-		assert.True(tb, createdWebsite.Enabled)
-		assert.Equal(tb, domain, createdWebsite.Domain)
+		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.NotNil(tb, createdApex.DNSZoneID, "DNS zone ID should be set when DNS hosting is enabled")
+		assert.Equal(tb, testZoneID6, *createdApex.DNSZoneID)
+		assert.True(tb, createdApex.DNSHostingEnabled)
+		assert.Equal(tb, domain, apexDomain(tb, ctx, websiteService, createdWebsite.ID))
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType, "Should be converted to IPNS for managed DNS")
 
 	}, TestOptions)
@@ -1629,9 +1553,10 @@ func TestWebsiteService_UpdateWebsite_DNSHostingEnabled_NoDNSUpdateWhenTargetUnc
 		domain := "no-dns-update-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
-
-		// Set up IPNS key mocks for auto-creation
+		website.ID = 8005
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
 		// Create website with initial DNS setup
@@ -1676,9 +1601,10 @@ func TestWebsiteService_DeleteWebsite_DNSHostingEnabled_ZoneRemainsAfterDeletion
 		domain := "zone-persists-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
-
-		// Set up IPNS key mocks for auto-creation
+		website.ID = 8006
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
 		// Create website with DNS
@@ -1731,7 +1657,8 @@ func TestWebsiteService_CreateWebsite_DNSHostingDisabled_NoDNSOperations(t *test
 		domain := "no-dns-ops-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = false // DNS hosting disabled
+		website.ID = 1671
+		prebindPrimaryDomain(tb, ctx, website, domain, false) // DNS hosting disabled
 
 		mockDNS, ok := dnsService.(*mocks.MockDNSService)
 		require.True(tb, ok, "DNS service should be a mock")
@@ -1742,8 +1669,11 @@ func TestWebsiteService_CreateWebsite_DNSHostingDisabled_NoDNSOperations(t *test
 		// Assert
 		require.NoError(tb, err)
 		assert.NotNil(tb, createdWebsite)
-		assert.Nil(tb, createdWebsite.DNSZoneID, "DNS zone ID should be nil when DNS hosting is disabled")
-		assert.False(tb, createdWebsite.Enabled)
+		apex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
+		require.NoError(tb, err)
+		require.NotNil(tb, apex)
+		assert.Nil(tb, apex.DNSZoneID, "DNS zone ID should be nil when DNS hosting is disabled")
+		assert.False(tb, apex.DNSHostingEnabled)
 
 		// Verify no DNS operations were performed
 		mockDNS.AssertNotCalled(t, "CreateZone")
@@ -1767,7 +1697,8 @@ func TestWebsiteService_UpdateWebsite_DNSHostingDisabled_NoDNSOperations(t *test
 		domain := "update-no-dns-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = false // DNS hosting disabled
+		website.ID = 1700
+		prebindPrimaryDomain(tb, ctx, website, domain, false) // DNS hosting disabled
 
 		mockDNS, ok := dnsService.(*mocks.MockDNSService)
 		require.True(tb, ok, "DNS service should be a mock")
@@ -1805,7 +1736,8 @@ func TestWebsiteService_DeleteWebsite_DNSHostingDisabled_NoDNSOperations(t *test
 		domain := "delete-no-dns-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = false // DNS hosting disabled
+		website.ID = 1738
+		prebindPrimaryDomain(tb, ctx, website, domain, false) // DNS hosting disabled
 
 		mockDNS, ok := dnsService.(*mocks.MockDNSService)
 		require.True(tb, ok, "DNS service should be a mock")
@@ -1837,9 +1769,10 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreationFailure_ContinuesWithoutDNS
 		domain := "zone-fail-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
-
-		// Set up IPNS key mocks for auto-creation (happens before DNS operations)
+		website.ID = 8007
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
 		// Mock DNS zone creation failure
@@ -1852,8 +1785,11 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreationFailure_ContinuesWithoutDNS
 		// Assert - Website should still be created despite DNS failure
 		require.NoError(tb, err)
 		assert.NotNil(tb, createdWebsite)
-		assert.Nil(tb, createdWebsite.DNSZoneID, "DNS zone ID should be nil when zone creation fails")
-		assert.Equal(tb, domain, createdWebsite.Domain)
+		apex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
+		require.NoError(tb, err)
+		require.NotNil(tb, apex)
+		assert.Nil(tb, apex.DNSZoneID, "DNS zone ID should be nil when zone creation fails")
+		assert.Equal(tb, domain, apex.Domain)
 		// Website should still get IPNS conversion since that happens before DNS operations
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType, "Should be converted to IPNS")
 
@@ -1874,9 +1810,10 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreationFailure_ContinuesWithout
 		domain := "records-fail-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
-
-		// Set up IPNS key mocks for auto-creation (happens before DNS operations)
+		website.ID = 8008
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
 		// Mock DNS zone creation success
@@ -1899,8 +1836,10 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreationFailure_ContinuesWithout
 		// Assert - Website should still be created with zone ID set
 		require.NoError(tb, err)
 		assert.NotNil(tb, createdWebsite)
-		assert.NotNil(tb, createdWebsite.DNSZoneID, "DNS zone ID should be set even when record creation fails")
-		assert.Equal(tb, testZoneID8, *createdWebsite.DNSZoneID)
+		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.NotNil(tb, createdApex.DNSZoneID, "DNS zone ID should be set even when record creation fails")
+		assert.Equal(tb, testZoneID8, *createdApex.DNSZoneID)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType, "Should be converted to IPNS")
 
 	}, TestOptions)
@@ -1955,7 +1894,10 @@ func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing
 
 		// Act - Create first website with DNS hosting enabled
 		website1 := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website1.Enabled = true // Enable DNS hosting
+		website1.ID = 8009
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website1, domain, true)
 		createdWebsite1, err := websiteService.CreateWebsite(context.Background(), website1)
 		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
@@ -1995,7 +1937,10 @@ func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing
 
 		// Act - Create second website with same domain
 		website2 := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website2.Enabled = true
+		website2.ID = 8010
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website2, domain, true)
 		createdWebsite2, err := websiteService.CreateWebsite(context.Background(), website2)
 		require.NoError(tb, err)
 
@@ -2060,14 +2005,19 @@ func TestWebsiteService_UpdateWebsite_EnableDNSHostingTransition(t *testing.T) {
 		zoneID := uint(9999)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = false
+		website.ID = 8009
+		// Bind a primary domain with DNS hosting disabled: enabling DNS later
+		// toggles this binding's DNSHostingEnabled from false to true.
+		prebindPrimaryDomain(tb, ctx, website, domain, false)
 		website.Status = string(pluginDb.WebsiteStatusActive)
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
-		assert.False(t, createdWebsite.Enabled)
-		assert.Nil(t, createdWebsite.DNSZoneID)
+		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.False(t, createdApex.DNSHostingEnabled)
+		assert.Nil(t, createdApex.DNSZoneID)
 
 		// Set up mock DNS service expectations for enabling DNS hosting
 		setupDNSZoneCreationMocks(t, mockDNS, zoneID, domain, testUserID1)
@@ -2083,7 +2033,9 @@ func TestWebsiteService_UpdateWebsite_EnableDNSHostingTransition(t *testing.T) {
 		// Assert
 		require.NoError(tb, err)
 		require.NotNil(tb, updatedWebsite)
-		assert.True(t, updatedWebsite.Enabled)
+		updatedApex, uerr := websiteService.GetApexDomainBinding(context.Background(), updatedWebsite.ID)
+		require.NoError(tb, uerr)
+		assert.True(t, updatedApex.DNSHostingEnabled)
 		assert.Equal(t, string(pluginDb.WebsiteStatusPendingValidation), updatedWebsite.Status)
 	}, TestOptions)
 }
@@ -2100,7 +2052,10 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingTransition(t *testing.T) 
 		testZoneID := uint(9998)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
+		website.ID = 8011
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		website.Status = string(pluginDb.WebsiteStatusActive)
 
 		// Set up IPNS key mocks for auto-creation
@@ -2113,8 +2068,10 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingTransition(t *testing.T) 
 		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
-		assert.True(t, createdWebsite.Enabled)
-		assert.NotNil(t, createdWebsite.DNSZoneID)
+		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.True(t, createdApex.DNSHostingEnabled)
+		assert.NotNil(t, createdApex.DNSZoneID)
 
 		// Set up mock DNS service expectations for disabling DNS hosting
 		// First, DeleteWebsiteDNSRecords is called to remove the website's DNS records
@@ -2133,9 +2090,11 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingTransition(t *testing.T) 
 		// Assert
 		require.NoError(tb, err)
 		require.NotNil(tb, updatedWebsite)
-		assert.False(t, updatedWebsite.Enabled)
+		updatedApex, uerr := websiteService.GetApexDomainBinding(context.Background(), updatedWebsite.ID)
+		require.NoError(tb, uerr)
+		assert.False(t, updatedApex.DNSHostingEnabled)
 		assert.Equal(t, string(pluginDb.WebsiteStatusPendingValidation), updatedWebsite.Status)
-		assert.Nil(t, updatedWebsite.DNSZoneID)
+		assert.Nil(t, updatedApex.DNSZoneID)
 
 	}, TestOptions)
 }
@@ -2149,8 +2108,6 @@ func TestWebsiteService_UpdateWebsite_DNSEnabledInvalidType(t *testing.T) {
 		domain := "invalid-dns-type-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = false
-
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
@@ -2179,14 +2136,21 @@ func TestWebsiteService_UpdateWebsite_DNSHostingTransitionWithExistingZone(t *te
 		testZoneID := uint(9997)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = false
+		website.ID = 8010
+		// Bind a primary domain with DNS hosting disabled but an already-existing
+		// zone, so that enabling DNS reuses the zone (no CreateZone) and only
+		// creates the DNS records.
+		existingApex := prebindPrimaryDomain(tb, ctx, website, domain, false)
+		existingApex.DNSZoneID = &testZoneID
+		require.NoError(tb, ctx.DB().Save(existingApex).Error)
 		website.Status = string(pluginDb.WebsiteStatusActive)
-		website.DNSZoneID = &testZoneID
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
-		assert.False(t, createdWebsite.Enabled)
+		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.False(t, createdApex.DNSHostingEnabled)
 
 		// Act - Enable DNS hosting when zone already exists
 		// Note: We don't mock CreateWebsiteDNSRecords here because handleDNSEnabledTransition
@@ -2202,7 +2166,9 @@ func TestWebsiteService_UpdateWebsite_DNSHostingTransitionWithExistingZone(t *te
 		// Assert
 		require.NoError(tb, err)
 		require.NotNil(tb, updatedWebsite)
-		assert.True(t, updatedWebsite.Enabled)
+		updatedApex, uerr := websiteService.GetApexDomainBinding(context.Background(), updatedWebsite.ID)
+		require.NoError(tb, uerr)
+		assert.True(t, updatedApex.DNSHostingEnabled)
 		assert.Equal(t, string(pluginDb.WebsiteStatusPendingValidation), updatedWebsite.Status)
 
 		// Verify CreateZone was NOT called (zone already existed)
@@ -2221,7 +2187,10 @@ func TestWebsiteService_UpdateWebsite_DNSEnableToggleOffOn(t *testing.T) {
 		testZoneID := uint(8001)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
+		website.ID = 8012
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		website.Status = string(pluginDb.WebsiteStatusActive)
 
 		// Initial creation with DNS enabled
@@ -2232,20 +2201,24 @@ func TestWebsiteService_UpdateWebsite_DNSEnableToggleOffOn(t *testing.T) {
 		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
-		assert.True(t, createdWebsite.Enabled)
-		assert.NotNil(t, createdWebsite.DNSZoneID)
+		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.True(t, createdApex.DNSHostingEnabled)
+		assert.NotNil(t, createdApex.DNSZoneID)
 
 		// Toggle DNS off
 		// First, DeleteWebsiteDNSRecords is called to remove the website's DNS records
-		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, *createdWebsite.DNSZoneID, mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, *createdApex.DNSZoneID, mock.Anything).Return(nil).Once()
 		// Then, DeleteZone is called because no other websites share the zone
-		mockDNS.EXPECT().DeleteZone(mock.Anything, *createdWebsite.DNSZoneID).Return(nil).Once()
+		mockDNS.EXPECT().DeleteZone(mock.Anything, *createdApex.DNSZoneID).Return(nil).Once()
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
 			"dns_enabled": false,
 		})
 		require.NoError(tb, err)
-		assert.False(t, updatedWebsite.Enabled)
-		assert.Nil(t, updatedWebsite.DNSZoneID, "dns_zone_id should be nil after successful delete")
+		updatedApex, uerr := websiteService.GetApexDomainBinding(context.Background(), updatedWebsite.ID)
+		require.NoError(tb, uerr)
+		assert.False(t, updatedApex.DNSHostingEnabled)
+		assert.Nil(t, updatedApex.DNSZoneID, "dns_zone_id should be nil after successful delete")
 
 		// Toggle DNS back on - handleDNSEnabledTransition only creates zone + records (no IPNS)
 		newZoneID := uint(8002)
@@ -2257,9 +2230,11 @@ func TestWebsiteService_UpdateWebsite_DNSEnableToggleOffOn(t *testing.T) {
 			"dns_enabled": true,
 		})
 		require.NoError(tb, err)
-		assert.True(t, updatedWebsite2.Enabled)
-		assert.NotNil(t, updatedWebsite2.DNSZoneID, "dns_zone_id should be set after re-enable")
-		assert.Equal(t, newZoneID, *updatedWebsite2.DNSZoneID)
+		updatedApex2, u2err := websiteService.GetApexDomainBinding(context.Background(), updatedWebsite2.ID)
+		require.NoError(tb, u2err)
+		assert.True(t, updatedApex2.DNSHostingEnabled)
+		assert.NotNil(t, updatedApex2.DNSZoneID, "dns_zone_id should be set after re-enable")
+		assert.Equal(t, newZoneID, *updatedApex2.DNSZoneID)
 	}, TestOptions)
 }
 
@@ -2274,7 +2249,10 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingDeleteZoneFails(t *testin
 		testZoneID := uint(8003)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
+		website.ID = 8013
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		website.Status = string(pluginDb.WebsiteStatusActive)
 
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
@@ -2284,21 +2262,25 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingDeleteZoneFails(t *testin
 		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
-		assert.NotNil(t, createdWebsite.DNSZoneID)
+		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.NotNil(t, createdApex.DNSZoneID)
 
 		// Toggle DNS off but DeleteZone fails
 		// First, DeleteWebsiteDNSRecords is called and succeeds
-		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, *createdWebsite.DNSZoneID, mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, *createdApex.DNSZoneID, mock.Anything).Return(nil).Once()
 		// Then, DeleteZone is called but fails
-		mockDNS.EXPECT().DeleteZone(mock.Anything, *createdWebsite.DNSZoneID).Return(errors.New("powerdns unavailable")).Once()
+		mockDNS.EXPECT().DeleteZone(mock.Anything, *createdApex.DNSZoneID).Return(errors.New("powerdns unavailable")).Once()
 
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
 			"dns_enabled": false,
 		})
 		require.NoError(tb, err)
-		assert.False(t, updatedWebsite.Enabled)
-		assert.NotNil(t, updatedWebsite.DNSZoneID, "dns_zone_id should be preserved when DeleteZone fails")
-		assert.Equal(t, *createdWebsite.DNSZoneID, *updatedWebsite.DNSZoneID)
+		updatedApex, uerr := websiteService.GetApexDomainBinding(context.Background(), updatedWebsite.ID)
+		require.NoError(tb, uerr)
+		assert.False(t, updatedApex.DNSHostingEnabled)
+		assert.NotNil(t, updatedApex.DNSZoneID, "dns_zone_id should be preserved when DeleteZone fails")
+		assert.Equal(t, *createdApex.DNSZoneID, *updatedApex.DNSZoneID)
 	}, TestOptions)
 }
 
@@ -2319,8 +2301,10 @@ func TestWebsiteService_UpdateWebsite_ConvertIPNSToIPFS_UpdatesDNSRecords(t *tes
 
 		// Create website with DNS hosting enabled (auto-creates IPNS key)
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
-
+		website.ID = 8014
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		testIPNSKey := setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID, domain, testUserID1), nil).Once()
@@ -2339,7 +2323,11 @@ func TestWebsiteService_UpdateWebsite_ConvertIPNSToIPFS_UpdatesDNSRecords(t *tes
 		require.NotNil(tb, createdWebsite)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType)
 		require.NotNil(tb, createdWebsite.IPNSKeyID)
-		require.NotNil(tb, createdWebsite.DNSZoneID)
+		apex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
+		require.NoError(tb, err)
+		require.NotNil(tb, apex)
+		require.NotNil(tb, apex.DNSZoneID)
+		assert.Equal(tb, testZoneID, *apex.DNSZoneID)
 
 		// Act - Update from IPNS to IPFS
 		newCID := util.GenerateTestCID(t, "new ipfs content")
@@ -2392,8 +2380,10 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPNS_NoDNSUpdate(t *testing.T) {
 		testZoneID := uint(9002)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
-
+		website.ID = 8015
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		testIPNSKey := setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID, domain, testUserID1), nil).Once()
@@ -2454,8 +2444,10 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 
 		// Create website with DNS hosting enabled (auto-creates IPNS key, starts as IPNS)
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
-
+		website.ID = 8016
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		testIPNSKey := setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID, domain, testUserID1), nil).Once()
@@ -2472,7 +2464,11 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 		websiteService.WaitForPublishes()
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
-		require.NotNil(tb, createdWebsite.DNSZoneID)
+		apex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
+		require.NoError(tb, err)
+		require.NotNil(tb, apex)
+		require.NotNil(tb, apex.DNSZoneID)
+		assert.Equal(tb, testZoneID, *apex.DNSZoneID)
 
 		// First, switch back to IPFS to set up the IPFS→IPNS scenario
 		newCID := util.GenerateTestCID(t, "intermediate ipfs content")
@@ -2545,7 +2541,8 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone(t *testing.T) {
 		domain := "type-only-convert.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = false
+		website.ID = 2544
+		prebindPrimaryDomain(tb, ctx, website, domain, false) // DNS hosting disabled
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -2585,7 +2582,8 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone_DNSRecordsUpdated(t *t
 		testZoneID := uint(8001)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = false
+		website.ID = 2585
+		prebindPrimaryDomain(tb, ctx, website, domain, false) // DNS hosting disabled initially
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -2604,6 +2602,9 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone_DNSRecordsUpdated(t *t
 			"dns_enabled": true,
 		}
 
+		// Converting to IPNS while enabling DNS: the service applies the
+		// dns_enabled toggle to the primary WebsiteDomain (per-domain model) and
+		// creates the zone + IPNS records for the converted target.
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID, domain, testUserID1), nil).Once()
 		mockDNS.EXPECT().CreateWebsiteDNSRecords(
 			mock.Anything,
@@ -2620,6 +2621,11 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone_DNSRecordsUpdated(t *t
 		require.NoError(tb, err)
 		require.NotNil(tb, updatedWebsite)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), updatedWebsite.TargetType)
+		apex, err := websiteService.GetApexDomainBinding(context.Background(), updatedWebsite.ID)
+		require.NoError(tb, err)
+		require.NotNil(tb, apex)
+		assert.True(tb, apex.DNSHostingEnabled)
+		assert.NotNil(tb, apex.DNSZoneID)
 	}, TestOptions)
 }
 
@@ -2632,7 +2638,8 @@ func TestWebsiteService_UpdateWebsite_IPNSTargetTypeWithCID(t *testing.T) {
 		domain := "ipns-with-cid.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = false
+		website.ID = 2641
+		prebindPrimaryDomain(tb, ctx, website, domain, false) // DNS hosting disabled
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -2673,8 +2680,10 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPFSWithoutCID(t *testing.T) {
 		testZoneID := uint(8002)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
-
+		website.ID = 8017
+		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
+		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 		_ = setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID, domain, testUserID1), nil).Once()

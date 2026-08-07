@@ -29,7 +29,6 @@ func createMockIPFSWebsite(id, userID uint, domain string, testCID string, statu
 	return &pluginDb.Website{
 		ID:              id,
 		UserID:          userID,
-		Domain:          domain,
 		TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
 		TargetMultihash: c.Hash(),
 		CIDVersion:      &version,
@@ -44,7 +43,6 @@ func createMockIPNSWebsite(id, userID uint, domain string, peerIDStr string, sta
 	return &pluginDb.Website{
 		ID:              id,
 		UserID:          userID,
-		Domain:          domain,
 		TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
 		TargetMultihash: target.ToMultihash(),
 		CIDVersion:      nil,
@@ -222,7 +220,6 @@ func TestAPI_GetSSLStatus(t *testing.T) {
 			mockWebsite := &pluginDb.Website{
 				ID:         1,
 				UserID:     userID,
-				Domain:     TestDomain,
 				TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
 				Status:     string(pluginDb.WebsiteStatusActive),
 			}
@@ -260,7 +257,6 @@ func TestAPI_GetSSLStatus(t *testing.T) {
 			mockWebsite := &pluginDb.Website{
 				ID:         1,
 				UserID:     userID,
-				Domain:     TestDomain,
 				TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
 				Status:     string(pluginDb.WebsiteStatusActive),
 			}
@@ -316,7 +312,6 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 		mockWebsite := &pluginDb.Website{
 			ID:         1,
 			UserID:     uint(1),
-			Domain:     TestDomain,
 			TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
 			Status:     string(pluginDb.WebsiteStatusActive),
 		}
@@ -526,7 +521,6 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			mockWebsite := &pluginDb.Website{
 				ID:         1,
 				UserID:     userID,
-				Domain:     TestDomain,
 				TargetType: string(pluginDb.WebsiteTargetTypeIPFS),
 				Status:     string(pluginDb.WebsiteStatusActive),
 			}

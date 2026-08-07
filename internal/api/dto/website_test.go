@@ -382,7 +382,6 @@ func TestWebsiteResponse_FromModel_DoesNotSetSSL(t *testing.T) {
 		now := time.Now()
 		model := &db.Website{
 			ID:              1,
-			Domain:          "example.com",
 			TargetType:      string(db.WebsiteTargetTypeIPFS),
 			Status:          string(db.WebsiteStatusActive),
 			ValidationToken: "token123",
@@ -511,7 +510,6 @@ func TestWebsiteResponse_SetValidationRecordInfo(t *testing.T) {
 
 	model := &db.Website{
 		ID:              1,
-		Domain:          "dev.pinner.xyz",
 		TargetType:      string(db.WebsiteTargetTypeIPFS),
 		Status:          string(db.WebsiteStatusActive),
 		ValidationToken: "abc123",
@@ -524,6 +522,7 @@ func TestWebsiteResponse_SetValidationRecordInfo(t *testing.T) {
 		resp.SetValidationRecordInfo("lumeweb-verify")
 		err := resp.FromModel(model)
 		require.NoError(t, err)
+		resp.SetPrimaryDomain(&db.WebsiteDomain{Domain: "dev.pinner.xyz"})
 		assert.Equal(t, "lumeweb-verify=abc123", resp.ValidationToken)
 		assert.Equal(t, "lumeweb-verify.dev.pinner.xyz", resp.ValidationRecordHost)
 	})
@@ -541,6 +540,7 @@ func TestWebsiteResponse_SetValidationRecordInfo(t *testing.T) {
 		resp.SetValidationRecordInfo("lumeweb-verify")
 		err := resp.FromModel(model)
 		require.NoError(t, err)
+		resp.SetPrimaryDomain(&db.WebsiteDomain{Domain: "dev.pinner.xyz"})
 		assert.Equal(t, "lumeweb-verify=abc123", resp.ValidationToken)
 		assert.Equal(t, "lumeweb-verify.dev.pinner.xyz", resp.ValidationRecordHost)
 

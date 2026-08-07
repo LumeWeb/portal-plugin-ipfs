@@ -43,7 +43,6 @@ func TestIntegration_CreateAndVerifyHNSDomain(t *testing.T) {
 		// Create a website
 		website := &pluginDb.Website{
 			UserID:          1,
-			Domain:          "example",
 			TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
 			TargetMultihash: []byte("test-hash"),
 			Status:          string(pluginDb.WebsiteStatusPendingValidation),

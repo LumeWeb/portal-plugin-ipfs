@@ -424,7 +424,8 @@ func TestValidateDNS_PendingValidation_ExpiredToken_ManagedDNS_RegeneratesToken(
 		zoneID := uint(5001)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
+		website.ID = 5001
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(zoneID, domain, testUserID1), nil).Once()
@@ -439,7 +440,11 @@ func TestValidateDNS_PendingValidation_ExpiredToken_ManagedDNS_RegeneratesToken(
 
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
-		require.NotNil(tb, created.DNSZoneID)
+		require.NotNil(tb, created)
+		apex, err := ws.GetApexDomainBinding(context.Background(), created.ID)
+		require.NoError(tb, err)
+		require.NotNil(tb, apex)
+		require.NotNil(tb, apex.DNSZoneID)
 
 		pastTime := time.Now().Add(-1 * time.Hour)
 		_, err = ws.UpdateWebsite(context.Background(), testUserID1, created.ID, map[string]interface{}{

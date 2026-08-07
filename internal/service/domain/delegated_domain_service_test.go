@@ -35,7 +35,6 @@ var TestOptions = coreTesting.CombineOptions(
 func createTestWebsite(tb testing.TB, db *gorm.DB, userID uint, domain string) *pluginDb.Website {
 	website := &pluginDb.Website{
 		UserID:          userID,
-		Domain:          domain,
 		TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
 		TargetMultihash: []byte("test"),
 		CIDVersion:      func() *uint8 { v := uint8(1); return &v }(),
