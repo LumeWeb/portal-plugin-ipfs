@@ -68,6 +68,9 @@ func TestDelegatedDomainService_CreateDomain(t *testing.T) {
 		assert.Equal(tb, "example.com", wd.Domain)
 		assert.Equal(tb, pluginDb.DomainNamespaceICANN, wd.Namespace)
 		assert.Equal(tb, uint(1), wd.ZoneID)
+		// DNS hosting defaults to true: binding always creates the authoritative
+		// portal-managed zone, so the per-domain hosting flag matches reality.
+		assert.True(tb, wd.DNSHostingEnabled)
 	}, TestOptions)
 }
 

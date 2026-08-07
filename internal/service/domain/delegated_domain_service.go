@@ -132,12 +132,13 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	}
 
 	wd := &pluginDb.WebsiteDomain{
-		WebsiteID: websiteID,
-		UserID:    userID,
-		Domain:    domain,
-		Namespace: pluginDb.DomainNamespace(namespace),
-		ZoneName:  canonicalZoneName(domain),
-		Status:    pluginDb.DomainStatusDraft,
+		WebsiteID:         websiteID,
+		UserID:            userID,
+		Domain:            domain,
+		Namespace:         pluginDb.DomainNamespace(namespace),
+		ZoneName:          canonicalZoneName(domain),
+		Status:            pluginDb.DomainStatusDraft,
+		DNSHostingEnabled: true,
 	}
 
 	// Soft deletes leave a tombstone row that still occupies the
