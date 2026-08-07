@@ -29,9 +29,10 @@ func setMockResolver(ws pluginCore.WebsiteService, r DNSResolver) {
 }
 
 type testDelegatedDomainService struct {
-	uses   func(string) bool
-	verify func(context.Context, *pluginDb.WebsiteDomain) (bool, error)
-	getNs  func(string) (string, bool)
+	uses      func(string) bool
+	verify    func(context.Context, *pluginDb.WebsiteDomain) (bool, error)
+	getNs     func(string) (string, bool)
+	getByName func(context.Context, string) (*pluginDb.WebsiteDomain, error)
 }
 
 func (t *testDelegatedDomainService) UsesDelegationForOwnership(d string) bool {
@@ -60,6 +61,9 @@ func (t *testDelegatedDomainService) GetNamespaceForDomain(d string) (string, bo
 }
 
 func (t *testDelegatedDomainService) GetWebsiteDomainByName(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error) {
+	if t.getByName != nil {
+		return t.getByName(ctx, domain)
+	}
 	return nil, gorm.ErrRecordNotFound
 }
 
@@ -85,6 +89,7 @@ func TestValidateDNS_PendingValidation_ValidDNSLinkAndToken_ReturnsValidated(t *
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		require.NotNil(tb, created)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "validate-pending.com", false)
 
 		mockResolver := mocks.NewMockDNSResolver(t)
 		mockResolver.EXPECT().ResolveDNSLink("validate-pending.com").Return(dnslink.Result{
@@ -118,6 +123,7 @@ func TestValidateDNS_PendingValidation_MissingDNSLink_ReturnsDNSMismatch(t *test
 		website := createTestIPFSWebsite(testUserID1, "missing-dnslink.com", testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "missing-dnslink.com", false)
 
 		mockResolver := mocks.NewMockDNSResolver(t)
 		mockResolver.EXPECT().ResolveDNSLink("missing-dnslink.com").Return(dnslink.Result{
@@ -142,6 +148,7 @@ func TestValidateDNS_PendingValidation_MissingToken_ReturnsTokenMissing(t *testi
 		website := createTestIPFSWebsite(testUserID1, "missing-token.com", testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "missing-token.com", false)
 
 		mockResolver := mocks.NewMockDNSResolver(t)
 		mockResolver.EXPECT().ResolveDNSLink("missing-token.com").Return(dnslink.Result{
@@ -185,6 +192,7 @@ func TestValidateDNS_ActiveSite_ExpiredToken_SkipsTokenCheckAndValidates(t *test
 		require.NoError(tb, err)
 		assert.True(tb, activeWebsite.IsExpired())
 		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), activeWebsite.Status)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "active-expired.com", false)
 
 		mockResolver := mocks.NewMockDNSResolver(t)
 		mockResolver.EXPECT().ResolveDNSLink("active-expired.com").Return(dnslink.Result{
@@ -230,6 +238,7 @@ func TestValidateDNS_BrokenSite_ExpiredToken_SkipsTokenCheckAndValidates(t *test
 		brokenWebsite, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
 		assert.True(tb, brokenWebsite.IsExpired())
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "broken-expired.com", false)
 
 		mockResolver := mocks.NewMockDNSResolver(t)
 		mockResolver.EXPECT().ResolveDNSLink("broken-expired.com").Return(dnslink.Result{
@@ -270,6 +279,7 @@ func TestValidateDNS_PendingValidation_ExpiredToken_ReturnsTokenExpiredWithRegen
 		expiredWebsite, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
 		assert.True(tb, expiredWebsite.IsExpired())
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "regen-token.com", false)
 
 		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
@@ -291,6 +301,7 @@ func TestValidateDNS_NXDOMAIN_ReturnsDNSMissing(t *testing.T) {
 		website := createTestIPFSWebsite(testUserID1, "nxdomain-test.com", testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "nxdomain-test.com", false)
 
 		mockResolver := mocks.NewMockDNSResolver(t)
 		mockResolver.EXPECT().ResolveDNSLink("nxdomain-test.com").Return(dnslink.Result{}, dnslink.DNSRCodeError{
@@ -318,6 +329,7 @@ func TestValidateDNS_DNSLinkLookupFailure_ReturnsError(t *testing.T) {
 		website := createTestIPFSWebsite(testUserID1, "dns-fail-test.com", testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "dns-fail-test.com", false)
 
 		mockResolver := mocks.NewMockDNSResolver(t)
 		mockResolver.EXPECT().ResolveDNSLink("dns-fail-test.com").Return(dnslink.Result{}, fmt.Errorf("network error"))
@@ -339,6 +351,7 @@ func TestValidateDNS_TxTTLookupFailure_ReturnsError(t *testing.T) {
 		website := createTestIPFSWebsite(testUserID1, "txt-fail-test.com", testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "txt-fail-test.com", false)
 
 		mockResolver := mocks.NewMockDNSResolver(t)
 		mockResolver.EXPECT().ResolveDNSLink("txt-fail-test.com").Return(dnslink.Result{
@@ -365,6 +378,7 @@ func TestValidateDNS_WrongDNSLink_ReturnsDNSMismatch(t *testing.T) {
 		website := createTestIPFSWebsite(testUserID1, "wrong-dnslink.com", testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "wrong-dnslink.com", false)
 
 		wrongCID := util.GenerateTestCID(t, "different content")
 		mockResolver := mocks.NewMockDNSResolver(t)
@@ -392,6 +406,7 @@ func TestValidateDNS_IPNSTarget_ValidDNSLinkAndToken(t *testing.T) {
 		website := createTestIPNSWebsite(testUserID1, "ipns-validate.com", ipnsName)
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "ipns-validate.com", false)
 
 		mockResolver := mocks.NewMockDNSResolver(t)
 		mockResolver.EXPECT().ResolveDNSLink("ipns-validate.com").Return(dnslink.Result{
@@ -424,7 +439,8 @@ func TestValidateDNS_PendingValidation_ExpiredToken_ManagedDNS_RegeneratesToken(
 		zoneID := uint(5001)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
-		website.Enabled = true
+		website.ID = 5001
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
 
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(zoneID, domain, testUserID1), nil).Once()
@@ -439,7 +455,11 @@ func TestValidateDNS_PendingValidation_ExpiredToken_ManagedDNS_RegeneratesToken(
 
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
-		require.NotNil(tb, created.DNSZoneID)
+		require.NotNil(tb, created)
+		apex, err := ws.GetApexDomainBinding(context.Background(), created.ID)
+		require.NoError(tb, err)
+		require.NotNil(tb, apex)
+		require.NotNil(tb, apex.DNSZoneID)
 
 		pastTime := time.Now().Add(-1 * time.Hour)
 		_, err = ws.UpdateWebsite(context.Background(), testUserID1, created.ID, map[string]interface{}{
@@ -497,6 +517,7 @@ func TestValidateDNS_PendingDelegated_SkipsTokenCheck(t *testing.T) {
 		website := createTestIPFSWebsite(testUserID1, "delegated-skip.com", testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "delegated-skip.com", false)
 
 		mockResolver := mocks.NewMockDNSResolver(t)
 		// Only DNSLink, no TXT lookup expected because token check skipped
@@ -529,6 +550,7 @@ func TestValidateDNS_DelegatedAttached_Success(t *testing.T) {
 		website := createTestIPFSWebsite(testUserID1, "attached-ok.hns", testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "attached-ok.hns", false)
 
 		// Insert an attached domain record (simulating delegated domain binding)
 		svc := ws.(*WebsiteServiceDefault)
@@ -573,6 +595,7 @@ func TestValidateDNS_DelegatedAttached_FailsVerification(t *testing.T) {
 		website := createTestIPFSWebsite(testUserID1, "attached-fail.hns", testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "attached-fail.hns", false)
 
 		svc := ws.(*WebsiteServiceDefault)
 		if db := svc.DB(); db != nil {
@@ -618,6 +641,7 @@ func TestValidateDNS_DelegatedAttached_VerifyError_Fails(t *testing.T) {
 		website := createTestIPFSWebsite(testUserID1, "verify-err.hns", testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "verify-err.hns", false)
 
 		svc := ws.(*WebsiteServiceDefault)
 		if db := svc.DB(); db != nil {

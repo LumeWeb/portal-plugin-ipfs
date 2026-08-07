@@ -57,6 +57,21 @@ func NewWebsiteJanitorJob() core.CronJob {
 	return job
 }
 
+// primaryDomainName resolves a website's primary domain name for logging.
+// The Website record no longer stores a domain string; it points at a primary
+// WebsiteDomain binding. Resolution is best-effort for log fields only, so a
+// lookup failure yields an empty string (never an error).
+func (j *WebsiteJanitorJob) primaryDomainName(ctx context.Context, website *pluginDb.Website) string {
+	if website == nil || website.PrimaryDomainID == nil || j.db == nil {
+		return ""
+	}
+	var wd pluginDb.WebsiteDomain
+	if err := j.db.WithContext(ctx).Where("id = ?", *website.PrimaryDomainID).First(&wd).Error; err != nil {
+		return ""
+	}
+	return wd.Domain
+}
+
 // Run executes the janitor job logic
 func (j *WebsiteJanitorJob) Run(ctx core.Context, eventCtx context.Context) error {
 	// Use eventCtx for tracing since it's the context.Context type
@@ -135,7 +150,7 @@ func (j *WebsiteJanitorJob) Run(ctx core.Context, eventCtx context.Context) erro
 					j.logger.Error("Failed to validate website",
 						zap.Error(err),
 						zap.Uint("website_id", website.ID),
-						zap.String("domain", website.Domain))
+						zap.String("domain", j.primaryDomainName(eventCtx, website)))
 				}
 			})
 		}
@@ -195,7 +210,7 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 	if string(newStatus) != oldStatus {
 		j.logger.Info("Website status changed",
 			zap.Uint("website_id", website.ID),
-			zap.String("domain", website.Domain),
+			zap.String("domain", j.primaryDomainName(ctx, website)),
 			zap.String("old_status", oldStatus),
 			zap.String("new_status", string(newStatus)))
 
@@ -207,7 +222,7 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 			// Skip notification in janitor context - notifications will be handled in user-facing operations
 			j.logger.Debug("Status changed to broken, skipping notification in janitor context",
 				zap.Uint("website_id", website.ID),
-				zap.String("domain", website.Domain))
+				zap.String("domain", j.primaryDomainName(ctx, website)))
 		}
 	}
 
@@ -265,7 +280,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 		j.logger.Error("IPNS key not found in database",
 			zap.Error(err),
 			zap.Uint("website_id", website.ID),
-			zap.String("domain", website.Domain),
+			zap.String("domain", j.primaryDomainName(ctx, website)),
 			zap.String("peer_id", peerID),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
@@ -278,7 +293,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	if website.UserID != userID {
 		j.logger.Error("IPNS key belongs to different user",
 			zap.Uint("website_id", website.ID),
-			zap.String("domain", website.Domain),
+			zap.String("domain", j.primaryDomainName(ctx, website)),
 			zap.Uint("website_user_id", website.UserID),
 			zap.Uint("key_user_id", userID),
 		)
@@ -292,7 +307,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 		j.logger.Error("Failed to look up IPNS key record",
 			zap.Error(err),
 			zap.Uint("website_id", website.ID),
-			zap.String("domain", website.Domain),
+			zap.String("domain", j.primaryDomainName(ctx, website)),
 			zap.String("peer_id", peerID),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
@@ -303,7 +318,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	if key.LastPublishedCID == "" {
 		j.logger.Warn("IPNS key has no published CID",
 			zap.Uint("website_id", website.ID),
-			zap.String("domain", website.Domain),
+			zap.String("domain", j.primaryDomainName(ctx, website)),
 			zap.String("peer_id", peerID),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
@@ -316,7 +331,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 		j.logger.Warn("Failed to validate last published CID",
 			zap.Error(err),
 			zap.Uint("website_id", website.ID),
-			zap.String("domain", website.Domain),
+			zap.String("domain", j.primaryDomainName(ctx, website)),
 			zap.String("cid", key.LastPublishedCID),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
@@ -327,7 +342,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	if !cidValid {
 		j.logger.Warn("Last published CID is not pinned",
 			zap.Uint("website_id", website.ID),
-			zap.String("domain", website.Domain),
+			zap.String("domain", j.primaryDomainName(ctx, website)),
 			zap.String("cid", key.LastPublishedCID),
 		)
 		website.Status = string(pluginDb.WebsiteStatusBroken)
@@ -340,7 +355,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 
 	j.logger.Debug("IPNS target validated successfully",
 		zap.Uint("website_id", website.ID),
-		zap.String("domain", website.Domain),
+		zap.String("domain", j.primaryDomainName(ctx, website)),
 		zap.String("peer_id", peerID),
 		zap.String("cid", key.LastPublishedCID),
 	)

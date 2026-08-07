@@ -32,7 +32,6 @@ func createTestIPFSGatewayWebsite(id, userID uint, domain string, testCID cid.Ci
 	return &pluginDb.Website{
 		ID:              id,
 		UserID:          userID,
-		Domain:          domain,
 		TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
 		TargetMultihash: testCID.Hash(),
 		CIDVersion:      &version,
@@ -47,7 +46,6 @@ func createTestDeletedIPFSGatewayWebsite(id, userID uint, domain string, testCID
 	return &pluginDb.Website{
 		ID:              id,
 		UserID:          userID,
-		Domain:          domain,
 		TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
 		TargetMultihash: testCID.Hash(),
 		CIDVersion:      &version,
@@ -77,7 +75,7 @@ func TestAPI_GetGatewayWebsite(t *testing.T) {
 
 		// Assert
 		assert.Equal(t, http.StatusOK, rec.Code, "Should return 200 OK for valid website")
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		require.NoError(t, err)
@@ -99,7 +97,7 @@ func TestAPI_GetGatewayWebsite_MissingSecret(t *testing.T) {
 
 		// Assert
 		assert.Equal(t, http.StatusUnauthorized, rec.Code, "Should return 401 Unauthorized without secret")
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		require.NoError(t, err)
@@ -120,7 +118,7 @@ func TestAPI_GetGatewayWebsite_InvalidSecret(t *testing.T) {
 
 		// Assert
 		assert.Equal(t, http.StatusUnauthorized, rec.Code, "Should return 401 Unauthorized with invalid secret")
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		require.NoError(t, err)
@@ -138,7 +136,7 @@ func TestAPI_GetGatewayWebsite_BrokenSite(t *testing.T) {
 		website := createTestIPFSGatewayWebsite(2, 1, domain, testCID, pluginDb.WebsiteStatusBroken)
 
 		helper.SetupWebsiteServiceMocks(domain, website)
-		
+
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/websites/"+domain, nil)
 		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
@@ -148,7 +146,7 @@ func TestAPI_GetGatewayWebsite_BrokenSite(t *testing.T) {
 
 		// Assert
 		assert.Equal(t, http.StatusGone, rec.Code, "Should return 410 Gone for broken website")
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		require.NoError(t, err)
@@ -177,7 +175,7 @@ func TestAPI_GetGatewayWebsite_DeletedSite(t *testing.T) {
 
 		// Assert
 		assert.Equal(t, http.StatusGone, rec.Code, "Should return 410 Gone for deleted website")
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		require.NoError(t, err)
@@ -190,9 +188,9 @@ func TestAPI_GetGatewayWebsite_NotFound(t *testing.T) {
 		// Arrange
 		helper := newMockHelper(t, ctx)
 		domain := "nonexistent.example.com"
-		
+
 		helper.SetupWebsiteServiceMocks(domain, nil)
-		
+
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/websites/"+domain, nil)
 		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
@@ -215,7 +213,7 @@ func TestAPI_GetGatewayWebsiteStatus(t *testing.T) {
 		website := createTestIPFSGatewayWebsite(1, 1, domain, testCID, pluginDb.WebsiteStatusActive)
 
 		helper.SetupWebsiteServiceMocks(domain, website)
-		
+
 		req := ctx.NewAPIRequest(http.MethodGet, fmt.Sprintf("/internal/websites/%s/status", domain), nil)
 		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
@@ -225,7 +223,7 @@ func TestAPI_GetGatewayWebsiteStatus(t *testing.T) {
 
 		// Assert
 		assert.Equal(t, http.StatusOK, rec.Code, "Should return 200 OK for status check")
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		require.NoError(t, err)
@@ -245,7 +243,7 @@ func TestAPI_GetGatewayWebsiteStatus_BrokenSite(t *testing.T) {
 
 		helper.SetupWebsiteServiceMocks(domain, website)
 		helper.SetupWebsiteServiceMocks(domain, website)
-		
+
 		req := ctx.NewAPIRequest(http.MethodGet, fmt.Sprintf("/internal/websites/%s/status", domain), nil)
 		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
@@ -255,7 +253,7 @@ func TestAPI_GetGatewayWebsiteStatus_BrokenSite(t *testing.T) {
 
 		// Assert
 		assert.Equal(t, http.StatusGone, rec.Code, "Should return 410 Gone for broken website status")
-		
+
 		var response map[string]interface{}
 		err := json.Unmarshal(rec.Body.Bytes(), &response)
 		require.NoError(t, err)
@@ -269,9 +267,9 @@ func TestAPI_GetGatewayWebsiteStatus_NotFound(t *testing.T) {
 		// Arrange
 		helper := newMockHelper(t, ctx)
 		domain := "nonexistent.example.com"
-		
+
 		helper.SetupWebsiteServiceMocks(domain, nil)
-		
+
 		req := ctx.NewAPIRequest(http.MethodGet, fmt.Sprintf("/internal/websites/%s/status", domain), nil)
 		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 
@@ -288,10 +286,10 @@ func TestAPI_GetGatewayWebsite_ServiceError(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		helper := newMockHelper(t, ctx)
 		domain := "error.example.com"
-		
+
 		mockWebsiteService := core.GetService[*mocks.MockWebsiteService](helper.ctx, pluginCore.WEBSITE_SERVICE)
 		mockWebsiteService.EXPECT().GetWebsiteByDomain(mock.Anything, domain).Return(nil, pluginDb.DomainNamespaceICANN, errors.New("database error"))
-		
+
 		req := ctx.NewAPIRequest(http.MethodGet, "/internal/websites/"+domain, nil)
 		req.Header.Set("X-Gateway-Secret", testGatewaySecret())
 

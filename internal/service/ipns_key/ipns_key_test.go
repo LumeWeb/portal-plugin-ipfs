@@ -387,7 +387,6 @@ func TestIPNSKeyService_DeleteKey_WithActiveWebsite(t *testing.T) {
 		// Create an active website that references this IPNS key
 		website := &pluginDb.Website{
 			UserID:          userID,
-			Domain:          "test.example.com",
 			TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
 			TargetMultihash: createdKey.PeerIDMultihash,
 			Status:          string(pluginDb.WebsiteStatusActive),
@@ -427,7 +426,6 @@ func TestIPNSKeyService_DeleteKey_WithInactiveWebsite(t *testing.T) {
 		// This simulates the scenario where user wants to clean up a failed website and its key
 		website := &pluginDb.Website{
 			UserID:          userID,
-			Domain:          "test-broken.example.com",
 			TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
 			TargetMultihash: createdKey.PeerIDMultihash,
 			Status:          string(pluginDb.WebsiteStatusBroken),
@@ -464,7 +462,6 @@ func TestIPNSKeyService_DeleteKey_WithPendingWebsite(t *testing.T) {
 		// Create a pending validation website that references this IPNS key
 		website := &pluginDb.Website{
 			UserID:          userID,
-			Domain:          "test-pending.example.com",
 			TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
 			TargetMultihash: createdKey.PeerIDMultihash,
 			Status:          string(pluginDb.WebsiteStatusPendingValidation),

@@ -118,6 +118,38 @@ func (s *WebsiteServiceDefault) resolverForDomain(domain string) DNSResolver {
 	return NewLiveResolver("")
 }
 
+// primaryWebsiteDomain resolves the website's primary (apex) WebsiteDomain
+// binding, which owns the DNS hosting state (dns_hosting_enabled, dns_zone_id)
+// for the site. It resolves via Website.PrimaryDomainID when set, otherwise
+// falls back to the oldest active binding for safety. Returns
+// gorm.ErrRecordNotFound when the website has no primary binding.
+func (s *WebsiteServiceDefault) primaryWebsiteDomain(ctx context.Context, website *pluginDb.Website) (*pluginDb.WebsiteDomain, error) {
+	var wd pluginDb.WebsiteDomain
+	q := s.DB().WithContext(ctx).Where("website_id = ?", website.ID)
+	if website.PrimaryDomainID != nil {
+		q = q.Where("id = ?", *website.PrimaryDomainID)
+	} else {
+		q = q.Where("status = ?", pluginDb.DomainStatusActive)
+	}
+	err := q.Order("id ASC").First(&wd).Error
+	if err != nil {
+		return nil, err
+	}
+	return &wd, nil
+}
+
+// primaryDomainName returns the primary domain's name for the given website, or
+// an empty string when no primary binding resolves. DNS/validation code that
+// needs the apex domain name should use this instead of the removed
+// Website.Domain field.
+func (s *WebsiteServiceDefault) primaryDomainName(ctx context.Context, website *pluginDb.Website) string {
+	wd, err := s.primaryWebsiteDomain(ctx, website)
+	if err != nil {
+		return ""
+	}
+	return wd.Domain
+}
+
 // NewWebsiteService creates a new website service
 func NewWebsiteService() (core.Service, []core.ContextBuilderOption, error) {
 	svc := &WebsiteServiceDefault{}
@@ -165,41 +197,18 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 		CreateWebsiteDuration.WithLabelValues(),
 		CreateWebsiteTotal.WithLabelValues(LabelStatusError),
 		func() (*pluginDb.Website, error) {
-			// Normalize and validate domain
-			website.Domain = domsvc.NormalizeDomain(website.Domain)
-			if err := s.validateDomain(website.Domain); err != nil {
-				return nil, fmt.Errorf("invalid domain: %w", err)
-			}
-
-			// Auto-convert: target_type=ipns with a plain IPFS CID means
-			// "create/use IPNS key and publish this CID to it"
+			// Validate target type and hash up front (domain normalization and
+			// validation moved to the primary-domain binding creation in the
+			// API layer; the Website model no longer carries a domain string).
+			// When target_type=ipns with a plain CID hash (CIDVersion set) the
+			// hash is the *input* to the IPNS auto-convert path below, so it
+			// must validate as a CID, not as a peer ID.
 			if website.TargetType == string(pluginDb.WebsiteTargetTypeIPNS) && website.CIDVersion != nil {
-				publishCID := website.TargetHash()
-
-				ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, website.Domain, publishCID)
-				if err != nil {
-					return nil, err
+				if _, err := cid.Decode(website.TargetHash()); err != nil {
+					return nil, fmt.Errorf("invalid target: %w: %v", ErrInvalidCID, err)
 				}
-
-				website.TargetType = string(pluginDb.WebsiteTargetTypeIPNS)
-				website.TargetMultihash = ipnsKey.PeerIDMultihash
-				website.CIDVersion = nil
-				website.CIDType = nil
-				website.IPNSKeyID = &ipnsKey.ID
-			} else {
-				// Validate target type and hash
-				if err := s.validateTarget(website.TargetType, website.TargetHash()); err != nil {
-					return nil, fmt.Errorf("invalid target: %w", err)
-				}
-			}
-
-			// Check if domain already exists
-			existing, _, err := s.GetWebsiteByDomain(ctx, website.Domain)
-			if err != nil && err != gorm.ErrRecordNotFound {
-				return nil, fmt.Errorf("failed to check existing domain: %w", err)
-			}
-			if existing != nil {
-				return nil, fmt.Errorf("domain already exists: %s", website.Domain)
+			} else if err := s.validateTarget(website.TargetType, website.TargetHash()); err != nil {
+				return nil, fmt.Errorf("invalid target: %w", err)
 			}
 
 			// Generate validation token
@@ -216,21 +225,30 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 			// Set initial status
 			website.Status = string(pluginDb.WebsiteStatusPendingValidation)
 
-			// Create website in database
-			err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				return tx.Create(website)
-			})
-			if err != nil {
-				s.Logger().Error("Failed to create website",
-					zap.Error(err),
-					zap.String("domain", website.Domain),
-					zap.Uint("user_id", website.UserID))
-				return nil, fmt.Errorf("failed to create website: %w", err)
+			// Resolve the primary (apex) WebsiteDomain, which owns the DNS hosting
+			// state for this site. The primary domain may have been bound before
+			// the website was created (Phase 4 API layer); if no binding exists yet
+			// we create the website without domain-keyed side-effects and let the
+			// domain-add flow drive DNS/IPNS setup later.
+			primaryWD, perr := s.primaryWebsiteDomain(ctx, website)
+			var primaryDomain string
+			if perr == nil && primaryWD != nil {
+				primaryDomain = primaryWD.Domain
+			} else {
+				s.Logger().Debug("No primary domain binding available at website creation, deferring DNS/IPNS side-effects",
+					zap.String("target_type", website.TargetType))
 			}
 
-			// Auto-create IPNS key for managed DNS when using IPFS target
-			if website.Enabled && website.TargetType == string(pluginDb.WebsiteTargetTypeIPFS) {
-				ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, website.Domain, website.TargetHash())
+			// Auto-convert: target_type=ipns with a plain IPFS CID means
+			// "create/use IPNS key and publish this CID to it". Requires a
+			// primary domain to name the key; without one the raw target stands.
+			// This must run before the website row is written so the persisted
+			// target is already a valid IPNS peer ID (Website.BeforeSave rejects
+			// a non-nil CIDVersion for IPNS targets).
+			if website.TargetType == string(pluginDb.WebsiteTargetTypeIPNS) && website.CIDVersion != nil && primaryDomain != "" {
+				publishCID := website.TargetHash()
+
+				ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, primaryDomain, publishCID)
 				if err != nil {
 					return nil, err
 				}
@@ -240,29 +258,45 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				website.CIDVersion = nil
 				website.CIDType = nil
 				website.IPNSKeyID = &ipnsKey.ID
-
-				err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-					return tx.Save(website)
-				})
-				if err != nil {
-					s.Logger().Error("Failed to update website with IPNS target",
-						zap.Error(err),
-						zap.Uint("website_id", website.ID))
-					return nil, fmt.Errorf("failed to update website with IPNS target: %w", err)
-				}
 			}
 
-			// Create DNS zone if hosting is enabled
-			if website.Enabled && s.dnsSvc != nil {
+			// Auto-create IPNS key for managed DNS when using IPFS target and
+			// the primary domain has DNS hosting enabled.
+			if primaryWD != nil && primaryWD.DNSHostingEnabled && website.TargetType == string(pluginDb.WebsiteTargetTypeIPFS) {
+				ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, primaryDomain, website.TargetHash())
+				if err != nil {
+					return nil, err
+				}
+
+				website.TargetType = string(pluginDb.WebsiteTargetTypeIPNS)
+				website.TargetMultihash = ipnsKey.PeerIDMultihash
+				website.CIDVersion = nil
+				website.CIDType = nil
+				website.IPNSKeyID = &ipnsKey.ID
+			}
+
+			// Create website in database (with the final, converted target).
+			err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Create(website)
+			})
+			if err != nil {
+				s.Logger().Error("Failed to create website",
+					zap.Error(err),
+					zap.Uint("user_id", website.UserID))
+				return nil, fmt.Errorf("failed to create website: %w", err)
+			}
+
+			// Create DNS zone if hosting is enabled on the primary domain.
+			if primaryWD != nil && primaryWD.DNSHostingEnabled && s.dnsSvc != nil {
 				var dnsZone *pluginDb.DNSZone
 
 				// Check if a parent zone already exists for this user (e.g. pinner.xyz for docs.pinner.xyz)
-				if parentDomain := extractParentDomain(website.Domain); parentDomain != "" {
+				if parentDomain := extractParentDomain(primaryDomain); parentDomain != "" {
 					existingZone, err := s.dnsSvc.GetZoneByDomain(ctx, parentDomain)
 					if err == nil && existingZone != nil && existingZone.UserID == website.UserID {
 						dnsZone = existingZone
 						s.Logger().Info("Reusing existing parent zone for subdomain website",
-							zap.String("domain", website.Domain),
+							zap.String("domain", primaryDomain),
 							zap.String("parent_zone_domain", parentDomain),
 							zap.Uint("zone_id", existingZone.ID))
 					}
@@ -271,21 +305,21 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				// No parent zone found — create one for this domain
 				if dnsZone == nil {
 					var err error
-					dnsZone, err = s.dnsSvc.CreateZone(ctx, website.Domain, website.UserID)
+					dnsZone, err = s.dnsSvc.CreateZone(ctx, primaryDomain, website.UserID)
 					if err != nil {
 						s.Logger().Warn("Failed to create DNS zone for website",
 							zap.Error(err),
-							zap.String("domain", website.Domain))
+							zap.String("domain", primaryDomain))
 						// Continue without DNS zone - website is still created
 						dnsZone = nil
 					}
 				}
 
 				if dnsZone != nil {
-					// Update website with DNS zone ID
-					website.DNSZoneID = &dnsZone.ID
+					// Associate the zone with the primary domain binding.
+					primaryWD.DNSZoneID = &dnsZone.ID
 					err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-						return tx.Save(website)
+						return tx.Model(primaryWD).Update("dns_zone_id", dnsZone.ID)
 					})
 					if err != nil {
 						s.Logger().Error("Failed to update website with DNS zone ID, attempting to clean up DNS zone",
@@ -294,7 +328,7 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 							zap.Uint("dns_zone_id", dnsZone.ID))
 
 						// Only attempt zone cleanup if we created this zone (not reusing a parent)
-						if dnsname.Equal(dnsZone.Domain, website.Domain) {
+						if dnsname.Equal(dnsZone.Domain, primaryDomain) {
 							if cleanupErr := s.dnsSvc.DeleteZone(ctx, dnsZone.ID); cleanupErr != nil {
 								s.Logger().Error("Failed to clean up orphaned DNS zone",
 									zap.Error(cleanupErr),
@@ -309,10 +343,10 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 					s.Logger().Info("DNS zone associated with website",
 						zap.Uint("website_id", website.ID),
 						zap.Uint("dns_zone_id", dnsZone.ID),
-						zap.String("domain", website.Domain))
+						zap.String("domain", primaryDomain))
 
 					// Create DNS records for the website
-					if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, dnsZone.ID, website.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), fmt.Sprintf("%s=%s", s.verificationTokenKey(), website.ValidationToken)); err != nil {
+					if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, dnsZone.ID, primaryDomain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), fmt.Sprintf("%s=%s", s.verificationTokenKey(), website.ValidationToken)); err != nil {
 						s.Logger().Error("Failed to create DNS records for website",
 							zap.Error(err),
 							zap.Uint("website_id", website.ID),
@@ -324,15 +358,15 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 
 			s.Logger().Info("Website created",
 				zap.Uint("id", website.ID),
-				zap.String("domain", website.Domain),
+				zap.String("domain", primaryDomain),
 				zap.Uint("user_id", website.UserID),
 				zap.String("target_type", website.TargetType),
 				zap.String("target_hash", website.TargetHash()),
-				zap.Bool("enabled", website.Enabled))
+				zap.Bool("dns_hosting_enabled", primaryWD != nil && primaryWD.DNSHostingEnabled))
 
 			// Emit website published event for SSE gateway notification
 			core.Fire(s.Context(), pluginEvent.EVENT_WEBSITE_PUBLISHED, pluginEvent.NewWebsitePublishedEvent(
-				ctx, website.Domain, website.TargetHash(), website.UserID, website.ID,
+				ctx, primaryDomain, website.TargetHash(), website.UserID, website.ID,
 			))
 
 			// Send notification to admin
@@ -394,7 +428,9 @@ func (s *WebsiteServiceDefault) GetWebsiteByDomain(ctx context.Context, domain s
 		GetWebsiteByDomainDuration.WithLabelValues(),
 		GetWebsiteByDomainTotal.WithLabelValues(LabelStatusError),
 		func() (*pluginDb.Website, error) {
-			// First: check website_domains (alt-root / delegated domains)
+			// Resolve purely via website_domains (legacy ipfs_websites.domain
+			// lookup no longer exists — the column was removed). If the domain
+			// service is unavailable, no domain mapping can be resolved.
 			if s.delegatedDomainSvc != nil {
 				wd, err := s.delegatedDomainSvc.GetWebsiteDomainByName(ctx, domain)
 				if err == nil && wd != nil && !wd.DeletedAt.Valid {
@@ -412,19 +448,7 @@ func (s *WebsiteServiceDefault) GetWebsiteByDomain(ctx context.Context, domain s
 				}
 			}
 
-			// Fallback: legacy ipfs_websites.domain lookup
-			var website pluginDb.Website
-			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				return tx.Where("domain = ?", domain).First(&website)
-			})
-			if err != nil {
-				if err == gorm.ErrRecordNotFound {
-					return nil, nil
-				}
-				return nil, fmt.Errorf("failed to get website by domain: %w", err)
-			}
-
-			return &website, nil
+			return nil, nil
 		},
 	)
 	if err != nil {
@@ -456,6 +480,15 @@ func (s *WebsiteServiceDefault) ListWebsites(ctx context.Context, userID uint, f
 			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 				// Construct the query with user ID filter
 				query := tx.Model(&pluginDb.Website{}).Where("user_id = ?", userID)
+
+				// The `domain` filter no longer maps to a website column: a
+				// website's domain lives on its WebsiteDomain bindings, so match
+				// websites that have a (non-deleted) binding with that domain.
+				if domainVal, ok := filterValue(filter, "domain"); ok {
+					query = query.Where("EXISTS (SELECT 1 FROM website_domains wd WHERE wd.website_id = ipfs_websites.id AND wd.domain = ? AND wd.deleted_at IS NULL)", domainVal)
+					filter = removeFilter(filter, "domain")
+				}
+
 				query = queryutil.ApplyFilters(query, filter, nil)
 				query = queryutil.ApplySort(query, sort)
 				query = queryutil.ApplyPagination(query, pagination)
@@ -501,14 +534,39 @@ func (s *WebsiteServiceDefault) ListWebsites(ctx context.Context, userID uint, f
 	return result.websites, result.total, nil
 }
 
+// filterValue returns the value of the first filter matching the given field,
+// and a bool indicating presence. Used to special-case the `domain` filter in
+// ListWebsites, which no longer maps to a website column.
+func filterValue(filters []queryutil.CrudFilter, field string) (any, bool) {
+	for _, f := range filters {
+		if f.GetField() == field {
+			return f.GetValue(), true
+		}
+	}
+	return nil, false
+}
+
+// removeFilter returns the filters with all entries for the given field removed.
+func removeFilter(filters []queryutil.CrudFilter, field string) []queryutil.CrudFilter {
+	out := filters[:0]
+	for _, f := range filters {
+		if f.GetField() != field {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // UpdateWebsite updates an existing website
 func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, websiteID uint, updates map[string]any) (*pluginDb.Website, error) {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.UpdateWebsite")
 	defer span.End()
 
 	var updatedWebsite *pluginDb.Website
-	var oldEnabled bool
+	// dnsEnabledChanged is true when the caller toggled DNS hosting; enableDNS
+	// records the requested direction (true = enabling, false = disabling).
 	var dnsEnabledChanged bool
+	var enableDNS bool
 	var targetHashChanged bool
 
 	err := core.MetricTrack(
@@ -530,27 +588,29 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				// Store old values for DNS updates and state transitions
 				oldTargetHash := website.TargetHash()
 				oldTargetType := pluginDb.WebsiteTargetType(website.TargetType)
-				oldEnabled = website.Enabled
 				targetHashChanged = false
-				dnsEnabledChanged = false
 				ipnsAutoCreated := false
 				var newTargetHashStr string
 
-				// Validate domain if being updated
-				if domain, ok := updates["domain"].(string); ok {
-					domain = domsvc.NormalizeDomain(domain)
-					updates["domain"] = domain
-					if err := s.validateDomain(domain); err != nil {
-						_ = tx.AddError(fmt.Errorf("invalid domain: %w", err))
-						return tx
-					}
-					// Check if new domain already exists
-					var existing pluginDb.Website
-					if err := tx.Where("domain = ? AND id != ?", domain, websiteID).First(&existing).Error; err == nil {
-						_ = tx.AddError(fmt.Errorf("domain already exists: %s", domain))
-						return tx
-					}
+				// Resolve the primary (apex) WebsiteDomain, which owns the DNS
+				// hosting state. DNS-hosted side-effects operate on this binding;
+				// the IPNS key stays on the Website itself.
+				primaryWD, perr := s.primaryWebsiteDomain(ctx, &website)
+				if perr != nil && !errors.Is(perr, gorm.ErrRecordNotFound) {
+					_ = tx.AddError(fmt.Errorf("failed to resolve primary domain: %w", perr))
+					return tx
 				}
+				var primaryDomain string
+				oldDNSEnabled := false
+				if primaryWD != nil {
+					primaryDomain = primaryWD.Domain
+					oldDNSEnabled = primaryWD.DNSHostingEnabled
+				}
+				dnsEnabledChanged = false
+
+				// (Primary-domain additions/renames are handled by the domain
+				// binding flow in the API layer; a website update no longer
+				// carries a domain string.)
 
 				// Validate and convert target if being updated
 				if targetHashStr, ok := updates["target_hash"].(string); ok {
@@ -571,7 +631,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 							return tx
 						}
 
-						ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, website.Domain, publishCID)
+						ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, s.primaryDomainName(ctx, &website), publishCID)
 						if err != nil {
 							_ = tx.AddError(err)
 							return tx
@@ -662,7 +722,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 							return tx
 						}
 
-						ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, website.Domain, publishCID)
+						ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, s.primaryDomainName(ctx, &website), publishCID)
 						if err != nil {
 							_ = tx.AddError(err)
 							return tx
@@ -685,14 +745,19 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 					}
 				}
 
-				// Check if dns_enabled is being changed with validation
+				// Check if DNS hosting is being toggled (dns_hosting_enabled).
+				// The website no longer has a dns_enabled column — the flag now
+				// lives on the primary WebsiteDomain, so it is removed from the
+				// website update and driven by the transition handlers below.
 				if dnsEnabledVal, exists := updates["dns_enabled"]; exists {
 					newDNSEnabled, ok := dnsEnabledVal.(bool)
 					if !ok {
 						_ = tx.AddError(fmt.Errorf("dns_enabled must be a boolean"))
 						return tx
 					}
-					dnsEnabledChanged = (newDNSEnabled != oldEnabled)
+					delete(updates, "dns_enabled")
+					dnsEnabledChanged = (newDNSEnabled != oldDNSEnabled)
+					enableDNS = newDNSEnabled
 				}
 
 				// Apply updates
@@ -717,21 +782,22 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 						if publishHash == "" {
 							publishHash = website.TargetHash()
 						}
-						s.publishCIDAsync(ctx, ipnsKey.PeerID().String(), publishHash, website.Domain)
+						s.publishCIDAsync(ctx, ipnsKey.PeerID().String(), publishHash, primaryDomain)
 					}
 				}
 
 				// Update DNS records if target changed and DNS hosting is enabled
+				// on the primary domain.
 				// Note: Skip DNS only when staying as IPNS (peer ID doesn't change)
-				if targetHashChanged && website.Enabled && website.DNSZoneID != nil && s.dnsSvc != nil {
+				if targetHashChanged && primaryWD != nil && primaryWD.DNSHostingEnabled && primaryWD.DNSZoneID != nil && s.dnsSvc != nil {
 					newTargetType := pluginDb.WebsiteTargetType(website.TargetType)
 					if oldTargetType != pluginDb.WebsiteTargetTypeIPNS || newTargetType != pluginDb.WebsiteTargetTypeIPNS {
 						newTargetHash := website.TargetHash()
-						if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.Domain, newTargetHash, newTargetType); err != nil {
+						if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, *primaryWD.DNSZoneID, primaryDomain, newTargetHash, newTargetType); err != nil {
 							s.Logger().Warn("Failed to update DNS records for website",
 								zap.Error(err),
 								zap.Uint("website_id", websiteID),
-								zap.Uint("dns_zone_id", *website.DNSZoneID))
+								zap.Uint("dns_zone_id", *primaryWD.DNSZoneID))
 						}
 					}
 				}
@@ -746,23 +812,53 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 		return nil, err
 	}
 
-	// Handle DNS hosting transitions if dns_enabled changed
-	if dnsEnabledChanged {
-		if updatedWebsite.Enabled && !oldEnabled {
-			// DNS hosting enabled: create zone/records and reset to pending_validation
-			if err := s.handleDNSEnabledTransition(ctx, updatedWebsite); err != nil {
-				s.Logger().Warn("Failed to handle DNS hosting enable transition",
-					zap.Error(err),
+	// Handle DNS hosting transitions if DNS hosting was toggled. The toggle is
+	// applied to the primary WebsiteDomain (the website no longer carries DNS
+	// state); IPNS key logic is untouched here.
+	if dnsEnabledChanged && updatedWebsite != nil {
+		// Set the new flag on the primary binding first (mirroring
+		// SetDomainDNSEnabled) so the persisted flag matches the DNS state that
+		// the enable/disable transitions produce, then drive the zone / record
+		// lifecycle for it.
+		wd, err := s.primaryWebsiteDomain(ctx, updatedWebsite)
+		if err != nil {
+			s.Logger().Warn("Failed to resolve primary domain for DNS hosting transition",
+				zap.Error(err),
+				zap.Uint("website_id", websiteID))
+		} else if wd != nil {
+			wd.DNSHostingEnabled = enableDNS
+			if uerr := s.DB().WithContext(ctx).Model(wd).Update("dns_hosting_enabled", enableDNS).Error; uerr != nil {
+				s.Logger().Warn("Failed to persist dns_hosting_enabled on primary domain",
+					zap.Error(uerr),
 					zap.Uint("website_id", websiteID))
-				// Continue despite failure - website is updated but DNS setup incomplete
-			}
-		} else if !updatedWebsite.Enabled && oldEnabled {
-			// DNS hosting disabled: delete records and reset to pending_validation
-			if err := s.handleDNSDisabledTransition(ctx, updatedWebsite); err != nil {
-				s.Logger().Warn("Failed to handle DNS hosting disable transition",
-					zap.Error(err),
-					zap.Uint("website_id", websiteID))
-				// Continue despite failure - website is updated but DNS cleanup incomplete
+			} else if enableDNS {
+				// DNS hosting enabled: create zone/records and reset to pending_validation.
+				// handleDNSEnabledTransition may auto-convert a plain-CID IPNS target
+				// to an IPNS key and persist it BEFORE the fallible zone-creation steps,
+				// so the conversion can be committed even when a later zone step fails.
+				// Reload the website whenever the enable transition started (not only on
+				// success) so updatedWebsite (and EVENT_WEBSITE_PUBLISHED below) reflect
+				// the converted target rather than stale pre-conversion state.
+				if err := s.handleDNSEnabledTransition(ctx, wd); err != nil {
+					s.Logger().Warn("Failed to handle DNS hosting enable transition",
+						zap.Error(err),
+						zap.Uint("website_id", websiteID))
+					// Continue despite failure - website is updated but DNS setup incomplete
+				}
+				if wd.WebsiteID != 0 {
+					var reloaded pluginDb.Website
+					if rerr := s.DB().WithContext(ctx).First(&reloaded, wd.WebsiteID).Error; rerr == nil {
+						updatedWebsite = &reloaded
+					}
+				}
+			} else {
+				// DNS hosting disabled: delete records and reset to pending_validation
+				if err := s.handleDNSDisabledTransition(ctx, wd); err != nil {
+					s.Logger().Warn("Failed to handle DNS hosting disable transition",
+						zap.Error(err),
+						zap.Uint("website_id", websiteID))
+					// Continue despite failure - website is updated but DNS cleanup incomplete
+				}
 			}
 		}
 	}
@@ -775,7 +871,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 	// Emit website published event if target hash changed (content was republished)
 	if targetHashChanged && updatedWebsite != nil {
 		core.Fire(s.Context(), pluginEvent.EVENT_WEBSITE_PUBLISHED, pluginEvent.NewWebsitePublishedEvent(
-			ctx, updatedWebsite.Domain, updatedWebsite.TargetHash(), updatedWebsite.UserID, updatedWebsite.ID,
+			ctx, s.primaryDomainName(ctx, updatedWebsite), updatedWebsite.TargetHash(), updatedWebsite.UserID, updatedWebsite.ID,
 		))
 	}
 
@@ -787,26 +883,64 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 	return updatedWebsite, nil
 }
 
-// handleDNSEnabledTransition handles the transition when DNS hosting is enabled for a website
-func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, website *pluginDb.Website) error {
+// handleDNSEnabledTransition handles the transition when DNS hosting is enabled
+// for the website's primary domain binding. DNS state (dns_zone_id) lives on the
+// WebsiteDomain; the website still supplies the target and validation token.
+func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, wd *pluginDb.WebsiteDomain) error {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.handleDNSEnabledTransition")
 	defer span.End()
 
+	// Load the owning website for target and validation-token state.
+	var website pluginDb.Website
+	if err := s.DB().WithContext(ctx).Where("id = ?", wd.WebsiteID).First(&website).Error; err != nil {
+		return fmt.Errorf("failed to load website for DNS hosting transition: %w", err)
+	}
+
+	// Tracks whether this enable transition created the zone itself (vs.
+	// reusing an existing parent zone). Used to roll back a freshly-created
+	// zone if a later step (record creation) fails, so we never orphan it.
+	zoneCreated := false
+
+	// Auto-convert a plain-CID IPNS target (target_type=ipns with a raw IPFS
+	// CID) to an IPNS key now that a primary domain binding exists. On the web
+	// create path the binding is only created after CreateWebsite runs, so the
+	// conversion is deferred here; without it the DNS records below would be
+	// created for the raw CID instead of the IPNS peer id. Guarded by
+	// CIDVersion != nil so already-converted targets are skipped (idempotent
+	// for the UpdateWebsite path, which converts earlier).
+	if website.TargetType == string(pluginDb.WebsiteTargetTypeIPNS) && website.CIDVersion != nil {
+		publishCID := website.TargetHash()
+		ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, wd.Domain, publishCID)
+		if err != nil {
+			return fmt.Errorf("failed to auto-create IPNS key for managed DNS: %w", err)
+		}
+		website.TargetType = string(pluginDb.WebsiteTargetTypeIPNS)
+		website.TargetMultihash = ipnsKey.PeerIDMultihash
+		website.CIDVersion = nil
+		website.CIDType = nil
+		website.IPNSKeyID = &ipnsKey.ID
+		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			return tx.Save(&website)
+		}); err != nil {
+			return fmt.Errorf("failed to update website with IPNS target: %w", err)
+		}
+	}
+
 	s.Logger().Info("Handling DNS hosting enable transition",
 		zap.Uint("website_id", website.ID),
-		zap.String("domain", website.Domain))
+		zap.String("domain", wd.Domain))
 
 	// Create DNS zone if it doesn't exist
-	if website.DNSZoneID == nil && s.dnsSvc != nil {
+	if wd.DNSZoneID == nil && s.dnsSvc != nil {
 		var dnsZone *pluginDb.DNSZone
 
 		// Check if a parent zone already exists for this user (e.g. pinner.xyz for docs.pinner.xyz)
-		if parentDomain := extractParentDomain(website.Domain); parentDomain != "" {
+		if parentDomain := extractParentDomain(wd.Domain); parentDomain != "" {
 			existingZone, err := s.dnsSvc.GetZoneByDomain(ctx, parentDomain)
 			if err == nil && existingZone != nil && existingZone.UserID == website.UserID {
 				dnsZone = existingZone
 				s.Logger().Info("Reusing existing parent zone for subdomain website",
-					zap.String("domain", website.Domain),
+					zap.String("domain", wd.Domain),
 					zap.String("parent_zone_domain", parentDomain),
 					zap.Uint("zone_id", existingZone.ID))
 			}
@@ -815,36 +949,37 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 		// No parent zone found — create one for this domain
 		var createErr error
 		if dnsZone == nil {
-			dnsZone, createErr = s.dnsSvc.CreateZone(ctx, website.Domain, website.UserID)
+			dnsZone, createErr = s.dnsSvc.CreateZone(ctx, wd.Domain, website.UserID)
 			if createErr != nil {
 				return fmt.Errorf("failed to create DNS zone: %w", createErr)
 			}
+			zoneCreated = true
 		}
 
-		// Update website with DNS zone ID
+		// Associate the zone with the primary domain binding.
 		err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-			return tx.Model(website).Update("dns_zone_id", dnsZone.ID)
+			return tx.Model(wd).Update("dns_zone_id", dnsZone.ID)
 		})
 		if err != nil {
 			s.Logger().Error("Failed to update website with DNS zone ID",
 				zap.Error(err),
 				zap.Uint("website_id", website.ID))
 			// Only attempt zone cleanup if we created this zone (not reusing a parent)
-			if dnsname.Equal(dnsZone.Domain, website.Domain) {
+			if zoneCreated {
 				_ = s.dnsSvc.DeleteZone(ctx, dnsZone.ID)
 			}
 			return fmt.Errorf("failed to associate DNS zone with website: %w", err)
 		}
 
-		website.DNSZoneID = &dnsZone.ID
+		wd.DNSZoneID = &dnsZone.ID
 		s.Logger().Info("DNS zone associated with website",
 			zap.Uint("website_id", website.ID),
 			zap.Uint("dns_zone_id", dnsZone.ID),
-			zap.String("domain", website.Domain))
+			zap.String("domain", wd.Domain))
 	}
 
 	// Create DNS records if zone exists
-	if website.DNSZoneID != nil && s.dnsSvc != nil {
+	if wd.DNSZoneID != nil && s.dnsSvc != nil {
 		// Regenerate validation token if expired or not set
 		var newToken string
 		if website.IsExpired() || website.ValidationToken == "" {
@@ -858,15 +993,34 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 		}
 
 		// Create DNS records
-		err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), fmt.Sprintf("%s=%s", s.verificationTokenKey(), newToken))
+		err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *wd.DNSZoneID, wd.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), fmt.Sprintf("%s=%s", s.verificationTokenKey(), newToken))
 		if err != nil {
+			// Roll back the partially-created DNS state so the binding is not
+			// left pointing at a zone with no (or partial) records: delete any
+			// records created for this domain, delete the zone if this
+			// transition created it, and clear dns_zone_id. Without this a
+			// failed enable orphans the zone and a later disable no-ops (flag
+			// already false), leaking the zone with no recovery path.
+			s.Logger().Error("Failed to create DNS records, rolling back DNS setup",
+				zap.Error(err),
+				zap.Uint("website_id", website.ID),
+				zap.Uint("dns_zone_id", *wd.DNSZoneID),
+				zap.String("domain", wd.Domain))
+			_ = s.dnsSvc.DeleteWebsiteDNSRecords(ctx, *wd.DNSZoneID, wd.Domain)
+			if zoneCreated {
+				_ = s.dnsSvc.DeleteZone(ctx, *wd.DNSZoneID)
+			}
+			_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Model(wd).Update("dns_zone_id", nil)
+			})
+			wd.DNSZoneID = nil
 			return fmt.Errorf("failed to create DNS records: %w", err)
 		}
 
 		// Update website with new token and status
 		expiresAt := time.Now().Add(s.config.ValidationTokenTTL)
 		err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-			return tx.Model(website).Updates(map[string]interface{}{
+			return tx.Model(&website).Updates(map[string]interface{}{
 				"validation_token":      newToken,
 				"validation_expires_at": expiresAt,
 				"status":                string(pluginDb.WebsiteStatusPendingValidation),
@@ -881,85 +1035,90 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 
 		s.Logger().Info("DNS records created, website reset to pending_validation",
 			zap.Uint("website_id", website.ID),
-			zap.String("domain", website.Domain))
+			zap.String("domain", wd.Domain))
 	}
 
 	return nil
 }
 
-// handleDNSDisabledTransition handles the transition when DNS hosting is disabled for a website
-func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context, website *pluginDb.Website) error {
+// handleDNSDisabledTransition handles the transition when DNS hosting is disabled
+// for the website's primary domain binding. DNS state (dns_zone_id) lives on the
+// WebsiteDomain; the website status is reset to pending_validation.
+func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context, wd *pluginDb.WebsiteDomain) error {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.handleDNSDisabledTransition")
 	defer span.End()
 
+	// Load the owning website to reset its validation status.
+	var website pluginDb.Website
+	if err := s.DB().WithContext(ctx).Where("id = ?", wd.WebsiteID).First(&website).Error; err != nil {
+		return fmt.Errorf("failed to load website for DNS hosting disable transition: %w", err)
+	}
+
 	s.Logger().Info("Handling DNS hosting disable transition",
 		zap.Uint("website_id", website.ID),
-		zap.String("domain", website.Domain))
+		zap.String("domain", wd.Domain))
 
 	recordsDeleted := false
 
 	// Delete DNS records for this website (not the zone — other websites may share it)
-	if website.DNSZoneID != nil && s.dnsSvc != nil {
-		err := s.dnsSvc.DeleteWebsiteDNSRecords(ctx, *website.DNSZoneID, website.Domain)
+	if wd.DNSZoneID != nil && s.dnsSvc != nil {
+		err := s.dnsSvc.DeleteWebsiteDNSRecords(ctx, *wd.DNSZoneID, wd.Domain)
 		if err != nil {
 			s.Logger().Warn("Failed to delete DNS records for website",
 				zap.Error(err),
 				zap.Uint("website_id", website.ID),
-				zap.Uint("dns_zone_id", *website.DNSZoneID))
+				zap.Uint("dns_zone_id", *wd.DNSZoneID))
 		} else {
 			recordsDeleted = true
 			s.Logger().Info("DNS records deleted for website",
 				zap.Uint("website_id", website.ID),
-				zap.Uint("dns_zone_id", *website.DNSZoneID))
+				zap.Uint("dns_zone_id", *wd.DNSZoneID))
 		}
 	}
 
-	// Check if any other websites still reference this zone
+	// Check if any other domain bindings still reference this zone
 	zoneIsEmpty := false
-	if recordsDeleted && website.DNSZoneID != nil {
+	if recordsDeleted && wd.DNSZoneID != nil {
 		var count int64
 		err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-			return tx.Model(&pluginDb.Website{}).
-				Where("dns_zone_id = ? AND id != ? AND deleted_at IS NULL", *website.DNSZoneID, website.ID).
+			return tx.Model(&pluginDb.WebsiteDomain{}).
+				Where("dns_zone_id = ? AND id != ? AND deleted_at IS NULL", *wd.DNSZoneID, wd.ID).
 				Count(&count)
 		})
 		if err != nil {
-			s.Logger().Warn("Failed to count websites sharing DNS zone",
+			s.Logger().Warn("Failed to count domain bindings sharing DNS zone",
 				zap.Error(err),
-				zap.Uint("dns_zone_id", *website.DNSZoneID))
+				zap.Uint("dns_zone_id", *wd.DNSZoneID))
 		} else {
 			zoneIsEmpty = count == 0
 		}
 	}
 
-	// Only delete the zone if no other websites are using it
+	// Only delete the zone if no other domain bindings are using it
 	zoneDeleted := false
-	if zoneIsEmpty && website.DNSZoneID != nil && s.dnsSvc != nil {
-		err := s.dnsSvc.DeleteZone(ctx, *website.DNSZoneID)
+	if zoneIsEmpty && wd.DNSZoneID != nil && s.dnsSvc != nil {
+		err := s.dnsSvc.DeleteZone(ctx, *wd.DNSZoneID)
 		if err != nil {
 			s.Logger().Warn("Failed to delete DNS zone for website",
 				zap.Error(err),
 				zap.Uint("website_id", website.ID),
-				zap.Uint("dns_zone_id", *website.DNSZoneID))
+				zap.Uint("dns_zone_id", *wd.DNSZoneID))
 		} else {
 			zoneDeleted = true
-			s.Logger().Info("DNS zone deleted (no other websites using it)",
+			s.Logger().Info("DNS zone deleted (no other domain bindings using it)",
 				zap.Uint("website_id", website.ID),
-				zap.Uint("dns_zone_id", *website.DNSZoneID))
+				zap.Uint("dns_zone_id", *wd.DNSZoneID))
 		}
 	}
 
-	// Reset status to pending_validation
-	// Only clear dns_zone_id if the zone was actually deleted from PowerDNS
+	// Reset website status to pending_validation.
+	// Only clear dns_zone_id on the primary binding if the zone was actually
+	// deleted from PowerDNS.
 	updates := map[string]interface{}{
 		"status": string(pluginDb.WebsiteStatusPendingValidation),
 	}
-	if zoneDeleted {
-		updates["dns_zone_id"] = nil
-	}
-
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		return tx.Model(website).Updates(updates)
+		return tx.Model(&website).Updates(updates)
 	})
 	if err != nil {
 		s.Logger().Error("Failed to update website",
@@ -968,9 +1127,22 @@ func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context,
 		return fmt.Errorf("failed to update website: %w", err)
 	}
 
+	if zoneDeleted {
+		err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			return tx.Model(wd).Update("dns_zone_id", nil)
+		})
+		if err != nil {
+			s.Logger().Error("Failed to clear DNS zone ID on primary domain binding",
+				zap.Error(err),
+				zap.Uint("website_id", website.ID))
+			return fmt.Errorf("failed to clear DNS zone ID: %w", err)
+		}
+		wd.DNSZoneID = nil
+	}
+
 	s.Logger().Info("DNS hosting disabled, website reset to pending_validation",
 		zap.Uint("website_id", website.ID),
-		zap.String("domain", website.Domain),
+		zap.String("domain", wd.Domain),
 		zap.Bool("zone_deleted", zoneDeleted))
 
 	return nil
@@ -1007,9 +1179,14 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 					return tx
 				}
 
-				// Store DNS zone ID and domain for cleanup
-				dnsZoneID = website.DNSZoneID
-				websiteDomain = website.Domain
+				// Store DNS zone ID and domain for cleanup, resolved from the
+				// website's primary domain binding (the website no longer
+				// carries DNS state).
+				primaryWD, _ := s.primaryWebsiteDomain(ctx, &website)
+				if primaryWD != nil {
+					dnsZoneID = primaryWD.DNSZoneID
+					websiteDomain = primaryWD.Domain
+				}
 
 				// Perform the soft delete
 				result := tx.Delete(&website)
@@ -1018,6 +1195,20 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 					return tx
 				}
 				count = result.RowsAffected
+
+				// Cascade soft-delete the website's domain bindings so the
+				// domain can be re-bound after this website is removed,
+				// matching the rest of the system's soft-delete semantics.
+				// The (domain, namespace) unique key would otherwise block a
+				// fresh binding; the app resolves this at bind time by purging
+				// the prior soft-deleted tombstone (see AddDomain guardrail)
+				// rather than relying on a partial index.
+				if count > 0 {
+					if derr := tx.Where("website_id = ?", websiteID).Delete(&pluginDb.WebsiteDomain{}).Error; derr != nil {
+						_ = tx.AddError(fmt.Errorf("failed to delete website domain bindings: %w", derr))
+						return tx
+					}
+				}
 				return tx
 			})
 
@@ -1156,11 +1347,11 @@ func (s *WebsiteServiceDefault) loadWebsite(ctx context.Context, userID, website
 	return website, nil
 }
 
-// ValidateDNS validates the DNS TXT record for a website domain
-func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Website) bool {
+// ValidateDNS validates the DNS TXT record for a website's primary domain
+func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Website, primaryDomain string) bool {
 	needs := website.Status == string(pluginDb.WebsiteStatusPendingValidation)
-	if needs && s.delegatedDomainSvc != nil && s.delegatedDomainSvc.UsesDelegationForOwnership(website.Domain) {
-		s.Logger().Debug("skipping TXT token (ownership proven via delegation verification)", zap.String("domain", website.Domain))
+	if needs && s.delegatedDomainSvc != nil && s.delegatedDomainSvc.UsesDelegationForOwnership(primaryDomain) {
+		s.Logger().Debug("skipping TXT token (ownership proven via delegation verification)", zap.String("domain", primaryDomain))
 		return false
 	}
 	return needs
@@ -1179,37 +1370,45 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				return pluginCore.ValidateDNSResult{}, err
 			}
 
-			needsTokenCheck := s.shouldPerformTokenCheck(&website)
+			// Resolve the primary domain binding, which owns the DNS hosting
+			// state. Validation operates on the apex domain's name and zone.
+			primaryWD, perr := s.primaryWebsiteDomain(ctx, &website)
+			if perr != nil {
+				return pluginCore.ValidateDNSResult{}, fmt.Errorf("failed to resolve primary domain for validation: %w", perr)
+			}
+			primaryDomain := primaryWD.Domain
+
+			needsTokenCheck := s.shouldPerformTokenCheck(&website, primaryDomain)
 
 			if needsTokenCheck && website.IsExpired() {
-				if err := s.regenerateExpiredToken(ctx, &website); err != nil {
+				if err := s.regenerateExpiredToken(ctx, &website, primaryWD); err != nil {
 					return pluginCore.ValidateDNSResult{}, err
 				}
 				return pluginCore.ValidateDNSResult{
 					Valid:   false,
-					Message: fmt.Sprintf(msgTokenExpired, website.Domain, s.verificationTokenKey(), website.Domain),
+					Message: fmt.Sprintf(msgTokenExpired, primaryDomain, s.verificationTokenKey(), primaryDomain),
 					Reason:  pluginCore.ValidationReasonTokenExpired,
 				}, nil
 			}
 
-			result, err := s.resolverForDomain(website.Domain).ResolveDNSLink(website.Domain)
+			result, err := s.resolverForDomain(primaryDomain).ResolveDNSLink(primaryDomain)
 			if err != nil {
 				if dnsErr, ok := errors.AsType[dnslink.DNSRCodeError](err); ok && dnsErr.DNSRCode == 3 {
 					s.Logger().Debug("DNS validation failed: no DNS records found (NXDOMAIN)",
 						zap.Error(err),
-						zap.String("domain", website.Domain),
+						zap.String("domain", primaryDomain),
 						zap.Uint("website_id", website.ID))
 					return pluginCore.ValidateDNSResult{
 						Valid:   false,
-						Message: fmt.Sprintf(msgDNSMissing, website.Domain),
+						Message: fmt.Sprintf(msgDNSMissing, primaryDomain),
 						Reason:  pluginCore.ValidationReasonDNSMissing,
 					}, nil
 				}
 
-				return pluginCore.ValidateDNSResult{}, fmt.Errorf("DNS lookup failed for %s: %w", website.Domain, err)
+				return pluginCore.ValidateDNSResult{}, fmt.Errorf("DNS lookup failed for %s: %w", primaryDomain, err)
 			}
 
-			if ok, msg, reason := s.checkDNSLinkMatch(&website, result); !ok {
+			if ok, msg, reason := s.checkDNSLinkMatch(&website, primaryDomain, result); !ok {
 				return pluginCore.ValidateDNSResult{
 					Valid:   false,
 					Message: msg,
@@ -1220,7 +1419,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 			_ = s.determineFoundDNSLink(result, &website)
 
 			if needsTokenCheck {
-				if ok, msg, reason, err := s.checkValidationToken(ctx, &website); err != nil {
+				if ok, msg, reason, err := s.checkValidationToken(ctx, &website, primaryDomain); err != nil {
 					return pluginCore.ValidateDNSResult{}, err
 				} else if !ok {
 					return pluginCore.ValidateDNSResult{
@@ -1251,14 +1450,14 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 
 			return pluginCore.ValidateDNSResult{
 				Valid:   true,
-				Message: fmt.Sprintf(msgValidated, website.Domain),
+				Message: fmt.Sprintf(msgValidated, primaryDomain),
 				Reason:  pluginCore.ValidationReasonValidated,
 			}, nil
 		},
 	)
 }
 
-func (s *WebsiteServiceDefault) checkDNSLinkMatch(website *pluginDb.Website, result dnslink.Result) (bool, string, pluginCore.ValidationReason) {
+func (s *WebsiteServiceDefault) checkDNSLinkMatch(website *pluginDb.Website, primaryDomain string, result dnslink.Result) (bool, string, pluginCore.ValidationReason) {
 	expectedDNSlink := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
 
 	var foundDNSlink string
@@ -1266,7 +1465,7 @@ func (s *WebsiteServiceDefault) checkDNSLinkMatch(website *pluginDb.Website, res
 		foundDNSlink = dto.IPFSPath(ipfsLinks[0].Identifier)
 		if foundDNSlink == expectedDNSlink {
 			s.Logger().Debug("Found valid DNSlink record",
-				zap.String("domain", website.Domain),
+				zap.String("domain", primaryDomain),
 				zap.String("dnslink", foundDNSlink))
 			return true, "", ""
 		}
@@ -1275,14 +1474,14 @@ func (s *WebsiteServiceDefault) checkDNSLinkMatch(website *pluginDb.Website, res
 		foundDNSlink = dto.IPNSPath(ipnsLinks[0].Identifier)
 		if foundDNSlink == expectedDNSlink {
 			s.Logger().Debug("Found valid DNSlink record",
-				zap.String("domain", website.Domain),
+				zap.String("domain", primaryDomain),
 				zap.String("dnslink", foundDNSlink))
 			return true, "", ""
 		}
 	}
 
 	s.Logger().Warn("DNS validation failed: missing or incorrect dnslink record",
-		zap.String("domain", website.Domain),
+		zap.String("domain", primaryDomain),
 		zap.String("expected", expectedDNSlink),
 		zap.String("found", foundDNSlink))
 	return false, fmt.Sprintf(msgDNSMismatch, expectedDNSlink, foundDNSlink), pluginCore.ValidationReasonDNSMismatch
@@ -1298,26 +1497,26 @@ func (s *WebsiteServiceDefault) determineFoundDNSLink(result dnslink.Result, web
 	return ""
 }
 
-func (s *WebsiteServiceDefault) checkValidationToken(ctx context.Context, website *pluginDb.Website) (bool, string, pluginCore.ValidationReason, error) {
+func (s *WebsiteServiceDefault) checkValidationToken(ctx context.Context, website *pluginDb.Website, primaryDomain string) (bool, string, pluginCore.ValidationReason, error) {
 	expectedTokenRecord := fmt.Sprintf("%s=%s", s.verificationTokenKey(), website.ValidationToken)
-	txtRecords, err := s.resolverForDomain(website.Domain).LookupTXT(ctx, s.verificationTokenKey()+"."+website.Domain)
+	txtRecords, err := s.resolverForDomain(primaryDomain).LookupTXT(ctx, s.verificationTokenKey()+"."+primaryDomain)
 	if err != nil {
-		return false, "", "", fmt.Errorf("DNS TXT lookup failed for %s.%s: %w", s.verificationTokenKey(), website.Domain, err)
+		return false, "", "", fmt.Errorf("DNS TXT lookup failed for %s.%s: %w", s.verificationTokenKey(), primaryDomain, err)
 	}
 
 	for _, txtRecord := range txtRecords {
 		if strings.Contains(txtRecord, expectedTokenRecord) {
 			s.Logger().Debug("Found valid validation token",
-				zap.String("domain", website.Domain),
+				zap.String("domain", primaryDomain),
 				zap.String("token", website.ValidationToken))
 			return true, "", "", nil
 		}
 	}
 
 	s.Logger().Warn("DNS validation failed: missing validation token",
-		zap.String("domain", website.Domain),
+		zap.String("domain", primaryDomain),
 		zap.String("expected_token", website.ValidationToken))
-	return false, fmt.Sprintf(msgTokenMissing, s.verificationTokenKey(), website.Domain, website.Domain), pluginCore.ValidationReasonTokenMissing, nil
+	return false, fmt.Sprintf(msgTokenMissing, s.verificationTokenKey(), primaryDomain, primaryDomain), pluginCore.ValidationReasonTokenMissing, nil
 }
 
 func (s *WebsiteServiceDefault) checkAttachedDelegations(ctx context.Context, website *pluginDb.Website) (bool, string, pluginCore.ValidationReason, error) {
@@ -1370,19 +1569,19 @@ func (s *WebsiteServiceDefault) checkAttachedDelegations(ctx context.Context, we
 	return true, "", "", nil
 }
 
-func (s *WebsiteServiceDefault) regenerateExpiredToken(ctx context.Context, website *pluginDb.Website) error {
+func (s *WebsiteServiceDefault) regenerateExpiredToken(ctx context.Context, website *pluginDb.Website, wd *pluginDb.WebsiteDomain) error {
 	newToken, err := s.generateValidationToken()
 	if err != nil {
 		return fmt.Errorf("failed to regenerate expired validation token: %w", err)
 	}
 
-	if website.DNSZoneID != nil && s.dnsSvc != nil {
+	if wd.DNSZoneID != nil && s.dnsSvc != nil {
 		tokenRecord := fmt.Sprintf("%s=%s", s.verificationTokenKey(), newToken)
-		if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *website.DNSZoneID, website.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), tokenRecord); err != nil {
+		if err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *wd.DNSZoneID, wd.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), tokenRecord); err != nil {
 			s.Logger().Warn("Failed to update DNS records with new validation token",
 				zap.Error(err),
 				zap.Uint("website_id", website.ID),
-				zap.String("domain", website.Domain))
+				zap.String("domain", wd.Domain))
 		}
 	}
 
@@ -1397,7 +1596,7 @@ func (s *WebsiteServiceDefault) regenerateExpiredToken(ctx context.Context, webs
 
 	s.Logger().Info("Regenerated expired validation token",
 		zap.Uint("website_id", website.ID),
-		zap.String("domain", website.Domain))
+		zap.String("domain", wd.Domain))
 
 	return nil
 }
@@ -1665,8 +1864,10 @@ func (s *WebsiteServiceDefault) notifyAdminWebsiteCreated(ctx context.Context, w
 		return nil
 	}
 
+	primaryDomain := s.primaryDomainName(ctx, website)
+
 	vars := map[string]interface{}{
-		"Domain":     website.Domain,
+		"Domain":     primaryDomain,
 		"UserEmail":  userEmail,
 		"TargetType": website.TargetType,
 		"TargetHash": website.TargetHash(),
@@ -1677,13 +1878,13 @@ func (s *WebsiteServiceDefault) notifyAdminWebsiteCreated(ctx context.Context, w
 	if err := s.mailerSvc.TemplateSend("website_created_admin", vars, vars, s.config.AdminEmail); err != nil {
 		s.Logger().Error("Failed to send website created notification",
 			zap.Error(err),
-			zap.String("domain", website.Domain),
+			zap.String("domain", primaryDomain),
 			zap.String("admin_email", s.config.AdminEmail))
 		return err
 	}
 
 	s.Logger().Debug("Website created notification sent",
-		zap.String("domain", website.Domain),
+		zap.String("domain", primaryDomain),
 		zap.String("admin_email", s.config.AdminEmail))
 	return nil
 }
@@ -1699,8 +1900,10 @@ func (s *WebsiteServiceDefault) notifyAdminWebsiteUpdated(ctx context.Context, w
 		return nil
 	}
 
+	primaryDomain := s.primaryDomainName(ctx, website)
+
 	vars := map[string]interface{}{
-		"Domain":     website.Domain,
+		"Domain":     primaryDomain,
 		"UserEmail":  userEmail,
 		"TargetType": website.TargetType,
 		"TargetHash": website.TargetHash(),
@@ -1712,13 +1915,13 @@ func (s *WebsiteServiceDefault) notifyAdminWebsiteUpdated(ctx context.Context, w
 	if err := s.mailerSvc.TemplateSend("website_updated_admin", vars, vars, s.config.AdminEmail); err != nil {
 		s.Logger().Error("Failed to send website updated notification",
 			zap.Error(err),
-			zap.String("domain", website.Domain),
+			zap.String("domain", primaryDomain),
 			zap.String("admin_email", s.config.AdminEmail))
 		return err
 	}
 
 	s.Logger().Debug("Website updated notification sent",
-		zap.String("domain", website.Domain),
+		zap.String("domain", primaryDomain),
 		zap.String("admin_email", s.config.AdminEmail))
 	return nil
 }
@@ -1734,8 +1937,10 @@ func (s *WebsiteServiceDefault) notifyUserStatusChanged(ctx context.Context, web
 		return nil
 	}
 
+	primaryDomain := s.primaryDomainName(ctx, website)
+
 	vars := map[string]interface{}{
-		"Domain":     website.Domain,
+		"Domain":     primaryDomain,
 		"UserEmail":  userEmail,
 		"OldStatus":  string(oldStatus),
 		"NewStatus":  string(newStatus),
@@ -1747,13 +1952,13 @@ func (s *WebsiteServiceDefault) notifyUserStatusChanged(ctx context.Context, web
 	if err := s.mailerSvc.TemplateSend("website_status_changed_user", vars, vars, userEmail); err != nil {
 		s.Logger().Error("Failed to send website status changed notification",
 			zap.Error(err),
-			zap.String("domain", website.Domain),
+			zap.String("domain", primaryDomain),
 			zap.String("user_email", userEmail))
 		return err
 	}
 
 	s.Logger().Debug("Website status changed notification sent",
-		zap.String("domain", website.Domain),
+		zap.String("domain", primaryDomain),
 		zap.String("user_email", userEmail),
 		zap.String("old_status", string(oldStatus)),
 		zap.String("new_status", string(newStatus)))
@@ -1854,15 +2059,109 @@ func (s *WebsiteServiceDefault) GetApexDomainBinding(ctx context.Context, websit
 	if err := s.DB().WithContext(ctx).Where("id = ?", websiteID).First(&website).Error; err != nil {
 		return nil, err
 	}
-	if s.delegatedDomainSvc == nil {
+	if website.PrimaryDomainID == nil {
 		return nil, gorm.ErrRecordNotFound
 	}
-	apex, err := s.delegatedDomainSvc.GetWebsiteDomainByName(ctx, website.Domain)
-	if err != nil {
+	var apex pluginDb.WebsiteDomain
+	if err := s.DB().WithContext(ctx).Where("id = ?", *website.PrimaryDomainID).First(&apex).Error; err != nil {
 		return nil, err
 	}
 	if apex.DeletedAt.Valid {
 		return nil, gorm.ErrRecordNotFound
 	}
-	return apex, nil
+	return &apex, nil
+}
+
+// SetPrimaryDomain repoints the website's primary (apex) domain binding to the
+// given WebsiteDomain. It validates that the binding belongs to the website and
+// that the website is owned by userID, then updates Website.PrimaryDomainID. If
+// the binding is already the primary, it's a no-op. Returns the new primary
+// binding so callers can chain per-domain operations (e.g. SetDomainDNSEnabled).
+func (s *WebsiteServiceDefault) SetPrimaryDomain(ctx context.Context, userID, websiteID, domainID uint) (*pluginDb.WebsiteDomain, error) {
+	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.SetPrimaryDomain")
+	defer span.End()
+
+	var wd pluginDb.WebsiteDomain
+	if err := s.DB().WithContext(ctx).
+		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+		First(&wd).Error; err != nil {
+		return nil, fmt.Errorf("domain lookup failed: %w", err)
+	}
+	if wd.DeletedAt.Valid {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var website pluginDb.Website
+	if err := s.DB().WithContext(ctx).Where("id = ? AND user_id = ?", websiteID, userID).First(&website).Error; err != nil {
+		return nil, fmt.Errorf("website lookup failed: %w", err)
+	}
+	if website.PrimaryDomainID != nil && *website.PrimaryDomainID == wd.ID {
+		return &wd, nil
+	}
+
+	if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", wd.ID).Error; err != nil {
+		return nil, fmt.Errorf("failed to set primary domain: %w", err)
+	}
+	return &wd, nil
+}
+
+// SetDomainDNSEnabled enables or disables DNS hosting for a specific domain
+// binding, running the corresponding enable/disable DNS transition. This is the
+// per-domain primitive: one domain on a website can be DNS-managed while
+// another is not.
+func (s *WebsiteServiceDefault) SetDomainDNSEnabled(ctx context.Context, userID, websiteID, domainID uint, enabled bool) (*pluginDb.WebsiteDomain, error) {
+	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.SetDomainDNSEnabled")
+	defer span.End()
+
+	var wd pluginDb.WebsiteDomain
+	if err := s.DB().WithContext(ctx).
+		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+		First(&wd).Error; err != nil {
+		return nil, fmt.Errorf("domain lookup failed: %w", err)
+	}
+
+	// Already in the desired state with nothing left to reconcile. The binding
+	// is reconciled when the flag and the zone presence agree: a managed
+	// (true) binding has a zone, an unmanaged (false) binding has none. Any
+	// disagreement is an orphan left by a partial transition and must be
+	// re-reconciled rather than skipped:
+	//   - flag true, zone nil: enable-orphan (UpdateWebsite persists the flag
+	//     before the transition; the transition may roll the zone back on
+	//     failure without reverting the flag).
+	//   - flag false, zone non-nil: disable-orphan (the disable transition
+	//     clears dns_zone_id only when PowerDNS actually deleted the zone, and
+	//     zone-deletion failures are non-fatal).
+	// Requiring agreement lets a retry (enable or disable) recover either
+	// orphan instead of silently leaking the DNS state.
+	if wd.DNSHostingEnabled == enabled && (wd.DNSHostingEnabled == (wd.DNSZoneID != nil)) {
+		return &wd, nil
+	}
+
+	wd.DNSHostingEnabled = enabled
+
+	// Run the transition first and persist the flag only after it fully
+	// succeeds. handleDNSEnabledTransition performs the external DNS/IPNS side
+	// effects (zone setup, website DNS records); writing dns_hosting_enabled
+	// before it could leave the binding marked DNS-managed with no (or partial)
+	// setup applied if the transition fails, and the line-2098 idempotency
+	// guard would then make a retry no-op instead of finishing the setup.
+	if enabled {
+		if err := s.handleDNSEnabledTransition(ctx, &wd); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.handleDNSDisabledTransition(ctx, &wd); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := s.DB().WithContext(ctx).Model(&wd).Update("dns_hosting_enabled", enabled).Error; err != nil {
+		return nil, fmt.Errorf("failed to set dns_hosting_enabled: %w", err)
+	}
+
+	// Reload to pick up any zone/IPNS mutations from the transition.
+	if err := s.DB().WithContext(ctx).Where("id = ?", wd.ID).First(&wd).Error; err != nil {
+		return nil, err
+	}
+	return &wd, nil
 }

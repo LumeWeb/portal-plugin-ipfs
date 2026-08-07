@@ -84,50 +84,6 @@ func (_c *MockDomainProvider_ApexRecordType_Call) RunAndReturn(run func() core.R
 	return _c
 }
 
-// UsesManagedZoneTLSA provides a mock function for the type MockDomainProvider
-func (_mock *MockDomainProvider) UsesManagedZoneTLSA() bool {
-	ret := _mock.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for UsesManagedZoneTLSA")
-	}
-
-	var r0 bool
-	if returnFunc, ok := ret.Get(0).(func() bool); ok {
-		r0 = returnFunc()
-	} else {
-		r0 = ret.Get(0).(bool)
-	}
-	return r0
-}
-
-// MockDomainProvider_UsesManagedZoneTLSA_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UsesManagedZoneTLSA'
-type MockDomainProvider_UsesManagedZoneTLSA_Call struct {
-	*mock.Call
-}
-
-// UsesManagedZoneTLSA is a helper method to define mock.On call
-func (_e *MockDomainProvider_Expecter) UsesManagedZoneTLSA() *MockDomainProvider_UsesManagedZoneTLSA_Call {
-	return &MockDomainProvider_UsesManagedZoneTLSA_Call{Call: _e.mock.On("UsesManagedZoneTLSA")}
-}
-
-func (_c *MockDomainProvider_UsesManagedZoneTLSA_Call) Run(run func()) *MockDomainProvider_UsesManagedZoneTLSA_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockDomainProvider_UsesManagedZoneTLSA_Call) Return(usesManagedZoneTLSA bool) *MockDomainProvider_UsesManagedZoneTLSA_Call {
-	_c.Call.Return(usesManagedZoneTLSA)
-	return _c
-}
-
-func (_c *MockDomainProvider_UsesManagedZoneTLSA_Call) RunAndReturn(run func() bool) *MockDomainProvider_UsesManagedZoneTLSA_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // BuildDelegation provides a mock function for the type MockDomainProvider
 func (_mock *MockDomainProvider) BuildDelegation(ctx context.Context, zoneID uint, domain string, website *db.Website, config json.RawMessage) (any, error) {
 	ret := _mock.Called(ctx, zoneID, domain, website, config)
@@ -363,6 +319,50 @@ func (_c *MockDomainProvider_Protocol_Call) Return(s string) *MockDomainProvider
 }
 
 func (_c *MockDomainProvider_Protocol_Call) RunAndReturn(run func() string) *MockDomainProvider_Protocol_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// UsesManagedZoneTLSA provides a mock function for the type MockDomainProvider
+func (_mock *MockDomainProvider) UsesManagedZoneTLSA() bool {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for UsesManagedZoneTLSA")
+	}
+
+	var r0 bool
+	if returnFunc, ok := ret.Get(0).(func() bool); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	return r0
+}
+
+// MockDomainProvider_UsesManagedZoneTLSA_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UsesManagedZoneTLSA'
+type MockDomainProvider_UsesManagedZoneTLSA_Call struct {
+	*mock.Call
+}
+
+// UsesManagedZoneTLSA is a helper method to define mock.On call
+func (_e *MockDomainProvider_Expecter) UsesManagedZoneTLSA() *MockDomainProvider_UsesManagedZoneTLSA_Call {
+	return &MockDomainProvider_UsesManagedZoneTLSA_Call{Call: _e.mock.On("UsesManagedZoneTLSA")}
+}
+
+func (_c *MockDomainProvider_UsesManagedZoneTLSA_Call) Run(run func()) *MockDomainProvider_UsesManagedZoneTLSA_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockDomainProvider_UsesManagedZoneTLSA_Call) Return(b bool) *MockDomainProvider_UsesManagedZoneTLSA_Call {
+	_c.Call.Return(b)
+	return _c
+}
+
+func (_c *MockDomainProvider_UsesManagedZoneTLSA_Call) RunAndReturn(run func() bool) *MockDomainProvider_UsesManagedZoneTLSA_Call {
 	_c.Call.Return(run)
 	return _c
 }

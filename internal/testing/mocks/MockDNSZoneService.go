@@ -56,22 +56,6 @@ func (_mock *MockDNSZoneService) CreateApexRecord(ctx context.Context, zoneID ui
 	return r0
 }
 
-func (_mock *MockDNSZoneService) SetTLSARecord(ctx context.Context, zoneID uint, content string) error {
-	ret := _mock.Called(ctx, zoneID, content)
-
-	if len(ret) == 0 {
-		panic("no return value specified for SetTLSARecord")
-	}
-
-	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string) error); ok {
-		r0 = returnFunc(ctx, zoneID, content)
-	} else {
-		r0 = ret.Error(0)
-	}
-	return r0
-}
-
 // MockDNSZoneService_CreateApexRecord_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CreateApexRecord'
 type MockDNSZoneService_CreateApexRecord_Call struct {
 	*mock.Call
@@ -446,6 +430,69 @@ func (_c *MockDNSZoneService_GetActiveDNSSECDS_Call) Return(ds string, err error
 }
 
 func (_c *MockDNSZoneService_GetActiveDNSSECDS_Call) RunAndReturn(run func(ctx context.Context, zoneID uint) (string, error)) *MockDNSZoneService_GetActiveDNSSECDS_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SetTLSARecord provides a mock function for the type MockDNSZoneService
+func (_mock *MockDNSZoneService) SetTLSARecord(ctx context.Context, zoneID uint, content string) error {
+	ret := _mock.Called(ctx, zoneID, content)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetTLSARecord")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string) error); ok {
+		r0 = returnFunc(ctx, zoneID, content)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockDNSZoneService_SetTLSARecord_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetTLSARecord'
+type MockDNSZoneService_SetTLSARecord_Call struct {
+	*mock.Call
+}
+
+// SetTLSARecord is a helper method to define mock.On call
+//   - ctx context.Context
+//   - zoneID uint
+//   - content string
+func (_e *MockDNSZoneService_Expecter) SetTLSARecord(ctx any, zoneID any, content any) *MockDNSZoneService_SetTLSARecord_Call {
+	return &MockDNSZoneService_SetTLSARecord_Call{Call: _e.mock.On("SetTLSARecord", ctx, zoneID, content)}
+}
+
+func (_c *MockDNSZoneService_SetTLSARecord_Call) Run(run func(ctx context.Context, zoneID uint, content string)) *MockDNSZoneService_SetTLSARecord_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockDNSZoneService_SetTLSARecord_Call) Return(err error) *MockDNSZoneService_SetTLSARecord_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockDNSZoneService_SetTLSARecord_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, content string) error) *MockDNSZoneService_SetTLSARecord_Call {
 	_c.Call.Return(run)
 	return _c
 }

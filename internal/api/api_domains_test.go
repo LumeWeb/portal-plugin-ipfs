@@ -407,6 +407,122 @@ func TestAPI_DANERepublish(t *testing.T) {
 	})
 }
 
+func TestAPI_UpdateDomain(t *testing.T) {
+	t.Run("toggle_dns_hosting_enabled", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID, testCID, _ := helper.SetupAuthenticatedTest()
+
+			website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
+			require.NoError(t, ctx.DB().Create(website).Error)
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID:         1,
+				UserID:            userID,
+				Domain:            "example.com",
+				Namespace:         pluginDb.DomainNamespaceICANN,
+				Status:            pluginDb.DomainStatusDraft,
+				DNSHostingEnabled: false,
+			}
+			require.NoError(t, ctx.DB().Create(wd).Error)
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+			updated := *wd
+			updated.DNSHostingEnabled = true
+			mockWebsiteService.EXPECT().SetDomainDNSEnabled(mock.Anything, userID, uint(1), uint(1), true).Return(&updated, nil)
+
+			reqBody := `{"dns_hosting_enabled":true}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPatch, "/api/websites/1/domains/1", token, []byte(reqBody))
+			assert.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+			var resp dto.DomainResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			assert.Equal(t, uint(1), resp.ID)
+			assert.True(t, resp.DNSHostingEnabled)
+		}, TestOptions)
+	})
+
+	t.Run("set_primary", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID, testCID, _ := helper.SetupAuthenticatedTest()
+
+			website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
+			require.NoError(t, ctx.DB().Create(website).Error)
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: 1,
+				UserID:    userID,
+				Domain:    "example.com",
+				Namespace: pluginDb.DomainNamespaceICANN,
+				Status:    pluginDb.DomainStatusDraft,
+			}
+			require.NoError(t, ctx.DB().Create(wd).Error)
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+			mockWebsiteService.EXPECT().SetPrimaryDomain(mock.Anything, userID, uint(1), uint(1)).Return(wd, nil)
+
+			reqBody := `{"primary":true}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPatch, "/api/websites/1/domains/1", token, []byte(reqBody))
+			assert.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+		}, TestOptions)
+	})
+
+	t.Run("toggle_dns_and_set_primary", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID, testCID, _ := helper.SetupAuthenticatedTest()
+
+			website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
+			require.NoError(t, ctx.DB().Create(website).Error)
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: 1,
+				UserID:    userID,
+				Domain:    "example.com",
+				Namespace: pluginDb.DomainNamespaceICANN,
+				Status:    pluginDb.DomainStatusDraft,
+			}
+			require.NoError(t, ctx.DB().Create(wd).Error)
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+			updated := *wd
+			updated.DNSHostingEnabled = true
+			mockWebsiteService.EXPECT().SetPrimaryDomain(mock.Anything, userID, uint(1), uint(1)).Return(wd, nil)
+			mockWebsiteService.EXPECT().SetDomainDNSEnabled(mock.Anything, userID, uint(1), uint(1), true).Return(&updated, nil)
+
+			reqBody := `{"dns_hosting_enabled":true,"primary":true}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPatch, "/api/websites/1/domains/1", token, []byte(reqBody))
+			assert.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+		}, TestOptions)
+	})
+
+	t.Run("not_found", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, _, _, _ := helper.SetupAuthenticatedTest()
+
+			reqBody := `{"dns_hosting_enabled":true}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPatch, "/api/websites/1/domains/999", token, []byte(reqBody))
+			assert.Equal(t, http.StatusNotFound, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("no_updates_returns_422", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID, testCID, _ := helper.SetupAuthenticatedTest()
+
+			website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
+			require.NoError(t, ctx.DB().Create(website).Error)
+
+			reqBody := `{}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPatch, "/api/websites/1/domains/1", token, []byte(reqBody))
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		}, TestOptions)
+	})
+}
+
 // testDANEKey is the fixed 32-byte AES-256 key (base64) used to encrypt the DANE
 // private key at rest. It matches the domain package's testDANEKey and is an
 // at-rest encryption key, not a secret literal.
