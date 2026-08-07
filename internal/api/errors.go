@@ -55,6 +55,10 @@ const (
 	// Website domain binding error types
 	ErrKeyDomainNotFound core.ErrorType = "DOMAIN_NOT_FOUND"
 	ErrKeyInvalidPathID  core.ErrorType = "INVALID_PATH_ID"
+	// ErrKeyNoStoredCertificate is returned when a DANE republish is requested
+	// for a domain that has no certificate/key stored (e.g. none was ever
+	// pushed via the cert webhook, or the binding is not DANE-capable).
+	ErrKeyNoStoredCertificate core.ErrorType = "NO_STORED_CERTIFICATE"
 )
 
 // HTTP status classes (RFC 9110 / RFC 4918) — keep these consistent:
@@ -101,6 +105,7 @@ func init() {
 		ErrKeyInvalidTarget:         {Key: ErrKeyInvalidTarget, Message: "Invalid target hash or peer ID provided"},
 		ErrKeyDomainNotFound:        {Key: ErrKeyDomainNotFound, Message: "Domain not found"},
 		ErrKeyInvalidPathID:         {Key: ErrKeyInvalidPathID, Message: "Invalid path parameter: %s"},
+		ErrKeyNoStoredCertificate:   {Key: ErrKeyNoStoredCertificate, Message: "No stored certificate for domain; nothing to republish"},
 		ErrKeyDeleteFailed:          {Key: ErrKeyDeleteFailed, Message: "Failed to delete zone"},
 		ErrKeyUpdateFailed:          {Key: ErrKeyUpdateFailed, Message: "Failed to update zone"},
 	})
@@ -132,6 +137,7 @@ func init() {
 		ErrKeyPermissionDenied:      http.StatusForbidden,
 		ErrKeyDomainNotFound:        http.StatusNotFound,
 		ErrKeyInvalidPathID:         http.StatusBadRequest,
+		ErrKeyNoStoredCertificate:   http.StatusConflict,
 		ErrKeyDeleteFailed:          http.StatusInternalServerError,
 		ErrKeyUpdateFailed:          http.StatusInternalServerError,
 	})

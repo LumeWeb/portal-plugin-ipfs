@@ -817,6 +817,17 @@ See also:.*`),
 				router.WithSuccessResponse(http.StatusOK, "Domain DNS requirements", router.WithJSONContent(dto.DomainResponse{})),
 			),
 		),
+		router.NewRoute(http.MethodPost, "/websites/:id/domains/:domain_id/dane/republish", a.republishDomainDANE,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Force re-publish of domain DANE records"),
+				router.WithDescription(`Forces re-publication of a bound domain's DANE records (the _443._tcp.<domain> TLSA RRset) into the portal-managed authoritative PowerDNS zone. It re-pushes the stored certificate/key through the same path used by the cert webhook, idempotently overwriting the TLSA. Use this when a TLSA was deleted or went missing and cert renewal did not re-trigger a publish. Only DANE-capable namespaces (e.g. HNS) are supported; a domain with no stored certificate returns 409.`),
+				router.WithTags("Websites", "Domains"),
+				router.WithPathParam("id", "Website ID", ""),
+				router.WithPathParam("domain_id", "Domain ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Republish result", router.WithJSONContent(dto.DomainDANERepublishResponse{})),
+			),
+		),
 	)
 
 	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), websiteRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
