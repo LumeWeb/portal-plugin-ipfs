@@ -832,17 +832,20 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 					zap.Error(uerr),
 					zap.Uint("website_id", websiteID))
 			} else if enableDNS {
-				// DNS hosting enabled: create zone/records and reset to pending_validation
+				// DNS hosting enabled: create zone/records and reset to pending_validation.
+				// handleDNSEnabledTransition may auto-convert a plain-CID IPNS target
+				// to an IPNS key and persist it BEFORE the fallible zone-creation steps,
+				// so the conversion can be committed even when a later zone step fails.
+				// Reload the website whenever the enable transition started (not only on
+				// success) so updatedWebsite (and EVENT_WEBSITE_PUBLISHED below) reflect
+				// the converted target rather than stale pre-conversion state.
 				if err := s.handleDNSEnabledTransition(ctx, wd); err != nil {
 					s.Logger().Warn("Failed to handle DNS hosting enable transition",
 						zap.Error(err),
 						zap.Uint("website_id", websiteID))
 					// Continue despite failure - website is updated but DNS setup incomplete
-				} else if wd.WebsiteID != 0 {
-					// handleDNSEnabledTransition may auto-convert a plain-CID IPNS
-					// target to an IPNS key and persist it. Reload the website so the
-					// returned updatedWebsite (and EVENT_WEBSITE_PUBLISHED below) reflect
-					// the converted target rather than the stale pre-conversion state.
+				}
+				if wd.WebsiteID != 0 {
 					var reloaded pluginDb.Website
 					if rerr := s.DB().WithContext(ctx).First(&reloaded, wd.WebsiteID).Error; rerr == nil {
 						updatedWebsite = &reloaded
