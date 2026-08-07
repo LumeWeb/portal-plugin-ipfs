@@ -101,4 +101,14 @@ type DNSService interface {
 	// zone has no active signing key; errors when multiple active signing keys
 	// exist (in-progress rollover).
 	GetActiveDNSSECDS(ctx context.Context, zoneID uint) (ds string, err error)
+
+	// EnsureSOAMNAME idempotently corrects a zone's SOA MNAME to the primary
+	// authorized nameserver, no-op'ing when it is already correct. PowerDNS
+	// seeds freshly created zones with a placeholder MNAME that is only fixed
+	// on the fresh-create path; this lets verification re-ensure a portal
+	// managed zone's SOA points at the right authority, mirroring the DNSSEC
+	// self-heal. It is best-effort (the SOA MNAME is a secondary authoritative
+	// pointer; delegation is carried by the NS record), so callers must not
+	// treat an error here as a hard verification failure.
+	EnsureSOAMNAME(ctx context.Context, zoneID uint, domain string, nameservers []string) error
 }

@@ -96,6 +96,15 @@ type DNSDelegation struct {
 	Nameservers          []string              `json:"nameservers,omitempty"`
 	ParentRecords        []DNSDelegationRecord `json:"parent_records,omitempty"`
 	AuthoritativeRecords []DNSDelegationRecord `json:"authoritative_records,omitempty"`
+	// DNSSEC reports the portal-managed DNSSEC signing state for a
+	// DNSSEC-signed namespace (e.g. HNS): "enabled" when the zone has an
+	// active signing key (the DS injected into parent_records derives from
+	// it), "disabled" when the zone is not DNSSEC-signed (ICANN or no key),
+	// and "error" when enablement/readback failed (details in DNSSECError).
+	// Populated by dns-requirements for portal-managed namespaces so an
+	// absent DS is never silent. ICANN namespaces omit it (no portal DNSSEC).
+	DNSSEC      string `json:"dnssec,omitempty"`
+	DNSSECError string `json:"dnssec_error,omitempty"`
 }
 
 // DomainResponse is a bound domain.

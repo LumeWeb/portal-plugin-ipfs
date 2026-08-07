@@ -145,6 +145,10 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 			dsRec := resp.Delegation.ParentRecords[1]
 			assert.Equal(t, "DS", dsRec.Type)
 			assert.Equal(t, "60776 13 2 3b35deed97def5fbb5ce939cd5b9036f12db0ccc2e1cb40bb4c565c168c66116", dsRec.Value)
+			// Active signing key means DNSSEC is explicitly reported as enabled,
+			// so an enabled zone is never a silent gap.
+			assert.Equal(t, "enabled", resp.Delegation.DNSSEC)
+			assert.Empty(t, resp.Delegation.DNSSECError)
 		}, TestOptions)
 	})
 
@@ -194,6 +198,10 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 			// correctness cannot be confirmed is never presented as current.
 			require.Len(t, resp.Delegation.ParentRecords, 1)
 			assert.Equal(t, "NS", resp.Delegation.ParentRecords[0].Type)
+			// Resolution error is surfaced explicitly so the user can diagnose
+			// (PowerDNS down / key rollover) rather than see a bare missing DS.
+			assert.Equal(t, "error", resp.Delegation.DNSSEC)
+			assert.Contains(t, resp.Delegation.DNSSECError, "PowerDNS unreachable")
 		}, TestOptions)
 	})
 
@@ -243,6 +251,11 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 			// No live signing key: stale DS must be removed, not presented.
 			require.Len(t, resp.Delegation.ParentRecords, 1)
 			assert.Equal(t, "NS", resp.Delegation.ParentRecords[0].Type)
+			// "No active key" on a managed zone is surfaced as disabled (not
+			// silent), telling the user DNSSEC isn't set up yet — the verify
+			// self-heal will mint the key on the next run.
+			assert.Equal(t, "disabled", resp.Delegation.DNSSEC)
+			assert.Contains(t, resp.Delegation.DNSSECError, "no active signing key")
 		}, TestOptions)
 	})
 
@@ -255,8 +268,49 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 			assert.Equal(t, http.StatusNotFound, rec.Code)
 		}, TestOptions)
 	})
-}
 
+	// ICANN namespaces are not portal-managed for DNSSEC: the DNSSEC fields
+	// must be omitted entirely (per the DTO contract) even when no active key
+	// exists, so the block is gated on NamespaceUsesManagedZoneTLSA — not on
+	// the presence of a key.
+	t.Run("icann_omits_dnssec_fields", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID, testCID, _ := helper.SetupAuthenticatedTest()
+
+			website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
+			require.NoError(t, ctx.DB().Create(website).Error)
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: userID, Domain: "example.com",
+				Namespace:   pluginDb.DomainNamespaceICANN,
+				Status:      pluginDb.DomainStatusRecordsGenerated,
+				ZoneName:    "example.com.",
+				GatewayHost: "gateway.lumeweb.com",
+				DelegationData: datatypes.JSONMap{
+					"mode": "delegated",
+					"parent_records": []map[string]any{
+						{"type": "NS", "value": "ns1.example.com."},
+					},
+				},
+			}
+			require.NoError(t, ctx.DB().Create(wd).Error)
+
+			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites/1/domains/1/dns-requirements", token, nil)
+			require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+			var resp dto.DomainResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.NotNil(t, resp.Delegation)
+			// ICANN: DNSSEC fields omitted (empty => omitempty drops them).
+			assert.Empty(t, resp.Delegation.DNSSEC)
+			assert.Empty(t, resp.Delegation.DNSSECError)
+			// Parent NS record retained.
+			require.Len(t, resp.Delegation.ParentRecords, 1)
+			assert.Equal(t, "NS", resp.Delegation.ParentRecords[0].Type)
+		}, TestOptions)
+	})
+}
 func TestAPI_DANERepublish(t *testing.T) {
 	republishPath := func(websiteID, domainID int) string {
 		return fmt.Sprintf("/api/websites/%d/domains/%d/dane/republish", websiteID, domainID)

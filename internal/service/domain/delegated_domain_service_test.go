@@ -151,6 +151,106 @@ func TestDelegatedDomainService_GetWebsiteDomainByDomainAndNamespace(t *testing.
 	}, TestOptions)
 }
 
+func TestDelegatedDomainService_VerifyDomain_SelfHealsDNSSEC(t *testing.T) {
+	// Regression: a managed (HNS) zone reporting "no active signing key"
+	// (GetActiveDNSSECDS -> ("", nil)) must self-heal by running the
+	// idempotent EnableDNSSEC, then re-reading the live DS — instead of
+	// silently verifying NS-only and leaving the zone without a DS. This
+	// recovers zones bound before the cryptokey-id fix whose key was never
+	// readable, without requiring the user to re-bind.
+	t.Run("hns_no_key_triggers_enable", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			db := ctx.DB()
+			require.NoError(tb, db.Create(&pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "example", Namespace: pluginDb.DomainNamespaceHNS,
+				ZoneID: 42, Status: pluginDb.DomainStatusWaitingDelegation,
+			}).Error)
+
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, svc)
+
+			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+			require.NotNil(tb, mockDNS)
+
+			// First read: no active key. Self-heal calls EnableDNSSEC, then
+			// re-reads and finds a live DS (the minted key).
+			mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, uint(42)).
+				Return("", nil).Once()
+			mockDNS.EXPECT().EnableDNSSEC(mock.Anything, uint(42)).
+				Return("257 3 13 dGVzdA==", nil).Once()
+			mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, uint(42)).
+				Return("60776 13 2 abc", nil).Once()
+			// SOA MNAME self-heal runs for the managed zone (best-effort).
+			mockDNS.EXPECT().EnsureSOAMNAME(mock.Anything, uint(42), "example", mock.Anything).
+				Return(nil).Once()
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "example", Namespace: pluginDb.DomainNamespaceHNS, ZoneID: 42,
+			}
+
+			// VerifyDomain proceeds to HNSProvider.VerifyDelegation, which
+			// returns the "resolver not configured" error in a unit harness
+			// (no real HNS resolver). The self-heal assertions below are what
+			// this test guards — EnableDNSSEC MUST have been invoked, the DS
+			// re-read, and the SOA MNAME self-heal fired, before delegation
+			// verification.
+			verified, err := svc.VerifyDomain(context.Background(), wd)
+			_ = verified
+			if err != nil {
+				// Allowed: resolver-not-configured after the self-heal mocks
+				// fired. The point of this test is the self-heal sequence.
+				tb.Logf("expected post-self-heal delegation error: %v", err)
+			}
+
+			mockDNS.AssertCalled(tb, "EnableDNSSEC", mock.Anything, uint(42))
+			mockDNS.AssertNumberOfCalls(tb, "GetActiveDNSSECDS", 2)
+			mockDNS.AssertCalled(tb, "EnsureSOAMNAME", mock.Anything, uint(42), "example", mock.Anything)
+			mockDNS.AssertExpectations(tb)
+		}, TestOptions)
+	})
+
+	// The SOA MNAME self-heal applies to any portal-managed PowerDNS zone, so
+	// an ICANN-hosted binding gets its SOA re-ensured on verify too.
+	t.Run("icann_soa_healed_dnssec_skipped", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			db := ctx.DB()
+			require.NoError(tb, db.Create(&pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "example.com", Namespace: pluginDb.DomainNamespaceICANN,
+				ZoneID: 42, Status: pluginDb.DomainStatusWaitingDelegation,
+			}).Error)
+
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, svc)
+
+			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+			require.NotNil(tb, mockDNS)
+
+			// ICANN has no portal DNSSEC: GetActiveDNSSECDS returns ("", nil)
+			// by default and EnableDNSSEC must NOT be touched. Only the SOA
+			// MNAME self-heal fires for the portal-managed zone.
+			mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, uint(42)).
+				Return("", nil).Once()
+			mockDNS.EXPECT().EnsureSOAMNAME(mock.Anything, uint(42), "example.com", mock.Anything).
+				Return(nil).Once()
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "example.com", Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 42,
+			}
+
+			verified, err := svc.VerifyDomain(context.Background(), wd)
+			_ = verified
+			if err != nil {
+				// Allowed: post-heal delegation error (system resolver).
+				tb.Logf("expected post-heal delegation error: %v", err)
+			}
+
+			mockDNS.AssertCalled(tb, "EnsureSOAMNAME", mock.Anything, uint(42), "example.com", mock.Anything)
+			mockDNS.AssertNotCalled(tb, "EnableDNSSEC")
+			mockDNS.AssertExpectations(tb)
+		}, TestOptions)
+	})
+}
+
 func TestDelegatedDomainService_GetPendingWebsiteDomainsPaginated(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()

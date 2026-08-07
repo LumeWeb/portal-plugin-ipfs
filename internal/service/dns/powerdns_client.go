@@ -206,6 +206,17 @@ func (c *PowerDNSClient) fixSOAMNAME(ctx context.Context, zoneID, domain string,
 	return c.fixSOAMNAMEOnZone(ctx, zoneID, domain, mname, zone)
 }
 
+// EnsureSOAMNAME idempotently corrects a zone's SOA MNAME to the primary
+// authorized nameserver. It is a public re-usable form of fixSOAMNAME for the
+// verify-time self-heal path: unlike the fresh-create call (which is only safe
+// because we just created the zone and know it is ours), this is gated by the
+// caller for portal-managed zones only. It no-ops when the MNAME is already
+// correct, and returns nil (rather than erroring) when there is no nameserver
+// to use, mirroring fixSOAMNAME's semantics.
+func (c *PowerDNSClient) EnsureSOAMNAME(ctx context.Context, zoneID, domain string, canonicalNameservers []string) error {
+	return c.fixSOAMNAME(ctx, zoneID, domain, canonicalNameservers)
+}
+
 // fixSOAMNAMEOnZone performs the MNAME correction on an already-fetched zone.
 // It is only called from the fresh-create path (fixSOAMNAME), where the zone
 // was just created by this call and is therefore provably portal-owned — no
