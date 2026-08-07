@@ -184,13 +184,10 @@ func mapDNSDelegation(raw []byte) *DNSDelegation {
 			ParentRecords:        hns.ParentRecords,
 			AuthoritativeRecords: hns.AuthoritativeRecords,
 		}
-		// Promote a DS record from parent_records to the first-class DS field.
-		for _, rec := range hns.ParentRecords {
-			if rec.Type == "DS" {
-				d.DS = rec.Value
-				break
-			}
-		}
+		// The DS is NOT promoted from stored parent_records: the DS is a
+		// derivative of the live PowerDNS signing key and is computed on the
+		// fly (see API.domainDNSRequirements -> GetActiveDNSSECDS), never
+		// persisted. A stored DS would go stale on key rotation.
 		return d
 	}
 

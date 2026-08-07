@@ -54,7 +54,7 @@ func (p *ICANNProvider) BuildDelegation(ctx context.Context, zoneID uint,
 }
 
 func (p *ICANNProvider) VerifyDelegation(ctx context.Context, domain string,
-	delegationData json.RawMessage) (bool, error) {
+	expectedDS string) (bool, error) {
 	// ICANN domains do not use an alt-root delegation step.
 	return true, nil
 }

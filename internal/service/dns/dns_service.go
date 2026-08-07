@@ -224,3 +224,37 @@ func (s *DNSServiceDefault) EnableDNSSEC(ctx context.Context, zoneID uint) (stri
 
 	return dnskey, nil
 }
+
+// GetActiveDNSSECDS returns the SHA-256 DS RDATA (type 2) for the zone's
+// currently-active signing key, computed live from PowerDNS cryptokey state.
+// It is the on-the-fly source of the DS to display in dns-requirements and to
+// verify on-chain, so no DS is persisted in the portal DB (a stored DS would
+// go stale on key rotation). Returns ("", nil) when the zone has no active
+// signing key; errors when multiple active keys exist (in-progress rollover).
+func (s *DNSServiceDefault) GetActiveDNSSECDS(ctx context.Context, zoneID uint) (string, error) {
+	if s.pdnsClient == nil {
+		return "", fmt.Errorf("PowerDNS client not configured")
+	}
+
+	var pdnsZoneID string
+	txErr := s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var zone pluginDb.DNSZone
+		if err := tx.First(&zone, zoneID).Error; err != nil {
+			return err
+		}
+		if zone.PowerDNSZoneID == "" {
+			return fmt.Errorf("zone %d has no PowerDNS zone ID", zoneID)
+		}
+		pdnsZoneID = zone.PowerDNSZoneID
+		return nil
+	})
+	if txErr != nil {
+		return "", txErr
+	}
+
+	ds, err := s.pdnsClient.GetActiveDNSKEYDS(ctx, pdnsZoneID)
+	if err != nil {
+		return "", fmt.Errorf("get active DNSKEY DS: %w", err)
+	}
+	return ds, nil
+}

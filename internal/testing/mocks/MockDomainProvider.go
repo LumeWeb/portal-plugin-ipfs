@@ -419,8 +419,8 @@ func (_c *MockDomainProvider_Validate_Call) RunAndReturn(run func(domain string)
 }
 
 // VerifyDelegation provides a mock function for the type MockDomainProvider
-func (_mock *MockDomainProvider) VerifyDelegation(ctx context.Context, domain string, delegationData json.RawMessage) (bool, error) {
-	ret := _mock.Called(ctx, domain, delegationData)
+func (_mock *MockDomainProvider) VerifyDelegation(ctx context.Context, domain string, expectedDS string) (bool, error) {
+	ret := _mock.Called(ctx, domain, expectedDS)
 
 	if len(ret) == 0 {
 		panic("no return value specified for VerifyDelegation")
@@ -428,16 +428,16 @@ func (_mock *MockDomainProvider) VerifyDelegation(ctx context.Context, domain st
 
 	var r0 bool
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, json.RawMessage) (bool, error)); ok {
-		return returnFunc(ctx, domain, delegationData)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (bool, error)); ok {
+		return returnFunc(ctx, domain, expectedDS)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, json.RawMessage) bool); ok {
-		r0 = returnFunc(ctx, domain, delegationData)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) bool); ok {
+		r0 = returnFunc(ctx, domain, expectedDS)
 	} else {
 		r0 = ret.Get(0).(bool)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, json.RawMessage) error); ok {
-		r1 = returnFunc(ctx, domain, delegationData)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
+		r1 = returnFunc(ctx, domain, expectedDS)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -452,12 +452,12 @@ type MockDomainProvider_VerifyDelegation_Call struct {
 // VerifyDelegation is a helper method to define mock.On call
 //   - ctx context.Context
 //   - domain string
-//   - delegationData json.RawMessage
-func (_e *MockDomainProvider_Expecter) VerifyDelegation(ctx any, domain any, delegationData any) *MockDomainProvider_VerifyDelegation_Call {
-	return &MockDomainProvider_VerifyDelegation_Call{Call: _e.mock.On("VerifyDelegation", ctx, domain, delegationData)}
+//   - expectedDS string
+func (_e *MockDomainProvider_Expecter) VerifyDelegation(ctx any, domain any, expectedDS any) *MockDomainProvider_VerifyDelegation_Call {
+	return &MockDomainProvider_VerifyDelegation_Call{Call: _e.mock.On("VerifyDelegation", ctx, domain, expectedDS)}
 }
 
-func (_c *MockDomainProvider_VerifyDelegation_Call) Run(run func(ctx context.Context, domain string, delegationData json.RawMessage)) *MockDomainProvider_VerifyDelegation_Call {
+func (_c *MockDomainProvider_VerifyDelegation_Call) Run(run func(ctx context.Context, domain string, expectedDS string)) *MockDomainProvider_VerifyDelegation_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -467,9 +467,9 @@ func (_c *MockDomainProvider_VerifyDelegation_Call) Run(run func(ctx context.Con
 		if args[1] != nil {
 			arg1 = args[1].(string)
 		}
-		var arg2 json.RawMessage
+		var arg2 string
 		if args[2] != nil {
-			arg2 = args[2].(json.RawMessage)
+			arg2 = args[2].(string)
 		}
 		run(
 			arg0,
@@ -485,7 +485,7 @@ func (_c *MockDomainProvider_VerifyDelegation_Call) Return(b bool, err error) *M
 	return _c
 }
 
-func (_c *MockDomainProvider_VerifyDelegation_Call) RunAndReturn(run func(ctx context.Context, domain string, delegationData json.RawMessage) (bool, error)) *MockDomainProvider_VerifyDelegation_Call {
+func (_c *MockDomainProvider_VerifyDelegation_Call) RunAndReturn(run func(ctx context.Context, domain string, expectedDS string) (bool, error)) *MockDomainProvider_VerifyDelegation_Call {
 	_c.Call.Return(run)
 	return _c
 }

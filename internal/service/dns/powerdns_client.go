@@ -451,12 +451,72 @@ func (c *PowerDNSClient) EnableDNSSEC(ctx context.Context, zoneID string) (strin
 	return result.DNSKey, nil
 }
 
+// GetActiveDNSKEYDS returns the SHA-256 DS RDATA (type 2, e.g.
+// "60776 13 2 <hex>") for the zone's currently-active signing key, computed
+// from the live PowerDNS cryptokey state. It is the on-the-fly source of the
+// DS to publish/verify on-chain, so the portal never needs to persist a DS
+// (which would go stale on key rotation).
+//
+// It returns ("", nil) when the zone has no active signing key (DNSSEC not
+// enabled). When there are multiple active signing keys — an in-progress
+// rollover — it returns an error rather than guessing which one is
+// authoritative, mirroring the guard in EnableDNSSEC.
+func (c *PowerDNSClient) GetActiveDNSKEYDS(ctx context.Context, zoneID string) (string, error) {
+	parts := strings.Split(zoneID, "/")
+	apiZoneID := parts[len(parts)-1]
+
+	zoneMu := c.zoneMu(apiZoneID)
+	zoneMu.Lock()
+	defer zoneMu.Unlock()
+
+	base := strings.TrimSuffix(c.baseURL, "/")
+	existing, err := c.listCryptokeys(ctx, base, apiZoneID)
+	if err != nil {
+		return "", fmt.Errorf("list cryptokeys: %w", err)
+	}
+
+	var active []cryptokey
+	for _, k := range existing {
+		if k.Active && (k.KeyType == "ksk" || k.KeyType == "csk") {
+			active = append(active, k)
+		}
+	}
+	switch len(active) {
+	case 0:
+		return "", nil
+	case 1:
+		ds, err := sha256DSPresentation(active[0].DS)
+		if err != nil {
+			return "", fmt.Errorf("zone %s active signing key has no usable SHA-256 DS: %w", zoneID, err)
+		}
+		return ds, nil
+	default:
+		return "", fmt.Errorf("zone %s has %d active signing keys; cannot determine which matches the published DS; reconcile manually", zoneID, len(active))
+	}
+}
+
+// sha256DSPresentation extracts the SHA-256 (digest type 2) DS RDATA
+// presentation from a PowerDNS-returned DS list. PowerDNS returns one DS entry
+// per digest type (e.g. "60776 13 2 <sha256>" and "60776 13 4 <sha512>"); we
+// select the type-2 entry, which is what parent-zone queryDS comparison and
+// on-chain DS publishing use.
+func sha256DSPresentation(dss []string) (string, error) {
+	for _, ds := range dss {
+		fields := strings.Fields(ds)
+		if len(fields) >= 3 && fields[2] == "2" {
+			return ds, nil
+		}
+	}
+	return "", fmt.Errorf("no SHA-256 DS (type 2) found")
+}
+
 // cryptokey is a PowerDNS cryptokey object (subset of the API response).
 type cryptokey struct {
-	ID      string `json:"id"`
-	KeyType string `json:"keytype"`
-	Active  bool   `json:"active"`
-	DNSKey  string `json:"dnskey"`
+	ID      string   `json:"id"`
+	KeyType string   `json:"keytype"`
+	Active  bool     `json:"active"`
+	DNSKey  string   `json:"dnskey"`
+	DS      []string `json:"ds"`
 }
 
 // listCryptokeys returns the zone's existing cryptokeys via

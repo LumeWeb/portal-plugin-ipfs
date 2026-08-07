@@ -251,7 +251,44 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
+
+	// The DS to publish is computed live from PowerDNS's current active signing
+	// key rather than read from stored delegation data (which would go stale on
+	// key rotation). Only portal-managed, DNSSEC-signed namespaces (e.g. HNS)
+	// yield a DS; ICANN domains have no parent DS and this is a no-op.
+	if resp.Delegation != nil && a.dnsService != nil {
+		if ds, dsErr := a.dnsService.GetActiveDNSSECDS(reqCtx, wd.ZoneID); dsErr == nil && ds != "" {
+			resp.Delegation.DS = ds
+			// Ensure the rendered parent_records carries the live DS so CLI
+			// renderers that draw from parent_records show the current value
+			// (replace any stale stored DS entry, else append).
+			resp.Delegation.ParentRecords = upsertDSRecord(resp.Delegation.ParentRecords, ds)
+		}
+	}
+
 	return httputil.EncodeResponse(ctx, &wd, &resp)
+}
+
+// upsertDSRecord returns parent records with the DS record set to `ds`,
+// replacing any existing DS entry or appending a new one. A nil/empty slice is
+// preserved as nil so ICANN-shaped delegation (no parent records) stays bare.
+func upsertDSRecord(records []dto.DNSDelegationRecord, ds string) []dto.DNSDelegationRecord {
+	if len(records) == 0 {
+		return records
+	}
+	out := records
+	replaced := false
+	for i := range out {
+		if out[i].Type == "DS" {
+			out[i].Value = ds
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		out = append(out, dto.DNSDelegationRecord{Type: "DS", Value: ds})
+	}
+	return out
 }
 
 // republishDomainDANE forces re-publication of a bound domain's DANE records

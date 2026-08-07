@@ -50,8 +50,11 @@ func TestDomainResponse_FromModel_HNS(t *testing.T) {
 	require.NotNil(t, resp.Delegation, "delegation should be populated for HNS")
 	assert.Equal(t, "delegated", resp.Delegation.Mode)
 
-	// DS promoted to first-class field.
-	assert.Equal(t, "lumeweb. 3600 IN DS 12345 13 2 <digest>", resp.Delegation.DS)
+	// DS is NOT promoted from stored parent_records: the DS is a derivative of
+	// the live PowerDNS signing key, computed on the fly (dns-requirements) and
+	// never persisted. A stored DS (even a legacy one) must not leak into the
+	// first-class field here.
+	assert.Equal(t, "", resp.Delegation.DS)
 
 	// Parent records preserved with type/ns/address.
 	require.Len(t, resp.Delegation.ParentRecords, 3)

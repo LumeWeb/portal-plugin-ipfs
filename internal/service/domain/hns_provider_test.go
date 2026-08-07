@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -185,8 +183,7 @@ func TestHNSProvider_SynthName_FromDaneLib(t *testing.T) {
 	assert.Contains(t, name, "x") // current lib convention from dane/hns
 }
 
-// fakeDNSZoneService is a minimal DNSZoneService stub for enabling DNSSEC with
-// a fixed DNSKEY, so enableDNSSECAndDS can be exercised deterministically.
+// fakeDNSZoneService is a minimal DNSZoneService stub for enabling DNSSEC.
 type fakeDNSZoneService struct{ dnskey string }
 
 func (f *fakeDNSZoneService) CreateZone(ctx context.Context, domain string, userID uint) (*pluginDb.DNSZone, error) {
@@ -205,31 +202,27 @@ func (f *fakeDNSZoneService) SetTLSARecord(ctx context.Context, zoneID uint, con
 func (f *fakeDNSZoneService) EnableDNSSEC(ctx context.Context, zoneID uint) (string, error) {
 	return f.dnskey, nil
 }
+func (f *fakeDNSZoneService) GetActiveDNSSECDS(ctx context.Context, zoneID uint) (string, error) {
+	// DS is no longer computed/stored by the provider; tests that need a live DS
+	// set it explicitly. Return empty (self-managed / no DS) by default.
+	return "", nil
+}
 
-func TestHNSProvider_enableDNSSECAndDS_ValueIsRDATAOnly(t *testing.T) {
-	// Regression: the DS parent record VALUE must carry only the RDATA
-	// (key tag, algorithm, digest type, digest) — never the owner name or the
-	// "DS" record-type token (RFC 4034 §5.3). Previously dane.FormatDSRecord
-	// was used, which prefixes "<owner> DS " onto the value.
-	p := NewHNSProvider("", []string{"ns1.example.com."}, TLSASource{})
+func TestHNSProvider_BuildDelegation_NoDSRecord(t *testing.T) {
+	// Regression: the delegation bundle must NOT carry a DS record in
+	// parent_records. The DS is a derivative of the live PowerDNS signing key
+	// and is computed on the fly (GetActiveDNSSECDS / dns-requirements), never
+	// persisted — so it cannot go stale on key rotation.
+	p := NewHNSProvider("", []string{"ns1.lumeweb.", "ns2.lumeweb."}, TLSASource{})
 	p.SetDNSService(&fakeDNSZoneService{dnskey: "257 3 13 dGVzdA=="})
 
-	records, err := p.enableDNSSECAndDS(context.Background(), 1, "example")
+	result, err := p.BuildDelegation(context.Background(), 1, "example", &pluginDb.Website{}, nil)
 	require.NoError(t, err)
-	require.Len(t, records, 1)
-	assert.Equal(t, "DS", records[0].Type)
 
-	v := records[0].Value
-	fields := strings.Fields(v)
-	assert.Len(t, fields, 4, "DS value must have exactly 4 RDATA fields: keytag, alg, digesttype, digest")
+	bundle, ok := result.(DelegationBundle)
+	require.True(t, ok, "expected DelegationBundle, got %T", result)
 
-	// First three fields are numeric (key tag, algorithm, digest type).
-	for _, f := range fields[:3] {
-		_, err := strconv.ParseUint(f, 10, 16) // key tag fits in u16; alg/digesttype smaller
-		assert.NoError(t, err, "field %q should be a number", f)
+	for _, rec := range bundle.ParentRecords {
+		assert.NotEqual(t, "DS", rec.Type, "delegation bundle must not persist a DS record")
 	}
-	// Digest field is non-empty hex (no owner/type tokens).
-	assert.NotEmpty(t, fields[3])
-	assert.NotContains(t, v, " DS ", "record-type token must not leak into the value")
-	assert.NotContains(t, v, "example", "owner name must not leak into the value")
 }

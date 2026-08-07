@@ -42,6 +42,11 @@ type DNSZoneService interface {
 	SetTLSARecord(ctx context.Context, zoneID uint, content string) error
 	// EnableDNSSEC enables DNSSEC on a zone and returns the DNSKEY.
 	EnableDNSSEC(ctx context.Context, zoneID uint) (dnskey string, err error)
+	// GetActiveDNSSECDS returns the SHA-256 DS RDATA (type 2) for a zone's
+	// currently-active signing key, computed live from PowerDNS. Returns ""
+	// when the zone has no active signing key; errors when multiple active keys
+	// exist (in-progress rollover).
+	GetActiveDNSSECDS(ctx context.Context, zoneID uint) (ds string, err error)
 }
 
 // DSRecord represents a Delegation Signer record for DNSSEC.
@@ -204,12 +209,25 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		return false, fmt.Errorf("unsupported namespace: %s", wd.Namespace)
 	}
 
-	data, err := json.Marshal(wd.DelegationData)
-	if err != nil {
-		return false, err
+	// Expected DS is computed live from PowerDNS's current active signing key
+	// (never persisted, so it cannot go stale on key rotation). ICANN's
+	// VerifyDelegation ignores it; HNS uses it to require the parent zone to
+	// serve the DS before marking the domain Active.
+	//
+	// If the live DS cannot be determined — e.g. an in-progress key rollover
+	// leaves multiple active signing keys, or PowerDNS is unreachable — we
+	// degrade to NS-only verification rather than fail the whole check, so a
+	// transient DNSSEC state never blocks delegation status.
+	expectedDS, dsErr := s.dnsSvc.GetActiveDNSSECDS(ctx, wd.ZoneID)
+	if dsErr != nil {
+		s.Logger().Warn("could not resolve live DS for verification; falling back to NS-only",
+			zap.Uint("zone_id", wd.ZoneID),
+			zap.String("domain", wd.Domain),
+			zap.Error(dsErr))
+		expectedDS = ""
 	}
 
-	verified, err := provider.VerifyDelegation(ctx, wd.Domain, data)
+	verified, err := provider.VerifyDelegation(ctx, wd.Domain, expectedDS)
 	if err != nil {
 		wd.Status = pluginDb.DomainStatusError
 		if s.DB() != nil {
