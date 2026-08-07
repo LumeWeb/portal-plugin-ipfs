@@ -46,7 +46,7 @@ require (
 	go.lumeweb.com/dane v0.0.2
 	go.lumeweb.com/httputil v0.5.7
 	go.lumeweb.com/ipfs-content v0.1.17
-	go.lumeweb.com/portal v0.5.2-0.20260807024535-96588d276d5f
+	go.lumeweb.com/portal v0.5.2-0.20260807215153-a5354663ccd3
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.1.0
 	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260728211030-fa71bb5211dc
@@ -128,7 +128,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.33.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.4 // indirect
-	github.com/aws/smithy-go v1.27.6 // indirect
+	github.com/aws/smithy-go v1.27.7 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
