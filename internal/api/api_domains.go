@@ -262,10 +262,11 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 		ds, dsErr := a.dnsService.GetActiveDNSSECDS(reqCtx, wd.ZoneID)
 		if dsErr != nil {
 			// PowerDNS unavailable or a key rollover is in progress: the live
-			// DS cannot be resolved. Log it rather than silently falling
-			// through to show whatever stale parent_records may hold.
+			// DS cannot be resolved. Log it and drop any stored DS from
+			// parent_records so a stale value is never presented as current.
 			a.Logger().Warn("could not resolve live DS for dns-requirements",
 				zap.Uint("zone_id", wd.ZoneID), zap.Error(dsErr))
+			resp.Delegation.ParentRecords = removeDSRecord(resp.Delegation.ParentRecords)
 		} else if ds != "" {
 			// Ensure the rendered parent_records carries the live DS so CLI
 			// renderers that draw from parent_records show the current value
@@ -295,6 +296,26 @@ func upsertDSRecord(records []dto.DNSDelegationRecord, ds string) []dto.DNSDeleg
 	}
 	if !replaced {
 		out = append(out, dto.DNSDelegationRecord{Type: "DS", Value: ds})
+	}
+	return out
+}
+
+// removeDSRecord returns parent records with any DS entry stripped out. Used
+// when the live DS cannot be resolved (PowerDNS down, key rollover) so a
+// stale stored DS is never presented as current. A nil/empty slice is
+// preserved as nil.
+func removeDSRecord(records []dto.DNSDelegationRecord) []dto.DNSDelegationRecord {
+	if len(records) == 0 {
+		return records
+	}
+	out := records[:0]
+	for _, r := range records {
+		if r.Type != "DS" {
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
