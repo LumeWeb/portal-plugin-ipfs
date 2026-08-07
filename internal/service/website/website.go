@@ -838,6 +838,15 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 						zap.Error(err),
 						zap.Uint("website_id", websiteID))
 					// Continue despite failure - website is updated but DNS setup incomplete
+				} else if wd.WebsiteID != 0 {
+					// handleDNSEnabledTransition may auto-convert a plain-CID IPNS
+					// target to an IPNS key and persist it. Reload the website so the
+					// returned updatedWebsite (and EVENT_WEBSITE_PUBLISHED below) reflect
+					// the converted target rather than the stale pre-conversion state.
+					var reloaded pluginDb.Website
+					if rerr := s.DB().WithContext(ctx).First(&reloaded, wd.WebsiteID).Error; rerr == nil {
+						updatedWebsite = &reloaded
+					}
 				}
 			} else {
 				// DNS hosting disabled: delete records and reset to pending_validation
