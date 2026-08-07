@@ -208,6 +208,49 @@ func TestDelegatedDomainService_VerifyDomain_SelfHealsDNSSEC(t *testing.T) {
 			mockDNS.AssertExpectations(tb)
 		}, TestOptions)
 	})
+
+	// The SOA MNAME self-heal is NOT tied to DANE/DNSSEC: it applies to any
+	// portal-managed PowerDNS zone. An ICANN-hosted binding (ZoneID set) must
+	// therefore get its SOA MNAME re-ensured on verify even though DNSSEC
+	// enablement is skipped (ICANN is not portal-managed for DNSSEC).
+	t.Run("icann_soa_healed_dnssec_skipped", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			db := ctx.DB()
+			require.NoError(tb, db.Create(&pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "example.com", Namespace: pluginDb.DomainNamespaceICANN,
+				ZoneID: 42, Status: pluginDb.DomainStatusWaitingDelegation,
+			}).Error)
+
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, svc)
+
+			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+			require.NotNil(tb, mockDNS)
+
+			// ICANN has no portal DNSSEC: GetActiveDNSSECDS returns ("", nil)
+			// by default and EnableDNSSEC must NOT be touched. Only the SOA
+			// MNAME self-heal fires for the portal-managed zone.
+			mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, uint(42)).
+				Return("", nil).Once()
+			mockDNS.EXPECT().EnsureSOAMNAME(mock.Anything, uint(42), "example.com", mock.Anything).
+				Return(nil).Once()
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "example.com", Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 42,
+			}
+
+			verified, err := svc.VerifyDomain(context.Background(), wd)
+			_ = verified
+			if err != nil {
+				// Allowed: post-heal delegation error (system resolver).
+				tb.Logf("expected post-heal delegation error: %v", err)
+			}
+
+			mockDNS.AssertCalled(tb, "EnsureSOAMNAME", mock.Anything, uint(42), "example.com", mock.Anything)
+			mockDNS.AssertNotCalled(tb, "EnableDNSSEC")
+			mockDNS.AssertExpectations(tb)
+		}, TestOptions)
+	})
 }
 
 func TestDelegatedDomainService_GetPendingWebsiteDomainsPaginated(t *testing.T) {
