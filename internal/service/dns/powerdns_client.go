@@ -512,11 +512,15 @@ func sha256DSPresentation(dss []string) (string, error) {
 
 // cryptokey is a PowerDNS cryptokey object (subset of the API response).
 type cryptokey struct {
-	ID      string   `json:"id"`
-	KeyType string   `json:"keytype"`
-	Active  bool     `json:"active"`
-	DNSKey  string   `json:"dnskey"`
-	DS      []string `json:"ds"`
+	// ID is the PowerDNS cryptokey id. PowerDNS returns it as a JSON number;
+	// binding it as json.Number (rather than string) makes unmarshaling accept
+	// the numeric form the API actually sends while remaining tolerant if a
+	// version ever returns a quoted string.
+	ID      json.Number `json:"id"`
+	KeyType string      `json:"keytype"`
+	Active  bool        `json:"active"`
+	DNSKey  string      `json:"dnskey"`
+	DS      []string    `json:"ds"`
 }
 
 // listCryptokeys returns the zone's existing cryptokeys via
