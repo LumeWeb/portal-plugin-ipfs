@@ -113,17 +113,27 @@ func (s *DelegatedDomainService) gatewayIP() string {
 //
 // It returns the zone and whether this call created it (so callers can roll
 // back a freshly-created zone on a later step failure).
+//
+// One-zone invariant: a subdomain never owns its own authoritative zone. If a
+// parent zone already exists it MUST be reused, and it must belong to the same
+// user — otherwise the subdomain would create a competing authoritative zone
+// and let another user squat authority over a name their neighbor already
+// hosts. A new zone is only created when no parent zone exists at all.
 func (s *DelegatedDomainService) resolveManagedZone(ctx context.Context, domain string, userID uint) (*pluginDb.DNSZone, bool, error) {
 	// A subdomain (e.g. docs.pinner.xyz) lives inside its parent's zone
 	// (pinner.xyz); only the apex owns a zone.
 	if parent := parentDomain(domain); parent != "" {
 		z, err := s.dnsSvc.GetZoneByDomain(ctx, parent)
-		if err == nil && z != nil && z.UserID == userID {
-			return z, false, nil
-		}
-		if err != nil && err != gorm.ErrRecordNotFound {
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, false, fmt.Errorf("lookup parent zone %q: %w", parent, err)
 		}
+		if err == nil && z != nil {
+			if z.UserID != userID {
+				return nil, false, fmt.Errorf("parent zone %q is owned by another user", parent)
+			}
+			return z, false, nil
+		}
+		// No parent zone exists — fall through and create a zone for the domain.
 	}
 
 	z, err := s.dnsSvc.CreateZone(ctx, domain, userID)

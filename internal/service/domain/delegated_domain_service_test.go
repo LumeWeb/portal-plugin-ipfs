@@ -148,6 +148,43 @@ func TestDelegatedDomainService_CreateDomain_SubdomainReusesParentZone(t *testin
 	}, TestOptions)
 }
 
+func TestDelegatedDomainService_CreateDomain_SubdomainForeignParentRejected(t *testing.T) {
+	// One-zone invariant: a subdomain must NOT create a competing authoritative
+	// zone when a parent zone exists but belongs to another user (subdomain-zone
+	// squatting). It must error instead.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+
+		website := createTestWebsite(tb, db, 1, "example.com")
+
+		// Parent zone owned by a DIFFERENT user (2).
+		require.NoError(tb, db.Create(&pluginDb.DNSZone{
+			UserID: 2, Domain: "example.com", Status: string(pluginDb.DNSZoneStatusActive),
+			PowerDNSZoneID: "foreign-pdns-id",
+		}).Error)
+
+		var parent pluginDb.DNSZone
+		require.NoError(tb, ctx.DB().WithContext(context.Background()).Where("domain = ?", "example.com").
+			First(&parent).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, mockDNS)
+
+		// Parent lookup returns the foreign-owned zone; CreateZone for the
+		// subdomain must NEVER be called.
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "example.com").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: parent.ID}, Domain: "example.com", UserID: 2}, nil).Once()
+		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, "docs.example.com", mock.Anything)
+
+		_, err := svc.CreateDomain(context.Background(), "icann", "docs.example.com", website.ID, 1, true, nil)
+		require.Error(tb, err)
+		assert.Contains(tb, err.Error(), "owned by another user")
+	}, TestOptions)
+}
+
 func TestDelegatedDomainService_CreateDomain_UnsupportedNamespace(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
