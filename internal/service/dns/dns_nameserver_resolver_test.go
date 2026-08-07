@@ -3,12 +3,14 @@ package dns
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 )
 
 // stubNameserverResolver records which domain it was asked about, so tests
@@ -83,4 +85,26 @@ func TestLiveNameservers_DelegatesToResolver(t *testing.T) {
 
 	_, err = svc.liveNameservers(context.Background(), "broken")
 	assert.ErrorContains(t, err, "resolver failed")
+}
+
+func TestLiveNameservers_FallsBackToLookup_OnNoProvider(t *testing.T) {
+	// When the resolver reports no provider for the domain
+	// (ErrNoProviderForDomain), liveNameservers must fall back to the default
+	// lookup so it stays consistent with nameserversForDomain (which also
+	// falls back to config nameservers for unmatched domains).
+	resolver := &stubNameserverResolver{
+		liveErrByDomain: map[string]error{"unmatched.example": pluginCore.ErrNoProviderForDomain},
+	}
+	lookup := mocks.NewMockDNSLookup(t)
+	lookup.EXPECT().LookupNS("unmatched.example").Return([]*net.NS{
+		{Host: "ns1.default.example."},
+	}, nil)
+	svc := &DNSServiceDefault{
+		nameserverResolver: resolver,
+		dnsLookup:          lookup,
+	}
+
+	live, err := svc.liveNameservers(context.Background(), "unmatched.example")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"ns1.default.example."}, live)
 }

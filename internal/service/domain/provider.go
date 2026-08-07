@@ -3,7 +3,6 @@ package domain
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
@@ -98,11 +97,13 @@ func (r *Registry) NameserversFor(domain string) ([]string, bool) {
 }
 
 // LiveNameservers returns the live NS records for the domain resolved
-// against the matching provider's namespace-appropriate resolver.
+// against the matching provider's namespace-appropriate resolver. It returns
+// pluginCore.ErrNoProviderForDomain when no registered provider validates the
+// domain, so callers can fall back to a default resolution path.
 func (r *Registry) LiveNameservers(ctx context.Context, domain string) ([]string, error) {
 	prov := r.providerForDomain(domain)
 	if prov == nil {
-		return nil, fmt.Errorf("no provider validates domain %q", domain)
+		return nil, pluginCore.ErrNoProviderForDomain
 	}
 	return prov.LiveNameservers(ctx, domain)
 }

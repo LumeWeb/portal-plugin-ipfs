@@ -1,6 +1,16 @@
 package core
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrNoProviderForDomain is returned by a NameserverResolver.LiveNameservers
+// when no registered provider validates the given domain. Callers that fall
+// back to a default resolution path for unmatched domains (mirroring
+// NameserversFor's false return) can match this sentinel with errors.Is to
+// continue their fallback.
+var ErrNoProviderForDomain = errors.New("no provider validates domain")
 
 // NameserverResolver resolves per-namespace nameserver and delegation
 // behavior for a domain, so namespace-agnostic services (DNS zone
@@ -21,7 +31,9 @@ type NameserverResolver interface {
 
 	// LiveNameservers returns the live NS records currently served for the
 	// domain, resolved against the namespace-appropriate resolver (the HNS
-	// resolver for HNS domains, the system resolver otherwise). The caller
-	// compares these against NameserversFor to confirm delegation.
+	// resolver for HNS domains, the system resolver otherwise). It returns
+	// ErrNoProviderForDomain when no registered provider validates the
+	// domain. The caller compares these against NameserversFor to confirm
+	// delegation.
 	LiveNameservers(ctx context.Context, domain string) ([]string, error)
 }

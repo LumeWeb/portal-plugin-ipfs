@@ -2,11 +2,13 @@ package dns
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"go.lumeweb.com/ipfs-sdk/dnsname"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
 	"go.lumeweb.com/portal/core"
@@ -42,11 +44,19 @@ func (s *DNSServiceDefault) nameserversForDomain(domain string) ([]string, error
 
 // liveNameservers returns the live NS records for a zone's domain, resolved
 // through the per-namespace resolver (HNS zones query the HNS-aware resolver,
-// ICANN zones the system resolver). Without an injected resolver it falls back
-// to the default (system) lookup.
+// ICANN zones the system resolver). When the resolver has no provider for the
+// domain (or none is injected) it falls back to the default (system) lookup,
+// mirroring nameserversForDomain's fallback so publication and validation stay
+// consistent for unmatched domains.
 func (s *DNSServiceDefault) liveNameservers(ctx context.Context, domain string) ([]string, error) {
 	if s.nameserverResolver != nil {
-		return s.nameserverResolver.LiveNameservers(ctx, domain)
+		nss, err := s.nameserverResolver.LiveNameservers(ctx, domain)
+		if err == nil {
+			return nss, nil
+		}
+		if !errors.Is(err, pluginCore.ErrNoProviderForDomain) {
+			return nil, err
+		}
 	}
 	nss, err := s.dnsLookup.LookupNS(domain)
 	if err != nil {
