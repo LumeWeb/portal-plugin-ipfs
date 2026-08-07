@@ -200,7 +200,14 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 			// Validate target type and hash up front (domain normalization and
 			// validation moved to the primary-domain binding creation in the
 			// API layer; the Website model no longer carries a domain string).
-			if err := s.validateTarget(website.TargetType, website.TargetHash()); err != nil {
+			// When target_type=ipns with a plain CID hash (CIDVersion set) the
+			// hash is the *input* to the IPNS auto-convert path below, so it
+			// must validate as a CID, not as a peer ID.
+			if website.TargetType == string(pluginDb.WebsiteTargetTypeIPNS) && website.CIDVersion != nil {
+				if _, err := cid.Decode(website.TargetHash()); err != nil {
+					return nil, fmt.Errorf("invalid target: %w: %v", ErrInvalidCID, err)
+				}
+			} else if err := s.validateTarget(website.TargetType, website.TargetHash()); err != nil {
 				return nil, fmt.Errorf("invalid target: %w", err)
 			}
 
