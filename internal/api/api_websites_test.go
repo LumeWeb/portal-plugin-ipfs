@@ -61,11 +61,20 @@ func createMockIPNSWebsite(id, userID uint, domain string, peerIDStr string, sta
 
 func TestAPI_CreateWebsite(t *testing.T) {
 	t.Run("success_ipfs_target", func(t *testing.T) {
-		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
 			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			// The handler creates the primary WebsiteDomain through the real
+			// DelegatedDomainService.CreateDomain, which looks the website up in
+			// the DB and provisions a DNS zone. Persist a real website row and
+			// stub the DNS zone/records calls.
+			require.NoError(tb, ctx.DB().Create(createTestIPFSGatewayWebsite(1, userID, TestDomain, cid.MustParse(TestCID), pluginDb.WebsiteStatusActive)).Error)
+			mockDNS := helper.SetupDNSServiceMocks()
+			mockDNS.EXPECT().CreateZone(mock.Anything, TestDomain, userID).Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: TestDomain}, nil)
+			mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything).Return(nil).Maybe()
 
 			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, pluginDb.WebsiteStatusPendingValidation, "test-token")
 
@@ -99,7 +108,7 @@ func TestAPI_CreateWebsite(t *testing.T) {
 	})
 
 	t.Run("success_ipns_target", func(t *testing.T) {
-		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
 			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
 
@@ -107,6 +116,13 @@ func TestAPI_CreateWebsite(t *testing.T) {
 			helper.SetupIPNSServiceMocks(userID)
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			// CreateDomain via the real delegated domain service needs a real
+			// website row and provisions a DNS zone.
+			require.NoError(tb, ctx.DB().Create(createTestIPFSGatewayWebsite(1, userID, TestDomain, cid.MustParse(TestCID), pluginDb.WebsiteStatusActive)).Error)
+			mockDNS := helper.SetupDNSServiceMocks()
+			mockDNS.EXPECT().CreateZone(mock.Anything, TestDomain, userID).Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: TestDomain}, nil)
+			mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything).Return(nil).Maybe()
 
 			mockWebsite := createMockIPNSWebsite(1, userID, TestDomain, TestPeerID, pluginDb.WebsiteStatusPendingValidation, "test-token")
 
@@ -201,11 +217,16 @@ func TestAPI_CreateWebsite(t *testing.T) {
 	})
 
 	t.Run("error_website_broken", func(t *testing.T) {
-		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
 			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			require.NoError(tb, ctx.DB().Create(createTestIPFSGatewayWebsite(1, userID, TestDomain, cid.MustParse(TestCID), pluginDb.WebsiteStatusActive)).Error)
+			mockDNS := helper.SetupDNSServiceMocks()
+			mockDNS.EXPECT().CreateZone(mock.Anything, TestDomain, userID).Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: TestDomain}, nil)
+			mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything).Return(nil).Maybe()
 
 			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, pluginDb.WebsiteStatusBroken, "test-token")
 
@@ -829,11 +850,24 @@ func TestAPI_GetWebsite(t *testing.T) {
 
 func TestAPI_UpdateWebsite(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
 			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
 
 			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			// The handler runs the real DelegatedDomainService.CreateDomain when
+			// changing the primary domain, which looks the website up in the DB
+			// and persists a new binding there. Persist a real website row so
+			// that lookup succeeds.
+			require.NoError(tb, ctx.DB().Create(createTestIPFSGatewayWebsite(1, userID, "example.com", cid.MustParse(TestCID), pluginDb.WebsiteStatusActive)).Error)
+
+			// CreateDomain for the ICANN primary domain creates a DNS zone and
+			// DNSLink record through the DNS service; apex is skipped (no
+			// gateway config in the harness).
+			mockDNS := helper.SetupDNSServiceMocks()
+			mockDNS.EXPECT().CreateZone(mock.Anything, "updated-example.com", userID).Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: "updated-example.com"}, nil)
+			mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything).Return(nil).Maybe()
 
 			mockWebsite := createMockIPFSWebsite(1, userID, "updated-example.com", TestCID, pluginDb.WebsiteStatusActive, "")
 
@@ -849,7 +883,7 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 				Domain:    "updated-example.com",
 			}
 			mockWebsiteService.EXPECT().SetPrimaryDomain(mock.Anything, userID, uint(1), mock.Anything).Return(mockApex, nil)
-			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil).Maybe()
 
 			reqBody := fmt.Sprintf(`{"domain":"updated-example.com","target_type":"ipfs","target_hash":"%s"}`, TestCID)
 			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
