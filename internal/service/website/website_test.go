@@ -553,6 +553,19 @@ func TestWebsiteService_GetWebsiteByDomain(t *testing.T) {
 		require.NoError(tb, err)
 		bindPrimaryDomain(tb, ctx, createdWebsite.ID, "domain-test.com", false)
 
+		// GetWebsiteByDomain resolves purely through the delegated domain
+		// service (the legacy Website.domain column was removed). Inject a fake
+		// that resolves the bound domain via the DB so the lookup succeeds.
+		setMockDelegatedDomainSvc(websiteService, &testDelegatedDomainService{
+			getByName: func(_ context.Context, domain string) (*pluginDb.WebsiteDomain, error) {
+				var wd pluginDb.WebsiteDomain
+				if err := ctx.DB().Where("domain = ?", domain).First(&wd).Error; err != nil {
+					return nil, err
+				}
+				return &wd, nil
+			},
+		})
+
 		// Act
 		retrievedWebsite, _, err := websiteService.GetWebsiteByDomain(context.Background(), "domain-test.com")
 

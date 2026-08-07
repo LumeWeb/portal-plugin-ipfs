@@ -29,9 +29,10 @@ func setMockResolver(ws pluginCore.WebsiteService, r DNSResolver) {
 }
 
 type testDelegatedDomainService struct {
-	uses   func(string) bool
-	verify func(context.Context, *pluginDb.WebsiteDomain) (bool, error)
-	getNs  func(string) (string, bool)
+	uses      func(string) bool
+	verify    func(context.Context, *pluginDb.WebsiteDomain) (bool, error)
+	getNs     func(string) (string, bool)
+	getByName func(context.Context, string) (*pluginDb.WebsiteDomain, error)
 }
 
 func (t *testDelegatedDomainService) UsesDelegationForOwnership(d string) bool {
@@ -60,6 +61,9 @@ func (t *testDelegatedDomainService) GetNamespaceForDomain(d string) (string, bo
 }
 
 func (t *testDelegatedDomainService) GetWebsiteDomainByName(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error) {
+	if t.getByName != nil {
+		return t.getByName(ctx, domain)
+	}
 	return nil, gorm.ErrRecordNotFound
 }
 
