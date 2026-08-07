@@ -1840,6 +1840,32 @@ func TestGetActiveDNSKEYDS(t *testing.T) {
 		}
 	})
 
+	t.Run("parses numeric id as PowerDNS actually returns", func(t *testing.T) {
+		// Regression: PowerDNS sends cryptokey id as a JSON number (not a
+		// quoted string). A struct whose ID field was typed string failed to
+		// unmarshal, breaking every cryptokey read (EnableDNSSEC, DS
+		// derivation) so the DS never rendered and verify 500'd.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body := `[{"id":5,"keytype":"csk","active":true,"dnskey":"257 3 13 evH3XP==","ds":["60776 13 2 3b35deed97def5fbb5ce939cd5b9036f12db0ccc2e1cb40bb4c565c168c66116"]}]`
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(body))
+		}))
+		defer server.Close()
+		client, err := NewPowerDNSClient(server.URL, testAPIKey(), &core.Logger{Logger: zap.NewNop()})
+		if err != nil {
+			t.Fatalf("NewPowerDNSClient: %v", err)
+		}
+		ds, err := client.GetActiveDNSKEYDS(context.Background(), "lumeweb.")
+		if err != nil {
+			t.Fatalf("GetActiveDNSKEYDS with numeric id: %v", err)
+		}
+		want := "60776 13 2 3b35deed97def5fbb5ce939cd5b9036f12db0ccc2e1cb40bb4c565c168c66116"
+		if ds != want {
+			t.Errorf("expected %q, got %q", want, ds)
+		}
+	})
+
 	t.Run("no active signing key returns empty", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
