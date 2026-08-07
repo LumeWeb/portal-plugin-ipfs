@@ -272,6 +272,11 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 			// renderers that draw from parent_records show the current value
 			// (replace any stale stored DS entry, else append).
 			resp.Delegation.ParentRecords = upsertDSRecord(resp.Delegation.ParentRecords, ds)
+		} else {
+			// Zone has no active signing key (e.g. after a key was rotated or
+			// removed): drop any stored DS so a stale value is never presented
+			// as current when there is no live DS to back it.
+			resp.Delegation.ParentRecords = removeDSRecord(resp.Delegation.ParentRecords)
 		}
 	}
 

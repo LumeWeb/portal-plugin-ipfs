@@ -197,6 +197,55 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 		}, TestOptions)
 	})
 
+	t.Run("ds_empty_removes_stale_ds", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID, testCID, _ := helper.SetupAuthenticatedTest()
+
+			// Zone has no active signing key (e.g. after key rotation): the
+			// documented GetActiveDNSSECDS ("", nil) outcome.
+			mockDNS := helper.SetupDNSServiceMocks()
+			mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, uint(0)).Return(
+				"", nil,
+			).Maybe()
+
+			website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
+			require.NoError(t, ctx.DB().Create(website).Error)
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID:   1,
+				UserID:      userID,
+				Domain:      "lumeweb",
+				Namespace:   pluginDb.DomainNamespaceHNS,
+				Status:      pluginDb.DomainStatusRecordsGenerated,
+				ZoneName:    "lumeweb.",
+				GatewayHost: "gateway.lumeweb.com",
+				DelegationData: datatypes.JSONMap{
+					"mode": "delegated",
+					"parent_records": []map[string]any{
+						{"type": "NS", "value": "ns1.lumeweb,ns2.lumeweb"},
+						// Stale stored DS — must be DROPPED when no live key exists.
+						{"type": "DS", "value": "lumeweb. 3600 IN DS 12345 13 2 <digest>"},
+					},
+					"authoritative_records": []map[string]any{
+						{"type": "NS", "value": "ns1.lumeweb\nns2.lumeweb"},
+					},
+				},
+			}
+			require.NoError(t, ctx.DB().Create(wd).Error)
+
+			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites/1/domains/1/dns-requirements", token, nil)
+			require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+			var resp dto.DomainResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.NotNil(t, resp.Delegation)
+			// No live signing key: stale DS must be removed, not presented.
+			require.Len(t, resp.Delegation.ParentRecords, 1)
+			assert.Equal(t, "NS", resp.Delegation.ParentRecords[0].Type)
+		}, TestOptions)
+	})
+
 	t.Run("missing_domain_returns_404", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
