@@ -84,6 +84,10 @@ type WebsiteService interface {
 	// down. Returns the updated binding.
 	SetDomainDNSEnabled(ctx context.Context, userID, websiteID, domainID uint, enabled bool) (*pluginDb.WebsiteDomain, error)
 
+	// SetPrimaryDomain repoints the website's primary (apex) domain binding to
+	// the given WebsiteDomain. Returns the new primary binding.
+	SetPrimaryDomain(ctx context.Context, userID, websiteID, domainID uint) (*pluginDb.WebsiteDomain, error)
+
 	// WaitForPublishes blocks until all in-flight async publish operations complete
 	WaitForPublishes()
 }

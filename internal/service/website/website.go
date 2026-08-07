@@ -1989,6 +1989,39 @@ func (s *WebsiteServiceDefault) GetApexDomainBinding(ctx context.Context, websit
 	return &apex, nil
 }
 
+// SetPrimaryDomain repoints the website's primary (apex) domain binding to the
+// given WebsiteDomain. It validates that the binding belongs to the website and
+// that the website is owned by userID, then updates Website.PrimaryDomainID. If
+// the binding is already the primary, it's a no-op. Returns the new primary
+// binding so callers can chain per-domain operations (e.g. SetDomainDNSEnabled).
+func (s *WebsiteServiceDefault) SetPrimaryDomain(ctx context.Context, userID, websiteID, domainID uint) (*pluginDb.WebsiteDomain, error) {
+	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.SetPrimaryDomain")
+	defer span.End()
+
+	var wd pluginDb.WebsiteDomain
+	if err := s.DB().WithContext(ctx).
+		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+		First(&wd).Error; err != nil {
+		return nil, fmt.Errorf("domain lookup failed: %w", err)
+	}
+	if wd.DeletedAt.Valid {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var website pluginDb.Website
+	if err := s.DB().WithContext(ctx).Where("id = ? AND user_id = ?", websiteID, userID).First(&website).Error; err != nil {
+		return nil, fmt.Errorf("website lookup failed: %w", err)
+	}
+	if website.PrimaryDomainID != nil && *website.PrimaryDomainID == wd.ID {
+		return &wd, nil
+	}
+
+	if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", wd.ID).Error; err != nil {
+		return nil, fmt.Errorf("failed to set primary domain: %w", err)
+	}
+	return &wd, nil
+}
+
 // SetDomainDNSEnabled enables or disables DNS hosting for a specific domain
 // binding, running the corresponding enable/disable DNS transition. This is the
 // per-domain primitive: one domain on a website can be DNS-managed while

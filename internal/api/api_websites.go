@@ -361,9 +361,11 @@ func (a *API) updateWebsite(c echo.Context) error {
 		return ctx.Error(NewError(ErrKeyInvalidRequest, fmt.Errorf("at least one field must be provided")), http.StatusUnprocessableEntity)
 	}
 
-	// Build updates map from non-nil fields. Domain and DNS hosting are managed
-	// via the domains API (per-domain), so they are intentionally NOT accepted
-	// on the website update request.
+	// Build updates map from non-nil fields. Target type and hash update the
+	// Website record directly. Domain and DNS hosting are per-domain state that
+	// lives on the primary WebsiteDomain; they are applied after the update
+	// (domain change repoints the primary binding, DNS toggle updates the
+	// primary binding's dns_hosting_enabled).
 	updates := map[string]interface{}{}
 
 	if req.TargetType != nil || req.TargetHash != nil {
@@ -384,15 +386,65 @@ func (a *API) updateWebsite(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
+	// Apply per-domain changes sourced from the website update request.
+	var primary *pluginDb.WebsiteDomain
+
+	// 1. Change the primary domain: create the requested domain binding and
+	// make it the website's new primary (apex) domain.
+	if req.Domain != nil {
+		if a.delegatedDomainSvc == nil {
+			return ctx.Error(NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service unavailable")), http.StatusInternalServerError)
+		}
+		namespace := string(pluginDb.DomainNamespaceICANN)
+		if req.Namespace != nil {
+			namespace = string(*req.Namespace)
+		}
+		var cfgRaw json.RawMessage
+		wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, cfgRaw)
+		if derr != nil {
+			a.Logger().Error("Failed to create primary domain for website",
+				zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Error(derr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		primary, derr = a.websiteService.SetPrimaryDomain(reqCtx, user, website.ID, wd.ID)
+		if derr != nil {
+			a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", wd.ID), zap.Error(derr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+	}
+
+	// 2. Toggle DNS hosting on the primary domain binding. Resolved after any
+	// domain change so the toggle applies to the current primary.
+	if req.DNSEnabled != nil {
+		if primary == nil {
+			p, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
+			if perr != nil {
+				a.Logger().Warn("cannot toggle DNS hosting: no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
+			} else {
+				primary = p
+			}
+		}
+		if primary != nil {
+			if _, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, *req.DNSEnabled); derr != nil {
+				a.Logger().Warn("failed to set DNS hosting on primary domain", zap.Uint("domain_id", primary.ID), zap.Error(derr))
+			}
+		}
+	}
+
 	var resp dto.WebsiteResponse
 	if err := resp.FromModel(website); err != nil {
 		a.Logger().Error("Failed to convert website to response", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
-	primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-	if perr != nil {
-		a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
+	if primary == nil {
+		var perr error
+		primary, perr = a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
+		if perr != nil {
+			a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
+		}
 	}
 	resp.SetPrimaryDomain(primary)
 	resp.GatewayDomain = a.gatewayDomain()

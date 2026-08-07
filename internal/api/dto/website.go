@@ -268,18 +268,23 @@ func (r *WebsiteRequest) ToModel() (*db.Website, error) {
 	return website, nil
 }
 
-// WebsiteUpdateRequest represents a request to update a website
+// WebsiteUpdateRequest represents a request to update a website.
 // All fields are optional — only provided fields will be updated.
-// Domain and DNS hosting are managed via the domains API (per-domain), so
-// they are intentionally NOT accepted here.
+// DNS hosting state lives on the primary WebsiteDomain; the website-level
+// dns_hosting_enabled field is accepted here for backward compatibility and
+// applied only to the website's primary domain binding. Setting domain changes
+// the website's primary (apex) domain.
 type WebsiteUpdateRequest struct {
 	TargetType *db.WebsiteTargetType `json:"target_type,omitempty"`
 	TargetHash *string               `json:"target_hash,omitempty"`
+	Domain     *string               `json:"domain,omitempty"`
+	Namespace  *db.DomainNamespace   `json:"namespace,omitempty"`
+	DNSEnabled *bool                 `json:"dns_hosting_enabled,omitempty"`
 }
 
 // HasUpdates returns true if at least one field is set
 func (r *WebsiteUpdateRequest) HasUpdates() bool {
-	return r.TargetType != nil || r.TargetHash != nil
+	return r.TargetType != nil || r.TargetHash != nil || r.Domain != nil || r.Namespace != nil || r.DNSEnabled != nil
 }
 
 func (r WebsiteUpdateRequest) Schema() *zog.StructSchema {
@@ -289,6 +294,12 @@ func (r WebsiteUpdateRequest) Schema() *zog.StructSchema {
 			db.WebsiteTargetTypeIPNS,
 		})),
 		"TargetHash": zog.Ptr(zog.String().Required().Min(1).Max(255)),
+		"Domain":     zog.Ptr(zog.String().Required().Min(1).Max(255)),
+		"Namespace": zog.Ptr(config.ZogStringLike[db.DomainNamespace]().OneOf([]db.DomainNamespace{
+			db.DomainNamespaceICANN,
+			db.DomainNamespaceHNS,
+		})),
+		"DNSEnabled": zog.Ptr(zog.Bool()),
 	})
 }
 

@@ -1136,6 +1136,86 @@ func (_c *MockWebsiteService_SetLogger_Call) RunAndReturn(run func(logger *core.
 	return _c
 }
 
+// SetPrimaryDomain provides a mock function for the type MockWebsiteService
+func (_mock *MockWebsiteService) SetPrimaryDomain(ctx context.Context, userID uint, websiteID uint, domainID uint) (*db.WebsiteDomain, error) {
+	ret := _mock.Called(ctx, userID, websiteID, domainID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetPrimaryDomain")
+	}
+
+	var r0 *db.WebsiteDomain
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, uint, uint) (*db.WebsiteDomain, error)); ok {
+		return returnFunc(ctx, userID, websiteID, domainID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, uint, uint) *db.WebsiteDomain); ok {
+		r0 = returnFunc(ctx, userID, websiteID, domainID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.WebsiteDomain)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uint, uint, uint) error); ok {
+		r1 = returnFunc(ctx, userID, websiteID, domainID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockWebsiteService_SetPrimaryDomain_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetPrimaryDomain'
+type MockWebsiteService_SetPrimaryDomain_Call struct {
+	*mock.Call
+}
+
+// SetPrimaryDomain is a helper method to define mock.On call
+//   - ctx context.Context
+//   - userID uint
+//   - websiteID uint
+//   - domainID uint
+func (_e *MockWebsiteService_Expecter) SetPrimaryDomain(ctx any, userID any, websiteID any, domainID any) *MockWebsiteService_SetPrimaryDomain_Call {
+	return &MockWebsiteService_SetPrimaryDomain_Call{Call: _e.mock.On("SetPrimaryDomain", ctx, userID, websiteID, domainID)}
+}
+
+func (_c *MockWebsiteService_SetPrimaryDomain_Call) Run(run func(ctx context.Context, userID uint, websiteID uint, domainID uint)) *MockWebsiteService_SetPrimaryDomain_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		var arg2 uint
+		if args[2] != nil {
+			arg2 = args[2].(uint)
+		}
+		var arg3 uint
+		if args[3] != nil {
+			arg3 = args[3].(uint)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *MockWebsiteService_SetPrimaryDomain_Call) Return(websiteDomain *db.WebsiteDomain, err error) *MockWebsiteService_SetPrimaryDomain_Call {
+	_c.Call.Return(websiteDomain, err)
+	return _c
+}
+
+func (_c *MockWebsiteService_SetPrimaryDomain_Call) RunAndReturn(run func(ctx context.Context, userID uint, websiteID uint, domainID uint) (*db.WebsiteDomain, error)) *MockWebsiteService_SetPrimaryDomain_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // UnblockWebsite provides a mock function for the type MockWebsiteService
 func (_mock *MockWebsiteService) UnblockWebsite(ctx context.Context, websiteID uint) error {
 	ret := _mock.Called(ctx, websiteID)

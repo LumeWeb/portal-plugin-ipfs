@@ -781,6 +781,18 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 
 			mockWebsiteService.EXPECT().UpdateWebsite(mock.Anything, userID, uint(1), mock.AnythingOfType("map[string]interface {}")).Return(mockWebsite, nil)
 
+			// Changing the primary domain runs the real delegate domain service
+			// (CreateDomain persists a binding in the test DB), then repoints the
+			// website's primary via SetPrimaryDomain and resolves it back for the
+			// response.
+			mockApex := &pluginDb.WebsiteDomain{
+				ID:        2,
+				WebsiteID: 1,
+				Domain:    "updated-example.com",
+			}
+			mockWebsiteService.EXPECT().SetPrimaryDomain(mock.Anything, userID, uint(1), mock.Anything).Return(mockApex, nil)
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
+
 			reqBody := fmt.Sprintf(`{"domain":"updated-example.com","target_type":"ipfs","target_hash":"%s"}`, TestCID)
 			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
 
@@ -804,6 +816,16 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 			mockWebsite := createMockIPFSWebsite(1, userID, "example.com", TestCID, pluginDb.WebsiteStatusActive, "")
 
 			mockWebsiteService.EXPECT().UpdateWebsite(mock.Anything, userID, uint(1), mock.AnythingOfType("map[string]interface {}")).Return(mockWebsite, nil)
+
+			// dns_hosting_enabled toggles DNS on the primary domain binding.
+			mockApex := &pluginDb.WebsiteDomain{
+				ID:               1,
+				WebsiteID:        1,
+				Domain:           "example.com",
+				DNSHostingEnabled: true,
+			}
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
+			mockWebsiteService.EXPECT().SetDomainDNSEnabled(mock.Anything, userID, uint(1), uint(1), true).Return(mockApex, nil)
 
 			reqBody := `{"dns_hosting_enabled":true}`
 			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
