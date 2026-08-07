@@ -214,17 +214,16 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 	// VerifyDelegation ignores it; HNS uses it to require the parent zone to
 	// serve the DS before marking the domain Active.
 	//
-	// If the live DS cannot be determined — e.g. an in-progress key rollover
-	// leaves multiple active signing keys, or PowerDNS is unreachable — we
-	// degrade to NS-only verification rather than fail the whole check, so a
-	// transient DNSSEC state never blocks delegation status.
+	// A zone with no active signing key (("", nil)) is genuinely self-managed —
+	// the portal generated no DS, so NS-only verification is correct. But if
+	// resolution ERRORS (key rollover with multiple active keys, PowerDNS
+	// unreachable), the zone is portal-managed and the live DS is
+	// indeterminate. We must NOT silently weaken a managed zone to NS-only on
+	// a transient failure: that would mark Active a zone whose DS chain of
+	// trust was not actually confirmed.
 	expectedDS, dsErr := s.dnsSvc.GetActiveDNSSECDS(ctx, wd.ZoneID)
 	if dsErr != nil {
-		s.Logger().Warn("could not resolve live DS for verification; falling back to NS-only",
-			zap.Uint("zone_id", wd.ZoneID),
-			zap.String("domain", wd.Domain),
-			zap.Error(dsErr))
-		expectedDS = ""
+		return false, fmt.Errorf("resolve live DS for zone %d: %w", wd.ZoneID, dsErr)
 	}
 
 	verified, err := provider.VerifyDelegation(ctx, wd.Domain, expectedDS)
