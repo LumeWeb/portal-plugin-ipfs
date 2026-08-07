@@ -1074,6 +1074,10 @@ func TestWebsiteService_UpdateSSLStatus_SuccessfulUpdate(t *testing.T) {
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
+		// SSL state lives per-domain on WebsiteDomain, so a binding must exist
+		// before UpdateSSLStatus can find and update it.
+		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, createdWebsite.Domain)).Error)
+
 		// Act - Update SSL status to issuing
 		updatedWebsite, err := websiteService.UpdateSSLStatus(context.Background(), createdWebsite.Domain, pluginDb.SSLStatusIssuing, "", nil)
 

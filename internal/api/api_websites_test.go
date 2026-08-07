@@ -323,6 +323,7 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 		mockApex := &pluginDb.WebsiteDomain{
 			ID:               1,
 			WebsiteID:        1,
+			UserID:           1,
 			Domain:           TestDomain,
 			SSLStatus:        string(status),
 			SSLError:         sslError,
@@ -530,9 +531,9 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 				Status:     string(pluginDb.WebsiteStatusActive),
 			}
 
-			mockApexPending := &pluginDb.WebsiteDomain{ID: 1, WebsiteID: 1, Domain: TestDomain, SSLStatus: string(pluginDb.SSLStatusPending), SSLLastUpdatedAt: &timestamp1}
-			mockApexIssuing := &pluginDb.WebsiteDomain{ID: 1, WebsiteID: 1, Domain: TestDomain, SSLStatus: string(pluginDb.SSLStatusIssuing), SSLLastUpdatedAt: &timestamp2}
-			mockApexReady := &pluginDb.WebsiteDomain{ID: 1, WebsiteID: 1, Domain: TestDomain, SSLStatus: string(pluginDb.SSLStatusReady), SSLLastUpdatedAt: &timestamp3}
+			mockApexPending := &pluginDb.WebsiteDomain{ID: 1, WebsiteID: 1, UserID: userID, Domain: TestDomain, SSLStatus: string(pluginDb.SSLStatusPending), SSLLastUpdatedAt: &timestamp1}
+			mockApexIssuing := &pluginDb.WebsiteDomain{ID: 1, WebsiteID: 1, UserID: userID, Domain: TestDomain, SSLStatus: string(pluginDb.SSLStatusIssuing), SSLLastUpdatedAt: &timestamp2}
+			mockApexReady := &pluginDb.WebsiteDomain{ID: 1, WebsiteID: 1, UserID: userID, Domain: TestDomain, SSLStatus: string(pluginDb.SSLStatusReady), SSLLastUpdatedAt: &timestamp3}
 
 			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusPending, "", mock.AnythingOfType("*time.Time")).Return(mockApexPending, nil)
 			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusIssuing, "", mock.AnythingOfType("*time.Time")).Return(mockApexIssuing, nil)
