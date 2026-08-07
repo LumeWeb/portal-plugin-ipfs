@@ -9,19 +9,21 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 
-	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
+	"go.lumeweb.com/portal/core"
 	"go.uber.org/zap"
 )
 
 // mockHTTPClient is a mock HTTP client for testing
 type mockHTTPClient struct {
-	response  *http.Response
-	err       error
-	requests  []*http.Request
+	response *http.Response
+	err      error
+	requests []*http.Request
 }
 
 func (m *mockHTTPClient) Do(req *http.Request) (*http.Response, error) {
@@ -32,7 +34,7 @@ func (m *mockHTTPClient) Do(req *http.Request) (*http.Response, error) {
 func TestNewPowerDNSClient(t *testing.T) {
 	logger := zap.NewNop()
 	coreLogger := &core.Logger{Logger: logger}
-	client, err := NewPowerDNSClient("http://localhost:8081", "test-api-key", coreLogger)
+	client, err := NewPowerDNSClient("http://localhost:8081", testAPIKey(), coreLogger)
 
 	if client == nil {
 		t.Fatal("NewPowerDNSClient returned nil")
@@ -67,7 +69,7 @@ func TestCreateZone(t *testing.T) {
 			nameservers: []string{"ns1.example.com.", "ns2.example.com."},
 			mockResponse: &http.Response{
 				StatusCode: http.StatusCreated,
-				Body:       io.NopCloser(bytes.NewBufferString(`{
+				Body: io.NopCloser(bytes.NewBufferString(`{
 					"id": "example.com.",
 					"name": "example.com.",
 					"kind": "Native"
@@ -98,7 +100,7 @@ func TestCreateZone(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := zap.NewNop()
-	coreLogger := &core.Logger{Logger: logger}
+			coreLogger := &core.Logger{Logger: logger}
 			mockClient := &mockHTTPClient{
 				response: tt.mockResponse,
 				err:      tt.mockError,
@@ -155,9 +157,9 @@ func TestGetZone(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:      "zone not found",
-			zoneID:    "nonexistent.com.",
-			mockError: errors.New("network error"),
+			name:        "zone not found",
+			zoneID:      "nonexistent.com.",
+			mockError:   errors.New("network error"),
 			expectError: true,
 		},
 	}
@@ -165,7 +167,7 @@ func TestGetZone(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := zap.NewNop()
-	coreLogger := &core.Logger{Logger: logger}
+			coreLogger := &core.Logger{Logger: logger}
 			mockClient := &mockHTTPClient{
 				response: tt.mockResponse,
 				err:      tt.mockError,
@@ -231,11 +233,11 @@ func TestUpdateZoneRRSets(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:         "RRSet update with API error",
-			zoneID:       "example.com.",
-			rrsets:       []powerdns.RRSet{},
-			mockError:    errors.New("network error"),
-			expectError:  true,
+			name:        "RRSet update with API error",
+			zoneID:      "example.com.",
+			rrsets:      []powerdns.RRSet{},
+			mockError:   errors.New("network error"),
+			expectError: true,
 		},
 		{
 			name:   "RRSet update with 422 from PowerDNS",
@@ -258,9 +260,9 @@ func TestUpdateZoneRRSets(t *testing.T) {
 			expectError: true,
 		},
 		{
-			name:   "RRSet update with nil response",
-			zoneID: "example.com.",
-			rrsets: []powerdns.RRSet{},
+			name:         "RRSet update with nil response",
+			zoneID:       "example.com.",
+			rrsets:       []powerdns.RRSet{},
 			mockResponse: nil,
 			mockError:    nil,
 			expectError:  true,
@@ -384,8 +386,8 @@ func TestCreateZoneIntegration(t *testing.T) {
 
 		// Verify API key header
 		apiKey := r.Header.Get("X-API-Key")
-		if apiKey != "test-api-key" {
-			t.Errorf("expected API key 'test-api-key', got '%s'", apiKey)
+		if apiKey != testAPIKey() {
+			t.Errorf("expected API key %q, got %q", testAPIKey(), apiKey)
 		}
 
 		// Verify request body
@@ -411,7 +413,7 @@ func TestCreateZoneIntegration(t *testing.T) {
 
 	logger := zap.NewNop()
 	coreLogger := &core.Logger{Logger: logger}
-	client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+	client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
 	if err != nil {
 		t.Fatalf("NewPowerDNSClient failed: %v", err)
 	}
@@ -455,7 +457,7 @@ func TestGetZoneIntegration(t *testing.T) {
 
 	logger := zap.NewNop()
 	coreLogger := &core.Logger{Logger: logger}
-	client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+	client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
 	if err != nil {
 		t.Fatalf("NewPowerDNSClient failed: %v", err)
 	}
@@ -507,7 +509,7 @@ func TestUpdateZoneRRSetsIntegration(t *testing.T) {
 
 	logger := zap.NewNop()
 	coreLogger := &core.Logger{Logger: logger}
-	client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+	client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
 	if err != nil {
 		t.Fatalf("NewPowerDNSClient failed: %v", err)
 	}
@@ -550,7 +552,7 @@ func TestDeleteZoneIntegration(t *testing.T) {
 
 	logger := zap.NewNop()
 	coreLogger := &core.Logger{Logger: logger}
-	client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+	client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
 	if err != nil {
 		t.Fatalf("NewPowerDNSClient failed: %v", err)
 	}
@@ -632,7 +634,7 @@ func TestCreateZoneCanonicalDomain(t *testing.T) {
 
 			logger := zap.NewNop()
 			coreLogger := &core.Logger{Logger: logger}
-			client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+			client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
 			if err != nil {
 				t.Fatalf("NewPowerDNSClient failed: %v", err)
 			}
@@ -660,11 +662,11 @@ func TestCreateZoneCanonicalDomain(t *testing.T) {
 }
 func TestCreateZoneCanonicalNameservers(t *testing.T) {
 	tests := []struct {
-		name           string
-		domain         string
-		nameservers    []string
-		expectedNS     []string
-		expectError    bool
+		name        string
+		domain      string
+		nameservers []string
+		expectedNS  []string
+		expectError bool
 	}{
 		{
 			name:        "normalize nameservers without trailing dots",
@@ -758,7 +760,7 @@ func TestCreateZoneCanonicalNameservers(t *testing.T) {
 
 			logger := zap.NewNop()
 			coreLogger := &core.Logger{Logger: logger}
-			client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+			client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
 			if err != nil {
 				t.Fatalf("NewPowerDNSClient failed: %v", err)
 			}
@@ -828,7 +830,7 @@ func TestCreateZoneHTTPErrorHandling(t *testing.T) {
 
 			logger := zap.NewNop()
 			coreLogger := &core.Logger{Logger: logger}
-			client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+			client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
 			if err != nil {
 				t.Fatalf("NewPowerDNSClient failed: %v", err)
 			}
@@ -864,7 +866,7 @@ func TestCreateZoneErrorResponseBody(t *testing.T) {
 
 	logger := zap.NewNop()
 	coreLogger := &core.Logger{Logger: logger}
-	client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+	client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
 	if err != nil {
 		t.Fatalf("NewPowerDNSClient failed: %v", err)
 	}
@@ -915,7 +917,7 @@ func TestCreateZoneConflictFetchesExisting(t *testing.T) {
 
 	logger := zap.NewNop()
 	coreLogger := &core.Logger{Logger: logger}
-	client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+	client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
 	if err != nil {
 		t.Fatalf("NewPowerDNSClient failed: %v", err)
 	}
@@ -950,7 +952,7 @@ func TestCreateZoneConflictGetAlsoFails(t *testing.T) {
 
 	logger := zap.NewNop()
 	coreLogger := &core.Logger{Logger: logger}
-	client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+	client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
 	if err != nil {
 		t.Fatalf("NewPowerDNSClient failed: %v", err)
 	}
@@ -991,7 +993,7 @@ func TestCreateZoneConflictExistingZoneNoID(t *testing.T) {
 
 	logger := zap.NewNop()
 	coreLogger := &core.Logger{Logger: logger}
-	client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+	client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
 	if err != nil {
 		t.Fatalf("NewPowerDNSClient failed: %v", err)
 	}
@@ -1036,15 +1038,108 @@ func TestIsDuplicateKeyError(t *testing.T) {
 // Helper functions
 
 func TestEnableDNSSEC(t *testing.T) {
-	t.Run("decodes cryptokey response with ds as string array", func(t *testing.T) {
+	t.Run("reuses existing active KSK (no POST, idempotent)", func(t *testing.T) {
+		var gotPOST bool
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost {
-				t.Errorf("expected POST request, got %s", r.Method)
+			if r.Method == http.MethodPost {
+				gotPOST = true
+				t.Error("expected no POST when an active KSK exists")
 			}
 			if r.URL.Path != "/servers/localhost/zones/lumeweb./cryptokeys" {
 				t.Errorf("unexpected path: %s", r.URL.Path)
 			}
-			// PowerDNS returns ds as an array of DS record strings.
+			// The idempotent reuse depends on details=true returning the dnskey
+			// content; missing it means DNSKey is empty and the guard never fires.
+			if r.URL.Query().Get("details") != "true" {
+				t.Errorf("expected ?details=true on cryptokeys GET, got query %q", r.URL.RawQuery)
+			}
+			// PowerDNS lists cryptokeys as an array.
+			body := `[{"id":"1","keytype":"ksk","active":true,"dnskey":"257 3 13 AwEAAaX9pZzY3eiw=="}]`
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(body))
+		}))
+		defer server.Close()
+
+		logger := zap.NewNop()
+		coreLogger := &core.Logger{Logger: logger}
+		client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
+		if err != nil {
+			t.Fatalf("NewPowerDNSClient failed: %v", err)
+		}
+
+		dnskey, err := client.EnableDNSSEC(context.Background(), "lumeweb.")
+		if err != nil {
+			t.Fatalf("EnableDNSSEC returned error: %v", err)
+		}
+		if dnskey != "257 3 13 AwEAAaX9pZzY3eiw==" {
+			t.Errorf("unexpected dnskey: %q", dnskey)
+		}
+		if gotPOST {
+			t.Fatal("EnableDNSSEC created a new KSK despite an active KSK existing")
+		}
+	})
+
+	t.Run("errors when multiple active keys exist (no silent guess)", func(t *testing.T) {
+		var gotPOST bool
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				gotPOST = true
+				t.Error("expected no POST when an active KSK exists")
+			}
+			if r.URL.Path != "/servers/localhost/zones/lumeweb./cryptokeys" {
+				t.Errorf("unexpected path: %s", r.URL.Path)
+			}
+			if r.Method == http.MethodGet && r.URL.Query().Get("details") != "true" {
+				t.Errorf("expected ?details=true on cryptokeys GET, got query %q", r.URL.RawQuery)
+			}
+			// Two active signing keys: the published one cannot be identified, so
+			// EnableDNSSEC must error rather than guess.
+			body := `[{"id":"1","keytype":"ksk","active":true,"dnskey":"257 3 13 AwEAAaX9pZzY3eiw=="},{"id":"2","keytype":"ksk","active":true,"dnskey":"257 3 13 AwEAAbB0yYx4fZQ=="}]`
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(body))
+		}))
+		defer server.Close()
+
+		logger := zap.NewNop()
+		coreLogger := &core.Logger{Logger: logger}
+		client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
+		if err != nil {
+			t.Fatalf("NewPowerDNSClient failed: %v", err)
+		}
+
+		_, err = client.EnableDNSSEC(context.Background(), "lumeweb.")
+		if err == nil {
+			t.Fatal("expected an error when multiple active signing keys exist and the published DS cannot be identified")
+		}
+		if !strings.Contains(err.Error(), "reconcile manually") {
+			t.Errorf("expected a reconcile-manually error, got: %v", err)
+		}
+		if gotPOST {
+			t.Fatal("EnableDNSSEC created a new KSK despite multiple active KSKs existing")
+		}
+	})
+
+	t.Run("creates KSK only when none exists (404 list -> POST)", func(t *testing.T) {
+		methodLog := []string{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			methodLog = append(methodLog, r.Method)
+			if r.URL.Path != "/servers/localhost/zones/lumeweb./cryptokeys" {
+				t.Errorf("unexpected path: %s", r.URL.Path)
+			}
+			// The idempotent reuse depends on details=true returning the dnskey
+			// content; missing it means DNSKey is empty and the guard never fires.
+			// Only the GET (list) carries the query; the POST (create) does not.
+			if r.Method == http.MethodGet && r.URL.Query().Get("details") != "true" {
+				t.Errorf("expected ?details=true on cryptokeys GET, got query %q", r.URL.RawQuery)
+			}
+			if r.Method == http.MethodGet {
+				// No cryptokeys yet -> 404.
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			// POST returns the freshly created KSK.
 			body := `{"dnskey":"257 3 13 AwEAAaX9pZzY3eiw==","ds":["45688 13 2 1F287B0F9E0C1A2B3C4D5E6F7A8B9C0D1E2F3A4B5C6D7E8F9A0B1C2D3E4F5"]}`
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
@@ -1054,7 +1149,46 @@ func TestEnableDNSSEC(t *testing.T) {
 
 		logger := zap.NewNop()
 		coreLogger := &core.Logger{Logger: logger}
-		client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+		client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
+		if err != nil {
+			t.Fatalf("NewPowerDNSClient failed: %v", err)
+		}
+
+		dnskey, err := client.EnableDNSSEC(context.Background(), "lumeweb.")
+		if err != nil {
+			t.Fatalf("EnableDNSSEC returned error: %v", err)
+		}
+		if dnskey != "257 3 13 AwEAAaX9pZzY3eiw==" {
+			t.Errorf("unexpected dnskey: %q", dnskey)
+		}
+		// Must have been GET (list) then POST (create) — and only one POST.
+		if len(methodLog) != 2 || methodLog[0] != http.MethodGet || methodLog[1] != http.MethodPost {
+			t.Fatalf("expected GET then POST, got: %v", methodLog)
+		}
+	})
+
+	t.Run("decodes cryptokey response when creating from empty list", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				// Empty list (200 with []) also means no KSK -> create.
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			if r.Method != http.MethodPost {
+				t.Errorf("expected POST after empty list, got %s", r.Method)
+			}
+			body := `{"dnskey":"257 3 13 AwEAAaX9pZzY3eiw==","ds":["45688 13 2 1F287B0F9E0C1A2B3C4D5E6F7A8B9C0D1E2F3A4B5C6D7E8F9A0B1C2D3E4F5"]}`
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(body))
+		}))
+		defer server.Close()
+
+		logger := zap.NewNop()
+		coreLogger := &core.Logger{Logger: logger}
+		client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
 		if err != nil {
 			t.Fatalf("NewPowerDNSClient failed: %v", err)
 		}
@@ -1068,6 +1202,83 @@ func TestEnableDNSSEC(t *testing.T) {
 		}
 	})
 
+	t.Run("serializes per-zone create under concurrency (only one POST)", func(t *testing.T) {
+		// Two concurrent delegation builds for the same zone must not both mint a
+		// KSK. The server's list returns no active KSK while a create is in
+		// flight, so without the per-zone mutex both goroutines would POST.
+		var (
+			mu         sync.Mutex
+			postCount  int
+			createPath string
+		)
+		createPath = "/servers/localhost/zones/lumeweb./cryptokeys"
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			isPost := r.Method == http.MethodPost
+			c := postCount
+			if isPost {
+				postCount++
+			}
+			mu.Unlock()
+
+			if r.URL.Path != createPath {
+				t.Errorf("unexpected path: %s", r.URL.Path)
+			}
+			if isPost {
+				// Before we mint, list must already see the new key. Simulate
+				// PowerDNS returning the created KSK on the next list.
+				body := `{"dnskey":"257 3 13 AwEAAaX9pZzY3eiw==","ds":["45688 13 2 1F287B0F9E0C1A2B3C4D5E6F7A8B9C0D1E2F3A4B5C6D7E8F9A0B1C2D3E4F5"]}`
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(body))
+				return
+			}
+			// GET list: no active KSK on the very first request (c==0); once a
+			// POST has happened (c>0) report the KSK as present.
+			if c > 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[{"id":"1","keytype":"ksk","active":true,"dnskey":"257 3 13 AwEAAaX9pZzY3eiw=="}]`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		}))
+		defer server.Close()
+
+		logger := zap.NewNop()
+		coreLogger := &core.Logger{Logger: logger}
+		client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
+		if err != nil {
+			t.Fatalf("NewPowerDNSClient failed: %v", err)
+		}
+
+		const goroutines = 8
+		var wg sync.WaitGroup
+		errs := make([]error, goroutines)
+		for i := 0; i < goroutines; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				_, e := client.EnableDNSSEC(context.Background(), "lumeweb.")
+				errs[idx] = e
+			}(i)
+		}
+		wg.Wait()
+		for i, e := range errs {
+			if e != nil {
+				t.Fatalf("goroutine %d EnableDNSSEC error: %v", i, e)
+			}
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		if postCount != 1 {
+			t.Fatalf("expected exactly one POST (KSK create) under concurrency, got %d", postCount)
+		}
+	})
+
 	t.Run("propagates non-2xx response", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
@@ -1077,7 +1288,7 @@ func TestEnableDNSSEC(t *testing.T) {
 
 		logger := zap.NewNop()
 		coreLogger := &core.Logger{Logger: logger}
-		client, err := NewPowerDNSClient(server.URL, "test-api-key", coreLogger)
+		client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
 		if err != nil {
 			t.Fatalf("NewPowerDNSClient failed: %v", err)
 		}
@@ -1094,6 +1305,21 @@ func TestEnableDNSSEC(t *testing.T) {
 
 func intPtr(i int) *int {
 	return &i
+}
+
+// testAPIKey returns the PowerDNS API key used by the mock HTTP servers in
+// these tests. It comes from the environment when set; both the client under
+// test and the mock-server header assertion use this same helper, so the tests
+// remain self-consistent. When unset it falls back to a non-empty sentinel so
+// the X-API-Key header assertions always compare against a real value.
+func testAPIKey() string {
+	// Fall back to a hardcoded non-empty sentinel when the env var is unset so
+	// the X-API-Key header assertions compare against a real value instead of
+	// "" (which would make them tautological no-ops).
+	if k := os.Getenv("POWERDNS_TEST_API_KEY"); k != "" {
+		return k
+	}
+	return "test-api-key"
 }
 
 func strPtr(s string) *string {
