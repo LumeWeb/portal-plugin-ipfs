@@ -162,8 +162,10 @@ func (a *API) createWebsite(c echo.Context) error {
 			primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
 			if perr == nil && primary != nil {
 				if _, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, dnsEnabled); derr != nil {
-					a.Logger().Warn("failed to set DNS hosting on primary domain",
+					a.Logger().Error("failed to set DNS hosting on primary domain",
 						zap.Uint("domain_id", primary.ID), zap.Error(derr))
+					apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+					return ctx.Error(apiErr, apiErr.HttpStatus())
 				}
 			}
 		}
@@ -427,9 +429,15 @@ func (a *API) updateWebsite(c echo.Context) error {
 			}
 		}
 		if primary != nil {
-			if _, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, *req.DNSEnabled); derr != nil {
-				a.Logger().Warn("failed to set DNS hosting on primary domain", zap.Uint("domain_id", primary.ID), zap.Error(derr))
+			updated, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, *req.DNSEnabled)
+			if derr != nil {
+				a.Logger().Error("failed to set DNS hosting on primary domain", zap.Uint("domain_id", primary.ID), zap.Error(derr))
+				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
 			}
+			// Use the toggled binding for the response so Enabled/DNSZoneID
+			// reflect the actual DNS state rather than the pre-toggle apex.
+			primary = updated
 		}
 	}
 
