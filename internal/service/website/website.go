@@ -2120,15 +2120,20 @@ func (s *WebsiteServiceDefault) SetDomainDNSEnabled(ctx context.Context, userID,
 		return nil, fmt.Errorf("domain lookup failed: %w", err)
 	}
 
-	// Already in the desired state with nothing left to reconcile. For enable
-	// (enabled=true) this additionally requires the zone to be present: a
-	// binding flagged DNS-managed (true) with DNSZoneID=nil is a partial-enable
-	// orphan that must be re-reconciled, not skipped. Such a state arises when
-	// UpdateWebsite persists the flag before the transition and the transition
-	// rolls the zone back on failure without reverting the flag. Requiring the
-	// zone lets a retry enable (or a disable) recover it instead of silently
-	// orphaning the binding.
-	if wd.DNSHostingEnabled == enabled && (wd.DNSZoneID != nil || !enabled) {
+	// Already in the desired state with nothing left to reconcile. The binding
+	// is reconciled when the flag and the zone presence agree: a managed
+	// (true) binding has a zone, an unmanaged (false) binding has none. Any
+	// disagreement is an orphan left by a partial transition and must be
+	// re-reconciled rather than skipped:
+	//   - flag true, zone nil: enable-orphan (UpdateWebsite persists the flag
+	//     before the transition; the transition may roll the zone back on
+	//     failure without reverting the flag).
+	//   - flag false, zone non-nil: disable-orphan (the disable transition
+	//     clears dns_zone_id only when PowerDNS actually deleted the zone, and
+	//     zone-deletion failures are non-fatal).
+	// Requiring agreement lets a retry (enable or disable) recover either
+	// orphan instead of silently leaking the DNS state.
+	if wd.DNSHostingEnabled == enabled && (wd.DNSHostingEnabled == (wd.DNSZoneID != nil)) {
 		return &wd, nil
 	}
 
