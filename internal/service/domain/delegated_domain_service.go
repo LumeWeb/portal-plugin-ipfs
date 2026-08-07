@@ -408,6 +408,17 @@ func (s *DelegatedDomainService) UsesDelegationForOwnership(domain string) bool 
 	return ok && ns != string(pluginDb.DomainNamespaceICANN)
 }
 
+// NamespaceUsesManagedZoneTLSA reports whether the given namespace's provider
+// translates certs into a DANE TLSA that the portal publishes into its managed
+// authoritative zone. Only such namespaces (e.g. HNS) can be force-republished.
+func (s *DelegatedDomainService) NamespaceUsesManagedZoneTLSA(namespace string) bool {
+	if s.registry == nil {
+		return false
+	}
+	prov := s.registry.Get(namespace)
+	return prov != nil && prov.UsesManagedZoneTLSA()
+}
+
 // GetNamespaceForDomain returns the namespace for the given domain if it
 // matches a registered provider. This is used to select the correct DNS
 // resolver for alt-root domains (different roots require different resolvers).

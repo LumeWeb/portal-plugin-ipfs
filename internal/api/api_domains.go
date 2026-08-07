@@ -253,3 +253,104 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 	}
 	return httputil.EncodeResponse(ctx, &wd, &resp)
 }
+
+// republishDomainDANE forces re-publication of a bound domain's DANE records
+// (the TLSA for a portal-managed, DNSSEC-signed zone) into the authoritative
+// PowerDNS zone. It re-pushes the stored certificate/key through
+// UpdateTLSAFromCert, which idempotently rewrites the _443._tcp.<domain> TLSA
+// RRset (PowerDNS REPLACE). This is the operator's escape hatch for a TLSA
+// that was deleted or went missing and won't be re-triggered by cert renewal.
+func (a *API) republishDomainDANE(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	userID, err := mcontext.GetUserID(c)
+	if err != nil {
+		return ctx.Error(err, http.StatusUnauthorized)
+	}
+
+	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	domainID, err := strconv.ParseUint(c.Param("domain_id"), 10, 64)
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid domain ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	var wd pluginDb.WebsiteDomain
+	if err := a.DB().WithContext(reqCtx).
+		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+		First(&wd).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			apiErr := NewError(ErrKeyDomainNotFound, errors.New("domain not found"))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	if a.delegatedDomainSvc == nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service not available"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	ns := string(wd.Namespace)
+	// Only DANE-capable namespaces whose provider publishes a managed-zone TLSA
+	// can be force-republished. Non-DANE namespaces (e.g. ICANN) have no TLSA.
+	if !a.delegatedDomainSvc.NamespaceUsesManagedZoneTLSA(ns) {
+		apiErr := NewError(ErrKeyNoStoredCertificate, fmt.Errorf("namespace %q does not use managed-zone DANE", ns))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	// The republish writes the TLSA into the portal-managed authoritative zone
+	// resolved by the domain's ZoneID. If no zone is assigned there is nothing
+	// to publish into -- short-circuit rather than return a false success.
+	if wd.ZoneID == 0 {
+		apiErr := NewError(ErrKeyNoStoredCertificate, fmt.Errorf("domain %q has no assigned managed zone; cannot republish", wd.Domain))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	cert, err := a.delegatedDomainSvc.GetCertificateKey(reqCtx, ns, wd.Domain)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			apiErr := NewError(ErrKeyNoStoredCertificate, err)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		a.Logger().Error("Failed to load stored certificate for DANE republish", zap.Error(err), zap.String("domain", wd.Domain))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	tlsa, ownerName, err := a.delegatedDomainSvc.UpdateTLSAFromCert(reqCtx, ns, wd.Domain, cert.CertPEM, cert.PrivateKeyPEM)
+	if err != nil {
+		a.Logger().Error("Failed to republish DANE TLSA", zap.Error(err), zap.String("domain", wd.Domain))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	// Reload wd after the publish: UpdateTLSAFromCert rewrites the row's
+	// DelegationData authoritative TLSA records in the DB, so the response must
+	// project the post-republish delegation state rather than the stale one we
+	// loaded before the publish.
+	if err := a.DB().WithContext(reqCtx).First(&wd, wd.ID).Error; err != nil {
+		a.Logger().Error("Failed to reload domain after DANE republish", zap.Error(err), zap.Uint("domain_id", wd.ID))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	resp := dto.DomainDANERepublishResponse{}
+	if err := resp.FromModel(&wd); err != nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	resp.TLSARData = tlsa
+	resp.OwnerName = ownerName
+	if ownerName != "" && tlsa != "" {
+		resp.TLSARecord = fmt.Sprintf("%s. 3600 IN TLSA %s", ownerName, tlsa)
+	}
+	return httputil.EncodeResponse(ctx, &wd, &resp)
+}

@@ -103,6 +103,64 @@ func (r *DomainResponse) FromModel(m *db.WebsiteDomain) error {
 	return nil
 }
 
+// DomainDANERepublishResponse is the result of forcing a DANE republish for a
+// bound domain. It carries the (reloaded) domain state plus the TLSA record and
+// owner name that were (re)published into the managed authoritative zone.
+//
+// NOTE: it deliberately duplicates the DomainResponse scalar fields rather than
+// embedding DomainResponse, because the gswagger schema generator rejects Go
+// embedded structs (potential infinite recursion).
+type DomainDANERepublishResponse struct {
+	ID          uint           `json:"id"`
+	Domain      string         `json:"domain"`
+	Namespace   string         `json:"namespace"`
+	Status      string         `json:"status,omitempty"`
+	ZoneName    string         `json:"zone_name,omitempty"`
+	GatewayHost string         `json:"gateway_host,omitempty"`
+	Delegation  *DNSDelegation `json:"delegation,omitempty"`
+	SSL         *SSLStatusInfo `json:"ssl,omitempty"`
+	TLSARecord  string         `json:"tlsa_record,omitempty"` // full "_443._tcp.<domain> ... TLSA ..." presentation
+	OwnerName   string         `json:"owner_name,omitempty"`  // "_443._tcp.<domain>"
+	TLSARData   string         `json:"tlsa_rdata,omitempty"`  // "3 1 1 <hex>"
+}
+
+// FromModel populates the DomainResponse-backed fields from a WebsiteDomain.
+func (r *DomainDANERepublishResponse) FromModel(m *db.WebsiteDomain) error {
+	return r.DomainResponseFromModel(m)
+}
+
+// DomainResponseFromModel copies the shared domain fields. It is defined so the
+// scalar fields line up with DomainResponse.FromModel without embedding.
+func (r *DomainDANERepublishResponse) DomainResponseFromModel(m *db.WebsiteDomain) error {
+	r.ID = m.ID
+	r.Domain = m.Domain
+	r.Namespace = string(m.Namespace)
+	r.Status = string(m.Status)
+	r.ZoneName = m.ZoneName
+	r.GatewayHost = m.GatewayHost
+	if m.SSLStatus != "" {
+		r.SSL = &SSLStatusInfo{
+			Status: m.SSLStatus,
+			Error:  m.SSLError,
+		}
+		if m.SSLIssuedAt != nil {
+			v := *m.SSLIssuedAt
+			r.SSL.IssuedAt = &v
+		}
+		if m.SSLLastUpdatedAt != nil {
+			v := *m.SSLLastUpdatedAt
+			r.SSL.LastUpdatedAt = &v
+		}
+	}
+	if len(m.DelegationData) > 0 {
+		raw, _ := json.Marshal(m.DelegationData)
+		if len(raw) > 0 {
+			r.Delegation = mapDNSDelegation(raw)
+		}
+	}
+	return nil
+}
+
 // mapDNSDelegation converts the raw provider DelegationData (JSON) into the
 // typed DNSDelegation. HNS emits a DelegationBundle with parent_records and
 // authoritative_records; ICANN emits nameservers. It returns nil when the
