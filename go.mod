@@ -46,7 +46,7 @@ require (
 	go.lumeweb.com/dane v0.0.2
 	go.lumeweb.com/httputil v0.5.7
 	go.lumeweb.com/ipfs-content v0.1.17
-	go.lumeweb.com/portal v0.5.2-0.20260806145912-88ce1aa51b10
+	go.lumeweb.com/portal v0.5.2-0.20260807024535-96588d276d5f
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.1.0
 	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260728211030-fa71bb5211dc
@@ -123,7 +123,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.28 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.35 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.36 // indirect
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.5 // indirect
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.5.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.33.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.4 // indirect
