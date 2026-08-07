@@ -896,6 +896,11 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 		return fmt.Errorf("failed to load website for DNS hosting transition: %w", err)
 	}
 
+	// Tracks whether this enable transition created the zone itself (vs.
+	// reusing an existing parent zone). Used to roll back a freshly-created
+	// zone if a later step (record creation) fails, so we never orphan it.
+	zoneCreated := false
+
 	// Auto-convert a plain-CID IPNS target (target_type=ipns with a raw IPFS
 	// CID) to an IPNS key now that a primary domain binding exists. On the web
 	// create path the binding is only created after CreateWebsite runs, so the
@@ -948,6 +953,7 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 			if createErr != nil {
 				return fmt.Errorf("failed to create DNS zone: %w", createErr)
 			}
+			zoneCreated = true
 		}
 
 		// Associate the zone with the primary domain binding.
@@ -959,7 +965,7 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 				zap.Error(err),
 				zap.Uint("website_id", website.ID))
 			// Only attempt zone cleanup if we created this zone (not reusing a parent)
-			if dnsname.Equal(dnsZone.Domain, wd.Domain) {
+			if zoneCreated {
 				_ = s.dnsSvc.DeleteZone(ctx, dnsZone.ID)
 			}
 			return fmt.Errorf("failed to associate DNS zone with website: %w", err)
@@ -989,6 +995,25 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 		// Create DNS records
 		err := s.dnsSvc.CreateWebsiteDNSRecords(ctx, *wd.DNSZoneID, wd.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), fmt.Sprintf("%s=%s", s.verificationTokenKey(), newToken))
 		if err != nil {
+			// Roll back the partially-created DNS state so the binding is not
+			// left pointing at a zone with no (or partial) records: delete any
+			// records created for this domain, delete the zone if this
+			// transition created it, and clear dns_zone_id. Without this a
+			// failed enable orphans the zone and a later disable no-ops (flag
+			// already false), leaking the zone with no recovery path.
+			s.Logger().Error("Failed to create DNS records, rolling back DNS setup",
+				zap.Error(err),
+				zap.Uint("website_id", website.ID),
+				zap.Uint("dns_zone_id", *wd.DNSZoneID),
+				zap.String("domain", wd.Domain))
+			_ = s.dnsSvc.DeleteWebsiteDNSRecords(ctx, *wd.DNSZoneID, wd.Domain)
+			if zoneCreated {
+				_ = s.dnsSvc.DeleteZone(ctx, *wd.DNSZoneID)
+			}
+			_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Model(wd).Update("dns_zone_id", nil)
+			})
+			wd.DNSZoneID = nil
 			return fmt.Errorf("failed to create DNS records: %w", err)
 		}
 
@@ -2095,7 +2120,11 @@ func (s *WebsiteServiceDefault) SetDomainDNSEnabled(ctx context.Context, userID,
 		return nil, fmt.Errorf("domain lookup failed: %w", err)
 	}
 
-	if wd.DNSHostingEnabled == enabled {
+	// Already in the requested state with nothing left to reconcile. Guard on
+	// both the flag and the zone so a disable is not skipped for a binding that
+	// is flagged false but still carries a dns_zone_id (e.g. left by an earlier
+	// partial enable) — skipping would orphan-leak the zone with no recovery.
+	if wd.DNSHostingEnabled == enabled && (enabled || wd.DNSZoneID == nil) {
 		return &wd, nil
 	}
 
