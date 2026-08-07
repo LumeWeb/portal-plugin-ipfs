@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
@@ -73,4 +74,19 @@ func (p *ICANNProvider) UsesManagedZoneTLSA() bool {
 // Nameservers returns the ICANN nameservers configured for the namespace.
 func (p *ICANNProvider) Nameservers() []string {
 	return p.nameservers
+}
+
+// LiveNameservers returns the NS records currently served for `domain`,
+// resolved against the system default resolver (ICANN names are visible to
+// standard resolvers). Returns the hostnames without trailing dots.
+func (p *ICANNProvider) LiveNameservers(ctx context.Context, domain string) ([]string, error) {
+	nss, err := net.LookupNS(domain)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(nss))
+	for _, ns := range nss {
+		out = append(out, strings.TrimSuffix(ns.Host, "."))
+	}
+	return out, nil
 }

@@ -2,11 +2,13 @@ package dns
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"go.lumeweb.com/ipfs-sdk/dnsname"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
 	"go.lumeweb.com/portal/core"
@@ -18,6 +20,54 @@ import (
 
 // DNSLinkTarget represents a DNSLink target path
 type DNSLinkTarget string
+
+// nameserversForDomain returns the nameservers to publish for a zone's
+// domain. When a per-namespace resolver is injected it delegates to the
+// matching provider (HNS zones get the HNS nameservers, ICANN the ICANN
+// list); otherwise it falls back to the ICANN config nameservers, preserving
+// behavior for deployments without the provider resolver wired up.
+func (s *DNSServiceDefault) nameserversForDomain(domain string) ([]string, error) {
+	if s.nameserverResolver != nil {
+		if nss, ok := s.nameserverResolver.NameserversFor(domain); ok {
+			if len(nss) == 0 {
+				return nil, fmt.Errorf("no nameservers configured for domain %s", domain)
+			}
+			return nss, nil
+		}
+	}
+	nss := s.config.Nameservers
+	if len(nss) == 0 {
+		return nil, fmt.Errorf("no approved nameservers configured")
+	}
+	return nss, nil
+}
+
+// liveNameservers returns the live NS records for a zone's domain, resolved
+// through the per-namespace resolver (HNS zones query the HNS-aware resolver,
+// ICANN zones the system resolver). When the resolver has no provider for the
+// domain (or none is injected) it falls back to the default (system) lookup,
+// mirroring nameserversForDomain's fallback so publication and validation stay
+// consistent for unmatched domains.
+func (s *DNSServiceDefault) liveNameservers(ctx context.Context, domain string) ([]string, error) {
+	if s.nameserverResolver != nil {
+		nss, err := s.nameserverResolver.LiveNameservers(ctx, domain)
+		if err == nil {
+			return nss, nil
+		}
+		if !errors.Is(err, pluginCore.ErrNoProviderForDomain) {
+			return nil, err
+		}
+	}
+	nss, err := s.dnsLookup.LookupNS(domain)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(nss))
+	for _, ns := range nss {
+		out = append(out, ns.Host)
+	}
+	return out, nil
+}
 
 // CreateZone creates a new DNS zone
 func (s *DNSServiceDefault) CreateZone(ctx context.Context, domain string, userID uint) (*pluginDb.DNSZone, error) {
@@ -51,9 +101,9 @@ func (s *DNSServiceDefault) CreateZone(ctx context.Context, domain string, userI
 		return nil, fmt.Errorf("DNS hosting not enabled")
 	}
 
-	nameservers := s.config.Nameservers
-	if len(nameservers) == 0 {
-		return nil, fmt.Errorf("no approved nameservers configured")
+	nameservers, err := s.nameserversForDomain(domain)
+	if err != nil {
+		return nil, err
 	}
 
 	zone, err := s.pdnsClient.CreateZone(ctx, domain, nameservers)
@@ -272,15 +322,16 @@ func (s *DNSServiceDefault) ValidateNameservers(ctx context.Context, zoneID uint
 		return false, fmt.Errorf("zone not found")
 	}
 
-	// Perform actual nameserver validation via DNS lookup
-	// Query DNS for the domain's nameservers and compare against approved nameservers
-	approvedNameservers := s.config.Nameservers
-	if len(approvedNameservers) == 0 {
-		return false, fmt.Errorf("no approved nameservers configured for validation")
+	// Resolve the approved nameservers and the live NS delegation for the
+	// zone's domain through the namespace provider. When no provider resolver
+	// is injected the DNS service falls back to the ICANN config nameservers
+	// and the default lookup, preserving prior behavior.
+	approvedNameservers, err := s.nameserversForDomain(zone.Domain)
+	if err != nil {
+		return false, err
 	}
 
-	// Lookup nameservers for the domain using DNS lookup interface
-	dnsNameservers, err := s.dnsLookup.LookupNS(zone.Domain)
+	liveNameservers, err := s.liveNameservers(ctx, zone.Domain)
 	if err != nil {
 		// Update check timestamp even on failure to prevent retry loops
 		zone.LastNameserverCheckAt = new(time.Now())
@@ -291,12 +342,12 @@ func (s *DNSServiceDefault) ValidateNameservers(ctx context.Context, zoneID uint
 	}
 
 	// Check if at least one approved nameserver is present in DNS response.
-	// net.LookupNS returns FQDNs with trailing dots (e.g. "ns1.example.com.")
-	// while config values typically lack them; dnsname.Equal folds both.
+	// Resolvers may return FQDNs with trailing dots (e.g. "ns1.example.com.")
+	// while approved values typically lack them; dnsname.Equal folds both.
 	valid := false
 	for _, approvedNS := range approvedNameservers {
-		for _, dnsNS := range dnsNameservers {
-			if dnsname.Equal(dnsNS.Host, approvedNS) {
+		for _, dnsNS := range liveNameservers {
+			if dnsname.Equal(dnsNS, approvedNS) {
 				valid = true
 				break
 			}
@@ -588,9 +639,9 @@ func (s *DNSServiceDefault) restoreSoftDeletedZone(ctx context.Context, zone *pl
 	}
 	var newPowerDNSZoneID string
 	if s.pdnsClient != nil {
-		nameservers := s.config.Nameservers
-		if len(nameservers) == 0 {
-			return fmt.Errorf("no approved nameservers configured")
+		nameservers, err := s.nameserversForDomain(domain)
+		if err != nil {
+			return err
 		}
 		pdnsZone, pdnsErr := s.pdnsClient.CreateZone(ctx, domain, nameservers)
 		if pdnsErr != nil {

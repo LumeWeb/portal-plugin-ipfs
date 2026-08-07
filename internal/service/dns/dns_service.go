@@ -34,6 +34,10 @@ type DNSServiceOptions struct {
 	PowerDNSClient *PowerDNSClient
 	// DNSLookup is the DNS lookup implementation (for testing)
 	DNSLookup DNSLookup
+	// NameserverResolver resolves per-namespace nameservers and live NS
+	// resolution for a domain (HNS vs ICANN). When nil, the DNS service
+	// falls back to the ICANN config nameservers + the default lookup.
+	NameserverResolver pluginCore.NameserverResolver
 }
 
 // DNSServiceOption is a function that configures DNSServiceOptions
@@ -53,14 +57,25 @@ func WithDNSLookup(lookup DNSLookup) DNSServiceOption {
 	}
 }
 
+// WithNameserverResolver sets the per-namespace nameserver resolver for the
+// DNS service. It is implemented by the domain provider registry and lets the
+// DNS service provision/validate HNS and ICANN zones through the namespace
+// provider rather than hardcoding ICANN nameservers and the system resolver.
+func WithNameserverResolver(resolver pluginCore.NameserverResolver) DNSServiceOption {
+	return func(opts *DNSServiceOptions) {
+		opts.NameserverResolver = resolver
+	}
+}
+
 var _ pluginCore.DNSService = (*DNSServiceDefault)(nil)
 
 // DNSServiceDefault manages DNS zones and PowerDNS integration
 type DNSServiceDefault struct {
 	*core.BaseComponent
-	config     *pluginConfig.DnsConfig
-	pdnsClient *PowerDNSClient
-	dnsLookup  DNSLookup
+	config             *pluginConfig.DnsConfig
+	pdnsClient         *PowerDNSClient
+	dnsLookup          DNSLookup
+	nameserverResolver pluginCore.NameserverResolver
 }
 
 // GetDNSLookup returns the DNS lookup implementation (for testing)
@@ -71,6 +86,15 @@ func (s *DNSServiceDefault) GetDNSLookup() DNSLookup {
 // SetDNSLookup sets the DNS lookup implementation (for testing)
 func (s *DNSServiceDefault) SetDNSLookup(lookup DNSLookup) {
 	s.dnsLookup = lookup
+}
+
+// SetNameserverResolver injects the per-namespace nameserver resolver (the
+// domain provider registry). It is called by the domain service factory at
+// startup once the provider registry is built, letting the DNS service
+// provision/validate HNS zones through the HNS provider (nameservers +
+// resolver) instead of hardcoding ICANN config.
+func (s *DNSServiceDefault) SetNameserverResolver(resolver pluginCore.NameserverResolver) {
+	s.nameserverResolver = resolver
 }
 
 // NewDNSService creates a new DNS service
@@ -90,6 +114,7 @@ func NewDNSServiceWithOptions(options ...DNSServiceOption) (core.Service, []core
 		option(serviceOpts)
 	}
 	svc.dnsLookup = serviceOpts.DNSLookup
+	svc.nameserverResolver = serviceOpts.NameserverResolver
 
 	opts := core.ContextOptions(
 		core.ContextWithStartupFunc(func(ctx core.Context) error {
