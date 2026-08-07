@@ -816,15 +816,22 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 	// applied to the primary WebsiteDomain (the website no longer carries DNS
 	// state); IPNS key logic is untouched here.
 	if dnsEnabledChanged && updatedWebsite != nil {
-		// Set the new flag on the primary binding first, then drive the zone /
-		// record lifecycle for it.
+		// Set the new flag on the primary binding first (mirroring
+		// SetDomainDNSEnabled) so the persisted flag matches the DNS state that
+		// the enable/disable transitions produce, then drive the zone / record
+		// lifecycle for it.
 		wd, err := s.primaryWebsiteDomain(ctx, updatedWebsite)
 		if err != nil {
 			s.Logger().Warn("Failed to resolve primary domain for DNS hosting transition",
 				zap.Error(err),
 				zap.Uint("website_id", websiteID))
 		} else if wd != nil {
-			if enableDNS {
+			wd.DNSHostingEnabled = enableDNS
+			if uerr := s.DB().WithContext(ctx).Model(wd).Update("dns_hosting_enabled", enableDNS).Error; uerr != nil {
+				s.Logger().Warn("Failed to persist dns_hosting_enabled on primary domain",
+					zap.Error(uerr),
+					zap.Uint("website_id", websiteID))
+			} else if enableDNS {
 				// DNS hosting enabled: create zone/records and reset to pending_validation
 				if err := s.handleDNSEnabledTransition(ctx, wd); err != nil {
 					s.Logger().Warn("Failed to handle DNS hosting enable transition",
@@ -875,6 +882,31 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 	var website pluginDb.Website
 	if err := s.DB().WithContext(ctx).Where("id = ?", wd.WebsiteID).First(&website).Error; err != nil {
 		return fmt.Errorf("failed to load website for DNS hosting transition: %w", err)
+	}
+
+	// Auto-convert a plain-CID IPNS target (target_type=ipns with a raw IPFS
+	// CID) to an IPNS key now that a primary domain binding exists. On the web
+	// create path the binding is only created after CreateWebsite runs, so the
+	// conversion is deferred here; without it the DNS records below would be
+	// created for the raw CID instead of the IPNS peer id. Guarded by
+	// CIDVersion != nil so already-converted targets are skipped (idempotent
+	// for the UpdateWebsite path, which converts earlier).
+	if website.TargetType == string(pluginDb.WebsiteTargetTypeIPNS) && website.CIDVersion != nil {
+		publishCID := website.TargetHash()
+		ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, wd.Domain, publishCID)
+		if err != nil {
+			return fmt.Errorf("failed to auto-create IPNS key for managed DNS: %w", err)
+		}
+		website.TargetType = string(pluginDb.WebsiteTargetTypeIPNS)
+		website.TargetMultihash = ipnsKey.PeerIDMultihash
+		website.CIDVersion = nil
+		website.CIDType = nil
+		website.IPNSKeyID = &ipnsKey.ID
+		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			return tx.Save(&website)
+		}); err != nil {
+			return fmt.Errorf("failed to update website with IPNS target: %w", err)
+		}
 	}
 
 	s.Logger().Info("Handling DNS hosting enable transition",

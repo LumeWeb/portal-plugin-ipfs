@@ -36,6 +36,7 @@ SET wd.dns_hosting_enabled = w.dns_enabled,
 --    columns, for MySQL ordering). ipns_key_id stays on ipfs_websites.
 ALTER TABLE ipfs_websites
     ADD COLUMN primary_domain_id BIGINT UNSIGNED NULL DEFAULT NULL;
+CREATE INDEX idx_ipfs_websites_primary_domain_id ON ipfs_websites(primary_domain_id);
 
 -- +goose StatementBegin
 UPDATE ipfs_websites w

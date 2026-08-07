@@ -177,11 +177,11 @@ func (r *IPNSRepublishResponse) FromModel(any) error {
 
 // WebsiteRequest represents a request to create a website
 type WebsiteRequest struct {
-	Domain     string               `json:"domain"`                         // primary domain (transparently created as a WebsiteDomain binding)
-	Namespace  *db.DomainNamespace  `json:"namespace,omitempty"`            // icann (default) or hns
-	TargetType db.WebsiteTargetType `json:"target_type"`                    // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
-	TargetHash string               `json:"target_hash"`                    // CID or IPNS peer ID
-	DNSEnabled *bool                `json:"dns_hosting_enabled,omitempty"`  // Whether DNS hosting is enabled for the primary domain (defaults to true if not specified)
+	Domain     string               `json:"domain"`                        // primary domain (transparently created as a WebsiteDomain binding)
+	Namespace  *db.DomainNamespace  `json:"namespace,omitempty"`           // icann (default) or hns
+	TargetType db.WebsiteTargetType `json:"target_type"`                   // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
+	TargetHash string               `json:"target_hash"`                   // CID or IPNS peer ID
+	DNSEnabled *bool                `json:"dns_hosting_enabled,omitempty"` // Whether DNS hosting is enabled for the primary domain (defaults to true if not specified)
 }
 
 func (r WebsiteRequest) Schema() *zog.StructSchema {
@@ -466,6 +466,13 @@ func (r *WebsiteResponse) SetSubdomainInfo(zoneDomain string) {
 
 func (r *WebsiteResponse) SetValidationRecordInfo(tokenKey string) {
 	r.tokenKey = tokenKey
+	// The primary domain may already be set; recompute the validation record
+	// host so it is populated regardless of whether SetPrimaryDomain ran before
+	// or after this call (a website has no validation record host without a
+	// primary domain, so leave it empty if Domain is blank).
+	if r.Domain != "" && r.ValidationToken != "" {
+		r.ValidationRecordHost = tokenKey + "." + r.Domain
+	}
 }
 
 // WebsiteValidateResponse represents a website validation response
