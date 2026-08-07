@@ -71,6 +71,19 @@ func TestAPI_CreateWebsite(t *testing.T) {
 
 			mockWebsiteService.EXPECT().CreateWebsite(mock.Anything, mock.AnythingOfType("*db.Website")).Return(mockWebsite, nil)
 
+			// Creating a website also creates its primary WebsiteDomain binding
+			// and enables DNS hosting on it (default true); the handler resolves
+			// the apex binding for the response and for the enable step.
+			mockApex := &pluginDb.WebsiteDomain{
+				ID:                1,
+				WebsiteID:         1,
+				UserID:            userID,
+				Domain:            TestDomain,
+				DNSHostingEnabled: true,
+			}
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
+			mockWebsiteService.EXPECT().SetDomainDNSEnabled(mock.Anything, userID, uint(1), uint(1), true).Return(mockApex, nil)
+
 			reqBody := fmt.Sprintf(`{"domain":"%s","target_type":"ipfs","target_hash":"%s"}`, TestDomain, TestCID)
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
 
@@ -98,6 +111,16 @@ func TestAPI_CreateWebsite(t *testing.T) {
 			mockWebsite := createMockIPNSWebsite(1, userID, TestDomain, TestPeerID, pluginDb.WebsiteStatusPendingValidation, "test-token")
 
 			mockWebsiteService.EXPECT().CreateWebsite(mock.Anything, mock.AnythingOfType("*db.Website")).Return(mockWebsite, nil)
+
+			mockApex := &pluginDb.WebsiteDomain{
+				ID:                1,
+				WebsiteID:         1,
+				UserID:            userID,
+				Domain:            TestDomain,
+				DNSHostingEnabled: true,
+			}
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
+			mockWebsiteService.EXPECT().SetDomainDNSEnabled(mock.Anything, userID, uint(1), uint(1), true).Return(mockApex, nil)
 
 			reqBody := fmt.Sprintf(`{"domain":"%s","target_type":"ipns","target_hash":"%s"}`, TestDomain, TestPeerID)
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
@@ -187,6 +210,11 @@ func TestAPI_CreateWebsite(t *testing.T) {
 			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, pluginDb.WebsiteStatusBroken, "test-token")
 
 			mockWebsiteService.EXPECT().CreateWebsite(mock.Anything, mock.AnythingOfType("*db.Website")).Return(mockWebsite, nil)
+
+			// Broken status returns 410 before the response is built, but the
+			// handler still resolves (and finds absent) the primary binding
+			// during domain enablement.
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(nil, nil)
 
 			reqBody := fmt.Sprintf(`{"domain":"%s","target_type":"ipfs","target_hash":"%s"}`, TestDomain, TestCID)
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
@@ -533,8 +561,15 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusIssuing, "", mock.AnythingOfType("*time.Time")).Return(mockApexIssuing, nil)
 			mockWebsiteService.EXPECT().UpdateSSLStatus(mock.Anything, TestDomain, pluginDb.SSLStatusReady, "", mock.AnythingOfType("*time.Time")).Return(mockApexReady, nil)
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil).Times(3)
+			// Each webhook request resolves the apex binding twice: once when
+			// populating the primary-domain response fields and again inside
+			// applyApexSSLStatus. Three requests => six GetApexDomainBinding
+			// calls, preserved per-status in call order (P,P,I,I,R,R).
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApexPending, nil).Once()
 			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApexPending, nil).Once()
 			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApexIssuing, nil).Once()
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApexIssuing, nil).Once()
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApexReady, nil).Once()
 			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApexReady, nil).Once()
 
 			reqBody1 := fmt.Sprintf(`{"status":"pending","timestamp":"%s"}`, timestamp1.Format(time.RFC3339))
@@ -579,6 +614,11 @@ func TestAPI_ListWebsites(t *testing.T) {
 
 			mockWebsiteService.EXPECT().ListWebsites(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return(mockWebsites, int64(2), nil)
 
+			// Each listed website's primary (apex) binding is resolved for the
+			// response; none of these test websites have one bound.
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(nil, nil)
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(2)).Return(nil, nil)
+
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites", token, nil)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
@@ -605,6 +645,8 @@ func TestAPI_ListWebsites(t *testing.T) {
 			}
 
 			mockWebsiteService.EXPECT().ListWebsites(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return(mockWebsites, int64(1), nil)
+
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(nil, nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites?domain=example.com&target_type=ipfs&status=active", token, nil)
 
@@ -652,6 +694,9 @@ func TestAPI_ListWebsites(t *testing.T) {
 			}
 
 			mockWebsiteService.EXPECT().ListWebsites(mock.Anything, userID, mock.Anything, mock.Anything, mock.Anything).Return(mockWebsites, int64(5), nil)
+
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(nil, nil)
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(2)).Return(nil, nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites?page=1&limit=2", token, nil)
 
@@ -704,6 +749,15 @@ func TestAPI_GetWebsite(t *testing.T) {
 
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)
 
+			// The primary (apex) binding supplies the response's Domain/DNS fields.
+			mockApex := &pluginDb.WebsiteDomain{
+				ID:        1,
+				WebsiteID: 1,
+				UserID:    userID,
+				Domain:    TestDomain,
+			}
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
+
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites/1", token, nil)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
@@ -752,6 +806,10 @@ func TestAPI_GetWebsite(t *testing.T) {
 			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, pluginDb.WebsiteStatusBroken, "")
 
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)
+
+			// Broken: the isBroken path still resolves the apex binding for the
+			// 410 response body.
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(nil, nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites/1", token, nil)
 
@@ -819,9 +877,9 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 
 			// dns_hosting_enabled toggles DNS on the primary domain binding.
 			mockApex := &pluginDb.WebsiteDomain{
-				ID:               1,
-				WebsiteID:        1,
-				Domain:           "example.com",
+				ID:                1,
+				WebsiteID:         1,
+				Domain:            "example.com",
 				DNSHostingEnabled: true,
 			}
 			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
@@ -861,6 +919,10 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 			mockWebsite := createMockIPFSWebsite(1, userID, "example.com", TestCID, pluginDb.WebsiteStatusActive, "")
 
 			mockWebsiteService.EXPECT().UpdateWebsite(mock.Anything, userID, uint(1), mock.AnythingOfType("map[string]interface {}")).Return(mockWebsite, nil)
+
+			// No domain/DNS fields in the update, so the handler falls back to
+			// resolving the current apex binding for the response.
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(nil, nil)
 
 			reqBody := `{"target_type":"ipns"}`
 			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
@@ -1053,6 +1115,15 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(pluginCore.ValidateDNSResult{Valid: true, Message: "DNS validation successful for test.example.com", Reason: pluginCore.ValidationReasonValidated}, nil)
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)
 
+			// The response's Domain comes from the primary (apex) binding.
+			mockApex := &pluginDb.WebsiteDomain{
+				ID:        1,
+				WebsiteID: 1,
+				UserID:    userID,
+				Domain:    TestDomain,
+			}
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
+
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/1/validate", token, nil)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
@@ -1078,6 +1149,15 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 
 			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).Return(pluginCore.ValidateDNSResult{Valid: false, Message: "DNS validation failed: missing validation token for test.example.com", Reason: pluginCore.ValidationReasonTokenMissing}, nil)
 			mockWebsiteService.EXPECT().GetWebsite(mock.Anything, userID, uint(1)).Return(mockWebsite, nil)
+
+			// The response's Domain comes from the primary (apex) binding.
+			mockApex := &pluginDb.WebsiteDomain{
+				ID:        1,
+				WebsiteID: 1,
+				UserID:    userID,
+				Domain:    TestDomain,
+			}
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/1/validate", token, nil)
 
