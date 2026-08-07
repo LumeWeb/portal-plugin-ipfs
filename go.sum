@@ -185,6 +185,8 @@ github.com/aws/aws-sdk-go-v2/service/s3 v1.106.4 h1:nN+nb2rhWmPOMwFA+e6xDJZJ0h/V
 github.com/aws/aws-sdk-go-v2/service/s3 v1.106.4/go.mod h1:lWk6L5Q3YkaC7so1bQUJkvF7hj2KUFzdZ4w15wc2GHY=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.106.5 h1:HpN6GgZ3T8pSvRp81ZsgumNjlvRsa+9M0ZL2o6W4uLY=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.106.5/go.mod h1:5FTZoQxhmLEiCAtYVk6V+t0iS/B5yGZVLZ3Wq5FDJZI=
+github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0 h1:OkYV+1171za+ab9otU1tGxMXhx6uZvwVEtVddjLuYTg=
+github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0/go.mod h1:5FTZoQxhmLEiCAtYVk6V+t0iS/B5yGZVLZ3Wq5FDJZI=
 github.com/aws/aws-sdk-go-v2/service/signin v1.5.0 h1:OHH5iTQvVGmfHjX/5Q+vFuA/Rf2x6/95aJ/75QCQSm4=
 github.com/aws/aws-sdk-go-v2/service/signin v1.5.0/go.mod h1:mCF3AK9PpL49oOrhniUXWAfhVBVQ/XbytoE5eccZUIs=
 github.com/aws/aws-sdk-go-v2/service/signin v1.5.2 h1:EjI1CZzDcBxPkTa3j1BdtIrUDbqnOGssFMeyUS+6W0I=
@@ -1202,6 +1204,8 @@ go.lumeweb.com/portal v0.5.2-0.20260806141942-0320eb07a00a h1:sjiInLYS0lreGzbzCM
 go.lumeweb.com/portal v0.5.2-0.20260806141942-0320eb07a00a/go.mod h1:5tyhR5sDmFKpSkRz4ZP58pVK0SCZQ7RTmW6li2gyZdc=
 go.lumeweb.com/portal v0.5.2-0.20260806145912-88ce1aa51b10 h1:Nm5tf5EXLECiJqn/fJaUTwawmu6n2UMRUohscTk7IhA=
 go.lumeweb.com/portal v0.5.2-0.20260806145912-88ce1aa51b10/go.mod h1:elW4RW9K8fm9SnfG1qYJBaDNS7zvgpmdVBbwoftzm/8=
+go.lumeweb.com/portal v0.5.2-0.20260807024535-96588d276d5f h1:5DsNXY1ReOB/q9AhVX5R+XD9N1CLWpXB4s1DJ5wzdXA=
+go.lumeweb.com/portal v0.5.2-0.20260807024535-96588d276d5f/go.mod h1:56NfunnE8xAwOJYpk4+iDpt6Yd/LMIG4/4J2kaW7bRM=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.1.0 h1:bHHJ7oZrBKmBvdUFutr3Dx6FdwvSg/ZeF33QaRM0DKU=
