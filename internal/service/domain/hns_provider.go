@@ -347,6 +347,22 @@ func (p *HNSProvider) Nameservers() []string {
 	return p.nsRecords
 }
 
+// LiveNameservers returns the NS records currently served for the HNS
+// domain, resolved against the configured HNS-aware resolver. HNS names are
+// visible only to an HNS-aware resolver (e.g. an hsd instance), not the
+// system default resolver. Uses the same raw miekg/dns query path as
+// VerifyDelegation so HSD referrals in the authority section are honored.
+func (p *HNSProvider) LiveNameservers(ctx context.Context, domain string) ([]string, error) {
+	if p.resolverAddr == "" {
+		return nil, fmt.Errorf("HNS resolver not configured (DnsConfig.HNSResolver); standard resolvers cannot resolve HNS names")
+	}
+	nss, err := queryNS(ctx, p.resolverAddr, dnsname.EnsureFQDN(domain))
+	if err != nil {
+		return nil, err
+	}
+	return nss, nil
+}
+
 // VerifyDelegation checks whether a HNS name's delegation is live via the
 // configured HNS resolver. HNS names are resolved against the Handshake
 // blockchain; this requires an HNS-aware resolver (not the system default).

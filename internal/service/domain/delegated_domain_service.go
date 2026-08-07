@@ -651,6 +651,15 @@ func NewDelegatedDomainServiceFactory() (core.Service, []core.ContextBuilderOpti
 			dns := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
 			if dns != nil {
 				hnsProv.SetDNSService(dns)
+				// Give the DNS service the per-namespace nameserver resolver
+				// (this registry) so it provisions/validates HNS zones via the
+				// HNS provider (nameservers + HNS resolver) rather than
+				// hardcoding ICANN nameservers and the system resolver.
+				if setter, ok := dns.(interface {
+					SetNameserverResolver(pluginCore.NameserverResolver)
+				}); ok {
+					setter.SetNameserverResolver(reg)
+				}
 			}
 			reg.Register(hnsProv)
 
