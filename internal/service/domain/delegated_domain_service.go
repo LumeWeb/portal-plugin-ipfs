@@ -42,6 +42,11 @@ type DNSZoneService interface {
 	SetTLSARecord(ctx context.Context, zoneID uint, content string) error
 	// EnableDNSSEC enables DNSSEC on a zone and returns the DNSKEY.
 	EnableDNSSEC(ctx context.Context, zoneID uint) (dnskey string, err error)
+	// GetActiveDNSSECDS returns the SHA-256 DS RDATA (type 2) for a zone's
+	// currently-active signing key, computed live from PowerDNS. Returns ""
+	// when the zone has no active signing key; errors when multiple active keys
+	// exist (in-progress rollover).
+	GetActiveDNSSECDS(ctx context.Context, zoneID uint) (ds string, err error)
 }
 
 // DSRecord represents a Delegation Signer record for DNSSEC.
@@ -204,12 +209,24 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		return false, fmt.Errorf("unsupported namespace: %s", wd.Namespace)
 	}
 
-	data, err := json.Marshal(wd.DelegationData)
-	if err != nil {
-		return false, err
+	// Expected DS is computed live from PowerDNS's current active signing key
+	// (never persisted, so it cannot go stale on key rotation). ICANN's
+	// VerifyDelegation ignores it; HNS uses it to require the parent zone to
+	// serve the DS before marking the domain Active.
+	//
+	// A zone with no active signing key (("", nil)) is genuinely self-managed —
+	// the portal generated no DS, so NS-only verification is correct. But if
+	// resolution ERRORS (key rollover with multiple active keys, PowerDNS
+	// unreachable), the zone is portal-managed and the live DS is
+	// indeterminate. We must NOT silently weaken a managed zone to NS-only on
+	// a transient failure: that would mark Active a zone whose DS chain of
+	// trust was not actually confirmed.
+	expectedDS, dsErr := s.dnsSvc.GetActiveDNSSECDS(ctx, wd.ZoneID)
+	if dsErr != nil {
+		return false, fmt.Errorf("resolve live DS for zone %d: %w", wd.ZoneID, dsErr)
 	}
 
-	verified, err := provider.VerifyDelegation(ctx, wd.Domain, data)
+	verified, err := provider.VerifyDelegation(ctx, wd.Domain, expectedDS)
 	if err != nil {
 		wd.Status = pluginDb.DomainStatusError
 		if s.DB() != nil {

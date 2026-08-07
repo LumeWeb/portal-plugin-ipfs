@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"testing"
@@ -96,6 +97,13 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 			helper := newMockHelper(t, ctx)
 			token, userID, testCID, _ := helper.SetupAuthenticatedTest()
 
+			// The DS is computed live from PowerDNS on demand, not stored. Stub
+			// the current active signing key's DS so the handler injects it.
+			mockDNS := helper.SetupDNSServiceMocks()
+			mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, uint(0)).Return(
+				"60776 13 2 3b35deed97def5fbb5ce939cd5b9036f12db0ccc2e1cb40bb4c565c168c66116", nil,
+			).Maybe()
+
 			website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
 			require.NoError(t, ctx.DB().Create(website).Error)
 
@@ -111,6 +119,7 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 					"mode": "delegated",
 					"parent_records": []map[string]any{
 						{"type": "NS", "value": "ns1.lumeweb,ns2.lumeweb"},
+						// Stale stored DS — must be REPLACED by the live value.
 						{"type": "DS", "value": "lumeweb. 3600 IN DS 12345 13 2 <digest>"},
 					},
 					"authoritative_records": []map[string]any{
@@ -129,8 +138,110 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 			assert.Equal(t, "hns", resp.Namespace)
 			require.NotNil(t, resp.Delegation)
 			assert.Equal(t, "delegated", resp.Delegation.Mode)
-			assert.Equal(t, "lumeweb. 3600 IN DS 12345 13 2 <digest>", resp.Delegation.DS)
+			// No first-class DS field — the live DS is injected into
+			// parent_records, replacing the stale stored DS entry.
 			require.Len(t, resp.Delegation.ParentRecords, 2)
+			assert.Equal(t, "NS", resp.Delegation.ParentRecords[0].Type)
+			dsRec := resp.Delegation.ParentRecords[1]
+			assert.Equal(t, "DS", dsRec.Type)
+			assert.Equal(t, "60776 13 2 3b35deed97def5fbb5ce939cd5b9036f12db0ccc2e1cb40bb4c565c168c66116", dsRec.Value)
+		}, TestOptions)
+	})
+
+	t.Run("ds_unresolvable_removes_stale_ds", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID, testCID, _ := helper.SetupAuthenticatedTest()
+
+			// PowerDNS is unreachable / key rollover: GetActiveDNSSECDS errors.
+			mockDNS := helper.SetupDNSServiceMocks()
+			mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, uint(0)).Return(
+				"", errors.New("PowerDNS unreachable"),
+			).Maybe()
+
+			website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
+			require.NoError(t, ctx.DB().Create(website).Error)
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID:   1,
+				UserID:      userID,
+				Domain:      "lumeweb",
+				Namespace:   pluginDb.DomainNamespaceHNS,
+				Status:      pluginDb.DomainStatusRecordsGenerated,
+				ZoneName:    "lumeweb.",
+				GatewayHost: "gateway.lumeweb.com",
+				DelegationData: datatypes.JSONMap{
+					"mode": "delegated",
+					"parent_records": []map[string]any{
+						{"type": "NS", "value": "ns1.lumeweb,ns2.lumeweb"},
+						// Stale stored DS — must be DROPPED, not presented as current.
+						{"type": "DS", "value": "lumeweb. 3600 IN DS 12345 13 2 <digest>"},
+					},
+					"authoritative_records": []map[string]any{
+						{"type": "NS", "value": "ns1.lumeweb\nns2.lumeweb"},
+					},
+				},
+			}
+			require.NoError(t, ctx.DB().Create(wd).Error)
+
+			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites/1/domains/1/dns-requirements", token, nil)
+			require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+			var resp dto.DomainResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.NotNil(t, resp.Delegation)
+			// Stale DS must be removed from parent_records so a value whose
+			// correctness cannot be confirmed is never presented as current.
+			require.Len(t, resp.Delegation.ParentRecords, 1)
+			assert.Equal(t, "NS", resp.Delegation.ParentRecords[0].Type)
+		}, TestOptions)
+	})
+
+	t.Run("ds_empty_removes_stale_ds", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID, testCID, _ := helper.SetupAuthenticatedTest()
+
+			// Zone has no active signing key (e.g. after key rotation): the
+			// documented GetActiveDNSSECDS ("", nil) outcome.
+			mockDNS := helper.SetupDNSServiceMocks()
+			mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, uint(0)).Return(
+				"", nil,
+			).Maybe()
+
+			website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
+			require.NoError(t, ctx.DB().Create(website).Error)
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID:   1,
+				UserID:      userID,
+				Domain:      "lumeweb",
+				Namespace:   pluginDb.DomainNamespaceHNS,
+				Status:      pluginDb.DomainStatusRecordsGenerated,
+				ZoneName:    "lumeweb.",
+				GatewayHost: "gateway.lumeweb.com",
+				DelegationData: datatypes.JSONMap{
+					"mode": "delegated",
+					"parent_records": []map[string]any{
+						{"type": "NS", "value": "ns1.lumeweb,ns2.lumeweb"},
+						// Stale stored DS — must be DROPPED when no live key exists.
+						{"type": "DS", "value": "lumeweb. 3600 IN DS 12345 13 2 <digest>"},
+					},
+					"authoritative_records": []map[string]any{
+						{"type": "NS", "value": "ns1.lumeweb\nns2.lumeweb"},
+					},
+				},
+			}
+			require.NoError(t, ctx.DB().Create(wd).Error)
+
+			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites/1/domains/1/dns-requirements", token, nil)
+			require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+			var resp dto.DomainResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.NotNil(t, resp.Delegation)
+			// No live signing key: stale DS must be removed, not presented.
+			require.Len(t, resp.Delegation.ParentRecords, 1)
 			assert.Equal(t, "NS", resp.Delegation.ParentRecords[0].Type)
 		}, TestOptions)
 	})

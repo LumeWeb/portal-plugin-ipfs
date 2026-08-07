@@ -13,7 +13,7 @@ type DomainProvider interface {
 	Protocol() string
 	Validate(domain string) error
 	BuildDelegation(ctx context.Context, zoneID uint, domain string, website *pluginDb.Website, config json.RawMessage) (any, error)
-	VerifyDelegation(ctx context.Context, domain string, delegationData json.RawMessage) (bool, error)
+	VerifyDelegation(ctx context.Context, domain string, expectedDS string) (bool, error)
 	// OnCertAvailable is called when a cert is pushed via /internal/dns/cert.
 	// Providers can use it to update TLSA in delegation data or trigger
 	// namespace-specific protocol updates. Can be nil-safe by returning nil.

@@ -93,4 +93,12 @@ type DNSService interface {
 
 	// EnableDNSSEC enables DNSSEC on a zone and returns the DNSKEY record content.
 	EnableDNSSEC(ctx context.Context, zoneID uint) (dnskey string, err error)
+
+	// GetActiveDNSSECDS returns the SHA-256 DS RDATA (type 2) for a zone's
+	// currently-active signing key, computed live from PowerDNS. It is the
+	// on-the-fly source of the DS (display in dns-requirements and on-chain
+	// verification) so no DS is persisted in the portal DB. Returns "" when the
+	// zone has no active signing key; errors when multiple active signing keys
+	// exist (in-progress rollover).
+	GetActiveDNSSECDS(ctx context.Context, zoneID uint) (ds string, err error)
 }

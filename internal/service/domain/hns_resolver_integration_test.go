@@ -2,7 +2,6 @@ package domain
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"strconv"
 	"strings"
@@ -153,7 +152,7 @@ func TestHNSProvider_VerifyDelegation_UsesCustomPortResolver(t *testing.T) {
 	p := NewHNSProvider(addr, []string{"ns1.lumeweb.", "ns2.lumeweb."}, TLSASource{})
 
 	before := served.value()
-	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", json.RawMessage(`{}`))
+	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", "")
 	require.NoError(t, err)
 	assert.True(t, verified, "delegation should verify when NS records match")
 
@@ -173,7 +172,7 @@ func TestHNSProvider_VerifyDelegation_CustomPort_NSMismatch(t *testing.T) {
 	p := NewHNSProvider(addr, []string{"ns1.lumeweb.", "ns2.lumeweb."}, TLSASource{})
 
 	before := served.value()
-	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", json.RawMessage(`{}`))
+	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", "")
 	require.NoError(t, err)
 	assert.False(t, verified, "delegation must not verify when returned NS do not match")
 	assert.Greater(t, served.value(), before, "custom-port resolver must have been queried even on mismatch")
@@ -182,7 +181,7 @@ func TestHNSProvider_VerifyDelegation_CustomPort_NSMismatch(t *testing.T) {
 func TestHNSProvider_VerifyDelegation_NoResolverConfigured(t *testing.T) {
 	p := NewHNSProvider("", []string{"ns1.lumeweb.", "ns2.lumeweb."}, TLSASource{})
 
-	_, err := p.VerifyDelegation(context.Background(), "lumeweb", json.RawMessage(`{}`))
+	_, err := p.VerifyDelegation(context.Background(), "lumeweb", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "HNS resolver not configured")
 }
@@ -198,7 +197,7 @@ func TestHNSProvider_VerifyDelegation_CustomPort_ErrorStillProvesDial(t *testing
 	p := NewHNSProvider(addr, []string{"ns1.lumeweb.", "ns2.lumeweb."}, TLSASource{})
 
 	before := served.value()
-	valid, err := p.VerifyDelegation(context.Background(), "lumeweb", json.RawMessage(`{}`))
+	valid, err := p.VerifyDelegation(context.Background(), "lumeweb", "")
 	t.Logf("VerifyDelegation valid=%v err=%v customPort=%s served=%d", valid, err, addr, served.value())
 
 	// The custom-port resolver was queried during VerifyDelegation regardless
@@ -281,7 +280,7 @@ func TestHNSProvider_VerifyDelegation_TruncatedUDP_TCPRetryFails(t *testing.T) {
 
 	p := NewHNSProvider(addr, []string{ns1, ns2}, TLSASource{})
 
-	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", json.RawMessage(`{}`))
+	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", "")
 	require.Error(t, err,
 		"must not silently succeed on truncated UDP data when the TCP retry fails")
 	assert.Contains(t, err.Error(), "TCP retry after UDP truncation failed",
@@ -303,7 +302,7 @@ func TestHNSProvider_VerifyDelegation_ErrorSurfacesActualResolverAddr(t *testing
 
 	p := NewHNSProvider(deadAddr, []string{"ns1.lumeweb.", "ns2.lumeweb."}, TLSASource{})
 
-	_, err = p.VerifyDelegation(context.Background(), "lumeweb", json.RawMessage(`{}`))
+	_, err = p.VerifyDelegation(context.Background(), "lumeweb", "")
 	require.Error(t, err)
 
 	// The wrapped error must name the custom resolver (host:port) so operators
@@ -329,17 +328,9 @@ func TestHNSProvider_VerifyDelegation_Managed_RequiresServedDS(t *testing.T) {
 
 	p := NewHNSProvider(addr, []string{"ns1.lumeweb.", "ns2.lumeweb."}, TLSASource{})
 
-	// Delegation data is the platform-generated bundle: it carries the DS the
-	// portal computed (managed zone).
-	managedDelegation := json.RawMessage(`{
-		"mode": "delegated",
-		"parent_records": [
-			{"type": "NS", "value": "ns1.lumeweb.,ns2.lumeweb."},
-			{"type": "DS", "value": "` + dsRdata + `"}
-		]
-	}`)
-
-	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", managedDelegation)
+	// The expected DS is the live value of the portal's current PowerDNS
+	// signing key (computed on the fly, never persisted). Feed it in directly.
+	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", dsRdata)
 	require.NoError(t, err)
 	assert.False(t, verified,
 		"managed zone must not verify before the portal's DS is served by the parent zone")
@@ -356,15 +347,8 @@ func TestHNSProvider_VerifyDelegation_Managed_VerifiedWhenDSServed(t *testing.T)
 
 	p := NewHNSProvider(addr, []string{"ns1.lumeweb.", "ns2.lumeweb."}, TLSASource{})
 
-	managedDelegation := json.RawMessage(`{
-		"mode": "delegated",
-		"parent_records": [
-			{"type": "NS", "value": "ns1.lumeweb.,ns2.lumeweb."},
-			{"type": "DS", "value": "` + dsRdata + `"}
-		]
-	}`)
-
-	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", managedDelegation)
+	// Expected DS is fed in directly (live value, see VerifyDomain).
+	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", dsRdata)
 	require.NoError(t, err)
 	assert.True(t, verified,
 		"managed zone must verify once NS delegation is visible AND the portal's DS is served")
@@ -379,33 +363,10 @@ func TestHNSProvider_VerifyDelegation_SelfManaged_NSOnly(t *testing.T) {
 	addr, _ := startCustomPortDNSServer(t, domain, []string{"ns1.lumeweb.", "ns2.lumeweb."})
 	p := NewHNSProvider(addr, []string{"ns1.lumeweb.", "ns2.lumeweb."}, TLSASource{})
 
-	// No parent DS record -> self-managed.
-	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", json.RawMessage(`{
-		"mode": "delegated",
-		"parent_records": [{"type": "NS", "value": "ns1.lumeweb.,ns2.lumeweb."}]
-	}`))
+	// Empty expectedDS means self-managed (no portal-generated DS).
+	verified, err := p.VerifyDelegation(context.Background(), "lumeweb", "")
 	require.NoError(t, err)
 	assert.True(t, verified, "self-managed zone validates on NS visibility alone")
-}
-
-// delegationExpectedDS normalizes both plain RDATA and legacy
-// "<owner> DS <rdata>" persisted values down to the DS RDATA.
-func TestDelegationExpectedDS(t *testing.T) {
-	raw := json.RawMessage(`{
-		"parent_records": [
-			{"type": "NS", "value": "ns1.lumeweb."},
-			{"type": "DS", "value": "44451 13 2 cb6c0f5b"}
-		]
-	}`)
-	assert.Equal(t, "44451 13 2 cb6c0f5b", delegationExpectedDS(raw))
-
-	legacy := json.RawMessage(`{
-		"parent_records": [{"type": "DS", "value": "lumeweb. 3600 IN DS 44451 13 2 cb6c0f5b"}]
-	}`)
-	assert.Equal(t, "44451 13 2 cb6c0f5b", delegationExpectedDS(legacy))
-
-	assert.Equal(t, "", delegationExpectedDS(json.RawMessage(`{}`)))
-	assert.Equal(t, "", delegationExpectedDS(json.RawMessage(`{"parent_records":[]}`)))
 }
 
 // dsEqual must normalize case on both sides: the served digest is lowercased

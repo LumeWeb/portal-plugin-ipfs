@@ -2,8 +2,6 @@ package domain
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -200,14 +198,14 @@ func (p *HNSProvider) BuildDelegation(ctx context.Context, zoneID uint,
 		tlsa = ""
 	}
 
-	// Enable DNSSEC on the zone and compute DS record
-	var dsRecords []Record
+	// Ensure DNSSEC is enabled on the zone so it is signed and has a key to
+	// derive the DS from. The DS itself is NOT persisted in the delegation
+	// bundle — it is derived live from PowerDNS on demand (see
+	// GetActiveDNSSECDS), so it can never go stale on key rotation.
 	if p.dnsSvc != nil {
-		ds, dsErr := p.enableDNSSECAndDS(ctx, zoneID, zoneName)
-		if dsErr != nil {
-			return nil, fmt.Errorf("dnssec enablement failed: %w", dsErr)
+		if err := p.enableDNSSEC(ctx, zoneID); err != nil {
+			return nil, fmt.Errorf("dnssec enablement failed: %w", err)
 		}
-		dsRecords = ds
 	}
 
 	nsRecords := p.Nameservers()
@@ -225,70 +223,19 @@ func (p *HNSProvider) BuildDelegation(ctx context.Context, zoneID uint,
 		bundle = p.buildDelegated(zoneName, nsRecords, tlsa, &cfg)
 	}
 
-	// Append DS records to parent (published at the parent zone for chain of trust)
-	if len(dsRecords) > 0 {
-		bundle.ParentRecords = append(bundle.ParentRecords, dsRecords...)
-	}
-
 	return bundle, nil
 }
 
-// enableDNSSECAndDS enables DNSSEC on the zone via PowerDNS and computes
-// the DS record from the returned DNSKEY using the dane library.
-func (p *HNSProvider) enableDNSSECAndDS(ctx context.Context, zoneID uint, zoneName string) ([]Record, error) {
-	dnskeyStr, err := p.dnsSvc.EnableDNSSEC(ctx, zoneID)
-	if err != nil {
-		return nil, fmt.Errorf("enable dnssec: %w", err)
+// enableDNSSEC ensures DNSSEC is enabled on the zone via PowerDNS. It is
+// idempotent (EnableDNSSEC reuses an existing active signing key) and exists so
+// fresh delegation guarantees a signed zone. The DS is deliberately NOT
+// computed or stored here: the portal keeps the delegation bundle free of the
+// derived DS, which is instead computed live from PowerDNS on demand.
+func (p *HNSProvider) enableDNSSEC(ctx context.Context, zoneID uint) error {
+	if _, err := p.dnsSvc.EnableDNSSEC(ctx, zoneID); err != nil {
+		return fmt.Errorf("enable dnssec: %w", err)
 	}
-
-	// PowerDNS returns DNSKEY as "257 3 13 <base64key>" (flags protocol algorithm key)
-	parts := strings.Fields(dnskeyStr)
-	if len(parts) < 4 {
-		return nil, fmt.Errorf("invalid dnskey format from powerdns: %q", dnskeyStr)
-	}
-
-	flags, err := strconv.ParseUint(parts[0], 10, 16)
-	if err != nil {
-		return nil, fmt.Errorf("parse dnskey flags: %w", err)
-	}
-	protocol, err := strconv.ParseUint(parts[1], 10, 8)
-	if err != nil {
-		return nil, fmt.Errorf("parse dnskey protocol: %w", err)
-	}
-	algorithm, err := strconv.ParseUint(parts[2], 10, 8)
-	if err != nil {
-		return nil, fmt.Errorf("parse dnskey algorithm: %w", err)
-	}
-
-	pubKey, err := base64.StdEncoding.DecodeString(strings.Join(parts[3:], ""))
-	if err != nil {
-		return nil, fmt.Errorf("decode dnskey public key: %w", err)
-	}
-
-	// Build DNSKEY RDATA: flags(2) + protocol(1) + algorithm(1) + public_key
-	rdata := make([]byte, 4+len(pubKey))
-	binary.BigEndian.PutUint16(rdata[0:2], uint16(flags))
-	rdata[2] = uint8(protocol)
-	rdata[3] = uint8(algorithm)
-	copy(rdata[4:], pubKey)
-
-	// Compute DS record using SHA-256 digest (type 2)
-	canonicalName := []byte(strings.ToLower(zoneName))
-	ds, err := dane.ComputeDS(canonicalName, rdata, 2)
-	if err != nil {
-		return nil, fmt.Errorf("compute ds: %w", err)
-	}
-
-	// The DS VALUE carries only the RDATA (key tag, algorithm, digest type,
-	// digest) per RFC 4034 §5.3 — the owner name and record-type token belong
-	// to the table's domain/type context, not the value. Use ds.String()
-	// (RDATA presentation) rather than dane.FormatDSRecord, which would
-	// prefix "<owner> DS " onto the value.
-	dsStr := ds.String()
-	return []Record{{
-		Type:  "DS",
-		Value: dsStr,
-	}}, nil
+	return nil
 }
 
 func (p *HNSProvider) buildDelegated(zoneName string, nsRecords []string, tlsa string, cfg *HNSDelegationConfig) DelegationBundle {
@@ -413,7 +360,7 @@ func (p *HNSProvider) Nameservers() []string {
 // generated) are validated on NS visibility alone, since only the name owner
 // knows their own DNSKEY/DS.
 func (p *HNSProvider) VerifyDelegation(ctx context.Context, domain string,
-	delegationData json.RawMessage) (bool, error) {
+	expectedDS string) (bool, error) {
 
 	if p.resolverAddr == "" {
 		return false, fmt.Errorf("HNS resolver not configured (DnsConfig.HNSResolver); standard resolvers cannot resolve HNS names")
@@ -448,10 +395,12 @@ func (p *HNSProvider) VerifyDelegation(ctx context.Context, domain string,
 		return false, nil
 	}
 
-	// Platform-generated DS: if the stored delegation carries a DS record the
-	// portal computed (managed/PowerDNS-signed zone), require that exact DS to
-	// be served by the parent zone before considering the delegation live.
-	expectedDS := delegationExpectedDS(delegationData)
+	// Platform-generated DS: when the caller supplies the live DS the portal
+	// computed for the PowerDNS-signed zone (see GetActiveDNSSECDS), require
+	// that exact DS to be served by the parent zone before considering the
+	// delegation live. An empty expectedDS means a self-managed zone (the name
+	// owner publishes their own DNSKEY/DS, which the portal cannot know), so NS
+	// visibility is sufficient.
 	if expectedDS == "" {
 		// Self-managed zone: the name owner publishes a DS from their own
 		// DNSKEY, which the portal cannot know. NS visibility is sufficient.
@@ -471,27 +420,6 @@ func (p *HNSProvider) VerifyDelegation(ctx context.Context, domain string,
 		}
 	}
 	return false, nil
-}
-
-// delegationExpectedDS extracts the platform-generated DS value (RDATA, e.g.
-// "44451 13 2 c359...") from a stored delegation bundle, or "" when the
-// portal did not generate a DS (self-managed zone).
-func delegationExpectedDS(delegationData json.RawMessage) string {
-	var bundle DelegationBundle
-	if len(delegationData) > 0 {
-		_ = json.Unmarshal(delegationData, &bundle)
-	}
-	for _, rec := range bundle.ParentRecords {
-		if rec.Type == "DS" && rec.Value != "" {
-			// DS values may carry a leading owner/token from older persisted
-			// data ("<owner> DS <rdata>"); normalize to RDATA.
-			if idx := strings.Index(rec.Value, " DS "); idx >= 0 {
-				return rec.Value[idx+len(" DS "):]
-			}
-			return rec.Value
-		}
-	}
-	return ""
 }
 
 // dsEqual compares two DS RDATA presentation strings ignoring the leading

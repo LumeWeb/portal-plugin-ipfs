@@ -251,7 +251,78 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
+
+	// The DS to publish is computed live from PowerDNS's current active signing
+	// key rather than read from stored delegation data (which would go stale on
+	// key rotation). Only portal-managed, DNSSEC-signed namespaces (e.g. HNS)
+	// yield a DS; ICANN domains have no parent DS and this is a no-op. The live
+	// DS is injected into parent_records (which renderers draw from); there is
+	// no separate DS field that could otherwise sit empty.
+	if resp.Delegation != nil && a.dnsService != nil {
+		ds, dsErr := a.dnsService.GetActiveDNSSECDS(reqCtx, wd.ZoneID)
+		if dsErr != nil {
+			// PowerDNS unavailable or a key rollover is in progress: the live
+			// DS cannot be resolved. Log it and drop any stored DS from
+			// parent_records so a stale value is never presented as current.
+			a.Logger().Warn("could not resolve live DS for dns-requirements",
+				zap.Uint("zone_id", wd.ZoneID), zap.Error(dsErr))
+			resp.Delegation.ParentRecords = removeDSRecord(resp.Delegation.ParentRecords)
+		} else if ds != "" {
+			// Ensure the rendered parent_records carries the live DS so CLI
+			// renderers that draw from parent_records show the current value
+			// (replace any stale stored DS entry, else append).
+			resp.Delegation.ParentRecords = upsertDSRecord(resp.Delegation.ParentRecords, ds)
+		} else {
+			// Zone has no active signing key (e.g. after a key was rotated or
+			// removed): drop any stored DS so a stale value is never presented
+			// as current when there is no live DS to back it.
+			resp.Delegation.ParentRecords = removeDSRecord(resp.Delegation.ParentRecords)
+		}
+	}
+
 	return httputil.EncodeResponse(ctx, &wd, &resp)
+}
+
+// upsertDSRecord returns parent records with the DS record set to `ds`,
+// replacing any existing DS entry or appending a new one. A nil/empty slice is
+// preserved as nil so ICANN-shaped delegation (no parent records) stays bare.
+func upsertDSRecord(records []dto.DNSDelegationRecord, ds string) []dto.DNSDelegationRecord {
+	if len(records) == 0 {
+		return records
+	}
+	out := records
+	replaced := false
+	for i := range out {
+		if out[i].Type == "DS" {
+			out[i].Value = ds
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		out = append(out, dto.DNSDelegationRecord{Type: "DS", Value: ds})
+	}
+	return out
+}
+
+// removeDSRecord returns parent records with any DS entry stripped out. Used
+// when the live DS cannot be resolved (PowerDNS down, key rollover) so a
+// stale stored DS is never presented as current. A nil/empty slice is
+// preserved as nil.
+func removeDSRecord(records []dto.DNSDelegationRecord) []dto.DNSDelegationRecord {
+	if len(records) == 0 {
+		return records
+	}
+	out := records[:0]
+	for _, r := range records {
+		if r.Type != "DS" {
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // republishDomainDANE forces re-publication of a bound domain's DANE records

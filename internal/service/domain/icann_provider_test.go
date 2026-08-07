@@ -34,7 +34,8 @@ func TestICANNProvider_BuildDelegation(t *testing.T) {
 
 func TestICANNProvider_VerifyDelegation(t *testing.T) {
 	p := NewICANNProvider(nil)
-	verified, err := p.VerifyDelegation(context.Background(), "example.com", nil)
+	// ICANN ignores expectedDS entirely.
+	verified, err := p.VerifyDelegation(context.Background(), "example.com", "")
 	assert.NoError(t, err)
 	assert.True(t, verified)
 }

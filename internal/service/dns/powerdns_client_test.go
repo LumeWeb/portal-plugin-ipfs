@@ -1775,3 +1775,105 @@ func testAPIKey() string {
 func strPtr(s string) *string {
 	return &s
 }
+
+func TestSha256DSPresentation(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      []string
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "selects SHA-256 (type 2) among multiple digest types",
+			in: []string{
+				"60776 13 4 870ecd07a97de1bad8b771699b8cd59f385437be4dec76698bcc049857cb67f68790e0a705909579570987844a0d8a61",
+				"60776 13 2 3b35deed97def5fbb5ce939cd5b9036f12db0ccc2e1cb40bb4c565c168c66116",
+			},
+			want: "60776 13 2 3b35deed97def5fbb5ce939cd5b9036f12db0ccc2e1cb40bb4c565c168c66116",
+		},
+		{name: "only SHA-256 present", in: []string{"44451 13 2 bdb0d7c0"}, want: "44451 13 2 bdb0d7c0"},
+		{name: "no DS entries", in: nil, wantErr: true},
+		{name: "only SHA-512 present", in: []string{"44451 13 4 beef"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := sha256DSPresentation(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestGetActiveDNSKEYDS(t *testing.T) {
+	t.Run("returns SHA-256 DS for single active CSK", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("details") != "true" {
+				t.Errorf("expected ?details=true, got %q", r.URL.RawQuery)
+			}
+			body := `[{"id":"5","keytype":"csk","active":true,"dnskey":"257 3 13 evH3XP==","ds":["60776 13 2 3b35deed97def5fbb5ce939cd5b9036f12db0ccc2e1cb40bb4c565c168c66116","60776 13 4 870ecd07"]}]`
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(body))
+		}))
+		defer server.Close()
+		client, err := NewPowerDNSClient(server.URL, testAPIKey(), &core.Logger{Logger: zap.NewNop()})
+		if err != nil {
+			t.Fatalf("NewPowerDNSClient: %v", err)
+		}
+		ds, err := client.GetActiveDNSKEYDS(context.Background(), "lumeweb.")
+		if err != nil {
+			t.Fatalf("GetActiveDNSKEYDS: %v", err)
+		}
+		want := "60776 13 2 3b35deed97def5fbb5ce939cd5b9036f12db0ccc2e1cb40bb4c565c168c66116"
+		if ds != want {
+			t.Errorf("expected %q, got %q", want, ds)
+		}
+	})
+
+	t.Run("no active signing key returns empty", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[{"id":"1","keytype":"csk","active":false,"dnskey":"257 3 13 x=","ds":["60776 13 2 abc"]}]`))
+		}))
+		defer server.Close()
+		client, err := NewPowerDNSClient(server.URL, testAPIKey(), &core.Logger{Logger: zap.NewNop()})
+		if err != nil {
+			t.Fatalf("NewPowerDNSClient: %v", err)
+		}
+		ds, err := client.GetActiveDNSKEYDS(context.Background(), "lumeweb.")
+		if err != nil {
+			t.Fatalf("GetActiveDNSKEYDS: %v", err)
+		}
+		if ds != "" {
+			t.Errorf("expected empty DS, got %q", ds)
+		}
+	})
+
+	t.Run("multiple active keys errors (no guess)", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body := `[{"id":"4","keytype":"csk","active":true,"dnskey":"257 3 13 a=","ds":["44451 13 2 bdb0d7c0"]},{"id":"5","keytype":"csk","active":true,"dnskey":"257 3 13 b=","ds":["60776 13 2 3b35deed"]}]`
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(body))
+		}))
+		defer server.Close()
+		client, err := NewPowerDNSClient(server.URL, testAPIKey(), &core.Logger{Logger: zap.NewNop()})
+		if err != nil {
+			t.Fatalf("NewPowerDNSClient: %v", err)
+		}
+		if _, err := client.GetActiveDNSKEYDS(context.Background(), "lumeweb."); err == nil {
+			t.Fatal("expected error with multiple active signing keys")
+		}
+	})
+}

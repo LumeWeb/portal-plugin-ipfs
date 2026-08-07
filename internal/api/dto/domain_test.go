@@ -50,8 +50,10 @@ func TestDomainResponse_FromModel_HNS(t *testing.T) {
 	require.NotNil(t, resp.Delegation, "delegation should be populated for HNS")
 	assert.Equal(t, "delegated", resp.Delegation.Mode)
 
-	// DS promoted to first-class field.
-	assert.Equal(t, "lumeweb. 3600 IN DS 12345 13 2 <digest>", resp.Delegation.DS)
+	// No first-class DS field: the DS is a parent_records entry derived from
+	// the live PowerDNS key (computed on the fly in dns-requirements), never a
+	// stored/promoted value.
+	assert.NotContains(t, resp.Delegation.ParentRecords, "ds")
 
 	// Parent records preserved with type/ns/address.
 	require.Len(t, resp.Delegation.ParentRecords, 3)
@@ -88,7 +90,6 @@ func TestDomainResponse_FromModel_ICANN(t *testing.T) {
 
 	require.NotNil(t, resp.Delegation)
 	assert.Equal(t, []string{"ns1.example.com", "ns2.example.com"}, resp.Delegation.Nameservers)
-	assert.Empty(t, resp.Delegation.DS)
 	assert.Empty(t, resp.Delegation.ParentRecords)
 }
 
