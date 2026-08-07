@@ -74,7 +74,7 @@ func TestAPI_CreateWebsite(t *testing.T) {
 			require.NoError(tb, ctx.DB().Create(createTestIPFSGatewayWebsite(1, userID, TestDomain, cid.MustParse(TestCID), pluginDb.WebsiteStatusActive)).Error)
 			mockDNS := helper.SetupDNSServiceMocks()
 			mockDNS.EXPECT().CreateZone(mock.Anything, TestDomain, userID).Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: TestDomain}, nil)
-			mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything).Return(nil).Maybe()
+			mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything, mock.Anything).Return(nil).Maybe()
 
 			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, pluginDb.WebsiteStatusPendingValidation, "test-token")
 
@@ -122,7 +122,7 @@ func TestAPI_CreateWebsite(t *testing.T) {
 			require.NoError(tb, ctx.DB().Create(createTestIPFSGatewayWebsite(1, userID, TestDomain, cid.MustParse(TestCID), pluginDb.WebsiteStatusActive)).Error)
 			mockDNS := helper.SetupDNSServiceMocks()
 			mockDNS.EXPECT().CreateZone(mock.Anything, TestDomain, userID).Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: TestDomain}, nil)
-			mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything).Return(nil).Maybe()
+			mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything, mock.Anything).Return(nil).Maybe()
 
 			mockWebsite := createMockIPNSWebsite(1, userID, TestDomain, TestPeerID, pluginDb.WebsiteStatusPendingValidation, "test-token")
 
@@ -226,7 +226,7 @@ func TestAPI_CreateWebsite(t *testing.T) {
 			require.NoError(tb, ctx.DB().Create(createTestIPFSGatewayWebsite(1, userID, TestDomain, cid.MustParse(TestCID), pluginDb.WebsiteStatusActive)).Error)
 			mockDNS := helper.SetupDNSServiceMocks()
 			mockDNS.EXPECT().CreateZone(mock.Anything, TestDomain, userID).Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: TestDomain}, nil)
-			mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything).Return(nil).Maybe()
+			mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything, mock.Anything).Return(nil).Maybe()
 
 			mockWebsite := createMockIPFSWebsite(1, userID, TestDomain, TestCID, pluginDb.WebsiteStatusBroken, "test-token")
 
@@ -867,7 +867,7 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 			// gateway config in the harness).
 			mockDNS := helper.SetupDNSServiceMocks()
 			mockDNS.EXPECT().CreateZone(mock.Anything, "updated-example.com", userID).Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: "updated-example.com"}, nil)
-			mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything).Return(nil).Maybe()
+			mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything, mock.Anything).Return(nil).Maybe()
 
 			mockWebsite := createMockIPFSWebsite(1, userID, "updated-example.com", TestCID, pluginDb.WebsiteStatusActive, "")
 

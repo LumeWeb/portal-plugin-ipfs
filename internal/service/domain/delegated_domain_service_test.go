@@ -60,7 +60,7 @@ func TestDelegatedDomainService_CreateDomain(t *testing.T) {
 
 		mockDNS.EXPECT().CreateZone(mock.Anything, "example.com", uint(1)).
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: "example.com"}, nil).Once()
-		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything, mock.Anything).Return(nil).Once()
 
 		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, true, nil)
 		assert.NoError(tb, err)
@@ -131,10 +131,12 @@ func TestDelegatedDomainService_CreateDomain_SubdomainReusesParentZone(t *testin
 		// parent, and CreateZone must NOT be called for the subdomain.
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "example.com").
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: parent.ID}, Domain: "example.com", UserID: 1}, nil).Once()
-		// Downstream record writes replay onto the reused parent zone id; make
-		// them permissive so the test isolates the zone-reuse invariant.
-		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(parent.ID), mock.Anything).Return(nil).Maybe()
-		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(parent.ID), mock.Anything, mock.Anything).Return(nil).Maybe()
+		// The subdomain's records must be named after the subdomain (not the
+		// parent apex) so they don't collide with the parent's own records. The
+		// apex record only fires when a gateway host is configured (it's absent
+		// in this harness), so assert its domain-name strictly if it runs.
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(parent.ID), "docs.example.com", mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(parent.ID), "docs.example.com", mock.Anything, mock.Anything).Return(nil).Maybe()
 		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, "docs.example.com", mock.Anything)
 
 		wd, err := svc.CreateDomain(context.Background(), "icann", "docs.example.com", website.ID, 1, true, nil)
@@ -414,8 +416,8 @@ func TestDelegatedDomainService_UpdateTLSA_PublishesToManagedZone(t *testing.T) 
 			// The TLSA must be pushed to the managed zone (zone 42) as
 			// "usage selector matching hash" rdata.
 			mockDNS.EXPECT().
-				SetTLSARecord(mock.Anything, uint(42), mock.Anything).
-				Run(func(_ context.Context, zoneID uint, content string) {
+				SetTLSARecord(mock.Anything, uint(42), mock.Anything, mock.Anything).
+				Run(func(_ context.Context, zoneID uint, domain string, content string) {
 					assert.Regexp(tb, `^3 1 1 [0-9a-fA-F]+$`, content,
 						"TLSA rdata must be '<usage> <selector> <matching> <digest>'")
 				}).

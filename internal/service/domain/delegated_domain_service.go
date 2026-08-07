@@ -33,18 +33,27 @@ type DNSZoneService interface {
 	// soft-deleted zones). Returns gorm.ErrRecordNotFound when none match.
 	GetZoneByDomain(ctx context.Context, domain string) (*pluginDb.DNSZone, error)
 	DeleteZone(ctx context.Context, zoneID uint) error
-	CreateDNSLinkRecord(ctx context.Context, zoneID uint, target string) error
-	// CreateApexRecord creates the apex (root) record for a zone of the given
-	// record type (e.g. RecordTypeA or RecordTypeALIAS). content is the raw
-	// value: an IP address for A, a gateway hostname for ALIAS.
-	CreateApexRecord(ctx context.Context, zoneID uint, recordType pluginCore.RecordType, content string) error
-	// SetTLSARecord writes (or replaces) the DANE TLSA record for a zone's
+	// CreateDNSLinkRecord writes the DNSLink TXT record for a domain's owner
+	// name(`_dnslink.<domain>`) into zone zoneID. domain is the FQDN of the
+	// record's owner: the zone apex for an apex binding, or a subdomain that
+	// lives inside a reused parent zone. Naming the record after domain (not
+	// the zone apex) keeps subdomain records from colliding with the parent's
+	// own DNSLink record.
+	CreateDNSLinkRecord(ctx context.Context, zoneID uint, domain string, target string) error
+	// CreateApexRecord creates the authoritative record for domain (not the
+	// zone apex) of the given record type (e.g. RecordTypeA or RecordTypeALIAS).
+	// content is the raw value: an IP address for A, a gateway hostname for
+	// ALIAS. When domain equals the zone apex this is the zone root record;
+	// for a subdomain reusing a parent zone it is the subdomain's record.
+	CreateApexRecord(ctx context.Context, zoneID uint, domain string, recordType pluginCore.RecordType, content string) error
+	// SetTLSARecord writes (or replaces) the DANE TLSA record for domain's
 	// HTTPS/TCP owner `_443._tcp` pointing at the portal-managed authoritative
 	// zone. content is the TLSA rdata: "usage selector matching hash" (e.g.
 	// "3 1 1 <hex>")). For HNS managed zones this makes DANE validators resolve
 	// the TLSA against the portal's PowerDNS zone; without it, authoritative
-	// queries return NXDOMAIN.
-	SetTLSARecord(ctx context.Context, zoneID uint, content string) error
+	// queries return NXDOMAIN. The owner is named after domain so a subdomain
+	// reusing a parent zone gets its own TLSA, not the parent's.
+	SetTLSARecord(ctx context.Context, zoneID uint, domain string, content string) error
 	// EnableDNSSEC enables DNSSEC on a zone and returns the DNSKEY.
 	EnableDNSSEC(ctx context.Context, zoneID uint) (dnskey string, err error)
 	// GetActiveDNSSECDS returns the SHA-256 DS RDATA (type 2) for a zone's
@@ -240,7 +249,10 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	}
 
 	target := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
-	if err := s.dnsSvc.CreateDNSLinkRecord(ctx, zone.ID, target); err != nil {
+	// Name the record after the binding's domain (not the zone apex) so a
+	// subdomain reusing a parent zone writes its own _dnslink.<subdomain>,
+	// not the parent's.
+	if err := s.dnsSvc.CreateDNSLinkRecord(ctx, zone.ID, domain, target); err != nil {
 		s.DB().WithContext(ctx).Unscoped().Delete(wd)
 		if zoneCreated {
 			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
@@ -267,7 +279,7 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	}
 
 	if apexContent != "" {
-		if err := s.dnsSvc.CreateApexRecord(ctx, zone.ID, apexType, apexContent); err != nil {
+		if err := s.dnsSvc.CreateApexRecord(ctx, zone.ID, domain, apexType, apexContent); err != nil {
 			s.DB().WithContext(ctx).Unscoped().Delete(wd)
 			if zoneCreated {
 				_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
@@ -635,9 +647,12 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 	// Only providers whose namespace uses DANE and whose zone the portal
 	// manages (e.g. HNS) do this; the decision is a provider capability, not
 	// a namespace string comparison, so any future DANE-capable namespace
-	// opts in here rather than via a hardcoded "hns" check.
+	// opts in here rather than via a hardcoded "hns" check. The TLSA owner is
+	// named after the binding's domain (not the zone apex) so a subdomain
+	// reusing a parent zone publishes _443._tcp.<subdomain> rather than
+	// overwriting the parent's TLSA.
 	if s.dnsSvc != nil && zoneID != 0 && provider.UsesManagedZoneTLSA() {
-		if err := s.dnsSvc.SetTLSARecord(ctx, zoneID, tlsa); err != nil {
+		if err := s.dnsSvc.SetTLSARecord(ctx, zoneID, domain, tlsa); err != nil {
 			// DNS publish failure is surfaced but the persisted cert/TLSA state
 			// is retained so a later cert push retries the publish.
 			return tlsa, ownerName, fmt.Errorf("publish tlsa to zone: %w", err)
