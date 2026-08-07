@@ -138,6 +138,12 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		Namespace: pluginDb.DomainNamespace(namespace),
 		ZoneName:  canonicalZoneName(domain),
 		Status:    pluginDb.DomainStatusDraft,
+		// Binding is managed-DNS by default: this flow creates the authoritative
+		// zone + records below, so the per-domain hosting flag must be true to
+		// stay reconciled with the zone existing (managed == zone non-nil). A
+		// non-managed binding is reached by disabling DNS hosting afterwards
+		// (SetDomainDNSEnabled), not by binding.
+		DNSHostingEnabled: true,
 	}
 
 	// Soft deletes leave a tombstone row that still occupies the
@@ -216,9 +222,10 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	wd.Status = pluginDb.DomainStatusRecordsGenerated
 	wd.DelegationData = jsonToMap(delegationBytes)
 	if err := s.DB().WithContext(ctx).Model(wd).Updates(map[string]any{
-		"zone_id":         zone.ID,
-		"status":          pluginDb.DomainStatusRecordsGenerated,
-		"delegation_data": wd.DelegationData,
+		"zone_id":             zone.ID,
+		"status":              pluginDb.DomainStatusRecordsGenerated,
+		"delegation_data":     wd.DelegationData,
+		"dns_hosting_enabled": true,
 	}).Error; err != nil {
 		return nil, fmt.Errorf("failed to finalize domain record: %w", err)
 	}
