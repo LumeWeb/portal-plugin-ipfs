@@ -283,3 +283,51 @@ func (s *DNSServiceDefault) GetActiveDNSSECDS(ctx context.Context, zoneID uint) 
 	}
 	return ds, nil
 }
+
+// EnsureSOAMNAME idempotently corrects a zone's SOA MNAME to the primary
+// authorized nameserver, no-op'ing when it is already correct. It is the
+// verify-time self-heal counterpart to the fresh-create MNAME fix: PowerDNS
+// seeds new zones with a placeholder MNAME that is only corrected once at
+// create, so a zone that slipped past that (or whose MNAME drifted) would
+// otherwise keep the placeholder forever. Verification re-ensures it for
+// portal-managed zones.
+//
+// It is deliberately best-effort: the SOA MNAME is a secondary authoritative
+// pointer (delegation is carried by the NS record whose primary we set), so an
+// error here is logged and returned but callers should not hard-fail
+// verification over it. No nameservers is a no-op (nil), matching the client.
+func (s *DNSServiceDefault) EnsureSOAMNAME(ctx context.Context, zoneID uint, domain string, nameservers []string) error {
+	if s.pdnsClient == nil {
+		return fmt.Errorf("PowerDNS client not configured")
+	}
+	if len(nameservers) == 0 || nameservers[0] == "" {
+		// No nameserver to use as the MNAME; nothing to correct.
+		return nil
+	}
+
+	var pdnsZoneID string
+	txErr := s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var zone pluginDb.DNSZone
+		if err := tx.First(&zone, zoneID).Error; err != nil {
+			return err
+		}
+		if zone.PowerDNSZoneID == "" {
+			return fmt.Errorf("zone %d has no PowerDNS zone ID", zoneID)
+		}
+		pdnsZoneID = zone.PowerDNSZoneID
+		return nil
+	})
+	if txErr != nil {
+		return txErr
+	}
+
+	if err := s.pdnsClient.EnsureSOAMNAME(ctx, pdnsZoneID, domain, nameservers); err != nil {
+		s.Logger().Warn("Failed to ensure SOA MNAME (best-effort)",
+			zap.Uint("zone_id", zoneID),
+			zap.String("pdns_zone_id", pdnsZoneID),
+			zap.String("domain", domain),
+			zap.Error(err))
+		return fmt.Errorf("ensure SOA MNAME: %w", err)
+	}
+	return nil
+}
