@@ -67,12 +67,12 @@ func TestIntegration_CreateAndVerifyHNSDomain(t *testing.T) {
 
 		mockDNS.EXPECT().CreateZone(mock.Anything, "example", uint(1)).
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: "example"}, nil).Once()
-		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything).Return(nil).Once()
-		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(1), pluginCore.RecordTypeA, gatewayIP).Return(nil).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything, mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(1), mock.Anything, pluginCore.RecordTypeA, gatewayIP).Return(nil).Once()
 		mockDNS.EXPECT().EnableDNSSEC(mock.Anything, uint(1)).Return("257 3 13 dGVzdA==", nil).Maybe()
 
 		// Create domain
-		wd, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, nil)
+		wd, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, true, nil)
 		require.NoError(tb, err)
 		require.NotNil(tb, wd)
 		assert.Equal(tb, pluginDb.DomainStatusRecordsGenerated, wd.Status)

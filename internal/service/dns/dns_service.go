@@ -174,27 +174,33 @@ func (s *DNSServiceDefault) GetConfig() (any, error) {
 	return &pluginConfig.DnsConfig{}, nil
 }
 
-// CreateDNSLinkRecord creates a DNSLink TXT record in a zone (adapter for domain.DNSZoneService)
-func (s *DNSServiceDefault) CreateDNSLinkRecord(ctx context.Context, zoneID uint, target string) error {
-	_, err := s.CreateRecord(ctx, zoneID, "_dnslink", "TXT", "dnslink="+target, 300)
+// CreateDNSLinkRecord creates a DNSLink TXT record in a zone for the given
+// domain owner (adapter for domain.DNSZoneService). The owner name is built
+// from domain, not the zone apex, so a subdomain reusing a parent zone gets
+// its own `_dnslink.<domain>` rather than overwriting the parent's.
+func (s *DNSServiceDefault) CreateDNSLinkRecord(ctx context.Context, zoneID uint, domain string, target string) error {
+	_, err := s.CreateRecord(ctx, zoneID, "_dnslink."+domain, "TXT", "dnslink="+target, 300)
 	return err
 }
 
-// CreateApexRecord creates the apex (root) record in a zone (adapter for
-// domain.DNSZoneService). content is raw: an IP for A, a gateway hostname for
-// ALIAS/CNAME.
-func (s *DNSServiceDefault) CreateApexRecord(ctx context.Context, zoneID uint, recordType pluginCore.RecordType, content string) error {
-	_, err := s.CreateRecord(ctx, zoneID, "", string(recordType), content, 300)
+// CreateApexRecord creates the authoritative record for domain in a zone
+// (adapter for domain.DNSZoneService). content is raw: an IP for A, a gateway
+// hostname for ALIAS/CNAME. The owner is domain (the zone apex for apex
+// bindings, or the subdomain label for subdomains reusing a parent zone).
+func (s *DNSServiceDefault) CreateApexRecord(ctx context.Context, zoneID uint, domain string, recordType pluginCore.RecordType, content string) error {
+	_, err := s.CreateRecord(ctx, zoneID, domain, string(recordType), content, 300)
 	return err
 }
 
-// SetTLSARecord writes (or replaces) the DANE TLSA record for a zone's
+// SetTLSARecord writes (or replaces) the DANE TLSA record for domain's
 // HTTPS/TCP owner `_443._tcp` in the portal-managed authoritative zone
 // (adapter for domain.DNSZoneService). content is the TLSA rdata, e.g.
 // "3 1 1 <sha256hex>". Publishing this is what lets DANE validators resolve the
 // TLSA against PowerDNS; without it authoritative queries return NXDOMAIN.
-func (s *DNSServiceDefault) SetTLSARecord(ctx context.Context, zoneID uint, content string) error {
-	_, err := s.CreateRecord(ctx, zoneID, "_443._tcp", "TLSA", content, 300)
+// The owner is built from domain (not the zone apex) so a subdomain reusing a
+// parent zone gets its own `_443._tcp.<domain>` rather than the parent's.
+func (s *DNSServiceDefault) SetTLSARecord(ctx context.Context, zoneID uint, domain string, content string) error {
+	_, err := s.CreateRecord(ctx, zoneID, "_443._tcp."+domain, "TLSA", content, 300)
 	return err
 }
 

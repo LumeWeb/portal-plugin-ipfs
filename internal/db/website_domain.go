@@ -23,6 +23,7 @@ const (
 	DomainStatusRecordsGenerated  DomainStatus = "records_generated"
 	DomainStatusWaitingDelegation DomainStatus = "waiting_delegation"
 	DomainStatusActive            DomainStatus = "active"
+	DomainStatusSelfHosted        DomainStatus = "self_hosted"
 	DomainStatusError             DomainStatus = "error"
 )
 

@@ -56,21 +56,26 @@ type DNSService interface {
 	// GetRRSet retrieves a specific DNS RRSet by name and type from PowerDNS
 	GetRRSet(ctx context.Context, zoneID uint, name string, recordType string) ([]*apiDTO.DNSRecord, error)
 
-	// CreateDNSLinkRecord creates a DNSLink _dnslink.<domain> TXT record
-	CreateDNSLinkRecord(ctx context.Context, zoneID uint, target string) error
+	// CreateDNSLinkRecord creates a DNSLink _dnslink.<domain> TXT record. domain
+	// is the record owner's FQDN: the zone apex for an apex binding, or a
+	// subdomain living inside a reused parent zone.
+	CreateDNSLinkRecord(ctx context.Context, zoneID uint, domain string, target string) error
 
-	// CreateApexRecord creates an apex (root) record pointing to the gateway.
+	// CreateApexRecord creates an authoritative record for domain (the zone apex
+	// for an apex binding, or a subdomain inside a reused parent zone).
 	// recordType is e.g. RecordTypeA (IP content for DNSSEC-signed alt-root)
 	// or RecordTypeALIAS (gateway hostname content).
-	CreateApexRecord(ctx context.Context, zoneID uint, recordType RecordType, content string) error
+	CreateApexRecord(ctx context.Context, zoneID uint, domain string, recordType RecordType, content string) error
 
-	// SetTLSARecord writes (or replaces) the DANE TLSA record for a zone's
+	// SetTLSARecord writes (or replaces) the DANE TLSA record for domain's
 	// HTTPS/TCP owner `_443._tcp` in the portal-managed authoritative zone.
 	// content is the TLSA rdata: "usage selector matching hash" (e.g.
 	// "3 1 1 <hex>"). Without publishing the TLSA to the authoritative zone,
 	// DANE validators get NXDOMAIN for the TLSA owner and DANE cannot be
-	// established for portal-managed (DNSSEC-signed) domains.
-	SetTLSARecord(ctx context.Context, zoneID uint, content string) error
+	// established for portal-managed (DNSSEC-signed) domains. The owner is
+	// named after domain so a subdomain reusing a parent zone publishes its own
+	// TLSA rather than the parent's.
+	SetTLSARecord(ctx context.Context, zoneID uint, domain string, content string) error
 
 	// CreateRecord creates a new DNS record in PowerDNS via RRSet
 	// name: the record name (e.g., "www")

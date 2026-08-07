@@ -189,14 +189,17 @@ type fakeDNSZoneService struct{ dnskey string }
 func (f *fakeDNSZoneService) CreateZone(ctx context.Context, domain string, userID uint) (*pluginDb.DNSZone, error) {
 	panic("unused")
 }
+func (f *fakeDNSZoneService) GetZoneByDomain(ctx context.Context, domain string) (*pluginDb.DNSZone, error) {
+	panic("unused")
+}
 func (f *fakeDNSZoneService) DeleteZone(ctx context.Context, zoneID uint) error { panic("unused") }
-func (f *fakeDNSZoneService) CreateDNSLinkRecord(ctx context.Context, zoneID uint, target string) error {
+func (f *fakeDNSZoneService) CreateDNSLinkRecord(ctx context.Context, zoneID uint, domain string, target string) error {
 	panic("unused")
 }
-func (f *fakeDNSZoneService) CreateApexRecord(ctx context.Context, zoneID uint, recordType pluginCore.RecordType, content string) error {
+func (f *fakeDNSZoneService) CreateApexRecord(ctx context.Context, zoneID uint, domain string, recordType pluginCore.RecordType, content string) error {
 	panic("unused")
 }
-func (f *fakeDNSZoneService) SetTLSARecord(ctx context.Context, zoneID uint, content string) error {
+func (f *fakeDNSZoneService) SetTLSARecord(ctx context.Context, zoneID uint, domain string, content string) error {
 	panic("unused")
 }
 func (f *fakeDNSZoneService) EnableDNSSEC(ctx context.Context, zoneID uint) (string, error) {

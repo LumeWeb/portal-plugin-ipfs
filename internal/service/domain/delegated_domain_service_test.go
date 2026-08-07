@@ -60,14 +60,130 @@ func TestDelegatedDomainService_CreateDomain(t *testing.T) {
 
 		mockDNS.EXPECT().CreateZone(mock.Anything, "example.com", uint(1)).
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: "example.com"}, nil).Once()
-		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything, mock.Anything).Return(nil).Once()
 
-		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, nil)
+		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, true, nil)
 		assert.NoError(tb, err)
 		assert.NotNil(tb, wd)
 		assert.Equal(tb, "example.com", wd.Domain)
 		assert.Equal(tb, pluginDb.DomainNamespaceICANN, wd.Namespace)
 		assert.Equal(tb, uint(1), wd.ZoneID)
+		// Managed-DNS binding: the flag is persisted to match the created zone.
+		assert.True(tb, wd.DNSHostingEnabled)
+	}, TestOptions)
+}
+
+func TestDelegatedDomainService_CreateDomain_SelfHosted(t *testing.T) {
+	// A self-hosted DNS binding (dnsHostingEnabled=false) must NOT create a
+	// PowerDNS zone, DNSLink, apex, or delegation — the user runs the
+	// authoritative server. It is marked self_hosted with no zone.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+
+		website := createTestWebsite(tb, db, 1, "example.com")
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, mockDNS)
+
+		// No zone, DNSLink, apex, or delegation calls for a self-hosted binding.
+		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, mock.Anything, mock.Anything)
+
+		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, false, nil)
+		assert.NoError(tb, err)
+		assert.NotNil(tb, wd)
+		assert.Equal(tb, pluginDb.DomainStatusSelfHosted, wd.Status)
+		assert.Equal(tb, uint(0), wd.ZoneID)
+		assert.False(tb, wd.DNSHostingEnabled)
+		assert.Nil(tb, wd.DelegationData)
+	}, TestOptions)
+}
+
+func TestDelegatedDomainService_CreateDomain_SubdomainReusesParentZone(t *testing.T) {
+	// A managed subdomain lives inside its parent's zone; it must NOT create a
+	// new PowerDNS zone. resolveManagedZone should return the parent zone.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+
+		website := createTestWebsite(tb, db, 1, "example.com")
+
+		// A parent zone owned by the same user must be reused.
+		require.NoError(tb, db.Create(&pluginDb.DNSZone{
+			UserID: 1, Domain: "example.com", Status: string(pluginDb.DNSZoneStatusActive),
+			PowerDNSZoneID: "parent-pdns-id",
+		}).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, mockDNS)
+
+		// GetZoneByDomain resolves the parent; CreateZone must NOT be called for
+		// the subdomain (a new zone would be an apex owned separately).
+		var parent pluginDb.DNSZone
+		require.NoError(tb, ctx.DB().WithContext(context.Background()).Where("domain = ?", "example.com").
+			First(&parent).Error)
+
+		// resolveManagedZone reuses the parent zone: GetZoneByDomain returns the
+		// parent, and CreateZone must NOT be called for the subdomain.
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "example.com").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: parent.ID}, Domain: "example.com", UserID: 1}, nil).Once()
+		// The subdomain's records must be named after the subdomain (not the
+		// parent apex) so they don't collide with the parent's own records. The
+		// apex record only fires when a gateway host is configured (it's absent
+		// in this harness), so assert its domain-name strictly if it runs.
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(parent.ID), "docs.example.com", mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(parent.ID), "docs.example.com", mock.Anything, mock.Anything).Return(nil).Maybe()
+		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, "docs.example.com", mock.Anything)
+
+		wd, err := svc.CreateDomain(context.Background(), "icann", "docs.example.com", website.ID, 1, true, nil)
+		assert.NoError(tb, err)
+		assert.NotNil(tb, wd)
+		// DNSLink/apex/delegation are written into the reused parent zone; the
+		// binding references it via ZoneName but owns no separate zone ID.
+		assert.Equal(tb, pluginDb.DomainStatusRecordsGenerated, wd.Status)
+		assert.True(tb, wd.DNSHostingEnabled)
+		assert.Equal(tb, uint(parent.ID), wd.ZoneID)
+	}, TestOptions)
+}
+
+func TestDelegatedDomainService_CreateDomain_SubdomainForeignParentRejected(t *testing.T) {
+	// One-zone invariant: a subdomain must NOT create a competing authoritative
+	// zone when a parent zone exists but belongs to another user (subdomain-zone
+	// squatting). It must error instead.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+
+		website := createTestWebsite(tb, db, 1, "example.com")
+
+		// Parent zone owned by a DIFFERENT user (2).
+		require.NoError(tb, db.Create(&pluginDb.DNSZone{
+			UserID: 2, Domain: "example.com", Status: string(pluginDb.DNSZoneStatusActive),
+			PowerDNSZoneID: "foreign-pdns-id",
+		}).Error)
+
+		var parent pluginDb.DNSZone
+		require.NoError(tb, ctx.DB().WithContext(context.Background()).Where("domain = ?", "example.com").
+			First(&parent).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, mockDNS)
+
+		// Parent lookup returns the foreign-owned zone; CreateZone for the
+		// subdomain must NEVER be called.
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "example.com").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: parent.ID}, Domain: "example.com", UserID: 2}, nil).Once()
+		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, "docs.example.com", mock.Anything)
+
+		_, err := svc.CreateDomain(context.Background(), "icann", "docs.example.com", website.ID, 1, true, nil)
+		require.Error(tb, err)
+		assert.Contains(tb, err.Error(), "owned by another user")
 	}, TestOptions)
 }
 
@@ -76,7 +192,7 @@ func TestDelegatedDomainService_CreateDomain_UnsupportedNamespace(t *testing.T) 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		require.NotNil(tb, svc)
 
-		_, err := svc.CreateDomain(context.Background(), "ens", "example.eth", 1, 1, nil)
+		_, err := svc.CreateDomain(context.Background(), "ens", "example.eth", 1, 1, true, nil)
 		assert.Error(tb, err)
 		assert.Contains(tb, err.Error(), "unsupported namespace")
 	}, TestOptions)
@@ -300,8 +416,8 @@ func TestDelegatedDomainService_UpdateTLSA_PublishesToManagedZone(t *testing.T) 
 			// The TLSA must be pushed to the managed zone (zone 42) as
 			// "usage selector matching hash" rdata.
 			mockDNS.EXPECT().
-				SetTLSARecord(mock.Anything, uint(42), mock.Anything).
-				Run(func(_ context.Context, zoneID uint, content string) {
+				SetTLSARecord(mock.Anything, uint(42), mock.Anything, mock.Anything).
+				Run(func(_ context.Context, zoneID uint, domain string, content string) {
 					assert.Regexp(tb, `^3 1 1 [0-9a-fA-F]+$`, content,
 						"TLSA rdata must be '<usage> <selector> <matching> <digest>'")
 				}).
