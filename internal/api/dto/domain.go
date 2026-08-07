@@ -27,6 +27,30 @@ func (r *DomainRequest) ToModel() (*DomainRequest, error) {
 	return r, nil
 }
 
+// DomainUpdateRequest updates a bound domain's per-domain DNS control:
+// whether the portal manages DNS hosting for this binding (dns_hosting_enabled)
+// and whether it is the website's primary (apex) binding. Either field is
+// optional; omitted fields are left unchanged.
+type DomainUpdateRequest struct {
+	DNSHostingEnabled *bool `json:"dns_hosting_enabled,omitempty"`
+	Primary           *bool `json:"primary,omitempty"`
+}
+
+func (r DomainUpdateRequest) Schema() *zog.StructSchema {
+	return zog.Struct(zog.Shape{
+		"DNSHostingEnabled": zog.Ptr(zog.Bool()),
+		"Primary":           zog.Ptr(zog.Bool()),
+	})
+}
+
+func (r *DomainUpdateRequest) ToModel() (*DomainUpdateRequest, error) {
+	return r, nil
+}
+
+func (r DomainUpdateRequest) HasUpdates() bool {
+	return r.DNSHostingEnabled != nil || r.Primary != nil
+}
+
 // DNSDelegationRecord is a single DNS record in a domain delegation. The fields
 // mirror the provider Record type (hns_provider.go) so clients can render a
 // generic table regardless of namespace.
@@ -83,6 +107,9 @@ type DomainResponse struct {
 	ZoneName    string         `json:"zone_name,omitempty"`
 	GatewayHost string         `json:"gateway_host,omitempty"`
 	Delegation  *DNSDelegation `json:"delegation,omitempty"`
+	// DNSHostingEnabled reports whether the portal manages DNS for this
+	// specific domain binding (the per-domain DNS hosting flag).
+	DNSHostingEnabled bool `json:"dns_hosting_enabled"`
 	// Per-domain SSL certificate state. SSL is a per-domain property, so it is
 	// exposed on the domain record (not the website).
 	SSL *SSLStatusInfo `json:"ssl,omitempty"`
@@ -95,6 +122,7 @@ func (r *DomainResponse) FromModel(m *db.WebsiteDomain) error {
 	r.Status = string(m.Status)
 	r.ZoneName = m.ZoneName
 	r.GatewayHost = m.GatewayHost
+	r.DNSHostingEnabled = m.DNSHostingEnabled
 
 	if m.SSLStatus != "" {
 		r.SSL = &SSLStatusInfo{

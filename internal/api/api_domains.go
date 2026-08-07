@@ -67,6 +67,107 @@ func (a *API) createDomain(c echo.Context) error {
 	return httputil.EncodeResponse(ctx, wd, &resp)
 }
 
+// updateDomain manages a bound domain's per-domain DNS control: toggling portal
+// DNS hosting (dns_hosting_enabled) for this specific binding and/or making it
+// the website's primary (apex) binding. This is the per-domain equivalent of
+// what the website-level update endpoint used to do, so a site with several
+// bound domains can manage each one's DNS state independently.
+func (a *API) updateDomain(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	userID, err := mcontext.GetUserID(c)
+	if err != nil {
+		return ctx.Error(err, http.StatusUnauthorized)
+	}
+
+	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	domainID, err := strconv.ParseUint(c.Param("domain_id"), 10, 64)
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid domain ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	req := dto.DomainUpdateRequest{}
+	if _, ok := httputil.DecodeAndValidateRequest(ctx, &req); !ok {
+		return nil
+	}
+
+	if !req.HasUpdates() {
+		apiErr := NewError(ErrKeyInvalidRequest, errors.New("at least one of dns_hosting_enabled or primary must be provided"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	// Verify the binding exists and belongs to the user before applying
+	// per-domain changes, so a bogus domain_id surfaces as 404 not 500.
+	var existing pluginDb.WebsiteDomain
+	if err := a.DB().WithContext(reqCtx).
+		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+		First(&existing).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			apiErr := NewError(ErrKeyDomainNotFound, errors.New("domain not found"))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	var primary *pluginDb.WebsiteDomain
+
+	// Make this binding the website's primary (apex) domain first, so any
+	// concurrent DNS-enable applies to it as the current primary.
+	if req.Primary != nil {
+		p, perr := a.websiteService.SetPrimaryDomain(reqCtx, userID, uint(websiteID), uint(domainID))
+		if perr != nil {
+			a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", uint(domainID)), zap.Error(perr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, perr)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		primary = p
+	}
+
+	// Toggle DNS hosting on this binding (enable runs the zone/records/IPNS
+	// transition; disable tears it down).
+	if req.DNSHostingEnabled != nil {
+		d, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, userID, uint(websiteID), uint(domainID), *req.DNSHostingEnabled)
+		if derr != nil {
+			a.Logger().Error("Failed to set domain DNS hosting", zap.Uint("domain_id", uint(domainID)), zap.Bool("enabled", *req.DNSHostingEnabled), zap.Error(derr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		primary = d
+	}
+
+	// Reload the binding so the response reflects every applied change. Prefer
+	// the binding returned by the service calls (which carry the post-transition
+	// state); fall back to a fresh read if neither service path produced one.
+	var result *pluginDb.WebsiteDomain
+	if primary != nil {
+		result = primary
+	} else {
+		var reloaded pluginDb.WebsiteDomain
+		if err := a.DB().WithContext(reqCtx).
+			Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+			First(&reloaded).Error; err != nil {
+			apiErr := NewError(ErrKeyFileProcessingFailed, err)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		result = &reloaded
+	}
+
+	resp := dto.DomainResponse{}
+	if err := resp.FromModel(result); err != nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	return httputil.EncodeResponse(ctx, result, &resp)
+}
+
 func (a *API) listDomains(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
@@ -280,7 +381,11 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 		}
 	}
 
-	return httputil.EncodeResponse(ctx, &wd, &resp)
+	// Encode the DTO directly rather than via EncodeResponse(model, dto):
+	// EncodeResponse re-derives the DTO from the model (FromModel -> mapDNSDelegation
+	// -> removeStoredDS), which would discard the live DS injected into
+	// parent_records above. resp already carries the complete, final delegation.
+	return ctx.JSON(http.StatusOK, &resp)
 }
 
 // upsertDSRecord returns parent records with the DS record set to `ds`,
