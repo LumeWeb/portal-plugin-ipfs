@@ -225,17 +225,6 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 			// Set initial status
 			website.Status = string(pluginDb.WebsiteStatusPendingValidation)
 
-			// Create website in database
-			err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				return tx.Create(website)
-			})
-			if err != nil {
-				s.Logger().Error("Failed to create website",
-					zap.Error(err),
-					zap.Uint("user_id", website.UserID))
-				return nil, fmt.Errorf("failed to create website: %w", err)
-			}
-
 			// Resolve the primary (apex) WebsiteDomain, which owns the DNS hosting
 			// state for this site. The primary domain may have been bound before
 			// the website was created (Phase 4 API layer); if no binding exists yet
@@ -247,12 +236,15 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				primaryDomain = primaryWD.Domain
 			} else {
 				s.Logger().Debug("No primary domain binding available at website creation, deferring DNS/IPNS side-effects",
-					zap.Uint("website_id", website.ID))
+					zap.String("target_type", website.TargetType))
 			}
 
 			// Auto-convert: target_type=ipns with a plain IPFS CID means
 			// "create/use IPNS key and publish this CID to it". Requires a
 			// primary domain to name the key; without one the raw target stands.
+			// This must run before the website row is written so the persisted
+			// target is already a valid IPNS peer ID (Website.BeforeSave rejects
+			// a non-nil CIDVersion for IPNS targets).
 			if website.TargetType == string(pluginDb.WebsiteTargetTypeIPNS) && website.CIDVersion != nil && primaryDomain != "" {
 				publishCID := website.TargetHash()
 
@@ -281,16 +273,17 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				website.CIDVersion = nil
 				website.CIDType = nil
 				website.IPNSKeyID = &ipnsKey.ID
+			}
 
-				err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-					return tx.Save(website)
-				})
-				if err != nil {
-					s.Logger().Error("Failed to update website with IPNS target",
-						zap.Error(err),
-						zap.Uint("website_id", website.ID))
-					return nil, fmt.Errorf("failed to update website with IPNS target: %w", err)
-				}
+			// Create website in database (with the final, converted target).
+			err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				return tx.Create(website)
+			})
+			if err != nil {
+				s.Logger().Error("Failed to create website",
+					zap.Error(err),
+					zap.Uint("user_id", website.UserID))
+				return nil, fmt.Errorf("failed to create website: %w", err)
 			}
 
 			// Create DNS zone if hosting is enabled on the primary domain.
