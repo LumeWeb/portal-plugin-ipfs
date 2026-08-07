@@ -145,6 +145,10 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 			dsRec := resp.Delegation.ParentRecords[1]
 			assert.Equal(t, "DS", dsRec.Type)
 			assert.Equal(t, "60776 13 2 3b35deed97def5fbb5ce939cd5b9036f12db0ccc2e1cb40bb4c565c168c66116", dsRec.Value)
+			// Active signing key means DNSSEC is explicitly reported as enabled,
+			// so an enabled zone is never a silent gap.
+			assert.Equal(t, "enabled", resp.Delegation.DNSSEC)
+			assert.Empty(t, resp.Delegation.DNSSECError)
 		}, TestOptions)
 	})
 
@@ -194,6 +198,10 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 			// correctness cannot be confirmed is never presented as current.
 			require.Len(t, resp.Delegation.ParentRecords, 1)
 			assert.Equal(t, "NS", resp.Delegation.ParentRecords[0].Type)
+			// Resolution error is surfaced explicitly so the user can diagnose
+			// (PowerDNS down / key rollover) rather than see a bare missing DS.
+			assert.Equal(t, "error", resp.Delegation.DNSSEC)
+			assert.Contains(t, resp.Delegation.DNSSECError, "PowerDNS unreachable")
 		}, TestOptions)
 	})
 
@@ -243,6 +251,11 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 			// No live signing key: stale DS must be removed, not presented.
 			require.Len(t, resp.Delegation.ParentRecords, 1)
 			assert.Equal(t, "NS", resp.Delegation.ParentRecords[0].Type)
+			// "No active key" on a managed zone is surfaced as disabled (not
+			// silent), telling the user DNSSEC isn't set up yet — the verify
+			// self-heal will mint the key on the next run.
+			assert.Equal(t, "disabled", resp.Delegation.DNSSEC)
+			assert.Contains(t, resp.Delegation.DNSSECError, "no active signing key")
 		}, TestOptions)
 	})
 
