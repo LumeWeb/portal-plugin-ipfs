@@ -111,6 +111,15 @@ func (c *PowerDNSClient) CreateZone(ctx context.Context, domain string, nameserv
 	kind := powerdns.ZoneCreateKindNative
 	zoneCreate.Kind = &kind
 
+	// Let PowerDNS own zone content generation: with only `nameservers` set,
+	// it auto-generates both the SOA and NS records for the zone, manages the
+	// SOA serial itself (SOA-EDIT-API defaults to DEFAULT), and applies a valid
+	// RFC 1982 serial. We deliberately do NOT inject an explicit SOA RRSet here:
+	// supplying our own serial fights PowerDNS's serial management (overflow and
+	// wrap-around hazards) and is the wrong division of responsibility. The only
+	// thing we correct afterwards is the SOA MNAME, which PowerDNS seeds with a
+	// placeholder ("a.misconfigured.dns.server.invalid.").
+
 	resp, err := c.client.CreateZone(ctx, defaultServerID, zoneCreate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create zone: %w", err)
@@ -122,6 +131,11 @@ func (c *PowerDNSClient) CreateZone(ctx context.Context, domain string, nameserv
 			c.logger.Info("Zone already exists in PowerDNS, fetching existing zone",
 				zap.String("domain", domain))
 
+			// The zone already exists in PowerDNS and is not provably ours — it
+			// may be a foreign or operator-managed zone. We must not mutate it
+			// (the SOA MNAME correction is only safe on the fresh-create path,
+			// where we just created the zone and know it is ours). Return it
+			// untouched.
 			existingZone, getErr := c.GetZone(ctx, canonicalDomain)
 			if getErr != nil {
 				return nil, fmt.Errorf("zone already exists but failed to fetch it: %w", getErr)
@@ -139,6 +153,23 @@ func (c *PowerDNSClient) CreateZone(ctx context.Context, domain string, nameserv
 		return nil, fmt.Errorf("powerdns API returned zone with no ID for domain %q", domain)
 	}
 
+	// Correct the SOA MNAME that PowerDNS seeded with its placeholder
+	// ("a.misconfigured.dns.server.invalid.") to the zone's primary nameserver.
+	// This is strictly best-effort: the zone was already created successfully
+	// and is provably portal-owned, and delegation is carried by the NS record
+	// (whose primary we set) — the MNAME is a secondary authoritative pointer.
+	// A transient GetZoneWithRRSets error or a rejected PATCH must neither fail
+	// the create nor destroy the live zone over this cosmetic issue, so we log
+	// a warning and always return the created zone. If the correction cannot
+	// run here, the placeholder MNAME may persist; it is surfaced via the log
+	// rather than by failing creation.
+	if err := c.fixSOAMNAME(ctx, *zone.Id, canonicalDomain, canonicalNameservers); err != nil {
+		c.logger.Warn("Failed to fix SOA MNAME after zone creation (best-effort)",
+			zap.String("domain", canonicalDomain),
+			zap.String("zone_id", *zone.Id),
+			zap.Error(err))
+	}
+
 	c.logger.Info("Zone created in PowerDNS",
 		zap.String("domain", domain),
 		zap.String("zone_id", *zone.Id))
@@ -146,9 +177,110 @@ func (c *PowerDNSClient) CreateZone(ctx context.Context, domain string, nameserv
 	return zone, nil
 }
 
-// GetZone retrieves a zone from PowerDNS
+// fixSOAMNAME corrects the SOA MNAME of a zone that PowerDNS created with its
+// placeholder owner ("a.misconfigured.dns.server.invalid.") to the primary
+// authoritative nameserver. It reads the SOA PowerDNS generated, swaps only the
+// MNAME field, and writes it back. All other SOA fields — most importantly the
+// serial PowerDNS assigned — are preserved verbatim, so we never fabricate a
+// serial (no RFC 1982 overflow or wrap-around hazards) and never fight
+// PowerDNS's serial management. Subsequent serial bumps are handled by
+// PowerDNS's SOA-EDIT-API=DEFAULT.
+//
+// This runs best-effort from CreateZone (both the fresh-create and the
+// existing-zone recovery path). It only mutates zones still carrying the
+// PowerDNS placeholder MNAME, so it can never rewrite a foreign or
+// manually-managed zone's legitimate SOA MNAME.
+//
+// SOA content format: MNAME RNAME SERIAL REFRESH RETRY EXPIRE MINIMUM.
+func (c *PowerDNSClient) fixSOAMNAME(ctx context.Context, zoneID, domain string, canonicalNameservers []string) error {
+	if len(canonicalNameservers) == 0 || canonicalNameservers[0] == "" {
+		// No nameserver to use as the MNAME; leave the zone as PowerDNS made it.
+		return nil
+	}
+	mname := dnsname.EnsureFQDN(canonicalNameservers[0])
+
+	zone, err := c.GetZoneWithRRSets(ctx, zoneID)
+	if err != nil {
+		return fmt.Errorf("get zone: %w", err)
+	}
+	return c.fixSOAMNAMEOnZone(ctx, zoneID, domain, mname, zone)
+}
+
+// fixSOAMNAMEOnZone performs the MNAME correction on an already-fetched zone.
+// It is only called from the fresh-create path (fixSOAMNAME), where the zone
+// was just created by this call and is therefore provably portal-owned — no
+// ownership gate is needed. It returns nil (a no-op) if the zone has no rrsets,
+// no usable MNAME, or its MNAME is already correct.
+func (c *PowerDNSClient) fixSOAMNAMEOnZone(ctx context.Context, zoneID, domain, mname string, zone *powerdns.Zone) error {
+	if zone == nil || zone.Rrsets == nil || mname == "" {
+		return nil
+	}
+
+	for i := range *zone.Rrsets {
+		rr := &(*zone.Rrsets)[i]
+		if rr.Type != "SOA" || len(rr.Records) == 0 {
+			continue
+		}
+		fields := strings.Fields(rr.Records[0].Content)
+		if len(fields) < 1 {
+			return fmt.Errorf("malformed SOA content %q", rr.Records[0].Content)
+		}
+		if fields[0] == mname {
+			// MNAME already correct; nothing to do.
+			return nil
+		}
+
+		// Preserve every field PowerDNS generated, swapping only the MNAME.
+		fields[0] = mname
+		content := strings.Join(fields, " ")
+		ttl := 3600
+		if rr.Ttl != nil {
+			ttl = *rr.Ttl
+		}
+
+		soaRRSet := powerdns.RRSet{
+			Name:       rr.Name,
+			Type:       "SOA",
+			Changetype: powerdns.REPLACE,
+			Ttl:        &ttl,
+			Records:    []powerdns.Record{{Content: content}},
+		}
+		if err := c.UpdateZoneRRSets(ctx, zoneID, []powerdns.RRSet{soaRRSet}); err != nil {
+			return err
+		}
+		c.logger.Info("Corrected SOA MNAME for zone",
+			zap.String("domain", domain),
+			zap.String("mname", mname))
+		return nil
+	}
+
+	return nil
+}
+
+// GetZone retrieves a zone from PowerDNS. It does not request rrsets, keeping
+// the payload light for callers that only need the zone metadata (id, name,
+// kind, serial). Callers that need the zone's records or SOA must use
+// GetZoneWithRRSets.
 func (c *PowerDNSClient) GetZone(ctx context.Context, zoneID string) (*powerdns.Zone, error) {
 	resp, err := c.client.GetZone(ctx, defaultServerID, zoneID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get zone: %w", err)
+	}
+
+	return handleResponse[powerdns.Zone](resp)
+}
+
+// GetZoneWithRRSets retrieves a zone from PowerDNS including its rrsets.
+// PowerDNS only returns a zone's rrsets when explicitly requested via
+// ?rrsets=true; without it Rrsets is nil, which would make callers that need
+// the SOA (e.g. fixSOAMNAME) silently no-op.
+func (c *PowerDNSClient) GetZoneWithRRSets(ctx context.Context, zoneID string) (*powerdns.Zone, error) {
+	resp, err := c.client.GetZone(ctx, defaultServerID, zoneID, func(_ context.Context, req *http.Request) error {
+		q := req.URL.Query()
+		q.Set("rrsets", "true")
+		req.URL.RawQuery = q.Encode()
+		return nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get zone: %w", err)
 	}

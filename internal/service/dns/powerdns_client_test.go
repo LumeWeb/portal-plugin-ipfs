@@ -24,11 +24,28 @@ type mockHTTPClient struct {
 	response *http.Response
 	err      error
 	requests []*http.Request
+	// bodyBytes caches the configured response body so it can be replayed on
+	// every request (CreateZone now issues POST + GET + PATCH).
+	bodyBytes []byte
 }
 
+// Do records the request and returns a fresh copy of the configured response
+// so the same response can serve multiple requests. The body is cached on first
+// use and re-buffered on every call.
 func (m *mockHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	m.requests = append(m.requests, req)
-	return m.response, m.err
+	if m.err != nil || m.response == nil {
+		return m.response, m.err
+	}
+	if m.bodyBytes == nil && m.response.Body != nil {
+		m.bodyBytes, _ = io.ReadAll(m.response.Body)
+		m.response.Body.Close()
+	}
+	clone := *m.response
+	if m.bodyBytes != nil {
+		clone.Body = io.NopCloser(bytes.NewBuffer(m.bodyBytes))
+	}
+	return &clone, nil
 }
 
 func TestNewPowerDNSClient(t *testing.T) {
@@ -198,6 +215,54 @@ func TestGetZone(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestGetZoneRRSetsQuery distinguishes the two accessors: GetZone stays on the
+// light payload (no rrsets query), while GetZoneWithRRSets requests
+// ?rrsets=true so callers that need the SOA (e.g. fixSOAMNAME) actually receive
+// the zone's rrsets instead of a silent nil.
+func TestGetZoneRRSetsQuery(t *testing.T) {
+	getParams := make(chan string, 4)
+	returnedRRSets := []powerdns.RRSet{{Name: "example.com.", Type: "SOA"}}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		getParams <- r.URL.Query().Get("rrsets")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(powerdns.Zone{
+			Id:     strPtr("example.com."),
+			Name:   strPtr("example.com."),
+			Rrsets: &returnedRRSets,
+		})
+	}))
+	defer server.Close()
+
+	logger := zap.NewNop()
+	coreLogger := &core.Logger{Logger: logger}
+	client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
+	if err != nil {
+		t.Fatalf("NewPowerDNSClient failed: %v", err)
+	}
+
+	// Plain GetZone must NOT request rrsets (light payload).
+	if _, err := client.GetZone(context.Background(), "example.com."); err != nil {
+		t.Fatalf("GetZone returned error: %v", err)
+	}
+	if p := <-getParams; p != "" {
+		t.Errorf("expected GetZone to omit rrsets query, got %q", p)
+	}
+
+	// GetZoneWithRRSets must request rrsets=true and surface Rrsets.
+	zone, err := client.GetZoneWithRRSets(context.Background(), "example.com.")
+	if err != nil {
+		t.Fatalf("GetZoneWithRRSets returned error: %v", err)
+	}
+	if p := <-getParams; p != "true" {
+		t.Errorf("expected GetZoneWithRRSets to send rrsets=true, got %q", p)
+	}
+	if zone == nil || zone.Rrsets == nil {
+		t.Fatal("expected Rrsets in GetZoneWithRRSets response")
 	}
 }
 
@@ -375,39 +440,56 @@ func TestDeleteZone(t *testing.T) {
 func TestCreateZoneIntegration(t *testing.T) {
 	// Integration test with actual HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify request method and path
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST request, got %s", r.Method)
-		}
-
-		if r.URL.Path != "/servers/localhost/zones" {
-			t.Errorf("expected path /servers/localhost/zones, got %s", r.URL.Path)
-		}
-
-		// Verify API key header
-		apiKey := r.Header.Get("X-API-Key")
-		if apiKey != testAPIKey() {
-			t.Errorf("expected API key %q, got %q", testAPIKey(), apiKey)
-		}
-
-		// Verify request body
-		var body powerdns.ZoneCreate
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("failed to decode request body: %v", err)
-		}
-
-		if body.Name != "example.com." {
-			t.Errorf("expected domain 'example.com.', got '%s'", body.Name)
-		}
-
-		// Return success response
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(powerdns.Zone{
-			Id:   strPtr("example.com."),
-			Name: strPtr("example.com."),
-			Kind: (*powerdns.ZoneKind)(strPtr("Native")),
-		})
+		switch r.Method {
+		case http.MethodPost:
+			// Verify request method and path
+			if r.URL.Path != "/servers/localhost/zones" {
+				t.Errorf("expected path /servers/localhost/zones, got %s", r.URL.Path)
+			}
+
+			// Verify API key header
+			apiKey := r.Header.Get("X-API-Key")
+			if apiKey != testAPIKey() {
+				t.Errorf("expected API key %q, got %q", testAPIKey(), apiKey)
+			}
+
+			// Verify request body
+			var body powerdns.ZoneCreate
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("failed to decode request body: %v", err)
+			}
+
+			if body.Name != "example.com." {
+				t.Errorf("expected domain 'example.com.', got '%s'", body.Name)
+			}
+
+			// Return success response
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(powerdns.Zone{
+				Id:   strPtr("example.com."),
+				Name: strPtr("example.com."),
+				Kind: (*powerdns.ZoneKind)(strPtr("Native")),
+			})
+		case http.MethodGet:
+			// GetZone (called by the MNAME fix): return the zone with the SOA
+			// RRset PowerDNS generated.
+			ttl := 3600
+			json.NewEncoder(w).Encode(powerdns.Zone{
+				Id:   strPtr("example.com."),
+				Name: strPtr("example.com."),
+				Rrsets: &[]powerdns.RRSet{
+					{Name: "example.com.", Type: "SOA", Ttl: &ttl,
+						Records: []powerdns.Record{{Content: "a.misconfigured.dns.server.invalid. hostmaster.example.com. 2024052601 10800 3600 604800 3600"}}},
+				},
+			})
+		case http.MethodPatch:
+			// UpdateZoneRRSets (MNAME fix): 204 No Content.
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
 	}))
 	defer server.Close()
 
@@ -710,51 +792,72 @@ func TestCreateZoneCanonicalNameservers(t *testing.T) {
 			var capturedBody powerdns.ZoneCreate
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// Read and parse request body
-				bodyBytes, err := io.ReadAll(r.Body)
-				if err != nil {
-					t.Errorf("failed to read request body: %v", err)
-				}
-
-				if err := json.Unmarshal(bodyBytes, &capturedBody); err != nil {
-					t.Errorf("failed to decode request body: %v", err)
-				}
-
-				// Verify nameservers are normalized
-				if capturedBody.Nameservers == nil {
-					t.Fatalf("expected nameservers to be set, got nil")
-				}
-
-				actualNameservers := *capturedBody.Nameservers
-
-				if len(actualNameservers) != len(tt.expectedNS) {
-					t.Errorf("expected %d nameservers, got %d", len(tt.expectedNS), len(actualNameservers))
-				}
-
-				for i, expected := range tt.expectedNS {
-					if i >= len(actualNameservers) {
-						t.Errorf("missing nameserver at index %d", i)
-						break
-					}
-					if actualNameservers[i] != expected {
-						t.Errorf("expected nameserver[%d] to be %q, got %q", i, expected, actualNameservers[i])
-					}
-				}
-
-				// Verify all nameservers have trailing dots
-				for _, ns := range actualNameservers {
-					if !strings.HasSuffix(ns, ".") {
-						t.Errorf("expected nameserver '%s' to have trailing dot", ns)
-					}
-				}
-
 				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(powerdns.Zone{
-					Id:   strPtr(capturedBody.Name),
-					Name: strPtr(capturedBody.Name),
-					Kind: (*powerdns.ZoneKind)(strPtr("Native")),
-				})
+				switch r.Method {
+				case http.MethodPost:
+					// CreateZone: capture and validate the create body.
+					bodyBytes, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Errorf("failed to read request body: %v", err)
+					}
+
+					if err := json.Unmarshal(bodyBytes, &capturedBody); err != nil {
+						t.Errorf("failed to decode request body: %v", err)
+					}
+
+					// Verify nameservers are normalized
+					if capturedBody.Nameservers == nil {
+						t.Fatalf("expected nameservers to be set, got nil")
+					}
+
+					actualNameservers := *capturedBody.Nameservers
+
+					if len(actualNameservers) != len(tt.expectedNS) {
+						t.Errorf("expected %d nameservers, got %d", len(tt.expectedNS), len(actualNameservers))
+					}
+
+					for i, expected := range tt.expectedNS {
+						if i >= len(actualNameservers) {
+							t.Errorf("missing nameserver at index %d", i)
+							break
+						}
+						if actualNameservers[i] != expected {
+							t.Errorf("expected nameserver[%d] to be %q, got %q", i, expected, actualNameservers[i])
+						}
+					}
+
+					// Verify all nameservers have trailing dots
+					for _, ns := range actualNameservers {
+						if !strings.HasSuffix(ns, ".") {
+							t.Errorf("expected nameserver '%s' to have trailing dot", ns)
+						}
+					}
+
+					w.WriteHeader(http.StatusCreated)
+					json.NewEncoder(w).Encode(powerdns.Zone{
+						Id:   strPtr(capturedBody.Name),
+						Name: strPtr(capturedBody.Name),
+						Kind: (*powerdns.ZoneKind)(strPtr("Native")),
+					})
+				case http.MethodGet:
+					// GetZone (called by the MNAME fix): return the zone with the
+					// SOA RRset PowerDNS generated.
+					ttl := 3600
+					json.NewEncoder(w).Encode(powerdns.Zone{
+						Id:   strPtr(tt.domain + "."),
+						Name: strPtr(tt.domain + "."),
+						Rrsets: &[]powerdns.RRSet{
+							{Name: tt.domain + ".", Type: "SOA", Ttl: &ttl,
+								Records: []powerdns.Record{{Content: "a.misconfigured.dns.server.invalid. hostmaster." + tt.domain + ". 2024052601 10800 3600 604800 3600"}}},
+						},
+					})
+				case http.MethodPatch:
+					// UpdateZoneRRSets (MNAME fix): 204 No Content.
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected method %s", r.Method)
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
 			}))
 			defer server.Close()
 
@@ -784,6 +887,229 @@ func TestCreateZoneCanonicalNameservers(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCreateZoneSOAMNAME(t *testing.T) {
+	// PowerDNS seeds a new zone's SOA with this placeholder MNAME; the fix
+	// must replace only field[0] and preserve the rest (especially the serial).
+	const placeholder = "a.misconfigured.dns.server.invalid."
+	const serverSerial = "2024052601"
+
+	tests := []struct {
+		name           string
+		domain         string
+		nameservers    []string
+		expectSOAMNAME string
+		// When true, no nameservers means the MNAME fix is skipped entirely and
+		// no PATCH is issued.
+		expectNoFix bool
+	}{
+		{
+			name:           "primary nameserver becomes SOA MNAME",
+			domain:         "example.com",
+			nameservers:    []string{"ns1.example.com.", "ns2.example.com."},
+			expectSOAMNAME: "ns1.example.com.",
+		},
+		{
+			name:           "MNAME normalized to FQDN",
+			domain:         "example.com",
+			nameservers:    []string{"ns1.example.com", "ns2.example.com"},
+			expectSOAMNAME: "ns1.example.com.",
+		},
+		{
+			name:        "no nameservers means no MNAME fix (no PATCH)",
+			domain:      "example.com",
+			nameservers: []string{},
+			expectNoFix: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var createdBody powerdns.ZoneCreate
+			var patchedBody powerdns.ZonePatch
+			patchCount := 0
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method {
+				case http.MethodPost:
+					// CreateZone: capture body, echo a minimal zone back.
+					bodyBytes, _ := io.ReadAll(r.Body)
+					if err := json.Unmarshal(bodyBytes, &createdBody); err != nil {
+						t.Errorf("failed to decode create body: %v", err)
+					}
+					w.WriteHeader(http.StatusCreated)
+					json.NewEncoder(w).Encode(powerdns.Zone{
+						Id:   strPtr(createdBody.Name),
+						Name: strPtr(createdBody.Name),
+						Kind: (*powerdns.ZoneKind)(strPtr("Native")),
+					})
+				case http.MethodGet:
+					// GetZone (called by fixSOAMNAME): must request rrsets=true
+					// or PowerDNS returns Rrsets as nil and the MNAME fix is a
+					// silent no-op. Assert the query param is present.
+					if q := r.URL.Query().Get("rrsets"); q != "true" {
+						t.Errorf("expected GET /zones/{id}?rrsets=true, got rrsets=%q", q)
+					}
+					// Return the zone with the SOA RRset PowerDNS generated.
+					ttl := 3600
+					soaContent := fmt.Sprintf("%s hostmaster.%s %s 10800 3600 604800 3600", placeholder, tt.domain, serverSerial)
+					json.NewEncoder(w).Encode(powerdns.Zone{
+						Id:   strPtr(tt.domain + "."),
+						Name: strPtr(tt.domain + "."),
+						Rrsets: &[]powerdns.RRSet{
+							{Name: tt.domain + ".", Type: "SOA", Ttl: &ttl, Records: []powerdns.Record{{Content: soaContent}}},
+						},
+					})
+				case http.MethodPatch:
+					// UpdateZoneRRSets (fixSOAMNAME PATCH): capture body.
+					patchCount++
+					bodyBytes, _ := io.ReadAll(r.Body)
+					if err := json.Unmarshal(bodyBytes, &patchedBody); err != nil {
+						t.Errorf("failed to decode patch body: %v", err)
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected method %s", r.Method)
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			}))
+			defer server.Close()
+
+			logger := zap.NewNop()
+			coreLogger := &core.Logger{Logger: logger}
+			client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
+			if err != nil {
+				t.Fatalf("NewPowerDNSClient failed: %v", err)
+			}
+
+			_, err = client.CreateZone(context.Background(), tt.domain, tt.nameservers)
+			if err != nil {
+				t.Fatalf("CreateZone returned error: %v", err)
+			}
+
+			// 1) We must NOT inject an explicit SOA RRSet at creation: with only
+			// `nameservers` set, PowerDNS auto-generates SOA + NS (so delegation
+			// is never broken) and owns the serial. Supplying our own SOA here
+			// would fight PowerDNS's serial management.
+			if createdBody.Rrsets != nil && len(*createdBody.Rrsets) != 0 {
+				t.Fatalf("expected no explicit rrsets in create request (PowerDNS should auto-generate SOA+NS), got %+v", createdBody.Rrsets)
+			}
+
+			if tt.expectNoFix {
+				if patchCount != 0 {
+					t.Fatalf("expected no MNAME fix PATCH when no nameservers, got %d", patchCount)
+				}
+				return
+			}
+
+			// 2) A single MNAME-fix PATCH must have been issued.
+			if patchCount != 1 {
+				t.Fatalf("expected exactly 1 MNAME-fix PATCH, got %d", patchCount)
+			}
+			if patchedBody.Rrsets == nil || len(*patchedBody.Rrsets) != 1 {
+				t.Fatalf("expected exactly one RRSet in MNAME-fix PATCH, got %+v", patchedBody.Rrsets)
+			}
+			soa := (*patchedBody.Rrsets)[0]
+			if soa.Type != "SOA" || soa.Changetype != powerdns.REPLACE {
+				t.Fatalf("expected SOA REPLACE RRSet, got type=%s changetype=%s", soa.Type, soa.Changetype)
+			}
+			if len(soa.Records) != 1 {
+				t.Fatalf("expected one SOA record in patch, got %d", len(soa.Records))
+			}
+
+			fields := strings.Fields(soa.Records[0].Content)
+			if len(fields) != 7 {
+				t.Fatalf("expected 7 SOA fields (MNAME RNAME SERIAL REFRESH RETRY EXPIRE MINIMUM), got %d: %q", len(fields), soa.Records[0].Content)
+			}
+			if fields[0] != tt.expectSOAMNAME {
+				t.Errorf("expected SOA MNAME %q, got %q", tt.expectSOAMNAME, fields[0])
+			}
+			if fields[0] == placeholder {
+				t.Error("SOA MNAME must not be the PowerDNS placeholder 'a.misconfigured.dns.server.invalid.'")
+			}
+
+			// 3) The serial must be preserved verbatim from what PowerDNS
+			// generated — we only swap the MNAME, never fabricate a serial.
+			if fields[2] != serverSerial {
+				t.Errorf("expected serial %q preserved, got %q (we must not fabricate a serial)", serverSerial, fields[2])
+			}
+
+			// 4) Timing fields must remain present.
+			for _, f := range fields[3:] {
+				if f == "" {
+					t.Errorf("SOA timing fields must be present: %q", soa.Records[0].Content)
+				}
+			}
+		})
+	}
+}
+
+// TestCreateZoneBestEffortSoaMNameFixReturnsCreatedZone verifies the
+// fresh-create path treats the SOA MNAME correction as strictly best-effort.
+// Even when the follow-up GET returns a malformed SOA (forcing fixSOAMNAME to
+// fail), CreateZone must still succeed and return the created zone — a
+// transient fetch/PATCH failure must never fail the create nor destroy the
+// live zone — and must not issue a compensating DeleteZone.
+func TestCreateZoneBestEffortSoaMNameFixReturnsCreatedZone(t *testing.T) {
+	var (
+		mu          sync.Mutex
+		deleteCalls int
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(powerdns.Zone{
+				Id:   strPtr("example.com."),
+				Name: strPtr("example.com."),
+				Kind: (*powerdns.ZoneKind)(strPtr("Native")),
+			})
+		case http.MethodGet:
+			// Return a zone whose SOA record content is empty -> malformed SOA
+			// -> fixSOAMNAMEOnZone returns an error.
+			ttl := 3600
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(powerdns.Zone{
+				Id:   strPtr("example.com."),
+				Name: strPtr("example.com."),
+				Rrsets: &[]powerdns.RRSet{
+					{Name: "example.com.", Type: "SOA", Ttl: &ttl, Records: []powerdns.Record{{Content: ""}}},
+				},
+			})
+		case http.MethodDelete:
+			mu.Lock()
+			deleteCalls++
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	logger := zap.NewNop()
+	coreLogger := &core.Logger{Logger: logger}
+	client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
+	if err != nil {
+		t.Fatalf("NewPowerDNSClient failed: %v", err)
+	}
+
+	zone, err := client.CreateZone(context.Background(), "example.com", []string{"ns1.example.com.", "ns2.example.com."})
+	if err != nil {
+		t.Fatalf("expected success despite best-effort SOA MNAME fix failure, got error: %v", err)
+	}
+	if zone == nil || zone.Id == nil || *zone.Id != "example.com." {
+		t.Fatalf("expected the created zone to be returned, got %v", zone)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if deleteCalls != 0 {
+		t.Errorf("expected no compensating DeleteZone on best-effort path, got %d", deleteCalls)
 	}
 }
 
@@ -1303,23 +1629,147 @@ func TestEnableDNSSEC(t *testing.T) {
 	})
 }
 
+// TestFixSOAMNAMEOnZoneCorrectsMNAME verifies the core correction helper on the
+// fresh-create path, where the zone was just created by the caller and is
+// provably portal-owned. The placeholder MNAME is corrected, and an already-
+// correct MNAME is left alone (idempotent).
+func TestFixSOAMNAMEOnZoneCorrectsMNAME(t *testing.T) {
+	ttl := 3600
+	makeZone := func(soaContent string) *powerdns.Zone {
+		return &powerdns.Zone{
+			Id:   strPtr("example.com."),
+			Name: strPtr("example.com."),
+			Rrsets: &[]powerdns.RRSet{
+				{Name: "example.com.", Type: "SOA", Ttl: &ttl, Records: []powerdns.Record{{Content: soaContent}}},
+			},
+		}
+	}
+
+	t.Run("placeholder MNAME is corrected", func(t *testing.T) {
+		patchCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPatch {
+				patchCount++
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		defer server.Close()
+
+		logger := zap.NewNop()
+		coreLogger := &core.Logger{Logger: logger}
+		client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
+		if err != nil {
+			t.Fatalf("NewPowerDNSClient failed: %v", err)
+		}
+
+		zone := makeZone("a.misconfigured.dns.server.invalid. hostmaster.example.com. 2024052601 10800 3600 604800 3600")
+		err = client.fixSOAMNAMEOnZone(context.Background(), "example.com.", "example.com", "ns1.example.com.", zone)
+		if err != nil {
+			t.Fatalf("fixSOAMNAMEOnZone returned error: %v", err)
+		}
+		if patchCount != 1 {
+			t.Errorf("expected 1 PATCH request, got %d", patchCount)
+		}
+	})
+
+	t.Run("already-correct MNAME is left alone", func(t *testing.T) {
+		patchCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPatch {
+				patchCount++
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		defer server.Close()
+
+		logger := zap.NewNop()
+		coreLogger := &core.Logger{Logger: logger}
+		client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
+		if err != nil {
+			t.Fatalf("NewPowerDNSClient failed: %v", err)
+		}
+
+		zone := makeZone("ns1.example.com. hostmaster.example.com. 2024052601 10800 3600 604800 3600")
+		err = client.fixSOAMNAMEOnZone(context.Background(), "example.com.", "example.com", "ns1.example.com.", zone)
+		if err != nil {
+			t.Fatalf("fixSOAMNAMEOnZone returned error: %v", err)
+		}
+		if patchCount != 0 {
+			t.Errorf("expected 0 PATCH requests for already-correct MNAME, got %d", patchCount)
+		}
+	})
+}
+
+// TestCreateZone409DoesNotMutateExistingZone verifies the 409 already-exists
+// path never issues a write. The existing zone may be a foreign or operator-
+// managed zone the portal does not own, so CreateZone must return it untouched
+// (POST + GET only, no PATCH) even when nameservers are supplied and the zone
+// carries a placeholder SOA MNAME.
+func TestCreateZone409DoesNotMutateExistingZone(t *testing.T) {
+	patchCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ttl := 3600
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/servers/localhost/zones":
+			w.WriteHeader(http.StatusConflict)
+			w.Write([]byte(`{"error": "Conflict"}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/servers/localhost/zones/"):
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(powerdns.Zone{
+				Id:   strPtr("example.com."),
+				Name: strPtr("example.com."),
+				Rrsets: &[]powerdns.RRSet{
+					{Name: "example.com.", Type: "SOA", Ttl: &ttl, Records: []powerdns.Record{{Content: "a.misconfigured.dns.server.invalid. hostmaster.example.com. 2024052601 10800 3600 604800 3600"}}},
+				},
+			})
+		case r.Method == http.MethodPatch:
+			patchCount++
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	logger := zap.NewNop()
+	coreLogger := &core.Logger{Logger: logger}
+	client, err := NewPowerDNSClient(server.URL, testAPIKey(), coreLogger)
+	if err != nil {
+		t.Fatalf("NewPowerDNSClient failed: %v", err)
+	}
+
+	zone, err := client.CreateZone(context.Background(), "example.com", []string{"ns1.example.com.", "ns2.example.com."})
+	if err != nil {
+		t.Fatalf("expected no error on 409, got: %v", err)
+	}
+	if zone == nil || zone.Id == nil || *zone.Id != "example.com." {
+		t.Fatalf("expected recovered zone ID 'example.com.', got %v", zone.Id)
+	}
+	if patchCount != 0 {
+		t.Errorf("expected 0 PATCH requests on 409 (must not mutate a non-owned zone), got %d", patchCount)
+	}
+}
+
 func intPtr(i int) *int {
 	return &i
 }
 
-// testAPIKey returns the PowerDNS API key used by the mock HTTP servers in
-// these tests. It comes from the environment when set; both the client under
-// test and the mock-server header assertion use this same helper, so the tests
-// remain self-consistent. When unset it falls back to a non-empty sentinel so
-// the X-API-Key header assertions always compare against a real value.
+// testAPIKey returns the PowerDNS API key used by these tests. It comes from
+// the POWERDNS_TEST_API_KEY environment variable when set; both the client
+// under test and the mock-server header assertion use this same helper, so the
+// tests remain self-consistent. When unset it falls back to an explicitly
+// non-secret placeholder so the X-API-Key header assertions compare against a
+// real value instead of "" (which would make them tautological no-ops).
+// The placeholder is not a credential — it never leaves the test process and
+// is never used against a real PowerDNS server.
 func testAPIKey() string {
-	// Fall back to a hardcoded non-empty sentinel when the env var is unset so
-	// the X-API-Key header assertions compare against a real value instead of
-	// "" (which would make them tautological no-ops).
+	// Prefer the environment; only fall back to a non-secret placeholder so
+	// the X-API-Key header assertions compare against a real value.
 	if k := os.Getenv("POWERDNS_TEST_API_KEY"); k != "" {
 		return k
 	}
-	return "test-api-key"
+	return "test-only-non-secret-placeholder"
 }
 
 func strPtr(s string) *string {
