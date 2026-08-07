@@ -612,3 +612,9 @@ func (p *HNSProvider) OnCertAvailable(ctx context.Context, domain string, certPE
 	p.tlsaSource.Certs[domain] = certPEM
 	return nil
 }
+
+// UsesManagedZoneTLSA reports that HNS uses DANE and that its TLSA must be
+// published into the portal-managed authoritative PowerDNS zone.
+func (p *HNSProvider) UsesManagedZoneTLSA() bool {
+	return true
+}

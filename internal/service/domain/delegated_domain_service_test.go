@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
@@ -174,4 +174,71 @@ func TestDelegatedDomainService_GetPendingWebsiteDomainsPaginated(t *testing.T) 
 		require.NoError(t, err)
 		assert.Len(t, wds2, 1)
 	}, TestOptions)
+}
+
+// TestDelegatedDomainService_UpdateTLSA_PublishesToManagedZone is the
+// regression test for the "TLSA record is never served" bug. When a cert is
+// pushed via UpdateTLSAFromCert for a domain whose WebsiteDomain carries a
+// ZoneID (i.e. a portal-managed, DNSSEC-signed authoritative zone), the TLSA
+// record MUST be published to PowerDNS via SetTLSARecord — otherwise DANE
+// validators get NXDOMAIN for `_443._tcp.<domain>` because the TLSA was only
+// stored in DB DelegationData and never served.
+func TestDelegatedDomainService_UpdateTLSA_PublishesToManagedZone(t *testing.T) {
+	t.Run("hns_publishes_tlsa", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			db := ctx.DB()
+			require.NoError(tb, db.Create(&pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "example", Namespace: pluginDb.DomainNamespaceHNS,
+				ZoneID: 42,
+			}).Error)
+
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, svc)
+
+			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+			require.NotNil(tb, mockDNS)
+
+			// The TLSA must be pushed to the managed zone (zone 42) as
+			// "usage selector matching hash" rdata.
+			mockDNS.EXPECT().
+				SetTLSARecord(mock.Anything, uint(42), mock.Anything).
+				Run(func(_ context.Context, zoneID uint, content string) {
+					assert.Regexp(tb, `^3 1 1 [0-9a-fA-F]+$`, content,
+						"TLSA rdata must be '<usage> <selector> <matching> <digest>'")
+				}).
+				Return(nil).
+				Once()
+
+			certPEM, _ := issueCertFromKey(t, mustGenerateKey(t), "example")
+			_, _, err := svc.UpdateTLSAFromCert(ctx, "hns", "example", certPEM, "")
+			require.NoError(tb, err)
+
+			mockDNS.AssertExpectations(tb)
+		}, keyTestOptions)
+	})
+
+	// Regression: ICANN domains get a portal-managed ZoneID too, but they do
+	// not use DANE, so a cert push must NOT publish a spurious TLSA record.
+	t.Run("icann_does_not_publish_tlsa", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			db := ctx.DB()
+			require.NoError(tb, db.Create(&pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "example.com", Namespace: pluginDb.DomainNamespaceICANN,
+				ZoneID: 42,
+			}).Error)
+
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, svc)
+
+			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+			require.NotNil(tb, mockDNS)
+			mockDNS.AssertNotCalled(tb, "SetTLSARecord")
+
+			certPEM, _ := issueCertFromKey(t, mustGenerateKey(t), "example.com")
+			_, _, err := svc.UpdateTLSAFromCert(ctx, "icann", "example.com", certPEM, "")
+			require.NoError(tb, err)
+
+			mockDNS.AssertNotCalled(tb, "SetTLSARecord")
+		}, keyTestOptions)
+	})
 }
