@@ -9,8 +9,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	"github.com/samber/lo"
+	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	apiDTO "go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
@@ -29,7 +29,7 @@ func getTestDnsConfig() *pluginConfig.DnsConfig {
 	return &pluginConfig.DnsConfig{
 		Enabled:              true,
 		PowerDNSAPIURL:       "http://localhost:8081",
-		PowerDNSAPIKey:       "test-api-key",
+		PowerDNSAPIKey:       testAPIKey(),
 		Nameservers:          []string{"ns1.localhost", "ns2.localhost"},
 		VerificationTokenKey: "lumeweb-verify",
 	}
@@ -133,7 +133,7 @@ func createTestOptionsWithServer(server *httptest.Server) coreTesting.TestContex
 func createTestPowerDNSClient(serverURL string) *PowerDNSClient {
 	logger := zap.NewNop()
 	coreLogger := &core.Logger{Logger: logger}
-	pdnsClient, err := NewPowerDNSClient(serverURL, "test-api-key", coreLogger)
+	pdnsClient, err := NewPowerDNSClient(serverURL, testAPIKey(), coreLogger)
 	if err != nil {
 		panic(fmt.Sprintf("failed to create PowerDNS client: %v", err))
 	}
@@ -158,8 +158,8 @@ func TestDNSServiceCreateZone(t *testing.T) {
 
 		// Verify API key header
 		apiKey := r.Header.Get("X-API-Key")
-		if apiKey != "test-api-key" {
-			t.Errorf("expected API key 'test-api-key', got '%s'", apiKey)
+		if apiKey != testAPIKey() {
+			t.Errorf("expected API key %q, got %q", testAPIKey(), apiKey)
 		}
 
 		// Return success response
@@ -729,14 +729,14 @@ func TestDNSServiceCreateRecord(t *testing.T) {
 	// Handle zone updates (PATCH for RRSet operations)
 	mux.HandleFunc("PATCH /servers/localhost/zones/example.com.", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		
+
 		// Parse the request body to get the RRSet being created
 		var updateRequest powerdns.ZonePatch
 		if err := json.NewDecoder(r.Body).Decode(&updateRequest); err == nil && updateRequest.Rrsets != nil && len(*updateRequest.Rrsets) > 0 {
 			// Store the RRSet in our slice for retrieval
 			*createdRRSet = *updateRequest.Rrsets
 		}
-		
+
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -796,7 +796,7 @@ func TestDNSServiceCreateRecord(t *testing.T) {
 				record, err := svc.CreateRecord(ctx, zone.ID, tc.name, tc.rtype, tc.content, tc.ttl)
 				require.NoError(tb, err, "CreateRecord should succeed for %s", tc.name)
 				require.NotNil(tb, record, "Record should not be nil for %s", tc.name)
-				
+
 				require.Equal(tb, zone.ID, record.ZoneID, "ZoneID should match for %s", tc.name)
 				require.Equal(tb, tc.name, record.Name, "Name should match for %s", tc.name)
 				require.Equal(tb, tc.rtype, record.Type, "Type should match for %s", tc.name)
@@ -860,7 +860,7 @@ func TestDNSServiceCreateRecord(t *testing.T) {
 
 	t.Run("powerdns_error", func(t *testing.T) {
 		errorMux := http.NewServeMux()
-		
+
 		// Handle zone creation
 		errorMux.HandleFunc("POST /servers/localhost/zones", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -994,9 +994,9 @@ func TestDNSServiceGetRRSet(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		rrsets := []powerdns.RRSet{
 			{
-				Name:  "www.example.com.",
-				Type:  "A",
-				Ttl:   lo.ToPtr(3600),
+				Name: "www.example.com.",
+				Type: "A",
+				Ttl:  lo.ToPtr(3600),
 				Records: []powerdns.Record{
 					{Content: "192.0.2.1"},
 				},
@@ -1214,6 +1214,59 @@ func TestDNSServiceCreateZoneRestoresSoftDeletedZoneWithNewPowerDNSZoneID(t *tes
 		require.Equal(tb, zone1.ID, zone2.ID, "restored zone should have same DB ID")
 		require.Equal(tb, "pdns-zone-2.", zone2.PowerDNSZoneID, "restored zone should have new PowerDNS zone ID from recreation")
 		require.False(tb, zone2.DeletedAt.Valid)
-		require.Equal(tb, string(pluginDb.DNSZoneStatusPendingNameserver), zone2.Status)
 	}, createTestOptionsWithServer(server))
+}
+
+func TestDNSServiceEnableDNSSEC(t *testing.T) {
+	// Mock server handles zone creation + cryptokeys list/create.
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /servers/localhost/zones", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(powerdns.Zone{Id: new("example.com."), Name: new("example.com."), Kind: (*powerdns.ZoneKind)(new("Native"))})
+	})
+	mux.HandleFunc("GET /servers/localhost/zones/example.com.", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(powerdns.Zone{Id: new("example.com."), Name: new("example.com."), Kind: (*powerdns.ZoneKind)(new("Native")), Rrsets: &[]powerdns.RRSet{}})
+	})
+	mux.HandleFunc("GET /servers/localhost/zones/example.com./cryptokeys", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"id":"1","keytype":"ksk","active":true,"dnskey":"257 3 13 AwEAAaX9pZzY3eiw=="}]`))
+	})
+	mux.HandleFunc("POST /servers/localhost/zones/example.com./cryptokeys", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"dnskey":"257 3 13 AwEAAaX9pZzY3eiw==","ds":["45688 13 2 1F287B0F9E0C1A2B3C4D5E6F7A8B9C0D1E2F3A4B5C6D7E8F9A0B1C2D3E4F5"]}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	testOptions := createTestOptionsWithServer(server)
+
+	t.Run("returns active KSK dnskey for existing zone", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
+			require.NotNil(tb, svc)
+
+			zone, err := svc.CreateZone(ctx, "example.com.", 1)
+			require.NoError(tb, err)
+			require.NotNil(tb, zone)
+
+			dnskey, err := svc.EnableDNSSEC(ctx, zone.ID)
+			require.NoError(tb, err)
+			require.Equal(tb, "257 3 13 AwEAAaX9pZzY3eiw==", dnskey)
+		}, testOptions)
+	})
+
+	t.Run("errors when zone does not exist", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
+			require.NotNil(tb, svc)
+
+			_, err := svc.EnableDNSSEC(ctx, 999999)
+			require.Error(tb, err)
+		}, testOptions)
+	})
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"go.lumeweb.com/ipfs-sdk/dnsname"
@@ -21,10 +22,32 @@ const defaultServerID = "localhost"
 
 // PowerDNSClient wraps the generated PowerDNS client
 type PowerDNSClient struct {
-	client   *powerdns.Client
-	logger   *core.Logger
-	baseURL  string
-	apiKey   string
+	client  *powerdns.Client
+	logger  *core.Logger
+	baseURL string
+	apiKey  string
+
+	// zoneLocks serializes the list-then-create window in EnableDNSSEC per zone
+	// so two concurrent delegation builds cannot both POST a new KSK (TOCTOU).
+	zoneLockMu sync.Mutex
+	zoneLocks  map[string]*sync.Mutex
+}
+
+// zoneMu returns the per-zone mutex for a normalized zone id, creating it on
+// first use. The map is never cleaned up; the number of distinct delegated
+// zones is small and bounded by the deploy's domain count, so this is fine.
+func (c *PowerDNSClient) zoneMu(zoneID string) *sync.Mutex {
+	c.zoneLockMu.Lock()
+	defer c.zoneLockMu.Unlock()
+	if c.zoneLocks == nil {
+		c.zoneLocks = make(map[string]*sync.Mutex)
+	}
+	mu, ok := c.zoneLocks[zoneID]
+	if !ok {
+		mu = &sync.Mutex{}
+		c.zoneLocks[zoneID] = mu
+	}
+	return mu
 }
 
 // NewPowerDNSClient creates a new PowerDNS client wrapper
@@ -190,13 +213,22 @@ func (c *PowerDNSClient) DeleteZone(ctx context.Context, zoneID string) error {
 	return nil
 }
 
-// EnableDNSSEC enables DNSSEC on a zone via the PowerDNS cryptokeys API.
-// Returns the DNSKEY record content (base64-encoded public key).
+// EnableDNSSEC ensures a zone has DNSSEC enabled and returns the active KSK's
+// DNSKEY record content.
+//
+// It is IDEMPOTENT: it lists the zone's existing cryptokeys and reuses an
+// existing active KSK rather than POSTing a new one. Creating a fresh KSK on
+// every call would rotate the zone's DNSSEC key each time delegation is built,
+// stranding the previously-published DS (DNSSEC keys must not cycle). A new KSK
+// is only created when the zone has no active KSK yet.
+//
+// The list-then-create window is serialized per zone (zoneMu) so concurrent
+// delegation builds for the same zone cannot both observe "no active KSK" and
+// both POST, which would mint two keys and reintroduce key cycling.
 func (c *PowerDNSClient) EnableDNSSEC(ctx context.Context, zoneID string) (string, error) {
-	// PowerDNS cryptokey creation endpoint:
-	// POST /api/v1/servers/:server_id/zones/:zone_id/cryptokeys
-	// Body: {"keytype": "ksk", "active": true}
-	// Response: { "dnskey": "257 3 13 <base64>", "ds": [...], ... }
+	// PowerDNS cryptokey API:
+	//   GET  /api/v1/servers/:server/zones/:zone/cryptokeys  (list)
+	//   POST /api/v1/servers/:server/zones/:zone/cryptokeys  (create)
 
 	parts := strings.Split(zoneID, "/")
 	apiZoneID := parts[len(parts)-1]
@@ -204,9 +236,45 @@ func (c *PowerDNSClient) EnableDNSSEC(ctx context.Context, zoneID string) (strin
 		return "", fmt.Errorf("invalid zone ID: %s", zoneID)
 	}
 
-	// PowerDNS picks algorithm based on its config defaults.
-	// We don't force `bits` or `algorithm` — that would override
-	// the operator's PowerDNS backend configuration.
+	// Serialize list+create for this zone so two concurrent builds can't both POST.
+	zoneMu := c.zoneMu(apiZoneID)
+	zoneMu.Lock()
+	defer zoneMu.Unlock()
+
+	base := strings.TrimSuffix(c.baseURL, "/")
+
+	// 1) Reuse an existing active signing key if the zone already has DNSSEC
+	// enabled. Match both "ksk" (split KSK/ZSK) and "csk" (Combined Signing Key)
+	// modes so a CSK-configured zone is never handed a fresh key on re-delegation.
+	existing, err := c.listCryptokeys(ctx, base, apiZoneID)
+	if err != nil {
+		return "", fmt.Errorf("list cryptokeys: %w", err)
+	}
+	var active []cryptokey
+	for _, k := range existing {
+		if k.Active && (k.KeyType == "ksk" || k.KeyType == "csk") && k.DNSKey != "" {
+			active = append(active, k)
+		}
+	}
+	switch len(active) {
+	case 0:
+		// No active signing key — fall through to create one below.
+	case 1:
+		c.logger.Info("DNSSEC already enabled on zone; reusing existing signing key",
+			zap.String("zone_id", zoneID),
+			zap.String("key_type", active[0].KeyType))
+		return active[0].DNSKey, nil
+	default:
+		// Multiple active signing keys: we cannot confirm which one the on-chain
+		// DS matches, so guess-free operation requires surfacing this rather than
+		// republishing a DS for the wrong key (the very drift this fix targets).
+		return "", fmt.Errorf("zone %s has %d active signing keys; cannot determine which matches the published DS; reconcile manually", zoneID, len(active))
+	}
+
+	// 2) No existing active KSK — create one. POSTing a cryptokey is what
+	// generates a fresh DNSKEY, so we only do this when none exists.
+	// PowerDNS picks the algorithm based on its config defaults; we don't force
+	// bits/algorithm to avoid overriding the operator's backend configuration.
 	reqBody := map[string]any{
 		"keytype": "ksk",
 		"active":  true,
@@ -216,9 +284,7 @@ func (c *PowerDNSClient) EnableDNSSEC(ctx context.Context, zoneID string) (strin
 		return "", fmt.Errorf("marshal cryptokey request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/servers/%s/zones/%s/cryptokeys",
-		strings.TrimSuffix(c.baseURL, "/"), defaultServerID, apiZoneID)
-
+	url := fmt.Sprintf("%s/servers/%s/zones/%s/cryptokeys", base, defaultServerID, apiZoneID)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("create cryptokey request: %w", err)
@@ -251,4 +317,47 @@ func (c *PowerDNSClient) EnableDNSSEC(ctx context.Context, zoneID string) (strin
 		zap.Bool("has_ds", len(result.DS) > 0))
 
 	return result.DNSKey, nil
+}
+
+// cryptokey is a PowerDNS cryptokey object (subset of the API response).
+type cryptokey struct {
+	ID      string `json:"id"`
+	KeyType string `json:"keytype"`
+	Active  bool   `json:"active"`
+	DNSKey  string `json:"dnskey"`
+}
+
+// listCryptokeys returns the zone's existing cryptokeys via
+// GET /servers/:server/zones/:zone/cryptokeys?details=true. The details=true
+// query is required: without it PowerDNS returns only each key's id and omits
+// the dnskey/ds content, which the idempotent reuse check depends on. A 404
+// (zone has no cryptokeys yet) is treated as an empty list.
+func (c *PowerDNSClient) listCryptokeys(ctx context.Context, base, apiZoneID string) ([]cryptokey, error) {
+	url := fmt.Sprintf("%s/servers/%s/zones/%s/cryptokeys?details=true", base, defaultServerID, apiZoneID)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list cryptokeys request: %w", err)
+	}
+	req.Header.Set("X-API-Key", c.apiKey)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list cryptokeys failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("PowerDNS cryptokey list returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var keys []cryptokey
+	if err := json.NewDecoder(resp.Body).Decode(&keys); err != nil {
+		return nil, fmt.Errorf("decode cryptokey list: %w", err)
+	}
+	return keys, nil
 }

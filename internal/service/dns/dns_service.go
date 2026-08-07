@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 
+	"gorm.io/gorm"
+
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
@@ -171,35 +173,54 @@ func (s *DNSServiceDefault) SetTLSARecord(ctx context.Context, zoneID uint, cont
 	return err
 }
 
-// EnableDNSSEC enables DNSSEC on a zone and returns the DNSKEY record content.
-// It delegates to the PowerDNS client's cryptokey API.
+// EnableDNSSEC enables DNSSEC on a zone and returns the active signing key's
+// DNSKEY record content.
+//
+// It validates the DNSZone row in a short transaction (releasing any lock
+// immediately), then delegates the actual cryptokey list+create to the PowerDNS
+// client, which is idempotent (reuses an existing active signing key) and
+// serializes the list+create window per zone with an in-process mutex.
+//
+// The DB transaction is deliberately NOT held across the PowerDNS calls: those
+// can take up to 2x the client timeout (30s each) of external network I/O, and
+// holding a write lock for that long would block same-zone DB writes and risk
+// exhausting the connection pool during bulk delegation. Correctness of the
+// "don't mint a second key" guarantee comes from the client's idempotent
+// list-then-reuse logic, not from a long-lived DB lock.
 func (s *DNSServiceDefault) EnableDNSSEC(ctx context.Context, zoneID uint) (string, error) {
 	if s.pdnsClient == nil {
 		return "", fmt.Errorf("PowerDNS client not configured")
 	}
 
-	// Look up the zone to get the PowerDNS zone ID
-	var zone pluginDb.DNSZone
-	if err := s.DB().WithContext(ctx).First(&zone, zoneID).Error; err != nil {
-		return "", fmt.Errorf("failed to fetch zone: %w", err)
+	// Short transaction: fetch + validate the zone row and its PowerDNS zone ID,
+	// then release before any external network I/O.
+	var pdnsZoneID string
+	txErr := s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var zone pluginDb.DNSZone
+		if err := tx.First(&zone, zoneID).Error; err != nil {
+			return err // includes gorm.ErrRecordNotFound
+		}
+		if zone.PowerDNSZoneID == "" {
+			return fmt.Errorf("zone %d has no PowerDNS zone ID", zoneID)
+		}
+		pdnsZoneID = zone.PowerDNSZoneID
+		return nil
+	})
+	if txErr != nil {
+		return "", txErr
 	}
 
-	if zone.PowerDNSZoneID == "" {
-		return "", fmt.Errorf("zone %d has no PowerDNS zone ID", zoneID)
-	}
-
-	dnskey, err := s.pdnsClient.EnableDNSSEC(ctx, zone.PowerDNSZoneID)
+	dnskey, err := s.pdnsClient.EnableDNSSEC(ctx, pdnsZoneID)
 	if err != nil {
 		s.Logger().Error("Failed to enable DNSSEC",
 			zap.Uint("zone_id", zoneID),
-			zap.String("pdns_zone_id", zone.PowerDNSZoneID),
+			zap.String("pdns_zone_id", pdnsZoneID),
 			zap.Error(err))
 		return "", fmt.Errorf("enable DNSSEC: %w", err)
 	}
 
 	s.Logger().Info("DNSSEC enabled",
-		zap.Uint("zone_id", zoneID),
-		zap.String("pdns_zone_id", zone.PowerDNSZoneID))
+		zap.Uint("zone_id", zoneID))
 
 	return dnskey, nil
 }
