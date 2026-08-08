@@ -520,3 +520,77 @@ func TestBlockRequestTracker_RemovePeerFromAll_DisconnectScenario(t *testing.T) 
 	
 	t.Log("Disconnect scenario test passed - ghost wants cleaned up correctly")
 }
+
+func TestBlockRequestTrackerMaintainsPeerIndex(t *testing.T) {
+	tracker := NewBlockRequestTracker()
+	cidA := mustTestCID(t, "QmYwAPJzv5CZsnA625qs3FTJ2xDkg7WjNnCm129r48gVfX")
+	cidB := mustTestCID(t, "QmYwAPJzv5CZsnA625qs3FTJ2xDkg7WjNnCm129r48gVfW")
+
+	tracker.AddRequest(cidA, "peer-a")
+	tracker.AddRequest(cidA, "peer-a")
+	tracker.AddRequest(cidB, "peer-a")
+	tracker.AddRequest(cidB, "peer-b")
+
+	tracker.mu.RLock()
+	if got := len(tracker.peerCIDs["peer-a"]); got != 2 {
+		t.Fatalf("peer-a CID count = %d, want 2", got)
+	}
+	if got := len(tracker.peerCIDs["peer-b"]); got != 1 {
+		t.Fatalf("peer-b CID count = %d, want 1", got)
+	}
+	tracker.mu.RUnlock()
+
+	tracker.RemovePeerFromAll("peer-a")
+
+	if _, ok := tracker.GetAndRemoveRandomPeer(cidA); ok {
+		t.Fatal("peer-a request remained for cidA")
+	}
+	peer, ok := tracker.GetAndRemoveRandomPeer(cidB)
+	if !ok || peer != "peer-b" {
+		t.Fatalf("cidB peer = %q, %v, want peer-b, true", peer, ok)
+	}
+
+	tracker.mu.RLock()
+	if _, ok := tracker.peerCIDs["peer-a"]; ok {
+		t.Fatal("peer-a reverse index remained after cleanup")
+	}
+	tracker.mu.RUnlock()
+}
+
+func TestBlockRequestTrackerRemovesReverseIndexEntries(t *testing.T) {
+	tracker := NewBlockRequestTracker()
+	cidA := mustTestCID(t, "QmYwAPJzv5CZsnA625qs3FTJ2xDkg7WjNnCm129r48gVfX")
+	cidB := mustTestCID(t, "QmYwAPJzv5CZsnA625qs3FTJ2xDkg7WjNnCm129r48gVfW")
+
+	tracker.AddRequest(cidA, "peer-a")
+	tracker.AddRequest(cidA, "peer-b")
+	tracker.AddRequest(cidB, "peer-a")
+
+	tracker.RemovePeer(cidA, "peer-a")
+
+	tracker.mu.RLock()
+	if _, ok := tracker.peerCIDs["peer-a"][cidA]; ok {
+		t.Fatal("cidA remained in peer-a reverse index")
+	}
+	if _, ok := tracker.peerCIDs["peer-a"][cidB]; !ok {
+		t.Fatal("cidB missing from peer-a reverse index")
+	}
+	tracker.mu.RUnlock()
+
+	tracker.PopPeer(cidB)
+
+	tracker.mu.RLock()
+	if _, ok := tracker.peerCIDs["peer-a"]; ok {
+		t.Fatal("empty peer reverse index remained after PopPeer")
+	}
+	tracker.mu.RUnlock()
+}
+
+func mustTestCID(t *testing.T, value string) cid.Cid {
+	t.Helper()
+	c, err := cid.Decode(value)
+	if err != nil {
+		t.Fatalf("decode test CID: %v", err)
+	}
+	return c
+}
