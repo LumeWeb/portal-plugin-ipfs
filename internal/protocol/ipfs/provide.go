@@ -291,10 +291,9 @@ func (r *Reprovider) performProvide(ctx context.Context, trigger string) time.Du
 	ctx, span := core.TraceMethod(ctx, "Reprovider.performProvide")
 	defer span.End()
 
-	// Wrap the entire cycle with a timeout. The inner ProvideManyTimeout
-	// only covers the DHT call — the rest (CountPinned, ProvideCIDs,
-	// SetLastAnnouncement) can hang indefinitely under connection saturation.
-	ctx, cancel := context.WithTimeout(ctx, r.cfg.ProvideManyTimeout*2)
+	// Reserve one timeout window for setup and announcement bookkeeping, and
+	// one full window for the DHT operation itself.
+	ctx, cancel := context.WithTimeout(ctx, r.cfg.ProvideManyTimeout*3)
 	defer cancel()
 
 	cycleStart := time.Now()

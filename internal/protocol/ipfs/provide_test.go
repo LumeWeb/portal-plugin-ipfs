@@ -623,6 +623,38 @@ func TestFullrtProvider_ProvideMany(t *testing.T) {
 	})
 }
 
+func TestReprovider_performProvide_UsesProvideManyTimeout(t *testing.T) {
+	provider := mocks.NewMockProvider(t)
+	store := mocks.NewMockReprovideStore(t)
+	logger, _ := zap.NewDevelopment()
+
+	cfg := newTestReproviderCfg(time.Second, 1)
+	cfg.ProvideManyTimeout = 100 * time.Millisecond
+	reprovider := &Reprovider{
+		provider:       provider,
+		store:          store,
+		log:            logger,
+		cfg:            cfg,
+		triggerProvide: make(chan struct{}, 1),
+	}
+
+	testCID := cid.NewCidV1(cid.Raw, mustMultihash(t, "provide-timeout"))
+	store.EXPECT().CountPinned(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context, _ time.Time) (core.PinnedCIDStats, error) {
+		time.Sleep(200 * time.Millisecond)
+		return core.PinnedCIDStats{}, nil
+	}).Once()
+	store.EXPECT().ProvideCIDs(mock.Anything, mock.Anything, 1).Return([]core.PinnedCID{{CID: testCID}}, nil).Once()
+	provider.EXPECT().ProvideMany(mock.Anything, mock.Anything).Run(func(ctx context.Context, _ []multihash.Multihash) {
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok, "ProvideMany context must have deadline")
+		remaining := time.Until(deadline)
+		assert.Greater(t, remaining, 40*time.Millisecond)
+		assert.Less(t, remaining, 200*time.Millisecond)
+	}).Return(context.DeadlineExceeded).Once()
+
+	assert.Equal(t, time.Minute, reprovider.performProvide(context.Background(), LabelTriggerScheduled))
+}
+
 func TestReprovider_performProvide_PartialFailure_AllFail(t *testing.T) {
 	ctx := context.Background()
 
