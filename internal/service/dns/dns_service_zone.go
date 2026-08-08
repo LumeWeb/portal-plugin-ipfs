@@ -602,6 +602,75 @@ func (s *DNSServiceDefault) DeleteWebsiteDNSRecords(ctx context.Context, zoneID 
 	return nil
 }
 
+// CreateWebsiteValidationRecord creates or replaces only the website validation TXT record.
+// It does not touch DNSLink or apex records shared with delegation.
+func (s *DNSServiceDefault) CreateWebsiteValidationRecord(ctx context.Context, zoneID uint, websiteDomain string, validationToken string) error {
+	ctx, span := core.TraceMethod(ctx, "DNSService.CreateWebsiteValidationRecord")
+	defer span.End()
+
+	zone, err := s.GetZone(ctx, zoneID)
+	if err != nil {
+		return fmt.Errorf("failed to get zone: %w", err)
+	}
+	if zone == nil {
+		return fmt.Errorf("zone not found")
+	}
+	if s.pdnsClient == nil {
+		return fmt.Errorf("DNS hosting not enabled")
+	}
+
+	verifyName, err := buildFullName(s.config.VerificationTokenKey, websiteDomain)
+	if err != nil {
+		return fmt.Errorf("invalid verification token key: %w", err)
+	}
+	ttl := 300
+	disabled := false
+	if err := s.pdnsClient.UpdateZoneRRSets(ctx, zone.PowerDNSZoneID, []powerdns.RRSet{{
+		Name:       verifyName,
+		Type:       "TXT",
+		Changetype: "REPLACE",
+		Ttl:        &ttl,
+		Records: []powerdns.Record{{
+			Content:  formatTXTContent(validationToken),
+			Disabled: &disabled,
+		}},
+	}}); err != nil {
+		return fmt.Errorf("failed to create validation record: %w", err)
+	}
+	return nil
+}
+
+// DeleteWebsiteValidationRecord removes only the website validation TXT record.
+// It does not touch DNSLink or apex records shared with delegation.
+func (s *DNSServiceDefault) DeleteWebsiteValidationRecord(ctx context.Context, zoneID uint, websiteDomain string) error {
+	ctx, span := core.TraceMethod(ctx, "DNSService.DeleteWebsiteValidationRecord")
+	defer span.End()
+
+	zone, err := s.GetZone(ctx, zoneID)
+	if err != nil {
+		return fmt.Errorf("failed to get zone: %w", err)
+	}
+	if zone == nil {
+		return fmt.Errorf("zone not found")
+	}
+	if s.pdnsClient == nil {
+		return fmt.Errorf("DNS hosting not enabled")
+	}
+
+	verifyName, err := buildFullName(s.config.VerificationTokenKey, websiteDomain)
+	if err != nil {
+		return fmt.Errorf("invalid verification token key: %w", err)
+	}
+	if err := s.pdnsClient.UpdateZoneRRSets(ctx, zone.PowerDNSZoneID, []powerdns.RRSet{{
+		Name:       verifyName,
+		Type:       "TXT",
+		Changetype: "DELETE",
+	}}); err != nil {
+		return fmt.Errorf("failed to delete validation record: %w", err)
+	}
+	return nil
+}
+
 // validateDomain validates the domain name format
 func (s *DNSServiceDefault) validateDomain(domain string) error {
 	if domain == "" {

@@ -55,11 +55,11 @@ func (a *API) verificationTokenKey() string {
 	return "lumeweb-verify"
 }
 
-func (a *API) zoneDomain(ctx context.Context, dnsZoneID *uint) string {
-	if dnsZoneID == nil || a.dnsService == nil {
+func (a *API) zoneDomain(ctx context.Context, zoneID uint) string {
+	if zoneID == 0 || a.dnsService == nil {
 		return ""
 	}
-	zone, err := a.dnsService.GetZone(ctx, *dnsZoneID)
+	zone, err := a.dnsService.GetZone(ctx, zoneID)
 	if err != nil || zone == nil {
 		return ""
 	}
@@ -190,7 +190,7 @@ func (a *API) createWebsite(c echo.Context) error {
 	resp.SetPrimaryDomain(primary)
 	resp.GatewayDomain = a.gatewayDomain()
 	if primary != nil {
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.DNSZoneID))
+		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
 	} else {
 		resp.SetSubdomainInfo("")
 	}
@@ -256,7 +256,7 @@ func (a *API) listWebsites(c echo.Context) error {
 		responses[i].SetPrimaryDomain(primary)
 		responses[i].GatewayDomain = a.gatewayDomain()
 		if primary != nil {
-			responses[i].SetSubdomainInfo(a.zoneDomain(reqCtx, primary.DNSZoneID))
+			responses[i].SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
 		} else {
 			responses[i].SetSubdomainInfo("")
 		}
@@ -305,7 +305,7 @@ func (a *API) getWebsite(c echo.Context) error {
 			resp.SetPrimaryDomain(primary)
 			resp.GatewayDomain = a.gatewayDomain()
 			if primary != nil {
-				resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.DNSZoneID))
+				resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
 			} else {
 				resp.SetSubdomainInfo("")
 			}
@@ -331,7 +331,7 @@ func (a *API) getWebsite(c echo.Context) error {
 	resp.SetPrimaryDomain(primary)
 	resp.GatewayDomain = a.gatewayDomain()
 	if primary != nil {
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.DNSZoneID))
+		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
 	} else {
 		resp.SetSubdomainInfo("")
 	}
@@ -440,7 +440,7 @@ func (a *API) updateWebsite(c echo.Context) error {
 				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
 				return ctx.Error(apiErr, apiErr.HttpStatus())
 			}
-			// Use the toggled binding for the response so Enabled/DNSZoneID
+			// Use the toggled binding for the response so Enabled/ZoneID
 			// reflect the actual DNS state rather than the pre-toggle apex.
 			primary = updated
 		}
@@ -462,7 +462,7 @@ func (a *API) updateWebsite(c echo.Context) error {
 	resp.SetPrimaryDomain(primary)
 	resp.GatewayDomain = a.gatewayDomain()
 	if primary != nil {
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.DNSZoneID))
+		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
 	} else {
 		resp.SetSubdomainInfo("")
 	}
@@ -571,7 +571,7 @@ func (a *API) getSSLStatus(c echo.Context) error {
 	primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
 	if perr == nil && primary != nil {
 		resp.SetPrimaryDomain(primary)
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.DNSZoneID))
+		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
 	} else {
 		// Fall back to the requested domain when the primary binding can't be
 		// resolved; the lookup was itself by domain string.
@@ -667,7 +667,7 @@ func (a *API) updateSSLStatus(c echo.Context) error {
 	primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
 	if perr == nil && primary != nil {
 		resp.SetPrimaryDomain(primary)
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.DNSZoneID))
+		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
 	} else {
 		// Fall back to the requested domain when the primary binding can't be
 		// resolved; the lookup was itself by domain string.

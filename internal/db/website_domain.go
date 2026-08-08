@@ -36,19 +36,20 @@ type WebsiteDomain struct {
 	Namespace      DomainNamespace `gorm:"index:idx_domain_namespace,unique"`
 	ZoneName       string
 	GatewayHost    string
-	ZoneID         uint `gorm:"index"` // FK to the delegation/zone record (alt-root/delegated delegation)
+	ZoneID         uint `gorm:"index"` // canonical reference to this binding's PowerDNS zone
 	Status         DomainStatus
 	DelegationData datatypes.JSONMap `gorm:"type:json"`
 	ProtocolData   datatypes.JSONMap `gorm:"type:json"`
 
-	// DNS hosting is a per-domain property. DNSHostingEnabled and DNSZoneID own
-	// the PowerDNS hosting lifecycle for this binding, having moved off the
-	// owning Website (which now only references this domain via
-	// Website.PrimaryDomainID). The IPNS key stays on the Website (it belongs to
-	// the site's target, not the domain). DNSZoneID is the PowerDNS hosting
-	// zone; keep it distinct from ZoneID (the delegation/alt-root zone above).
-	DNSHostingEnabled bool  `gorm:"column:dns_hosting_enabled;default:false"`
-	DNSZoneID         *uint `gorm:"column:dns_zone_id;index:idx_website_domains_dns_zone_id"`
+	// DNS hosting is a per-domain property, owning the PowerDNS hosting
+	// lifecycle for this binding (having moved off the owning Website, which
+	// now only references this domain via Website.PrimaryDomainID). The IPNS
+	// key stays on the Website (it belongs to the site's target, not the
+	// domain). ZoneID is the single canonical PowerDNS zone reference for the
+	// binding — set by CreateDomain (via resolveManagedZone), or 0 when the
+	// binding is self-hosted (user runs the authoritative server, no portal
+	// zone).
+	DNSHostingEnabled bool `gorm:"column:dns_hosting_enabled;default:false"`
 
 	// SSL certificate state for this specific domain binding. SSL is a
 	// per-hostname property (each bound domain may hold its own cert), so it
@@ -65,6 +66,32 @@ type WebsiteDomain struct {
 
 func (WebsiteDomain) TableName() string {
 	return "website_domains"
+}
+
+// DelegationRecordsOwned reports whether website lifecycle code must preserve
+// shared DNSLink and apex records. HNS zones are DNSSEC-signed at the apex and
+// their records are provisioned by the delegation path even if delegation_data
+// or status is stale during a transition.
+func (wd *WebsiteDomain) DelegationRecordsOwned() bool {
+	return wd.Namespace == DomainNamespaceHNS || wd.DelegationOwned()
+}
+
+// DelegationOwned reports whether this binding's PowerDNS zone also hosts
+// alt-root delegation (DNS/DS/DNSSEC for namespaces served from the managed
+// zone). A binding that has progressed into the delegation lifecycle
+// (delegation_data present, status past records_generated) owns its zone for
+// delegation purposes, so website-DNS hosting teardown must NOT delete that
+// zone or clear zone_id.
+func (wd *WebsiteDomain) DelegationOwned() bool {
+	if len(wd.DelegationData) == 0 {
+		return false
+	}
+	switch wd.Status {
+	case DomainStatusRecordsGenerated, DomainStatusWaitingDelegation, DomainStatusActive:
+		return true
+	default:
+		return false
+	}
 }
 
 // BeforeSave normalizes the bound domain to its canonical apex form on every

@@ -25,6 +25,7 @@ import (
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.lumeweb.com/queryutil"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -1242,8 +1243,8 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreatedWhenEnabled(t *testing.T) {
 		assert.NotNil(tb, createdWebsite)
 		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
 		require.NoError(tb, err)
-		assert.NotNil(tb, createdApex.DNSZoneID)
-		assert.Equal(tb, testZoneID1, *createdApex.DNSZoneID)
+		assert.NotZero(tb, createdApex.ZoneID)
+		assert.Equal(tb, testZoneID1, createdApex.ZoneID)
 		assert.True(tb, createdApex.DNSHostingEnabled)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType, "Should be converted to IPNS for managed DNS")
 		assert.NotNil(tb, createdWebsite.IPNSKeyID, "IPNS key ID should be set")
@@ -1503,7 +1504,7 @@ func TestWebsiteService_CreateWebsite_DNSHostingDisabledWhenEnabledFalse(t *test
 		createdApex, apxErr := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
 		require.NoError(tb, apxErr)
 		require.NotNil(tb, createdApex)
-		assert.Nil(tb, createdApex.DNSZoneID, "DNS zone ID should be nil when DNS hosting is disabled")
+		assert.Zero(tb, createdApex.ZoneID, "DNS zone ID should be nil when DNS hosting is disabled")
 		assert.False(tb, createdApex.DNSHostingEnabled)
 
 		// Verify no DNS methods were called
@@ -1554,8 +1555,8 @@ func TestWebsiteService_CreateWebsite_DNSHostingEnabled_CreatesZoneAndRecords(t 
 		assert.NotNil(tb, createdWebsite)
 		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
 		require.NoError(tb, err)
-		assert.NotNil(tb, createdApex.DNSZoneID, "DNS zone ID should be set when DNS hosting is enabled")
-		assert.Equal(tb, testZoneID6, *createdApex.DNSZoneID)
+		assert.NotZero(tb, createdApex.ZoneID, "DNS zone ID should be set when DNS hosting is enabled")
+		assert.Equal(tb, testZoneID6, createdApex.ZoneID)
 		assert.True(tb, createdApex.DNSHostingEnabled)
 		assert.Equal(tb, domain, apexDomain(tb, ctx, websiteService, createdWebsite.ID))
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType, "Should be converted to IPNS for managed DNS")
@@ -1693,7 +1694,7 @@ func TestWebsiteService_CreateWebsite_DNSHostingDisabled_NoDNSOperations(t *test
 		apex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
 		require.NoError(tb, err)
 		require.NotNil(tb, apex)
-		assert.Nil(tb, apex.DNSZoneID, "DNS zone ID should be nil when DNS hosting is disabled")
+		assert.Zero(tb, apex.ZoneID, "DNS zone ID should be nil when DNS hosting is disabled")
 		assert.False(tb, apex.DNSHostingEnabled)
 
 		// Verify no DNS operations were performed
@@ -1809,7 +1810,7 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreationFailure_ContinuesWithoutDNS
 		apex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
 		require.NoError(tb, err)
 		require.NotNil(tb, apex)
-		assert.Nil(tb, apex.DNSZoneID, "DNS zone ID should be nil when zone creation fails")
+		assert.Zero(tb, apex.ZoneID, "DNS zone ID should be nil when zone creation fails")
 		assert.Equal(tb, domain, apex.Domain)
 		// Website should still get IPNS conversion since that happens before DNS operations
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType, "Should be converted to IPNS")
@@ -1859,10 +1860,49 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreationFailure_ContinuesWithout
 		assert.NotNil(tb, createdWebsite)
 		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
 		require.NoError(tb, err)
-		assert.NotNil(tb, createdApex.DNSZoneID, "DNS zone ID should be set even when record creation fails")
-		assert.Equal(tb, testZoneID8, *createdApex.DNSZoneID)
+		assert.NotZero(tb, createdApex.ZoneID, "DNS zone ID should be set even when record creation fails")
+		assert.Equal(tb, testZoneID8, createdApex.ZoneID)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType, "Should be converted to IPNS")
 
+	}, TestOptions)
+}
+
+// TestWebsiteService_EnableDNSHosting_RecordFailurePreservesDelegationZone
+// verifies failed website-record creation cannot clear or delete a zone still
+// required by delegation.
+func TestWebsiteService_EnableDNSHosting_RecordFailurePreservesDelegationZone(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "delegation-enable-failure.com"
+		testZoneID := uint(9002)
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.ID = 9013
+		wd := prebindPrimaryDomain(tb, ctx, website, domain, false)
+		wd.ZoneID = testZoneID
+		wd.Status = pluginDb.DomainStatusRecordsGenerated
+		wd.DelegationData = datatypes.JSONMap{"ns": []interface{}{"dns1.example."}}
+		require.NoError(tb, ctx.DB().Model(wd).Updates(map[string]interface{}{
+			"zone_id":         testZoneID,
+			"status":          string(pluginDb.DomainStatusRecordsGenerated),
+			"delegation_data": wd.DelegationData,
+		}).Error)
+
+		mockDNS.EXPECT().CreateWebsiteValidationRecord(
+			mock.Anything, testZoneID, domain, mock.Anything,
+		).Return(assert.AnError).Once()
+		mockDNS.EXPECT().DeleteWebsiteValidationRecord(mock.Anything, testZoneID, domain).Return(nil).Once()
+
+		_, err := websiteService.SetDomainDNSEnabled(context.Background(), testUserID1, website.ID, wd.ID, true)
+		require.Error(tb, err)
+
+		var persisted pluginDb.WebsiteDomain
+		require.NoError(tb, ctx.DB().First(&persisted, wd.ID).Error)
+		assert.Equal(tb, testZoneID, persisted.ZoneID, "delegation-owned zone must survive enable rollback")
+		assert.False(tb, persisted.DNSHostingEnabled, "hosting flag must remain disabled after failed enable")
 	}, TestOptions)
 }
 
@@ -2038,7 +2078,7 @@ func TestWebsiteService_UpdateWebsite_EnableDNSHostingTransition(t *testing.T) {
 		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.False(t, createdApex.DNSHostingEnabled)
-		assert.Nil(t, createdApex.DNSZoneID)
+		assert.Zero(t, createdApex.ZoneID)
 
 		// Set up mock DNS service expectations for enabling DNS hosting
 		setupDNSZoneCreationMocks(t, mockDNS, zoneID, domain, testUserID1)
@@ -2092,7 +2132,7 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingTransition(t *testing.T) 
 		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.True(t, createdApex.DNSHostingEnabled)
-		assert.NotNil(t, createdApex.DNSZoneID)
+		assert.NotZero(t, createdApex.ZoneID)
 
 		// Set up mock DNS service expectations for disabling DNS hosting
 		// First, DeleteWebsiteDNSRecords is called to remove the website's DNS records
@@ -2115,7 +2155,7 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingTransition(t *testing.T) 
 		require.NoError(tb, uerr)
 		assert.False(t, updatedApex.DNSHostingEnabled)
 		assert.Equal(t, string(pluginDb.WebsiteStatusPendingValidation), updatedWebsite.Status)
-		assert.Nil(t, updatedApex.DNSZoneID)
+		assert.Zero(t, updatedApex.ZoneID)
 
 	}, TestOptions)
 }
@@ -2162,7 +2202,7 @@ func TestWebsiteService_UpdateWebsite_DNSHostingTransitionWithExistingZone(t *te
 		// zone, so that enabling DNS reuses the zone (no CreateZone) and only
 		// creates the DNS records.
 		existingApex := prebindPrimaryDomain(tb, ctx, website, domain, false)
-		existingApex.DNSZoneID = &testZoneID
+		existingApex.ZoneID = testZoneID
 		require.NoError(tb, ctx.DB().Save(existingApex).Error)
 		website.Status = string(pluginDb.WebsiteStatusActive)
 
@@ -2225,13 +2265,13 @@ func TestWebsiteService_UpdateWebsite_DNSEnableToggleOffOn(t *testing.T) {
 		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.True(t, createdApex.DNSHostingEnabled)
-		assert.NotNil(t, createdApex.DNSZoneID)
+		assert.NotZero(t, createdApex.ZoneID)
 
 		// Toggle DNS off
 		// First, DeleteWebsiteDNSRecords is called to remove the website's DNS records
-		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, *createdApex.DNSZoneID, mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, createdApex.ZoneID, mock.Anything).Return(nil).Once()
 		// Then, DeleteZone is called because no other websites share the zone
-		mockDNS.EXPECT().DeleteZone(mock.Anything, *createdApex.DNSZoneID).Return(nil).Once()
+		mockDNS.EXPECT().DeleteZone(mock.Anything, createdApex.ZoneID).Return(nil).Once()
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
 			"dns_enabled": false,
 		})
@@ -2239,7 +2279,7 @@ func TestWebsiteService_UpdateWebsite_DNSEnableToggleOffOn(t *testing.T) {
 		updatedApex, uerr := websiteService.GetApexDomainBinding(context.Background(), updatedWebsite.ID)
 		require.NoError(tb, uerr)
 		assert.False(t, updatedApex.DNSHostingEnabled)
-		assert.Nil(t, updatedApex.DNSZoneID, "dns_zone_id should be nil after successful delete")
+		assert.Zero(t, updatedApex.ZoneID, "dns_zone_id should be nil after successful delete")
 
 		// Toggle DNS back on - handleDNSEnabledTransition only creates zone + records (no IPNS)
 		newZoneID := uint(8002)
@@ -2254,8 +2294,8 @@ func TestWebsiteService_UpdateWebsite_DNSEnableToggleOffOn(t *testing.T) {
 		updatedApex2, u2err := websiteService.GetApexDomainBinding(context.Background(), updatedWebsite2.ID)
 		require.NoError(tb, u2err)
 		assert.True(t, updatedApex2.DNSHostingEnabled)
-		assert.NotNil(t, updatedApex2.DNSZoneID, "dns_zone_id should be set after re-enable")
-		assert.Equal(t, newZoneID, *updatedApex2.DNSZoneID)
+		assert.NotZero(t, updatedApex2.ZoneID, "dns_zone_id should be set after re-enable")
+		assert.Equal(t, newZoneID, updatedApex2.ZoneID)
 	}, TestOptions)
 }
 
@@ -2285,13 +2325,13 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingDeleteZoneFails(t *testin
 		require.NotNil(tb, createdWebsite)
 		createdApex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
 		require.NoError(tb, err)
-		assert.NotNil(t, createdApex.DNSZoneID)
+		assert.NotZero(t, createdApex.ZoneID)
 
 		// Toggle DNS off but DeleteZone fails
 		// First, DeleteWebsiteDNSRecords is called and succeeds
-		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, *createdApex.DNSZoneID, mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, createdApex.ZoneID, mock.Anything).Return(nil).Once()
 		// Then, DeleteZone is called but fails
-		mockDNS.EXPECT().DeleteZone(mock.Anything, *createdApex.DNSZoneID).Return(errors.New("powerdns unavailable")).Once()
+		mockDNS.EXPECT().DeleteZone(mock.Anything, createdApex.ZoneID).Return(errors.New("powerdns unavailable")).Once()
 
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
 			"dns_enabled": false,
@@ -2300,8 +2340,8 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingDeleteZoneFails(t *testin
 		updatedApex, uerr := websiteService.GetApexDomainBinding(context.Background(), updatedWebsite.ID)
 		require.NoError(tb, uerr)
 		assert.False(t, updatedApex.DNSHostingEnabled)
-		assert.NotNil(t, updatedApex.DNSZoneID, "dns_zone_id should be preserved when DeleteZone fails")
-		assert.Equal(t, *createdApex.DNSZoneID, *updatedApex.DNSZoneID)
+		assert.NotZero(t, updatedApex.ZoneID, "dns_zone_id should be preserved when DeleteZone fails")
+		assert.Equal(t, createdApex.ZoneID, updatedApex.ZoneID)
 	}, TestOptions)
 }
 
@@ -2347,8 +2387,8 @@ func TestWebsiteService_UpdateWebsite_ConvertIPNSToIPFS_UpdatesDNSRecords(t *tes
 		apex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
 		require.NoError(tb, err)
 		require.NotNil(tb, apex)
-		require.NotNil(tb, apex.DNSZoneID)
-		assert.Equal(tb, testZoneID, *apex.DNSZoneID)
+		require.NotZero(tb, apex.ZoneID)
+		assert.Equal(tb, testZoneID, apex.ZoneID)
 
 		// Act - Update from IPNS to IPFS
 		newCID := util.GenerateTestCID(t, "new ipfs content")
@@ -2488,8 +2528,8 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 		apex, err := websiteService.GetApexDomainBinding(context.Background(), createdWebsite.ID)
 		require.NoError(tb, err)
 		require.NotNil(tb, apex)
-		require.NotNil(tb, apex.DNSZoneID)
-		assert.Equal(tb, testZoneID, *apex.DNSZoneID)
+		require.NotZero(tb, apex.ZoneID)
+		assert.Equal(tb, testZoneID, apex.ZoneID)
 
 		// First, switch back to IPFS to set up the IPFS→IPNS scenario
 		newCID := util.GenerateTestCID(t, "intermediate ipfs content")
@@ -2646,7 +2686,7 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone_DNSRecordsUpdated(t *t
 		require.NoError(tb, err)
 		require.NotNil(tb, apex)
 		assert.True(tb, apex.DNSHostingEnabled)
-		assert.NotNil(tb, apex.DNSZoneID)
+		assert.NotZero(tb, apex.ZoneID)
 	}, TestOptions)
 }
 
@@ -2729,5 +2769,43 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPFSWithoutCID(t *testing.T) {
 		_, err = websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
 		require.Error(tb, err)
 		assert.Contains(tb, err.Error(), "cannot convert from IPNS to IPFS without specifying a target CID")
+	}, TestOptions)
+}
+
+// TestWebsiteService_DisableDNSHosting_PreservesDelegationOwnedZone verifies
+// that disabling website DNS hosting on a delegation-owned binding (one whose
+// PowerDNS zone hosts alt-root delegation records) does NOT delete the zone or
+// clear zone_id — the zone must survive for the delegation (VerifyDomain,
+// EnableDNSSEC, GetActiveDNSSECDS, republish all read zone_id).
+func TestWebsiteService_DisableDNSHosting_PreservesDelegationOwnedZone(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "delegation-owned.com"
+		testZoneID := uint(9001)
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.ID = 9012
+
+		// Bind the primary domain as a delegation-owned binding: it has
+		// progressed into the delegation lifecycle (delegation_data present,
+		// status records_generated) and carries a real zone.
+		wd := prebindPrimaryDomain(tb, ctx, website, domain, true)
+		wd.ZoneID = testZoneID
+		wd.Status = pluginDb.DomainStatusRecordsGenerated
+		wd.DelegationData = datatypes.JSONMap{"ns": []interface{}{"dns1.example."}}
+		require.NoError(tb, ctx.DB().Model(wd).Updates(map[string]interface{}{
+			"zone_id":         testZoneID,
+			"status":          string(pluginDb.DomainStatusRecordsGenerated),
+			"delegation_data": wd.DelegationData,
+		}).Error)
+
+		// Toggle DNS hosting off. The delegation-owned gate must skip record
+		// deletion and zone deletion entirely — no DNS service calls expected.
+		updated, err := websiteService.SetDomainDNSEnabled(context.Background(), testUserID1, website.ID, wd.ID, false)
+		require.NoError(tb, err)
+		assert.False(tb, updated.DNSHostingEnabled, "hosting flag should be off")
+		assert.Equal(tb, testZoneID, updated.ZoneID, "delegation-owned zone must be preserved on DNS-host disable")
 	}, TestOptions)
 }

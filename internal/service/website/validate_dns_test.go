@@ -459,7 +459,7 @@ func TestValidateDNS_PendingValidation_ExpiredToken_ManagedDNS_RegeneratesToken(
 		apex, err := ws.GetApexDomainBinding(context.Background(), created.ID)
 		require.NoError(tb, err)
 		require.NotNil(tb, apex)
-		require.NotNil(tb, apex.DNSZoneID)
+		require.NotZero(tb, apex.ZoneID)
 
 		pastTime := time.Now().Add(-1 * time.Hour)
 		_, err = ws.UpdateWebsite(context.Background(), testUserID1, created.ID, map[string]interface{}{
