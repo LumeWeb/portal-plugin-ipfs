@@ -7,11 +7,13 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
 	"time"
 
+	format "github.com/ipfs/go-ipld-format"
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
@@ -26,6 +28,8 @@ import (
 )
 
 const (
+	failedDownloadBackoff = 30 * time.Second
+
 	downloadPriorityLow downloadPriority = iota + 1
 	downloadPriorityMedium
 	downloadPriorityHigh
@@ -40,13 +44,14 @@ type (
 		b   []byte
 		err error
 
-		cid       cid.Cid
-		priority  downloadPriority
-		index     int
-		timestamp time.Time
-		log       *core.Logger
-		clientIP  string
-		ctx       context.Context
+		cid            cid.Cid
+		priority       downloadPriority
+		prefetchOrigin bool
+		index          int
+		timestamp      time.Time
+		log            *core.Logger
+		clientIP       string
+		ctx            context.Context
 
 		mu sync.Mutex // protects ch, b, and err fields
 	}
@@ -65,10 +70,12 @@ type (
 		storage core.StorageService
 		log     *core.Logger
 
-		mu       sync.Mutex // protects the fields below
-		cond     sync.Cond
-		inflight map[string]*blockResponse
-		queue    *priorityQueue
+		mu               sync.Mutex // protects the fields below
+		cond             sync.Cond
+		inflight         map[string]*blockResponse
+		failedUntil      map[string]time.Time
+		lastFailurePrune time.Time
+		queue            *priorityQueue
 	}
 )
 
@@ -285,10 +292,34 @@ func (bd *BlockDownloaderDefault) downloadWorker(n int) {
 		log.Debug("popped task from queue")
 		bd.doDownloadTask(task, log)
 
-		// delete the task from the inflight map after it's done
+		// Remove the task from inflight and suppress immediate retries after
+		// failed fetches so a missing block cannot amplify storage/network load.
 		bd.mu.Lock()
-		delete(bd.inflight, cidKey(task.cid))
+		key := cidKey(task.cid)
+		delete(bd.inflight, key)
+		bd.finalizeDownload(task, key, time.Now())
 		bd.mu.Unlock()
+	}
+}
+
+// finalizeDownload applies the missing-CID cooldown after a task completes. A
+// prefetch-origin failure arms the backoff (even if a concurrent foreground Get
+// upgraded the task's priority); a successful fetch clears any stale entry so a
+// block that becomes available again within the window is no longer suppressed.
+func (bd *BlockDownloaderDefault) finalizeDownload(task *blockResponse, key string, now time.Time) {
+	if task.err != nil {
+		if task.prefetchOrigin {
+			recordDownloadFailure(bd.failedUntil, key, task.err, now)
+		}
+		return
+	}
+	delete(bd.failedUntil, key)
+}
+
+func recordDownloadFailure(failedUntil map[string]time.Time, key string, err error, now time.Time) {
+	var notFound format.ErrNotFound
+	if err != nil && errors.As(err, &notFound) {
+		failedUntil[key] = now.Add(failedDownloadBackoff)
 	}
 }
 
@@ -297,7 +328,26 @@ func (bd *BlockDownloaderDefault) queueBlock(ctx context.Context, c cid.Cid, pri
 		core.WithAttributes(attribute.String("cid", c.String())))
 	defer span.End()
 
-	resp, ok := bd.inflight[cidKey(c)]
+	key := cidKey(c)
+	if priority < downloadPriorityHigh {
+		now := time.Now()
+		if now.Sub(bd.lastFailurePrune) >= failedDownloadBackoff {
+			pruneExpiredFailures(bd.failedUntil, now)
+			bd.lastFailurePrune = now
+		}
+		if until, ok := bd.failedUntil[key]; ok {
+			if remaining := time.Until(until); remaining > 0 {
+				resp := &blockResponse{
+					cid: c, ch: make(chan struct{}), err: fmt.Errorf("block download backoff active for %s (retry in %s)", c, remaining.Round(time.Millisecond)), log: bd.log,
+				}
+				close(resp.ch)
+				return resp, false
+			}
+			delete(bd.failedUntil, key)
+		}
+	}
+
+	resp, ok := bd.inflight[key]
 	if ok {
 		if resp.priority < priority {
 			resp.priority = priority
@@ -324,10 +374,21 @@ func (bd *BlockDownloaderDefault) queueBlock(ctx context.Context, c cid.Cid, pri
 		clientIP: clientIP,
 		ctx:      ctx,
 	}
+	if priority < downloadPriorityHigh {
+		resp.prefetchOrigin = true
+	}
 	bd.inflight[cidKey(c)] = resp
 	heap.Push(bd.queue, resp)
 	bd.cond.Signal()
 	return resp, true
+}
+
+func pruneExpiredFailures(failedUntil map[string]time.Time, now time.Time) {
+	for key, until := range failedUntil {
+		if !now.Before(until) {
+			delete(failedUntil, key)
+		}
+	}
 }
 
 // Get returns a block by CID.
@@ -388,8 +449,9 @@ func NewBlockDownloader(ctx core.Context, store pluginCore.MetadataStore, worker
 		log:     log,
 		storage: storage,
 
-		inflight: make(map[string]*blockResponse),
-		queue:    &priorityQueue{},
+		inflight:    make(map[string]*blockResponse),
+		failedUntil: make(map[string]time.Time),
+		queue:       &priorityQueue{},
 	}
 	bd.cond.L = &bd.mu
 	heap.Init(bd.queue)
