@@ -107,6 +107,39 @@ func TestUpdateTLSAFromCert_PersistsAndReusesKey(t *testing.T) {
 	}, keyTestOptions)
 }
 
+func TestEnsureCertificateKey_BootstrapsAndReusesStableSPKI(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		require.NoError(tb, db.Create(&pluginDb.WebsiteDomain{
+			WebsiteID: 1, UserID: 1, Domain: "bootstrap", Namespace: pluginDb.DomainNamespaceHNS,
+		}).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		first, err := svc.EnsureCertificateKey(ctx, "hns", "bootstrap")
+		require.NoError(tb, err)
+		require.NotNil(tb, first)
+		require.NotEmpty(tb, first.PrivateKeyPEM)
+		require.Empty(tb, first.CertPEM)
+		require.NotEmpty(tb, first.TLSA)
+
+		var storedRow pluginDb.WebsiteDomain
+		require.NoError(tb, db.Where("domain = ? AND namespace = ?", "bootstrap", pluginDb.DomainNamespaceHNS).First(&storedRow).Error)
+		assert.Empty(tb, storedRow.ProtocolData[daneKeyField], "bootstrap must not fabricate or store a certificate")
+
+		second, err := svc.EnsureCertificateKey(ctx, "hns", "bootstrap")
+		require.NoError(tb, err)
+		assert.Equal(tb, first.PrivateKeyPEM, second.PrivateKeyPEM)
+		assert.Equal(tb, first.TLSA, second.TLSA)
+
+		stored, err := svc.GetCertificateKey(ctx, "hns", "bootstrap")
+		require.NoError(tb, err)
+		assert.Equal(tb, first.PrivateKeyPEM, stored.PrivateKeyPEM)
+		assert.Equal(tb, second.TLSA, stored.TLSA)
+	}, keyTestOptions)
+}
+
 func TestGetCertificateKey_NotFound(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
