@@ -43,7 +43,7 @@ require (
 	github.com/samber/lo v1.53.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tus/tusd/v2 v2.10.0
-	go.lumeweb.com/dane v0.0.2
+	go.lumeweb.com/dane v0.0.3
 	go.lumeweb.com/httputil v0.5.7
 	go.lumeweb.com/ipfs-content v0.1.17
 	go.lumeweb.com/portal v0.5.2-0.20260807215153-a5354663ccd3

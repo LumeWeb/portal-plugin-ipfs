@@ -236,6 +236,12 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		if err := s.DB().WithContext(ctx).Model(wd).Update("status", pluginDb.DomainStatusSelfHosted).Error; err != nil {
 			return nil, fmt.Errorf("failed to finalize domain record: %w", err)
 		}
+		if provider.UsesManagedZoneTLSA() {
+			if _, err := s.EnsureCertificateKey(ctx, namespace, domain); err != nil {
+				s.DB().WithContext(ctx).Unscoped().Delete(wd)
+				return nil, fmt.Errorf("failed to bootstrap DANE identity: %w", err)
+			}
+		}
 		return wd, nil
 	}
 
@@ -738,6 +744,91 @@ type StoredCert struct {
 	CertPEM       string
 	TLSA          string
 	OwnerName     string
+}
+
+// EnsureCertificateKey creates the stable DANE key for a domain if it does not
+// already exist, then computes and stores TLSA from that key's SPKI. The row
+// lock prevents concurrent bootstraps from publishing TLSA for different keys.
+func (s *DelegatedDomainService) EnsureCertificateKey(ctx context.Context, namespace, domain string) (*StoredCert, error) {
+	if s.DB() == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+
+	ns := pluginDb.DomainNamespace(namespace)
+	var keyPEM string
+	if err := s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var wd pluginDb.WebsiteDomain
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("domain = ? AND namespace = ?", domain, ns).First(&wd).Error; err != nil {
+			return err
+		}
+		if wd.ProtocolData != nil {
+			if encrypted, ok := wd.ProtocolData[protocolDataPrivateKeyKey].(string); ok && encrypted != "" {
+				decrypted, err := s.decryptPrivateKey(ctx, encrypted)
+				if err != nil {
+					return err
+				}
+				keyPEM = decrypted
+				return nil
+			}
+		}
+
+		generated, err := dane.GenerateKey()
+		if err != nil {
+			return fmt.Errorf("generate DANE key: %w", err)
+		}
+		encrypted, err := s.encryptPrivateKey(ctx, generated)
+		if err != nil {
+			return fmt.Errorf("encrypt DANE key: %w", err)
+		}
+		if wd.ProtocolData == nil {
+			wd.ProtocolData = make(datatypes.JSONMap)
+		}
+		wd.ProtocolData[protocolDataPrivateKeyKey] = encrypted
+		if err := tx.Model(&pluginDb.WebsiteDomain{}).Where("id = ?", wd.ID).
+			Updates(map[string]any{"protocol_data": wd.ProtocolData, "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
+		keyPEM = generated
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	// TLSA 3 1 1 pins the key's SPKI, not a certificate fingerprint. Caddy
+	// issues and pushes the certificate later; bootstrap must not fabricate or
+	// persist one here.
+	hash, err := dane.ComputeTLSAFromPrivateKey(keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("compute TLSA from DANE key: %w", err)
+	}
+	tlsa := TLSAHashPrefix() + hash
+	ownerName := dane.TLSAOwnerName(domain, DaneTLSAPort, DaneTLSATransport)
+	if err := s.persistTLSAKeyMetadata(ctx, namespace, domain, tlsa, ownerName); err != nil {
+		return nil, err
+	}
+	return &StoredCert{PrivateKeyPEM: keyPEM, TLSA: tlsa, OwnerName: ownerName}, nil
+}
+
+func (s *DelegatedDomainService) persistTLSAKeyMetadata(ctx context.Context, namespace, domain, tlsa, ownerName string) error {
+	ns := pluginDb.DomainNamespace(namespace)
+	return s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var wd pluginDb.WebsiteDomain
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("domain = ? AND namespace = ?", domain, ns).First(&wd).Error; err != nil {
+			return err
+		}
+		if wd.ProtocolData == nil {
+			wd.ProtocolData = make(datatypes.JSONMap)
+		}
+		wd.ProtocolData[protocolDataTLSAKey] = tlsa
+		wd.ProtocolData[protocolDataOwnerKey] = ownerName
+		return tx.Model(&pluginDb.WebsiteDomain{}).Where("id = ?", wd.ID).
+			Updates(map[string]any{
+				"protocol_data": wd.ProtocolData,
+				"updated_at":    time.Now(),
+			}).Error
+	})
 }
 
 // GetCertificateKey returns the stored DANE key material for a domain,
