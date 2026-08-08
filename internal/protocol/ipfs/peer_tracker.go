@@ -14,14 +14,16 @@ import (
 // This enables probabilistic peer attribution when the actual client IP context
 // is not available (e.g., in bitswap scenarios).
 type BlockRequestTracker struct {
-	mu      sync.RWMutex
+	mu       sync.RWMutex
 	requests map[cid.Cid][]string
+	peerCIDs map[string]map[cid.Cid]struct{}
 }
 
 // NewBlockRequestTracker creates a new empty BlockRequestTracker
 func NewBlockRequestTracker() *BlockRequestTracker {
 	return &BlockRequestTracker{
 		requests: make(map[cid.Cid][]string),
+		peerCIDs: make(map[string]map[cid.Cid]struct{}),
 	}
 }
 
@@ -41,6 +43,7 @@ func (br *BlockRequestTracker) AddRequest(c cid.Cid, peerIP string) {
 	}
 
 	br.requests[c] = append(peers, peerIP)
+	br.addPeerCIDLocked(peerIP, c)
 }
 
 // GetAndRemoveRandomPeer selects a random peer IP for the given CID and removes it from the tracker
@@ -62,6 +65,7 @@ func (br *BlockRequestTracker) GetAndRemoveRandomPeer(c cid.Cid) (string, bool) 
 	}
 
 	selected := peers[index]
+	br.removePeerCIDLocked(selected, c)
 
 	// Remove selected peer from list
 	if len(peers) == 1 {
@@ -74,7 +78,7 @@ func (br *BlockRequestTracker) GetAndRemoveRandomPeer(c cid.Cid) (string, bool) 
 	return selected, true
 }
 
-// PopPeer removes and returns the first peer IP for the given CID
+// PopPeer removes and returns the first peer IP for the CID
 // Returns (peerIP, true) if a peer was found, or ("", false) otherwise
 func (br *BlockRequestTracker) PopPeer(c cid.Cid) (string, bool) {
 	br.mu.Lock()
@@ -87,6 +91,7 @@ func (br *BlockRequestTracker) PopPeer(c cid.Cid) (string, bool) {
 	}
 
 	selected := peers[0]
+	br.removePeerCIDLocked(selected, c)
 
 	if len(peers) == 1 {
 		delete(br.requests, c)
@@ -110,6 +115,7 @@ func (br *BlockRequestTracker) RemovePeer(c cid.Cid, peerIP string) {
 
 	for i, p := range peers {
 		if p == peerIP {
+			br.removePeerCIDLocked(peerIP, c)
 			if len(peers) == 1 {
 				delete(br.requests, c)
 			} else {
@@ -130,26 +136,41 @@ func (br *BlockRequestTracker) RemovePeerFromAll(peerIP string) {
 		return
 	}
 
-	for c, peers := range br.requests {
-		found := false
+	cids := br.peerCIDs[peerIP]
+	for c := range cids {
+		peers := br.requests[c]
 		for i, p := range peers {
-			if p == peerIP {
-				found = true
-				if len(peers) == 1 {
-					// Remove the entire entry if this was the only peer
-					delete(br.requests, c)
-				} else {
-					// Remove just this peer from the list
-					br.requests[c] = append(peers[:i], peers[i+1:]...)
-				}
-				break
+			if p != peerIP {
+				continue
 			}
+			if len(peers) == 1 {
+				delete(br.requests, c)
+			} else {
+				br.requests[c] = append(peers[:i], peers[i+1:]...)
+			}
+			break
 		}
-		// If we found and removed the peer, we can continue to next CID
-		// (we only need to remove each peer once per CID)
-		if found {
-			continue
-		}
+	}
+	delete(br.peerCIDs, peerIP)
+}
+
+func (br *BlockRequestTracker) addPeerCIDLocked(peerIP string, c cid.Cid) {
+	cids := br.peerCIDs[peerIP]
+	if cids == nil {
+		cids = make(map[cid.Cid]struct{})
+		br.peerCIDs[peerIP] = cids
+	}
+	cids[c] = struct{}{}
+}
+
+func (br *BlockRequestTracker) removePeerCIDLocked(peerIP string, c cid.Cid) {
+	cids := br.peerCIDs[peerIP]
+	if cids == nil {
+		return
+	}
+	delete(cids, c)
+	if len(cids) == 0 {
+		delete(br.peerCIDs, peerIP)
 	}
 }
 
@@ -158,15 +179,15 @@ func randomIndex(n int) (int, error) {
 	if n <= 0 {
 		return 0, nil
 	}
-	
+
 	// Calculate the range size
 	rangeSize := big.NewInt(int64(n))
-	
+
 	// Generate a random number in [0, n)
 	index, err := rand.Int(rand.Reader, rangeSize)
 	if err != nil {
 		return 0, err
 	}
-	
+
 	return int(index.Int64()), nil
 }
