@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ipfs/go-cid"
+	format "github.com/ipfs/go-ipld-format"
 	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -110,19 +111,21 @@ func TestBlockDownloader_DownloadObjectWithOptionsError(t *testing.T) {
 		require.NoError(tb, err)
 		testCid := cid.NewCidV1(cid.Raw, mh)
 
-		// Mock the BlockExists call
-		mockStore.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Once()
+		// Foreground requests remain retryable after a failed fetch.
+		mockStore.EXPECT().BlockExists(mock.Anything, testCid).Return(nil).Twice()
 
-		// Mock the DownloadObjectWithOptions call to return an error
 		mockStorage.EXPECT().DownloadObjectWithOptions(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(nil, fmt.Errorf("download failed")).Once()
+			Return(nil, format.ErrNotFound{Cid: testCid}).Twice()
 
-		// Call Get
 		block, err := bd.Get(context.Background(), testCid)
 		assert.Error(tb, err)
 		assert.Nil(tb, block)
-
 		assert.Contains(t, err.Error(), "failed to download block")
+
+		block, err = bd.Get(context.Background(), testCid)
+		assert.Error(tb, err)
+		assert.Nil(tb, block)
+		assert.Contains(tb, err.Error(), "failed to download block")
 	}, ipfsTestConfig)
 }
 
