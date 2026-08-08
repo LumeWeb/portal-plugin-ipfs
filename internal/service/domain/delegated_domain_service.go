@@ -238,6 +238,7 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		}
 		if provider.UsesManagedZoneTLSA() {
 			if _, err := s.EnsureCertificateKey(ctx, namespace, domain); err != nil {
+				s.DB().WithContext(ctx).Unscoped().Delete(wd)
 				return nil, fmt.Errorf("failed to bootstrap DANE identity: %w", err)
 			}
 		}

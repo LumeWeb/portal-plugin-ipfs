@@ -101,6 +101,26 @@ func TestDelegatedDomainService_CreateDomain_SelfHosted(t *testing.T) {
 	}, TestOptions)
 }
 
+func TestDelegatedDomainService_CreateDomain_SelfHostedDANEFailurePurgesBinding(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "example")
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		_, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, false, nil)
+		require.Error(tb, err)
+		assert.Contains(tb, err.Error(), "failed to bootstrap DANE identity")
+
+		var count int64
+		require.NoError(tb, db.Unscoped().Model(&pluginDb.WebsiteDomain{}).
+			Where("domain = ? AND namespace = ?", "example", pluginDb.DomainNamespaceHNS).
+			Count(&count).Error)
+		assert.Zero(tb, count, "failed self-hosted DANE bootstrap must purge the binding")
+	}, TestOptions)
+}
+
 func TestDelegatedDomainService_CreateDomain_SubdomainReusesParentZone(t *testing.T) {
 	// A managed subdomain lives inside its parent's zone; it must NOT create a
 	// new PowerDNS zone. resolveManagedZone should return the parent zone.
