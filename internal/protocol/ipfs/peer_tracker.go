@@ -19,6 +19,14 @@ type BlockRequestTracker struct {
 	peerCIDs map[string]map[cid.Cid]struct{}
 }
 
+const (
+	// maxPeersPerCID bounds attribution memory for a single hot block.
+	maxPeersPerCID = 64
+	// maxTrackedCIDs bounds total tracker memory. Attribution is best-effort
+	// once this limit is reached; block retrieval must not be blocked by it.
+	maxTrackedCIDs = 100_000
+)
+
 // NewBlockRequestTracker creates a new empty BlockRequestTracker
 func NewBlockRequestTracker() *BlockRequestTracker {
 	return &BlockRequestTracker{
@@ -40,6 +48,15 @@ func (br *BlockRequestTracker) AddRequest(c cid.Cid, peerIP string) {
 	peers := br.requests[c]
 	if slices.Contains(peers, peerIP) {
 		return
+	}
+	if len(peers) >= maxPeersPerCID {
+		// Keep attribution current for hot blocks by rotating out the oldest
+		// requester when the per-CID bound is reached.
+		br.removePeerCIDLocked(peers[0], c)
+		peers = peers[1:]
+	}
+	if peers == nil && len(br.requests) >= maxTrackedCIDs {
+		br.evictOneCIDLocked()
 	}
 
 	br.requests[c] = append(peers, peerIP)
@@ -171,6 +188,16 @@ func (br *BlockRequestTracker) removePeerCIDLocked(peerIP string, c cid.Cid) {
 	delete(cids, c)
 	if len(cids) == 0 {
 		delete(br.peerCIDs, peerIP)
+	}
+}
+
+func (br *BlockRequestTracker) evictOneCIDLocked() {
+	for c, peers := range br.requests {
+		delete(br.requests, c)
+		for _, peerIP := range peers {
+			br.removePeerCIDLocked(peerIP, c)
+		}
+		return
 	}
 }
 

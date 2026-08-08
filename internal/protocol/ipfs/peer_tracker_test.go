@@ -1,9 +1,11 @@
 package ipfs
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/ipfs/go-cid"
+	"github.com/multiformats/go-multihash"
 )
 
 func TestBlockRequestTracker_AddRequest(t *testing.T) {
@@ -593,4 +595,57 @@ func mustTestCID(t *testing.T, value string) cid.Cid {
 		t.Fatalf("decode test CID: %v", err)
 	}
 	return c
+}
+
+func TestBlockRequestTracker_BoundsPeersPerCID(t *testing.T) {
+	tracker := NewBlockRequestTracker()
+	block := cid.NewCidV1(cid.Raw, mustTrackerHash(t, "bounded-block"))
+
+	for i := 0; i < maxPeersPerCID; i++ {
+		tracker.AddRequest(block, "peer-"+strconv.Itoa(i))
+	}
+	tracker.AddRequest(block, "new-peer")
+
+	count := 0
+	foundNewest := false
+	for {
+		peer, ok := tracker.PopPeer(block)
+		if !ok {
+			break
+		}
+		count++
+		if peer == "new-peer" {
+			foundNewest = true
+		}
+	}
+	if count != maxPeersPerCID {
+		t.Fatalf("expected %d peers, got %d", maxPeersPerCID, count)
+	}
+	if !foundNewest {
+		t.Fatal("expected newest requester to replace an older attribution")
+	}
+}
+
+func TestBlockRequestTracker_BoundsTotalCIDsAndCleansReverseIndex(t *testing.T) {
+	tracker := NewBlockRequestTracker()
+	for i := 0; i < maxTrackedCIDs+1; i++ {
+		block := cid.NewCidV1(cid.Raw, mustTrackerHash(t, strconv.Itoa(i)))
+		tracker.AddRequest(block, "same-peer")
+	}
+
+	if len(tracker.requests) != maxTrackedCIDs {
+		t.Fatalf("expected %d tracked CIDs, got %d", maxTrackedCIDs, len(tracker.requests))
+	}
+	if len(tracker.peerCIDs["same-peer"]) != maxTrackedCIDs {
+		t.Fatalf("expected reverse index to contain %d CIDs, got %d", maxTrackedCIDs, len(tracker.peerCIDs["same-peer"]))
+	}
+}
+
+func mustTrackerHash(t *testing.T, value string) multihash.Multihash {
+	t.Helper()
+	hash, err := multihash.Sum([]byte(value), multihash.SHA2_256, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hash
 }
