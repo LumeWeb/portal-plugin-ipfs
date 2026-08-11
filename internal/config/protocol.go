@@ -8,11 +8,11 @@ import (
 )
 
 const (
-	DefaultPort  = 4001
+	DefaultPort   = 4001
 	DefaultWSPort = 4002
 
-	DefaultBitswapGlobalWantRateLimit = 2500
-	DefaultBitswapGlobalWantBurst     = 5000
+	DefaultBitswapGlobalWantRateLimit  = 2500
+	DefaultBitswapGlobalWantBurst      = 5000
 	DefaultBitswapPerPeerWantRateLimit = 200
 	DefaultBitswapPerPeerWantBurst     = 512
 
@@ -24,22 +24,22 @@ var _ config.Defaults = (*ProtocolConfig)(nil)
 var _ config.Defaults = (*BitswapConfig)(nil)
 
 type ProtocolConfig struct {
-	Port                    int           `config:"port"`
-	WSPort                  int           `config:"ws_port"`
-	AnnounceWeb             bool          `config:"announce_web"`
-	ListenAddresses         []string      `config:"listen_addresses"`
-	Peers                   []IPFSPeer    `config:"peers"`
-	BootstrapPeers          []IPFSPeer    `config:"bootstrap_peers"`
-	Provider                IPFSProvider  `config:"provider"`
-	BlockStore              BlockStore    `config:"blockstore"`
-	IPNS                    IPNS          `config:"ipns"`
-	LogLevel                string        `config:"log_level"`
-	AutoScaleResourceLimits bool          `config:"auto_scale_resource_limits"`
-	DHTMode                 string        `config:"dht_mode"`
-	TrustedProxies          []string      `config:"trusted_proxies"`
-	ProxyProtocol           bool          `config:"proxy_protocol"`
-	Gateways                []string      `config:"gateways"`
-	Bitswap                 BitswapConfig `config:"bitswap"`
+	Port                  int           `config:"port"`
+	WSPort                int           `config:"ws_port"`
+	AnnounceWeb           bool          `config:"announce_web"`
+	ListenAddresses       []string      `config:"listen_addresses"`
+	Peers                 []IPFSPeer    `config:"peers"`
+	BootstrapPeers        []IPFSPeer    `config:"bootstrap_peers"`
+	Provider              IPFSProvider  `config:"provider"`
+	BlockStore            BlockStore    `config:"blockstore"`
+	IPNS                  IPNS          `config:"ipns"`
+	LogLevel              string        `config:"log_level"`
+	DisableResourceLimits bool          `config:"disable_resource_limits"`
+	DHTMode               string        `config:"dht_mode"`
+	TrustedProxies        []string      `config:"trusted_proxies"`
+	ProxyProtocol         bool          `config:"proxy_protocol"`
+	Gateways              []string      `config:"gateways"`
+	Bitswap               BitswapConfig `config:"bitswap"`
 }
 
 type BitswapConfig struct {
@@ -53,7 +53,7 @@ type BitswapConfig struct {
 func (b BitswapConfig) Defaults() map[string]any {
 	return map[string]any{
 		"GlobalWantRateLimit":  DefaultBitswapGlobalWantRateLimit,
-		"GlobalWantBurst":     DefaultBitswapGlobalWantBurst,
+		"GlobalWantBurst":      DefaultBitswapGlobalWantBurst,
 		"PerPeerWantRateLimit": DefaultBitswapPerPeerWantRateLimit,
 		"PerPeerWantBurst":     DefaultBitswapPerPeerWantBurst,
 	}
@@ -70,7 +70,7 @@ func (c ProtocolConfig) Defaults() map[string]any {
 
 func (l ProtocolConfig) Schema() z.ZogSchema {
 	return z.Struct(z.Shape{
-		"Port": z.Int().Default(DefaultPort).GT(0, z.Message("port must be positive")),
+		"Port":   z.Int().Default(DefaultPort).GT(0, z.Message("port must be positive")),
 		"WSPort": z.Int().Default(DefaultWSPort).GT(0, z.Message("ws port must be positive")),
 		"LogLevel": z.String().
 			Default("info").
