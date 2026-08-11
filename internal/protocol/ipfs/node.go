@@ -446,26 +446,28 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	}
 	limiter := rcmgr.NewFixedLimiter(limits)
 
-	// Build list of IP ranges that bypass rate limiting and connection limits.
-	// Private/Docker networks are always whitelisted (nginx and internal services
-	// connect through these). Loopback is always unlimited.
-	// Gateways (parsed from multiaddrs) add additional edge gateway ranges.
-	gatewayNets := []*net.IPNet{
-		mustParseCIDR("127.0.0.0/8"),
-		mustParseCIDR("::1/128"),
-		mustParseCIDR("172.16.0.0/12"),
-		mustParseCIDR("10.0.0.0/8"),
-		mustParseCIDR("192.168.0.0/16"),
-		mustParseCIDR("fc00::/7"),
+	// Build the sets of IP ranges that bypass rate limiting and the per-source
+	// connection limiter.
+	//
+	// rateBypassNets (private/loopback/Docker) are always exempt so nginx and
+	// internal services can connect regardless of public traffic shaping.
+	// trustedGatewayNets come from explicitly configured gateways
+	// (cfg.Gateways) and additionally receive reserved rcmgr admission and
+	// connmgr peer protection below. Private-range peers are NOT automatically
+	// granted gateway reserved capacity — that is an explicit, configured
+	// decision.
+	rateBypassNets := privateAndLoopbackNets()
+	gatewayIPs, gatewayPeerIDs, gatewayAllowlisted, err := parseGatewayMultiaddrs(cfg.Gateways)
+	if err != nil {
+		return nil, err
 	}
-	gatewayIPs, gatewayPeerIDs := parseGatewayMultiaddrs(cfg.Gateways)
-	gatewayNets = append(gatewayNets, gatewayIPs...)
+	trustedGatewayNets := gatewayIPs
 
-	prefixLimits := make([]libp2pRate.PrefixLimit, 0, len(gatewayNets))
+	prefixLimits := make([]libp2pRate.PrefixLimit, 0, len(rateBypassNets)+len(trustedGatewayNets))
 	connLimits4 := make([]rcmgr.NetworkPrefixLimit, 0)
 	connLimits6 := make([]rcmgr.NetworkPrefixLimit, 0)
 
-	for _, cidr := range gatewayNets {
+	for _, cidr := range append(rateBypassNets, trustedGatewayNets...) {
 		prefix := netIPNetToPrefix(cidr)
 		prefixLimits = append(prefixLimits, libp2pRate.PrefixLimit{Prefix: prefix, Limit: libp2pRate.Limit{}})
 		if cidr.IP.To4() != nil {
@@ -475,12 +477,24 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		}
 	}
 
+	// Trusted gateways are also allowlisted in the resource manager. libp2p
+	// draws allowlisted connections against a separate reserved system pool
+	// that activates once the normal system pool is full, so a trusted gateway
+	// can still be admitted when public capacity is exhausted. The peer-
+	// constrained form (/ip4/x/p2p/...) is preferred where a peer ID is known:
+	// libp2p first admits by IP, then re-checks the authenticated peer ID after
+	// the handshake and moves non-matching peers back to the normal pool.
+	//
+	// NOTE: the WithNetworkPrefixLimit 1024 above only relaxes the per-source/IP
+	// limiter — it does NOT exempt these ranges from the global system ceiling.
+	// The allowlist is what provides the reserved admission path.
 	rm, err := rcmgr.NewResourceManager(limiter,
 		rcmgr.WithConnRateLimiters(&libp2pRate.Limiter{
 			NetworkPrefixLimits: prefixLimits,
 			GlobalLimit:         libp2pRate.Limit{},
 		}),
 		rcmgr.WithNetworkPrefixLimit(connLimits4, connLimits6),
+		rcmgr.WithAllowlistedMultiaddrs(gatewayAllowlisted),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource manager: %w", err)
@@ -1075,36 +1089,136 @@ func mustParseCIDR(s string) *net.IPNet {
 	return ipNet
 }
 
-func parseGatewayMultiaddrs(addrs []string) (ipNets []*net.IPNet, peerIDs []peer.ID) {
-	for _, s := range addrs {
-		ma, err := multiaddr.NewMultiaddr(s)
-		if err != nil {
-			continue
+// parseGatewayMultiaddrs parses configured gateway multiaddrs into a single
+// source of truth consumed by every trust layer:
+//
+//   - ipNets:      IP networks for the rate-limiter exemption and the
+//     per-source/IP connection limiter.
+//   - peerIDs:     peer IDs for connmgr protection (never pruned) and the
+//     Bitswap want-rate bypass.
+//   - allowlisted: the full original multiaddrs (including any /p2p and
+//     /ipcidr components, verbatim) for the rcmgr allowlist, which reserves
+//     connection admission when the normal system pool is full. Only
+//     multiaddrs that carry an IP component are returned.
+//
+// An IP with an explicit /ipcidr/N prefix yields that subnet (previously the
+// /ipcidr component was ignored and the address collapsed to a /32 or /128
+// host route). A malformed or invalid gateway component is a configuration
+// error and fails node startup rather than being silently skipped.
+func parseGatewayMultiaddrs(addrs []string) (
+	ipNets []*net.IPNet,
+	peerIDs []peer.ID,
+	allowlisted []multiaddr.Multiaddr,
+	err error,
+) {
+	for _, raw := range addrs {
+		ma, maErr := multiaddr.NewMultiaddr(raw)
+		if maErr != nil {
+			return nil, nil, nil, fmt.Errorf("invalid gateway multiaddr %q: %w", raw, maErr)
 		}
 
-		for _, c := range ma {
-			switch c.Protocol().Code {
-			case multiaddr.P_IP4, multiaddr.P_IP6:
-				ip := net.ParseIP(c.Value())
-				if ip != nil {
-					bits := 128
-					if ip.To4() != nil {
-						bits = 32
-					}
-					_, ipNet, _ := net.ParseCIDR(fmt.Sprintf("%s/%d", ip.String(), bits))
-					if ipNet != nil {
-						ipNets = append(ipNets, ipNet)
-					}
-				}
-			case multiaddr.P_P2P:
-				p, err := peer.Decode(c.Value())
-				if err == nil {
-					peerIDs = append(peerIDs, p)
-				}
+		ipStr := ""
+		prefixBits := -1
+		hasIP := false
+		var parseErr error
+
+		// Emit the currently-pending IP (with its /ipcidr prefix, if any) as a
+		// network. Called when a new IP component is seen and after the loop, so
+		// every IP component in the multiaddr yields a network — including
+		// p2p-circuit relays, where the relay IP that actually originates the
+		// connection must remain rate/conn-exempt and allowlisted.
+		emitPending := func() {
+			if ipStr == "" || prefixBits <= 0 {
+				return
 			}
+			_, network, netErr := net.ParseCIDR(fmt.Sprintf("%s/%d", ipStr, prefixBits))
+			if netErr != nil {
+				parseErr = netErr
+				return
+			}
+			ipNets = append(ipNets, network)
+			ipStr = ""
+			prefixBits = -1
+		}
+
+		multiaddr.ForEach(ma, func(c multiaddr.Component) bool {
+			switch c.Protocol().Code {
+			case multiaddr.P_IP4:
+				emitPending()
+				ipStr = c.Value()
+				prefixBits = 32
+				hasIP = true
+			case multiaddr.P_IP6:
+				emitPending()
+				ipStr = c.Value()
+				prefixBits = 128
+				hasIP = true
+			case multiaddr.P_IPCIDR:
+				bits, atoiErr := strconv.Atoi(c.Value())
+				if atoiErr != nil {
+					parseErr = fmt.Errorf("invalid /ipcidr value %q: %w", c.Value(), atoiErr)
+					return false
+				}
+				// /ipcidr binds to the pending IP (the one it follows).
+				if ipStr != "" {
+					maxBits := 32
+					if ip := net.ParseIP(ipStr); ip != nil && ip.To4() == nil {
+						maxBits = 128
+					}
+					if bits > maxBits {
+						parseErr = fmt.Errorf(
+							"invalid /ipcidr prefix /%d for %s (max /%d)", bits, ipStr, maxBits)
+						return false
+					}
+				}
+				prefixBits = bits
+			case multiaddr.P_P2P:
+				p, decodeErr := peer.Decode(c.Value())
+				if decodeErr != nil {
+					parseErr = fmt.Errorf("invalid /p2p peer ID %q: %w", c.Value(), decodeErr)
+					return false
+				}
+				peerIDs = append(peerIDs, p)
+			}
+			return true
+		})
+		emitPending()
+		if parseErr != nil {
+			return nil, nil, nil, fmt.Errorf("invalid gateway multiaddr %q: %w", raw, parseErr)
+		}
+
+		// The allowlist receives the full original multiaddr (including any
+		// /p2p and /ipcidr components) verbatim, as a single source of truth
+		// shared by all four gateway trust consumers. Keeping /p2p is what
+		// enables the post-handshake peer re-check (rcmgr.go:799
+		// AllowedPeerAndMultiaddr) after the IP-based admission. Only
+		// multiaddrs carrying an IP component are allowlisted: an IP-less,
+		// peer-only multiaddr would make the rcmgr decline the entry with
+		// "missing ip address" and fail node startup; the peer is still
+		// enforced via cmgr.Protect and the Bitswap want-rate bypass.
+		if hasIP {
+			allowlisted = append(allowlisted, ma)
 		}
 	}
-	return ipNets, peerIDs
+
+	return ipNets, peerIDs, allowlisted, nil
+}
+
+// privateAndLoopbackNets returns the fixed set of private / loopback / Docker
+// networks that bypass IP-rate and per-subnet connection abuse controls. These
+// are always exempt so nginx and internal services can connect regardless of
+// public traffic shaping. They are intentionally distinct from configured
+// trusted gateway networks: a private-range peer is not automatically treated
+// as critical infrastructure that reserves capacity or is never pruned.
+func privateAndLoopbackNets() []*net.IPNet {
+	return []*net.IPNet{
+		mustParseCIDR("127.0.0.0/8"),
+		mustParseCIDR("::1/128"),
+		mustParseCIDR("172.16.0.0/12"),
+		mustParseCIDR("10.0.0.0/8"),
+		mustParseCIDR("192.168.0.0/16"),
+		mustParseCIDR("fc00::/7"),
+	}
 }
 
 // deriveConnLimits converts the rcmgr hard limits into the connection
