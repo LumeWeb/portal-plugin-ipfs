@@ -320,3 +320,70 @@ func TestProxyProtocolUntrustedProxy(t *testing.T) {
 		t.Error("untrusted proxy should not have PROXY header parsed")
 	}
 }
+
+// TestProxyProtocolUseRequiresHeader demonstrates why the node must NOT install
+// the proxy transport when no proxy is configured. The empty-whitelist policy
+// is proxyproto.USE, which requires an inbound connection to open with a PROXY
+// protocol header before its data is relayed. A direct libp2p peer sends raw
+// multistream+noise bytes (no PROXY header), so its first bytes are consumed by
+// header detection and its dial does not proceed — the failure mode behind the
+// reported downtime. The config gate in node.go (proxy_protocol=false → plain
+// TCP transport) avoids this path entirely.
+func TestProxyProtocolUseRequiresHeader(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	// Default (no trusted proxies) policy is USE.
+	proxyLn := newProxyProtocolListener(ln, nil)
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, aerr := proxyLn.Accept()
+		if aerr == nil {
+			accepted <- c
+		} else {
+			accepted <- nil
+		}
+	}()
+
+	// A raw client sends libp2p-style bytes with no PROXY header. Under the USE
+	// policy these bytes are swallowed by proxy-protocol detection, so the
+	// server-side handshake cannot observe them.
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Send non-PROXY bytes (e.g. a libp2p multistream header).
+	conn.Write([]byte("/multistream/1.0.0\n"))
+	conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	buf := make([]byte, 64)
+	n, _ := conn.Read(buf)
+
+	select {
+	case acceptedConn := <-accepted:
+		acceptedConn.Close()
+		// The raw dial did not receive a response within the deadline: the
+		// server consumed the bytes as a (malformed) proxy header and did not
+		// drive a libp2p handshake. n == 0 asserts no reply was echoed back.
+		if n > 0 {
+			t.Fatalf("under USE policy a raw client was still served: %q", buf[:n])
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("raw client connection was never accepted as a proxied connection")
+	}
+}
+
+// TestMakeProxyPolicyDefaultIsUse pins the current empty-whitelist default so
+// the config gate that selects the plain TCP transport when proxy_protocol is
+// disabled stays meaningful: with no trusted proxies configured the wrapper
+// would otherwise require the PROXY header.
+func TestMakeProxyPolicyDefaultIsUse(t *testing.T) {
+	p, _ := makeProxyPolicy(nil)(&net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 4001})
+	if p != proxyproto.USE {
+		t.Errorf("makeProxyPolicy(nil) = %v, want proxyproto.USE", p)
+	}
+}

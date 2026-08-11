@@ -58,6 +58,7 @@ import (
 	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
+	tcp "github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	webrtc "github.com/libp2p/go-libp2p/p2p/transport/webrtc"
 	ws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
@@ -490,13 +491,26 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		libp2p.ResourceManager(rm),
 		libp2p.DefaultPeerstore,
 		libp2p.UserAgent("lumeweb-ipfs/" + pluginBuild.GetInfo().Short()),
-		libp2p.Transport(newProxyTCPTransport(trustedProxies)),
+	}
+
+	// The TCP transport is wired one of two ways. When the node sits behind a
+	// proxy that appends PROXY protocol headers (e.g. nginx stream or HAProxy
+	// with send-proxy), it must accept and parse those headers; otherwise use a
+	// plain TCP transport so direct libp2p peers can connect without sending a
+	// PROXY header first.
+	if cfg.ProxyProtocol {
+		opts = append(opts, libp2p.Transport(newProxyTCPTransport(trustedProxies)))
+	} else {
+		opts = append(opts, libp2p.Transport(tcp.NewTCPTransport))
+	}
+
+	opts = append(opts,
 		libp2p.Transport(quic.NewTransport),
 		libp2p.Transport(webtransport.New),
 		libp2p.Transport(webrtc.New),
 		libp2p.Transport(ws.New),
 		libp2p.PrometheusRegisterer(prometheus.WrapRegistererWithPrefix("libp2p_", core.PluginMetricsRegistry(internal.ProtocolName))),
-	}
+	)
 
 	opts = append(opts, libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 		var domain string
