@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/netip"
 	"strconv"
@@ -50,7 +51,6 @@ import (
 	"github.com/libp2p/go-libp2p-kad-dht/fullrt"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	pubsubrouter "github.com/libp2p/go-libp2p-pubsub-router"
-	libp2pCoreConnmgr "github.com/libp2p/go-libp2p/core/connmgr"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -420,10 +420,29 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 	scalingLimits := rcmgr.DefaultLimits
 	libp2p.SetDefaultServiceLimits(&scalingLimits)
 
-	limits := rcmgr.InfiniteLimits
+	scaled := scalingLimits.AutoScale()
+	limits := scaled
 
-	if cfg.AutoScaleResourceLimits {
-		limits = scalingLimits.AutoScale()
+	if cfg.DisableResourceLimits {
+		limits = rcmgr.InfiniteLimits
+	} else {
+		// This node runs as a public server (ForceReachabilityPublic +
+		// companion ModeServer), so inbound is a fundamental traffic class,
+		// not a secondary direction. libp2p's default autoscale policy gives
+		// the system inbound cap roughly HALF the total connection ceiling
+		// (64 inbound vs 128 total), which would make inbound the de-facto
+		// global cap and let the soft connmgr never prune before the hard
+		// fence rejects new public peers. Raise the system inbound ceiling to
+		// the total connection limit while keeping the autoscaled memory, FD,
+		// stream, peer, and protocol limits intact.
+		scaledLimiter := rcmgr.NewFixedLimiter(scaled)
+		baseTotal := scaledLimiter.GetSystemLimits().GetConnTotalLimit()
+
+		limits = rcmgr.PartialLimitConfig{
+			System: rcmgr.ResourceLimits{
+				ConnsInbound: rcmgr.LimitVal(baseTotal),
+			},
+		}.Build(scaled)
 	}
 	limiter := rcmgr.NewFixedLimiter(limits)
 
@@ -467,14 +486,26 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		return nil, fmt.Errorf("failed to create resource manager: %w", err)
 	}
 
-	connLimit := rm.(libp2pCoreConnmgr.GetConnLimiter).GetConnLimit()
-	lowWater := int(float64(connLimit) * 0.5)
-	if lowWater < 160 {
-		lowWater = 160
-	}
-	cmgr, err := connmgr.NewConnManager(lowWater, connLimit)
+	lowWater, highWater := deriveConnLimits(limiter)
+	cmgr, err := connmgr.NewConnManager(
+		lowWater,
+		highWater,
+		connmgr.WithGracePeriod(30*time.Second),
+		connmgr.WithSilencePeriod(5*time.Second),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create connection manager: %w", err)
+	}
+
+	// Keep configured gateway peers out of the soft-pruning set, matching the
+	// whitelisted treatment they already get at the hard rcmgr layer
+	// (NetworkPrefixLimit / rate-limiter bypass). With finite watermarks the
+	// connection manager actually prunes now, so without this a gateway peer
+	// could be disconnected once the pool crosses high-water even though the
+	// hard layer explicitly allows those whitelisted endpoints.
+	const gatewayProtectionTag = "portal-gateway"
+	for _, gatewayID := range gatewayPeerIDs {
+		cmgr.Protect(gatewayID, gatewayProtectionTag)
 	}
 
 	trustedProxies, err := parseTrustedProxies(cfg.TrustedProxies)
@@ -1074,6 +1105,70 @@ func parseGatewayMultiaddrs(addrs []string) (ipNets []*net.IPNet, peerIDs []peer
 		}
 	}
 	return ipNets, peerIDs
+}
+
+// deriveConnLimits converts the rcmgr hard limits into the connection
+// manager's soft watermarks.
+//
+// The connection manager is the SOFT working-set manager: it prunes the pool
+// back toward low-water once the count exceeds high-water. The rcmgr is the
+// HARD emergency fence: it rejects new connections once a hard limit is
+// reached. For graceful operation the invariant must be
+//
+//	lowWater < highWater << rcmgr hard limit (for the direction that bites)
+//
+// libp2p's GetConnLimit() on a limiter returns the TOTAL connection hard
+// limit. For a public server the inbound ceiling can be the binding one (a
+// rejected inbound dial is external downtime, whereas an outbound dial is
+// just silently re-tried). So derive the watermarks from min(total, inbound)
+// to act on the direction that first fills up, and leave high-water meaningfully
+// below that hard limit to preserve burst headroom.
+func deriveConnLimits(limiter rcmgr.Limiter) (low, high int) {
+	sys := limiter.GetSystemLimits()
+	hardTotal := sys.GetConnTotalLimit()
+	hardInbound := sys.GetConnLimit(network.DirInbound)
+
+	hardConnLimit := hardTotal
+	if hardInbound < hardTotal {
+		hardConnLimit = hardInbound
+	}
+
+	// Degenerate / unbounded hard limit. InfiniteLimits (used by
+	// disable_resource_limits for a debug/unlimited mode) resolves its Conns
+	// limits to math.MaxInt rather than a real ceiling, and a BlockAll ("0")
+	// or -1 value would carry no meaningful bound either. There is nothing to
+	// derive proportions from in those cases, so return effectively-never-
+	// prune watermarks (math.MaxInt scale). This keeps the connection manager
+	// out of the way in unlimited mode instead of collapsing the pool down to
+	// an aggressive tiny floor, which would contradict the mode's intent.
+	if hardConnLimit <= 0 || hardConnLimit >= math.MaxInt/2 {
+		// Preserve the low < high ordering BasicConnMgr requires while keeping
+		// both at a scale that never triggers ordinary pruning on a real host.
+		return math.MaxInt / 2, math.MaxInt
+	}
+
+	high = int(float64(hardConnLimit) * 0.70)
+	low = int(float64(high) * 0.75)
+	if low < 1 {
+		low = 1
+	}
+	if high < low {
+		high = low
+	}
+	// Keep the pair strictly ordered (low < high) for tiny ceilings and clamp
+	// high-water to the hard limit so the prune threshold can never exceed the
+	// rcmgr fence. Without this, hard limits of 1 or 2 collapse low==high==1,
+	// which violates the ordering BasicConnMgr requires.
+	if high > hardConnLimit {
+		high = hardConnLimit
+	}
+	if low >= high {
+		low = high - 1
+		if low < 1 {
+			low, high = 1, 2
+		}
+	}
+	return low, high
 }
 
 func netIPNetToPrefix(n *net.IPNet) netip.Prefix {
