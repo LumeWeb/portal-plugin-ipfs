@@ -37,6 +37,7 @@ type ProtocolConfig struct {
 	AutoScaleResourceLimits bool          `config:"auto_scale_resource_limits"`
 	DHTMode                 string        `config:"dht_mode"`
 	TrustedProxies          []string      `config:"trusted_proxies"`
+	ProxyProtocol           bool          `config:"proxy_protocol"`
 	Gateways                []string      `config:"gateways"`
 	Bitswap                 BitswapConfig `config:"bitswap"`
 }
