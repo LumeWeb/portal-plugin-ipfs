@@ -73,6 +73,7 @@ type WebsiteServiceDefault struct {
 	pinSvc             pluginCore.IPFSPinService
 	ipnsKeySvc         pluginCore.IPNSKeyService
 	mailerSvc          core.MailerService
+	userSvc            core.UserService
 	dnsSvc             pluginCore.DNSService
 	config             *pluginConfig.WebsiteConfig
 	dnsConfig          *pluginConfig.DnsConfig
@@ -158,6 +159,7 @@ func NewWebsiteService() (core.Service, []core.ContextBuilderOption, error) {
 			svc.pinSvc = core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)
 			svc.ipnsKeySvc = core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 			svc.mailerSvc = core.GetService[core.MailerService](ctx, core.MAILER_SERVICE)
+			svc.userSvc = core.GetService[core.UserService](ctx, core.USER_SERVICE)
 			svc.dnsSvc = core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
 			var dds *domsvc.DelegatedDomainService = core.GetServiceOptional[*domsvc.DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 			if dds != nil {
@@ -381,15 +383,19 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				zap.String("target_hash", website.TargetHash()),
 				zap.Bool("dns_hosting_enabled", primaryWD != nil && primaryWD.DNSHostingEnabled))
 
+			// Admin "website created" notification. When a delegated-domain
+			// service is wired it fires inside DelegatedDomainService.CreateDomain
+			// (so the domain resolves); otherwise fire here so every created
+			// website notifies. The two paths are mutually exclusive per
+			// deployment, so the email is never sent twice.
+			if s.delegatedDomainSvc == nil {
+				s.NotifyAdminWebsiteCreated(ctx, website.ID)
+			}
+
 			// Emit website published event for SSE gateway notification
 			core.Fire(s.Context(), pluginEvent.EVENT_WEBSITE_PUBLISHED, pluginEvent.NewWebsitePublishedEvent(
 				ctx, primaryDomain, website.TargetHash(), website.UserID, website.ID,
 			))
-
-			// Send notification to admin
-			if err := s.notifyAdminWebsiteCreated(ctx, website, ""); err != nil {
-				s.Logger().Warn("Failed to send website created notification", zap.Error(err))
-			}
 
 			return website, nil
 		},
@@ -893,7 +899,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 	}
 
 	// Send notification to admin
-	if err := s.notifyAdminWebsiteUpdated(ctx, updatedWebsite, "", updates); err != nil {
+	if err := s.notifyAdminWebsiteUpdated(ctx, updatedWebsite, updates); err != nil {
 		s.Logger().Warn("Failed to send website updated notification", zap.Error(err))
 	}
 
@@ -1728,7 +1734,7 @@ func (s *WebsiteServiceDefault) CheckStatus(ctx context.Context, website *plugin
 
 			// Send notification if status changed
 			if oldStatus != newStatus {
-				if err := s.notifyUserStatusChanged(ctx, website, "", oldStatus, newStatus); err != nil {
+				if err := s.notifyUserStatusChanged(ctx, website, oldStatus, newStatus); err != nil {
 					s.Logger().Warn("Failed to send status changed notification", zap.Error(err))
 				}
 			}
@@ -1931,8 +1937,26 @@ func (s *WebsiteServiceDefault) generateValidationToken() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-// notifyAdminWebsiteCreated sends an email notification to admin when a new website is created
-func (s *WebsiteServiceDefault) notifyAdminWebsiteCreated(ctx context.Context, website *pluginDb.Website, userEmail string) error {
+// resolveUserEmail looks up a user's email address by ID. Returns an empty
+// string when the user service is unavailable or the account can't be found,
+// so notification callers never fail on an unresolvable email.
+func (s *WebsiteServiceDefault) resolveUserEmail(ctx context.Context, userID uint) string {
+	if s.userSvc == nil {
+		return ""
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_, u, err := s.userSvc.AccountExists(queryCtx, userID)
+	if err != nil || u == nil {
+		return ""
+	}
+	return u.Email
+}
+
+// notifyAdminWebsiteCreated sends an email notification to admin when a new website is created.
+// The notification must be fired after the primary domain binding exists (the API layer
+// creates/points it before calling this) so the domain resolves.
+func (s *WebsiteServiceDefault) notifyAdminWebsiteCreated(ctx context.Context, website *pluginDb.Website) error {
 	if !s.config.NotificationsEnabled || s.mailerSvc == nil {
 		return nil
 	}
@@ -1946,7 +1970,7 @@ func (s *WebsiteServiceDefault) notifyAdminWebsiteCreated(ctx context.Context, w
 
 	vars := map[string]interface{}{
 		"Domain":     primaryDomain,
-		"UserEmail":  userEmail,
+		"UserEmail":  s.resolveUserEmail(ctx, website.UserID),
 		"TargetType": website.TargetType,
 		"TargetHash": website.TargetHash(),
 		"Status":     website.Status,
@@ -1967,8 +1991,24 @@ func (s *WebsiteServiceDefault) notifyAdminWebsiteCreated(ctx context.Context, w
 	return nil
 }
 
+// NotifyAdminWebsiteCreated implements the WebsiteService interface method. It
+// reloads the website fresh so the primary domain binding (created by
+// CreateDomain) resolves, then fires the admin notification.
+func (s *WebsiteServiceDefault) NotifyAdminWebsiteCreated(ctx context.Context, websiteID uint) error {
+	queryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	var website pluginDb.Website
+	if err := s.DB().WithContext(queryCtx).First(&website, websiteID).Error; err != nil {
+		s.Logger().Warn("Failed to load website for created notification",
+			zap.Error(err), zap.Uint("website_id", websiteID))
+		return err
+	}
+	return s.notifyAdminWebsiteCreated(ctx, &website)
+}
+
 // notifyAdminWebsiteUpdated sends an email notification to admin when a website is updated
-func (s *WebsiteServiceDefault) notifyAdminWebsiteUpdated(ctx context.Context, website *pluginDb.Website, userEmail string, changes map[string]interface{}) error {
+func (s *WebsiteServiceDefault) notifyAdminWebsiteUpdated(ctx context.Context, website *pluginDb.Website, changes map[string]interface{}) error {
 	if !s.config.NotificationsEnabled || s.mailerSvc == nil {
 		return nil
 	}
@@ -1982,7 +2022,7 @@ func (s *WebsiteServiceDefault) notifyAdminWebsiteUpdated(ctx context.Context, w
 
 	vars := map[string]interface{}{
 		"Domain":     primaryDomain,
-		"UserEmail":  userEmail,
+		"UserEmail":  s.resolveUserEmail(ctx, website.UserID),
 		"TargetType": website.TargetType,
 		"TargetHash": website.TargetHash(),
 		"Status":     website.Status,
@@ -2005,11 +2045,12 @@ func (s *WebsiteServiceDefault) notifyAdminWebsiteUpdated(ctx context.Context, w
 }
 
 // notifyUserStatusChanged sends an email notification to user when website status changes
-func (s *WebsiteServiceDefault) notifyUserStatusChanged(ctx context.Context, website *pluginDb.Website, userEmail string, oldStatus pluginDb.WebsiteStatus, newStatus pluginDb.WebsiteStatus) error {
+func (s *WebsiteServiceDefault) notifyUserStatusChanged(ctx context.Context, website *pluginDb.Website, oldStatus pluginDb.WebsiteStatus, newStatus pluginDb.WebsiteStatus) error {
 	if !s.config.NotificationsEnabled || s.mailerSvc == nil {
 		return nil
 	}
 
+	userEmail := s.resolveUserEmail(ctx, website.UserID)
 	if userEmail == "" {
 		s.Logger().Debug("User email not available, skipping notification")
 		return nil

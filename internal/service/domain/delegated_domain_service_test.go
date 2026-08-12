@@ -62,7 +62,12 @@ func TestDelegatedDomainService_CreateDomain(t *testing.T) {
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: "example.com"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), mock.Anything, mock.Anything).Return(nil).Once()
 
-		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, true, nil)
+		// Setting the website's primary domain fires the admin "created"
+		// notification from the service layer.
+		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
+
+		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, true, true, nil)
 		assert.NoError(tb, err)
 		assert.NotNil(tb, wd)
 		assert.Equal(tb, "example.com", wd.Domain)
@@ -70,6 +75,43 @@ func TestDelegatedDomainService_CreateDomain(t *testing.T) {
 		assert.Equal(tb, uint(1), wd.ZoneID)
 		// Managed-DNS binding: the flag is persisted to match the created zone.
 		assert.True(tb, wd.DNSHostingEnabled)
+	}, TestOptions)
+}
+
+// TestDelegatedDomainService_CreateDomain_NotifyEvenWhenPrimarySet ensures the
+// created notification is gated on the notifyCreated flag alone — not on the
+// website lacking a primary domain. A managed-DNS create on a website that
+// already has a primary still fires when notifyCreated is true.
+func TestDelegatedDomainService_CreateDomain_NotifyEvenWhenPrimarySet(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+
+		website := createTestWebsite(tb, db, 1, "example.com")
+		existingPrimary := uint(999)
+		require.NoError(tb, db.Model(website).Update("primary_domain_id", existingPrimary).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().CreateZone(mock.Anything, "alt-example.com", uint(1)).
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 2}, Domain: "alt-example.com"}, nil).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(2), mock.Anything, mock.Anything).Return(nil).Once()
+
+		// Primary already set, but notifyCreated=true must still emit.
+		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
+
+		wd, err := svc.CreateDomain(context.Background(), "icann", "alt-example.com", website.ID, 1, true, true, nil)
+		assert.NoError(tb, err)
+		assert.NotNil(tb, wd)
+		assert.Equal(tb, "alt-example.com", wd.Domain)
+
+		// The pre-existing primary is left untouched.
+		var reloaded pluginDb.Website
+		require.NoError(tb, db.First(&reloaded, website.ID).Error)
+		require.NotNil(tb, reloaded.PrimaryDomainID)
+		assert.Equal(tb, existingPrimary, *reloaded.PrimaryDomainID)
 	}, TestOptions)
 }
 
@@ -91,13 +133,26 @@ func TestDelegatedDomainService_CreateDomain_SelfHosted(t *testing.T) {
 		// No zone, DNSLink, apex, or delegation calls for a self-hosted binding.
 		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, mock.Anything, mock.Anything)
 
-		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, false, nil)
+		// Self-hosted creation still fires the service-layer created
+		// notification (the binding is the new website's primary).
+		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
+
+		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, false, true, nil)
 		assert.NoError(tb, err)
 		assert.NotNil(tb, wd)
 		assert.Equal(tb, pluginDb.DomainStatusSelfHosted, wd.Status)
 		assert.Equal(tb, uint(0), wd.ZoneID)
 		assert.False(tb, wd.DNSHostingEnabled)
 		assert.Nil(tb, wd.DelegationData)
+
+		// The binding is recorded as the website's primary so the website
+		// service resolves the apex domain via PrimaryDomainID (the
+		// status=active fallback would miss a self-hosted, non-active binding).
+		var reloaded pluginDb.Website
+		require.NoError(tb, db.First(&reloaded, website.ID).Error)
+		require.NotNil(tb, reloaded.PrimaryDomainID)
+		assert.Equal(tb, wd.ID, *reloaded.PrimaryDomainID)
 	}, TestOptions)
 }
 
@@ -109,7 +164,7 @@ func TestDelegatedDomainService_CreateDomain_SelfHostedDANEFailurePurgesBinding(
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		require.NotNil(tb, svc)
 
-		_, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, false, nil)
+		_, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, false, false, nil)
 		require.Error(tb, err)
 		assert.Contains(tb, err.Error(), "failed to bootstrap DANE identity")
 
@@ -159,7 +214,12 @@ func TestDelegatedDomainService_CreateDomain_SubdomainReusesParentZone(t *testin
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(parent.ID), "docs.example.com", mock.Anything, mock.Anything).Return(nil).Maybe()
 		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, "docs.example.com", mock.Anything)
 
-		wd, err := svc.CreateDomain(context.Background(), "icann", "docs.example.com", website.ID, 1, true, nil)
+		// The subdomain becomes the website's primary binding, firing the
+		// admin "created" notification from the service layer.
+		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
+
+		wd, err := svc.CreateDomain(context.Background(), "icann", "docs.example.com", website.ID, 1, true, true, nil)
 		assert.NoError(tb, err)
 		assert.NotNil(tb, wd)
 		// DNSLink/apex/delegation are written into the reused parent zone; the
@@ -201,7 +261,7 @@ func TestDelegatedDomainService_CreateDomain_SubdomainForeignParentRejected(t *t
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: parent.ID}, Domain: "example.com", UserID: 2}, nil).Once()
 		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, "docs.example.com", mock.Anything)
 
-		_, err := svc.CreateDomain(context.Background(), "icann", "docs.example.com", website.ID, 1, true, nil)
+		_, err := svc.CreateDomain(context.Background(), "icann", "docs.example.com", website.ID, 1, true, false, nil)
 		require.Error(tb, err)
 		assert.Contains(tb, err.Error(), "owned by another user")
 	}, TestOptions)
@@ -212,7 +272,7 @@ func TestDelegatedDomainService_CreateDomain_UnsupportedNamespace(t *testing.T) 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		require.NotNil(tb, svc)
 
-		_, err := svc.CreateDomain(context.Background(), "ens", "example.eth", 1, 1, true, nil)
+		_, err := svc.CreateDomain(context.Background(), "ens", "example.eth", 1, 1, true, false, nil)
 		assert.Error(tb, err)
 		assert.Contains(tb, err.Error(), "unsupported namespace")
 	}, TestOptions)

@@ -88,6 +88,12 @@ type WebsiteService interface {
 	// the given WebsiteDomain. Returns the new primary binding.
 	SetPrimaryDomain(ctx context.Context, userID, websiteID, domainID uint) (*pluginDb.WebsiteDomain, error)
 
+	// NotifyAdminWebsiteCreated sends the admin "website created" notification
+	// for the given website. The caller must have created the primary domain
+	// binding first so the email's Domain field resolves. Resolves the
+	// recipient user's email internally. No-op when notifications are disabled.
+	NotifyAdminWebsiteCreated(ctx context.Context, websiteID uint) error
+
 	// WaitForPublishes blocks until all in-flight async publish operations complete
 	WaitForPublishes()
 }

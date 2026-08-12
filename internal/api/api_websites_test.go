@@ -92,6 +92,7 @@ func TestAPI_CreateWebsite(t *testing.T) {
 			}
 			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
 			mockWebsiteService.EXPECT().SetDomainDNSEnabled(mock.Anything, userID, uint(1), uint(1), true).Return(mockApex, nil)
+			mockWebsiteService.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, uint(1)).Return(nil)
 
 			reqBody := fmt.Sprintf(`{"domain":"%s","target_type":"ipfs","target_hash":"%s"}`, TestDomain, TestCID)
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
@@ -137,6 +138,7 @@ func TestAPI_CreateWebsite(t *testing.T) {
 			}
 			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil)
 			mockWebsiteService.EXPECT().SetDomainDNSEnabled(mock.Anything, userID, uint(1), uint(1), true).Return(mockApex, nil)
+			mockWebsiteService.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, uint(1)).Return(nil)
 
 			reqBody := fmt.Sprintf(`{"domain":"%s","target_type":"ipns","target_hash":"%s"}`, TestDomain, TestPeerID)
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
@@ -234,8 +236,10 @@ func TestAPI_CreateWebsite(t *testing.T) {
 
 			// Broken status returns 410 before the response is built, but the
 			// handler still resolves (and finds absent) the primary binding
-			// during domain enablement.
+			// during domain enablement, and CreateDomain still fires the
+			// service-layer created notification on the primary binding.
 			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(nil, nil)
+			mockWebsiteService.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, uint(1)).Return(nil)
 
 			reqBody := fmt.Sprintf(`{"domain":"%s","target_type":"ipfs","target_hash":"%s"}`, TestDomain, TestCID)
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
@@ -884,6 +888,10 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 			}
 			mockWebsiteService.EXPECT().SetPrimaryDomain(mock.Anything, userID, uint(1), mock.Anything).Return(mockApex, nil)
 			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(mockApex, nil).Maybe()
+			// Updating a website (even one that lacked a primary domain) must
+			// NOT emit a "website created" notification — that is reserved for
+			// genuine creations via the create handler.
+			mockWebsiteService.AssertNotCalled(tb, "NotifyAdminWebsiteCreated", mock.Anything, mock.Anything)
 
 			reqBody := fmt.Sprintf(`{"domain":"updated-example.com","target_type":"ipfs","target_hash":"%s"}`, TestCID)
 			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
