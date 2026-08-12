@@ -899,7 +899,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 	}
 
 	// Send notification to admin
-	if err := s.notifyAdminWebsiteUpdated(ctx, updatedWebsite, updates); err != nil {
+	if err := s.notifyAdminWebsiteUpdated(ctx, updatedWebsite); err != nil {
 		s.Logger().Warn("Failed to send website updated notification", zap.Error(err))
 	}
 
@@ -2008,7 +2008,7 @@ func (s *WebsiteServiceDefault) NotifyAdminWebsiteCreated(ctx context.Context, w
 }
 
 // notifyAdminWebsiteUpdated sends an email notification to admin when a website is updated
-func (s *WebsiteServiceDefault) notifyAdminWebsiteUpdated(ctx context.Context, website *pluginDb.Website, changes map[string]interface{}) error {
+func (s *WebsiteServiceDefault) notifyAdminWebsiteUpdated(ctx context.Context, website *pluginDb.Website) error {
 	if !s.config.NotificationsEnabled || s.mailerSvc == nil {
 		return nil
 	}
@@ -2027,7 +2027,6 @@ func (s *WebsiteServiceDefault) notifyAdminWebsiteUpdated(ctx context.Context, w
 		"TargetHash": website.TargetHash(),
 		"Status":     website.Status,
 		"UpdatedAt":  website.UpdatedAt.Format(time.RFC3339),
-		"Changes":    changes,
 	}
 
 	if err := s.mailerSvc.TemplateSend("website_updated_admin", vars, vars, s.config.AdminEmail); err != nil {
