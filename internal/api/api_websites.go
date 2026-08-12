@@ -149,7 +149,7 @@ func (a *API) createWebsite(c echo.Context) error {
 			namespace = string(*req.Namespace)
 		}
 		var cfgRaw json.RawMessage
-		if _, err := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, req.Domain, website.ID, user, dnsEnabled, cfgRaw); err != nil {
+		if _, err := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, req.Domain, website.ID, user, dnsEnabled, true, cfgRaw); err != nil {
 			a.Logger().Error("Failed to create primary domain for website",
 				zap.Uint("website_id", website.ID), zap.String("domain", req.Domain), zap.Error(err))
 			apiErr := NewError(ErrKeyFileProcessingFailed, err)
@@ -407,7 +407,7 @@ func (a *API) updateWebsite(c echo.Context) error {
 		if req.DNSEnabled != nil {
 			newDomainDNS = *req.DNSEnabled
 		}
-		wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, cfgRaw)
+		wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw)
 		if derr != nil {
 			a.Logger().Error("Failed to create primary domain for website",
 				zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Error(derr))

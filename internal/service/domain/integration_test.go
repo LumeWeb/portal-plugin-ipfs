@@ -71,8 +71,13 @@ func TestIntegration_CreateAndVerifyHNSDomain(t *testing.T) {
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(1), mock.Anything, pluginCore.RecordTypeA, gatewayIP).Return(nil).Once()
 		mockDNS.EXPECT().EnableDNSSEC(mock.Anything, uint(1)).Return("257 3 13 dGVzdA==", nil).Maybe()
 
+		// The website acquires its primary domain, firing the service-layer
+		// admin "created" notification.
+		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
+
 		// Create domain
-		wd, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, true, nil)
+		wd, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, true, true, nil)
 		require.NoError(tb, err)
 		require.NotNil(tb, wd)
 		assert.Equal(tb, pluginDb.DomainStatusRecordsGenerated, wd.Status)

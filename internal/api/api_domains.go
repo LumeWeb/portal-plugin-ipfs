@@ -57,7 +57,7 @@ func (a *API) createDomain(c echo.Context) error {
 		dnsHostingEnabled = *req.DNSHostingEnabled
 	}
 
-	wd, err := a.delegatedDomainSvc.CreateDomain(reqCtx, req.Namespace, req.Domain, uint(websiteID), userID, dnsHostingEnabled, configRaw)
+	wd, err := a.delegatedDomainSvc.CreateDomain(reqCtx, req.Namespace, req.Domain, uint(websiteID), userID, dnsHostingEnabled, false, configRaw)
 	if err != nil {
 		a.Logger().Error("Failed to create domain", zap.Error(err))
 		apiErr := NewError(ErrKeyValidationFailed, err)

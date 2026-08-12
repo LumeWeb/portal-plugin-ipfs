@@ -165,7 +165,7 @@ func parentDomain(domain string) string {
 
 func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	namespace, domain string, websiteID, userID uint, dnsHostingEnabled bool,
-	config json.RawMessage) (*pluginDb.WebsiteDomain, error) {
+	notifyCreated bool, config json.RawMessage) (*pluginDb.WebsiteDomain, error) {
 
 	// Require a database connection up front: many call sites feed through a
 	// service that may not be wired to a DB (e.g. the website-create API when
@@ -241,6 +241,23 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 				s.DB().WithContext(ctx).Unscoped().Delete(wd)
 				return nil, fmt.Errorf("failed to bootstrap DANE identity: %w", err)
 			}
+		}
+		// This binding is the new website's first (primary) domain. Record it
+		// so the website service resolves the apex domain via PrimaryDomainID
+		// rather than the status=active fallback — a self-hosted binding is
+		// not active, so it would otherwise resolve to an empty domain.
+		if website.PrimaryDomainID == nil {
+			primaryID := wd.ID
+			if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", primaryID).Error; err != nil {
+				return nil, fmt.Errorf("failed to set primary domain: %w", err)
+			}
+			website.PrimaryDomainID = &primaryID
+		}
+		// Self-hosted bindings skip the managed-DNS primary assignment below,
+		// so fire the created notification here for a genuine creation. The
+		// PrimaryDomainID set above lets the service resolve the domain.
+		if notifyCreated {
+			s.notifyAdminWebsiteCreated(ctx, website.ID)
 		}
 		return wd, nil
 	}
@@ -333,7 +350,29 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		website.PrimaryDomainID = &wd.ID
 	}
 
+	// Only a genuine website creation (flagged by the create API caller) fires
+	// the admin "website created" notification. Domain-add operations on an
+	// existing website, which also flow through CreateDomain, must not emit a
+	// spurious created email. Firing here (service layer) lets the email's
+	// Domain field resolve against the binding just persisted. Non-fatal: a
+	// template/mail failure must not fail domain creation.
+	if notifyCreated {
+		s.notifyAdminWebsiteCreated(ctx, website.ID)
+	}
+
 	return wd, nil
+}
+
+// notifyAdminWebsiteCreated fires the admin "website created" notification for
+// the given website, delegating to the WebsiteService. It never fails the
+// caller: a resolution or template/mail error is logged and swallowed.
+func (s *DelegatedDomainService) notifyAdminWebsiteCreated(ctx context.Context, websiteID uint) {
+	if ws := core.GetServiceOptional[pluginCore.WebsiteService](s.Context(), pluginCore.WEBSITE_SERVICE); ws != nil {
+		if nerr := ws.NotifyAdminWebsiteCreated(ctx, websiteID); nerr != nil {
+			s.Logger().Warn("Failed to send website created notification",
+				zap.Uint("website_id", websiteID), zap.Error(nerr))
+		}
+	}
 }
 
 // VerifyDomain checks delegation and persists the result.

@@ -271,6 +271,59 @@ func TestWebsiteService_CreateWebsite_IPFSTarget(t *testing.T) {
 	}, TestOptions)
 }
 
+// notifyEnabledTestOptions mirrors the base test options but turns on the admin
+// website-created notification so a test can observe the email send. No
+// delegated-domain service is wired, exercising the domain-service-absent path.
+var notifyEnabledTestOptions = coreTesting.CombineOptions(
+	coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{}),
+	testopts.NewBaseMockPluginBuilder().
+		WithService(pluginCore.WEBSITE_SERVICE, NewWebsiteService).
+		WithServiceConfig(pluginCore.WEBSITE_SERVICE, &pluginConfig.WebsiteConfig{
+			NotificationsEnabled: true,
+			AdminEmail:           "admin@test",
+			ValidationTokenTTL:   24 * time.Hour,
+		}).
+		WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService).
+		WithServiceConfig(pluginCore.DNS_SERVICE, &pluginConfig.DnsConfig{
+			Enabled:                      true,
+			Nameservers:                  []string{"ns1.localhost", "ns2.localhost"},
+			NameserverValidationInterval: 5 * time.Minute,
+			VerificationTokenKey:         "lumeweb-verify",
+		}).
+		WithMigrations(map[core.DBType]fs.FS{
+			core.DB_TYPE_SQLITE: migrations.GetSQLite(),
+		}).BuilderOption(),
+	coreTesting.WithMockMailerService(),
+	util.GetProtocolMock(),
+)
+
+// TestWebsiteService_CreateWebsite_NoDomainServiceFiresNotification verifies
+// that a website created when the delegated-domain service is absent still
+// fires the admin "website created" notification (previous behavior dropped it
+// because CreateDomain, which normally fires it, is never invoked). The email's
+// Domain is allowed to be empty, matching the "no domain set" contract.
+func TestWebsiteService_CreateWebsite_NoDomainServiceFiresNotification(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		mailer := coreTesting.GetMockMailerService(ctx)
+		require.NotNil(tb, mailer)
+		mailer.EXPECT().TemplateSend(
+			"website_created_admin",
+			mock.Anything, mock.Anything,
+			"admin@test",
+		).Return(nil).Once()
+
+		testCID := util.GenerateTestCID(t, "test data")
+		website := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
+
+		created, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, created)
+	}, notifyEnabledTestOptions)
+}
+
 func TestWebsiteService_SSLStatusDoesNotAffectWebsiteStatus(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
