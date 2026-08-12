@@ -48,6 +48,7 @@ import (
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
+	"github.com/libp2p/go-libp2p-kad-dht/crawler"
 	"github.com/libp2p/go-libp2p-kad-dht/fullrt"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	pubsubrouter "github.com/libp2p/go-libp2p-pubsub-router"
@@ -676,7 +677,22 @@ func NewNode(ctx core.Context, cfg *config.ProtocolConfig, rs pluginCore.Reprovi
 		}
 		ipfsNode.companionDHT = companion
 
+		// FullRT's default crawler runs 200 parallel workers, which is the
+		// largest connection-burst generator in the process and can exceed the
+		// connmgr high-water during a crawl. Make its parallelism configurable
+		// (default 96) so operators can bound the burst headroom against the
+		// rcmgr connection ceiling.
+		frtCrawler, crawlerErr := crawler.NewDefaultCrawler(
+			node,
+			crawler.WithParallelism(cfg.FullRTCrawlerParallelism),
+		)
+		if crawlerErr != nil {
+			companion.Close()
+			return nil, fmt.Errorf("failed to create fullrt crawler: %w", crawlerErr)
+		}
+
 		fullRTOpts := []fullrt.Option{
+			fullrt.WithCrawler(frtCrawler),
 			fullrt.DHTOption(
 				append(dhtOpts,
 					dht.BucketSize(20), // this cannot be changed

@@ -16,6 +16,8 @@ const (
 	DefaultBitswapPerPeerWantRateLimit = 200
 	DefaultBitswapPerPeerWantBurst     = 512
 
+	DefaultFullRTCrawlerParallelism = 96
+
 	DHTModeBasic  = "basic"
 	DHTModeFullRT = "fullrt"
 )
@@ -24,22 +26,23 @@ var _ config.Defaults = (*ProtocolConfig)(nil)
 var _ config.Defaults = (*BitswapConfig)(nil)
 
 type ProtocolConfig struct {
-	Port                  int           `config:"port"`
-	WSPort                int           `config:"ws_port"`
-	AnnounceWeb           bool          `config:"announce_web"`
-	ListenAddresses       []string      `config:"listen_addresses"`
-	Peers                 []IPFSPeer    `config:"peers"`
-	BootstrapPeers        []IPFSPeer    `config:"bootstrap_peers"`
-	Provider              IPFSProvider  `config:"provider"`
-	BlockStore            BlockStore    `config:"blockstore"`
-	IPNS                  IPNS          `config:"ipns"`
-	LogLevel              string        `config:"log_level"`
-	DisableResourceLimits bool          `config:"disable_resource_limits"`
-	DHTMode               string        `config:"dht_mode"`
-	TrustedProxies        []string      `config:"trusted_proxies"`
-	ProxyProtocol         bool          `config:"proxy_protocol"`
-	Gateways              []string      `config:"gateways"`
-	Bitswap               BitswapConfig `config:"bitswap"`
+	Port                     int           `config:"port"`
+	WSPort                   int           `config:"ws_port"`
+	AnnounceWeb              bool          `config:"announce_web"`
+	ListenAddresses          []string      `config:"listen_addresses"`
+	Peers                    []IPFSPeer    `config:"peers"`
+	BootstrapPeers           []IPFSPeer    `config:"bootstrap_peers"`
+	Provider                 IPFSProvider  `config:"provider"`
+	BlockStore               BlockStore    `config:"blockstore"`
+	IPNS                     IPNS          `config:"ipns"`
+	LogLevel                 string        `config:"log_level"`
+	DisableResourceLimits    bool          `config:"disable_resource_limits"`
+	DHTMode                  string        `config:"dht_mode"`
+	FullRTCrawlerParallelism int           `config:"fullrt_crawler_parallelism"`
+	TrustedProxies           []string      `config:"trusted_proxies"`
+	ProxyProtocol            bool          `config:"proxy_protocol"`
+	Gateways                 []string      `config:"gateways"`
+	Bitswap                  BitswapConfig `config:"bitswap"`
 }
 
 type BitswapConfig struct {
@@ -61,10 +64,11 @@ func (b BitswapConfig) Defaults() map[string]any {
 
 func (c ProtocolConfig) Defaults() map[string]any {
 	return map[string]any{
-		"Port":           DefaultPort,
-		"WSPort":         DefaultWSPort,
-		"BootstrapPeers": BootstrapPeers,
-		"DHTMode":        "fullrt",
+		"Port":                     DefaultPort,
+		"WSPort":                   DefaultWSPort,
+		"BootstrapPeers":           BootstrapPeers,
+		"DHTMode":                  "fullrt",
+		"FullRTCrawlerParallelism": DefaultFullRTCrawlerParallelism,
 	}
 }
 
@@ -78,6 +82,9 @@ func (l ProtocolConfig) Schema() z.ZogSchema {
 		"DHTMode": z.String().
 			Default(DHTModeFullRT).
 			OneOf([]string{DHTModeBasic, DHTModeFullRT}, z.Message("dht mode must be one of: basic, fullrt")),
+		"FullRTCrawlerParallelism": z.Int().
+			Default(DefaultFullRTCrawlerParallelism).
+			GT(0, z.Message("fullrt crawler parallelism must be positive")),
 	})
 }
 
