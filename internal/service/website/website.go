@@ -1595,12 +1595,23 @@ func (s *WebsiteServiceDefault) checkValidationToken(ctx context.Context, websit
 // ValidateDNS steps that run before this check. There is no portal delegation
 // to wait on, so the gate passes rather than leaving the site at "Domain
 // delegation not yet published" forever.
+//
+// This only applies when the hosting DNS was independently proven this pass.
+// Delegated namespaces (HNS) skip the TXT token via shouldPerformTokenCheck, so
+// for a zone-less self-hosted binding in a delegated namespace a DNSLink-only
+// pass is not an ownership proof: the delegation gate must still run
+// VerifyDomain so the site does not activate with no ownership proof at all.
 func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *pluginDb.WebsiteDomain) (bool, string, pluginCore.ValidationReason, error) {
 	if s.delegatedDomainSvc == nil {
 		return true, "", "", nil
 	}
 
-	if primaryWD.ZoneID == 0 {
+	// A zone-less primary is self-hosted: no portal zone to reconcile. Only
+	// pass when hosting DNS was independently proven (the TXT token ran, i.e.
+	// the namespace does not use delegation for ownership). For delegated
+	// namespaces (HNS) the token check is skipped, so this is not an ownership
+	// proof and we must keep the delegation gate.
+	if primaryWD.ZoneID == 0 && !s.delegatedDomainSvc.UsesDelegationForOwnership(primaryWD.Domain) {
 		return true, "", "", nil
 	}
 
