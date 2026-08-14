@@ -398,20 +398,40 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 	}
 
 	// Expected DS is computed live from PowerDNS's current active signing key
-	// (never persisted, so it cannot go stale on key rotation). ICANN's
-	// VerifyDelegation ignores it; HNS uses it to require the parent zone to
-	// serve the DS before marking the domain Active.
+	// (never persisted, so it cannot go stale on key rotation). Only
+	// managed-DNSSEC namespaces (provider.RequiresDNSSEC, e.g. HNS)
+	// require it: HNS uses the DS to require the parent zone to serve it before
+	// marking the domain Active. Other providers (e.g. ICANN) verify on NS
+	// visibility alone and ignore DS, so a DS-resolution failure must never fail
+	// their verification — otherwise transient PowerDNS/DS slowness on an ICANN
+	// root blocks delegation validation entirely.
 	//
-	// A zone with no active signing key (("", nil)) is genuinely self-managed —
-	// the portal generated no DS, so NS-only verification is correct. But if
-	// resolution ERRORS (key rollover with multiple active keys, PowerDNS
-	// unreachable), the zone is portal-managed and the live DS is
-	// indeterminate. We must NOT silently weaken a managed zone to NS-only on
-	// a transient failure: that would mark Active a zone whose DS chain of
-	// trust was not actually confirmed.
-	expectedDS, dsErr := s.dnsSvc.GetActiveDNSSECDS(ctx, wd.ZoneID)
-	if dsErr != nil {
-		return false, fmt.Errorf("resolve live DS for zone %d: %w", wd.ZoneID, dsErr)
+	// For a managed-DNSSEC zone with no active signing key (("", nil)) the zone
+	// is genuinely self-managed — the portal generated no DS, so NS-only
+	// verification is correct. But if resolution ERRORS (key rollover with
+	// multiple active keys, PowerDNS unreachable), the zone is portal-managed and
+	// the live DS is indeterminate. We must NOT silently weaken a managed zone to
+	// NS-only on a transient failure: that would mark Active a zone whose DS
+	// chain of trust was not actually confirmed.
+	var expectedDS string
+	if provider.RequiresDNSSEC() {
+		var dsErr error
+		expectedDS, dsErr = s.dnsSvc.GetActiveDNSSECDS(ctx, wd.ZoneID)
+		if dsErr != nil {
+			return false, fmt.Errorf("resolve live DS for zone %d: %w", wd.ZoneID, dsErr)
+		}
+	} else if wd.ZoneID != 0 {
+		// Best-effort for non-DNSSEC providers: surface DB/PowerDNS errors so
+		// they are observable, but the provider verifies on NS and ignores DS,
+		// so a failure here must not block delegation.
+		if ds, dsErr := s.dnsSvc.GetActiveDNSSECDS(ctx, wd.ZoneID); dsErr != nil {
+			s.Logger().Warn("failed to resolve live DS for non-DNSSEC namespace, continuing",
+				zap.Uint("zone_id", wd.ZoneID),
+				zap.String("domain", wd.Domain),
+				zap.Error(dsErr))
+		} else {
+			expectedDS = ds
+		}
 	}
 
 	// Self-heal re-ensures the portal-managed-zone invariants that are
