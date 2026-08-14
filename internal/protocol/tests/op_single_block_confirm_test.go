@@ -7,19 +7,20 @@ import (
 	"testing"
 
 	"github.com/ipfs/boxo/bitswap"
+	"github.com/ipfs/boxo/bitswap/network/bsnet"
 	"github.com/ipfs/boxo/blockservice"
 	"github.com/ipfs/boxo/blockstore"
-	"github.com/ipfs/boxo/bitswap/network/bsnet"
 	"github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/go-cid"
 	ds "github.com/ipfs/go-datastore"
 	dssync "github.com/ipfs/go-datastore/sync"
-	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/stretchr/testify/require"
+	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
@@ -28,7 +29,6 @@ import (
 	pluginUpload "go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
-	contentUnixFS "go.lumeweb.com/ipfs-content/unixfs"
 )
 
 // TestRetrieveSingleBlockPopulatesWorkflowCids is a regression test for the
@@ -123,6 +123,15 @@ func TestRetrieveSingleBlockPopulatesWorkflowCids(t *testing.T) {
 		require.NotEmpty(tb, wd.Cids, "single-block DAG must populate workflow Cids, got empty (confirm would fail with 'no CIDs to confirm')")
 		require.ElementsMatch(tb, []string{secondNode.RootCID.String()}, wd.Cids,
 			"single-block DAG should persist exactly the root CID in workflow data")
+
+		// Assert - the root block must be actually stored so a Ready IPFSBlock
+		// row exists. ConfirmOperationHandler.BlockExists requires a Ready row
+		// (metadata.go:421-447); without storage the block is "not ready" and
+		// the workflow retries forever.
+		metadataStore := nodeProto.GetMetadataStore()
+		require.NotNil(tb, metadataStore)
+		require.NoError(tb, metadataStore.BlockExists(context.Background(), secondNode.RootCID),
+			"root block must be stored and Ready after retrieve (BlockExists should succeed for single-block DAG)")
 	}, coreTesting.CombineOptions(
 		GetStandardTestOptions(),
 		coreTesting.WithConfig("plugin.ipfs.protocol.dht_mode", "basic"),
