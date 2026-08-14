@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -442,6 +443,53 @@ func TestDelegatedDomainService_VerifyDomain_SelfHealsDNSSEC(t *testing.T) {
 
 			mockDNS.AssertCalled(tb, "EnsureSOAMNAME", mock.Anything, uint(42), "example.com", mock.Anything)
 			mockDNS.AssertNotCalled(tb, "EnableDNSSEC")
+			mockDNS.AssertExpectations(tb)
+		}, TestOptions)
+	})
+
+	// Regression: an ICANN root must not fail delegation verification when the
+	// live DS cannot be resolved (e.g. transient PowerDNS slowness/timeout). DS
+	// is only meaningful for managed-DNSSEC namespaces (HNS); ICANN verifies on
+	// NS visibility and ignores DS. A GetActiveDNSSECDS error on an ICANN zone
+	// used to abort VerifyDomain with "resolve live DS for zone N" and pin the
+	// domain at "Domain delegation not yet published" forever.
+	t.Run("icann_ds_error_does_not_fail_verification", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			db := ctx.DB()
+			require.NoError(tb, db.Create(&pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "lumeweb.com", Namespace: pluginDb.DomainNamespaceICANN,
+				ZoneID: 8, Status: pluginDb.DomainStatusWaitingDelegation,
+			}).Error)
+
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, svc)
+
+			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+			require.NotNil(tb, mockDNS)
+
+			// DS resolution fails (the production symptom: context canceled /
+			// PowerDNS timeout). This must NOT abort verification for an ICANN
+			// root. SOA MNAME self-heal still fires for the portal-managed zone.
+			mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, uint(8)).
+				Return("", errors.New("context canceled")).Once()
+			mockDNS.EXPECT().EnsureSOAMNAME(mock.Anything, uint(8), "lumeweb.com", mock.Anything).
+				Return(nil).Once()
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "lumeweb.com", Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 8,
+			}
+
+			verified, err := svc.VerifyDomain(context.Background(), wd)
+			_ = verified
+			if err != nil {
+				// Allowed: post-heal ICANN delegation error (system resolver).
+				// The key assertion is that the DS error itself was swallowed —
+				// err must NOT wrap "resolve live DS for zone 8".
+				tb.Logf("expected post-heal delegation error: %v", err)
+				require.NotContains(tb, err.Error(), "resolve live DS")
+			}
+
+			mockDNS.AssertCalled(tb, "EnsureSOAMNAME", mock.Anything, uint(8), "lumeweb.com", mock.Anything)
 			mockDNS.AssertExpectations(tb)
 		}, TestOptions)
 	})

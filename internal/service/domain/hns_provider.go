@@ -562,3 +562,9 @@ func (p *HNSProvider) OnCertAvailable(ctx context.Context, domain string, certPE
 func (p *HNSProvider) UsesManagedZoneTLSA() bool {
 	return true
 }
+
+// RequiresDNSSEC reports that HNS confirms delegation against a live DS served
+// by the alt-root parent before marking the domain Active (managed-DNSSEC).
+func (p *HNSProvider) RequiresDNSSEC() bool {
+	return true
+}

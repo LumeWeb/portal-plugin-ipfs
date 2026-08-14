@@ -71,6 +71,12 @@ func (p *ICANNProvider) UsesManagedZoneTLSA() bool {
 	return false
 }
 
+// RequiresDNSSEC reports that ICANN verifies delegation on NS visibility alone
+// and does not require a live DS from the parent zone.
+func (p *ICANNProvider) RequiresDNSSEC() bool {
+	return false
+}
+
 // Nameservers returns the ICANN nameservers configured for the namespace.
 func (p *ICANNProvider) Nameservers() []string {
 	return p.nameservers

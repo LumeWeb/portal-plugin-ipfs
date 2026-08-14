@@ -24,6 +24,14 @@ type DomainProvider interface {
 	// whose zone the portal DNSSEC-signs). Providers that do not use DANE
 	// (e.g. ICANN) return false so no spurious _443._tcp TLSA is published.
 	UsesManagedZoneTLSA() bool
+	// RequiresDNSSEC reports whether this provider's delegation is confirmed
+	// against a live DS record served by the parent zone (managed-DNSSEC
+	// namespaces, e.g. HNS). Providers that verify on NS visibility alone
+	// (e.g. ICANN) and ignore DS return false, so a DS-resolution failure never
+	// blocks their verification. Distinct from UsesManagedZoneTLSA: a provider
+	// could DNSSEC-sign without DANE (and vice versa), so DNSSEC-requirement is
+	// its own capability.
+	RequiresDNSSEC() bool
 	// Nameservers returns the nameservers this provider publishes and
 	// validates delegation against for its namespace. Alt-root providers
 	// (e.g. HNS) return their own namespace-specific nameservers, which
