@@ -69,10 +69,18 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 		cidList = append(cidList, c)
 	}
 
-	// Guard: no CIDs means nothing to confirm — avoid inconsistent state
-	// where UpdatePinStatus and GetPinByRequestID run on a missing record.
+	// Guard: no CIDs means there is nothing to confirm. This must not be a
+	// retryable error: the pin workflow's confirm step is configured with
+	// FailureBehavior=RetryStep, and workflowData.Cids is only ever populated by
+	// the prior retrieve step, so an empty list cannot be fixed by retrying.
+	// In practice an empty Cids at this point means a stale/orphaned request
+	// (created before retrieve began persisting Cids). Treat it as a no-op
+	// success and let the workflow complete, rather than retrying forever and
+	// re-queueing step-executor cron jobs indefinitely.
 	if len(cidList) == 0 {
-		return fmt.Errorf("no CIDs to confirm")
+		h.Logger().Warn("confirm skipped: no CIDs in workflow data",
+			zap.Uint("request_id", req.ID))
+		return nil
 	}
 
 	// Process all CIDs to create upload/core pin records for all CIDs
