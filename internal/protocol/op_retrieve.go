@@ -179,10 +179,15 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 
 		// Flush buffered metadata to the database before any DB lookups.
 		// collectDAGCids stores blocks via BlockStore.Put -> batcher.Add,
-		// but the batcher only auto-flushes at batch-size boundaries.
+		// but the batcher only auto-flushes at batch-size boundaries. If the
+		// flush fails, no Ready IPFSBlock row is committed, so ConfirmOperation
+		// would fail with "block not ready" and retry forever. Surface the
+		// error (and release the download reservation) instead of proceeding.
 		if flusher := proto.GetBlockstoreFlusher(); flusher != nil {
 			if err := flusher.Flush(ctx); err != nil {
 				h.Logger().Error("Failed to flush block metadata", zap.Error(err))
+				cleanupDownloadReservation(checkResults.Download)
+				return fmt.Errorf("failed to flush block metadata: %w", err)
 			}
 		}
 
