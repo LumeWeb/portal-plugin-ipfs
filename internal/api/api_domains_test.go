@@ -438,11 +438,14 @@ func TestAPI_DANERepublish(t *testing.T) {
 			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, mockDNS)
 			// The seeding push and the HTTP republish each call SetTLSARecord(zoneID=42).
-			mockDNS.On("SetTLSARecord", mock.Anything, uint(42), mock.Anything).Return(nil).Times(2)
+			// The mock signature is SetTLSARecord(ctx, zoneID, domain, content); all
+			// four args must be matched, otherwise the calls register as a mismatch
+			// and only the expectation bookkeeping (not the real call) advances.
+			mockDNS.On("SetTLSARecord", mock.Anything, uint(42), mock.Anything, mock.Anything).Return(nil).Times(2)
 			_, _, err := svc.UpdateTLSAFromCert(ctx, "hns", wd.Domain, certPEM, keyPEM)
 			require.NoError(t, err, "seeding stored cert via UpdateTLSAFromCert")
 
-			mockDNS.AssertCalled(tb, "SetTLSARecord", mock.Anything, uint(42), mock.Anything)
+			mockDNS.AssertCalled(tb, "SetTLSARecord", mock.Anything, uint(42), mock.Anything, mock.Anything)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, republishPath(int(websiteID), int(wd.ID)), token, nil)
 			require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
