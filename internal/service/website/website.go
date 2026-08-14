@@ -1589,8 +1589,18 @@ func (s *WebsiteServiceDefault) checkValidationToken(ctx context.Context, websit
 // primary (apex) binding gates website validation: secondaries own their own
 // DNS and validate independently, so a pending secondary must not block a
 // site whose primary hosting DNS is correct.
+//
+// A self-hosted primary (ZoneID == 0) owns no portal-managed zone to reconcile
+// and its hosting DNS (DNSLink + validation token) was already verified by the
+// ValidateDNS steps that run before this check. There is no portal delegation
+// to wait on, so the gate passes rather than leaving the site at "Domain
+// delegation not yet published" forever.
 func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *pluginDb.WebsiteDomain) (bool, string, pluginCore.ValidationReason, error) {
 	if s.delegatedDomainSvc == nil {
+		return true, "", "", nil
+	}
+
+	if primaryWD.ZoneID == 0 {
 		return true, "", "", nil
 	}
 
