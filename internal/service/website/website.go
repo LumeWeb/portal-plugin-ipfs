@@ -20,7 +20,6 @@ import (
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	pluginEvent "go.lumeweb.com/portal-plugin-ipfs/internal/event"
 	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
-	"golang.org/x/sync/errgroup"
 
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal/core"
@@ -1497,7 +1496,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				}
 			}
 
-			if ok, msg, reason, err := s.checkAttachedDelegations(ctx, &website); err != nil {
+			if ok, msg, reason, err := s.checkDelegation(ctx, primaryWD); err != nil {
 				return pluginCore.ValidateDNSResult{}, err
 			} else if !ok {
 				return pluginCore.ValidateDNSResult{
@@ -1586,51 +1585,22 @@ func (s *WebsiteServiceDefault) checkValidationToken(ctx context.Context, websit
 	return false, fmt.Sprintf(msgTokenMissing, s.verificationTokenKey(), primaryDomain, primaryDomain), pluginCore.ValidationReasonTokenMissing, nil
 }
 
-func (s *WebsiteServiceDefault) checkAttachedDelegations(ctx context.Context, website *pluginDb.Website) (bool, string, pluginCore.ValidationReason, error) {
+// checkDelegation verifies the website's primary domain delegation. Only the
+// primary (apex) binding gates website validation: secondaries own their own
+// DNS and validate independently, so a pending secondary must not block a
+// site whose primary hosting DNS is correct.
+func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *pluginDb.WebsiteDomain) (bool, string, pluginCore.ValidationReason, error) {
 	if s.delegatedDomainSvc == nil {
 		return true, "", "", nil
 	}
 
-	var attached []pluginDb.WebsiteDomain
-	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		return tx.Where("website_id = ?", website.ID).Find(&attached)
-	}); err != nil {
-		s.Logger().Error("failed to load attached domains for delegation verification",
-			zap.Error(err),
-			zap.Uint("website_id", website.ID))
-		return false, "", "", fmt.Errorf("failed to verify domain delegations: %w", err)
-	}
+	verifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
-	// Verify delegations concurrently with a bounded worker pool and a
-	// shared context deadline to avoid N*10s serial blocking.
-	grp, verifyCtx := errgroup.WithContext(ctx)
-	grp.SetLimit(5)
-	var mu sync.Mutex
-	var failedDomain string
-	var failed bool
-	for i := range attached {
-		ad := &attached[i]
-		grp.Go(func() error {
-			verifyCtx2, cancel := context.WithTimeout(verifyCtx, 10*time.Second)
-			defer cancel()
-			verified, verr := s.delegatedDomainSvc.VerifyDomain(verifyCtx2, ad)
-			if verr != nil || !verified {
-				s.Logger().Info("delegation not verified for attached domain",
-					zap.String("domain", ad.Domain), zap.Error(verr))
-				mu.Lock()
-				if !failed {
-					failed = true
-					failedDomain = ad.Domain
-				}
-				mu.Unlock()
-				return errors.New("delegation not verified")
-			}
-			return nil
-		})
-	}
-	if err := grp.Wait(); err != nil {
-		s.Logger().Info("delegation verification failed for attached domain",
-			zap.String("domain", failedDomain))
+	verified, verr := s.delegatedDomainSvc.VerifyDomain(verifyCtx, primaryWD)
+	if verr != nil || !verified {
+		s.Logger().Info("delegation not verified for primary domain",
+			zap.String("domain", primaryWD.Domain), zap.Error(verr))
 		return false, msgDelegationPending, pluginCore.ValidationReasonDelegationPending, nil
 	}
 	return true, "", "", nil
