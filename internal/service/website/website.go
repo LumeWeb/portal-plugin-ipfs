@@ -1590,28 +1590,25 @@ func (s *WebsiteServiceDefault) checkValidationToken(ctx context.Context, websit
 // DNS and validate independently, so a pending secondary must not block a
 // site whose primary hosting DNS is correct.
 //
-// A self-hosted primary (ZoneID == 0) owns no portal-managed zone to reconcile
-// and its hosting DNS (DNSLink + validation token) was already verified by the
-// ValidateDNS steps that run before this check. There is no portal delegation
-// to wait on, so the gate passes rather than leaving the site at "Domain
-// delegation not yet published" forever.
+// A self-hosted primary (ZoneID == 0) owns no portal-managed zone, so the
+// delegation gate passes once its hosting DNS validated earlier in ValidateDNS.
+// The presence of a real PowerDNS zone (ZoneID != 0) is the authoritative
+// marker of a portal-hosted, delegatable binding. VerifyDomain structurally
+// cannot succeed for a zone-less binding (it no-ops with false), so routing one
+// through the delegation gate is an unreachable dead-end.
 //
-// This only applies when the hosting DNS was independently proven this pass.
-// Delegated namespaces (HNS) skip the TXT token via shouldPerformTokenCheck, so
-// for a zone-less self-hosted binding in a delegated namespace a DNSLink-only
-// pass is not an ownership proof: the delegation gate must still run
-// VerifyDomain so the site does not activate with no ownership proof at all.
+// Ownership for a self-hosted binding is proven by its hosting DNS, which
+// ValidateDNS already validated just before this gate: ICANN runs the TXT token
+// check, and for a delegated namespace (HNS) the DNSLink record resolves from
+// the owner-controlled HNS zone (only the domain owner can publish it there),
+// so a DNSLink that matches the website's exact target is itself an ownership
+// proof for that namespace.
 func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *pluginDb.WebsiteDomain) (bool, string, pluginCore.ValidationReason, error) {
 	if s.delegatedDomainSvc == nil {
 		return true, "", "", nil
 	}
 
-	// A zone-less primary is self-hosted: no portal zone to reconcile. Only
-	// pass when hosting DNS was independently proven (the TXT token ran, i.e.
-	// the namespace does not use delegation for ownership). For delegated
-	// namespaces (HNS) the token check is skipped, so this is not an ownership
-	// proof and we must keep the delegation gate.
-	if primaryWD.ZoneID == 0 && !s.delegatedDomainSvc.UsesDelegationForOwnership(primaryWD.Domain) {
+	if primaryWD.ZoneID == 0 {
 		return true, "", "", nil
 	}
 

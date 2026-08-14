@@ -746,13 +746,14 @@ func TestValidateDNS_DelegatedAttached_FailsVerification(t *testing.T) {
 	}, TestOptions)
 }
 
-// TestValidateDNS_SelfHostedHNSPrimary_RequiresDelegation guards against the
-// self-hosted short-circuit being applied to delegated namespaces. An HNS
-// primary skips the TXT token check (shouldPerformTokenCheck returns false for
-// delegated namespaces), so a DNSLink match alone is NOT an ownership proof for
-// a zone-less HNS binding. The delegation gate must still run VerifyDomain and
-// fail pending here, rather than letting the site activate with no proof.
-func TestValidateDNS_SelfHostedHNSPrimary_RequiresDelegation(t *testing.T) {
+// TestValidateDNS_SelfHostedHNSPrimary_DoesNotDeadEnd guards against trapping a
+// zone-less (self-hosted) HNS primary in an unreachable delegation-pending
+// state. A self-hosted binding (ZoneID == 0) has no portal-managed PowerDNS
+// zone, so VerifyDomain structurally cannot succeed for it (it no-ops with
+// false). The delegation gate must pass for every zone-less primary once its
+// hosting DNS validated, regardless of namespace: for HNS the DNSLink resolves
+// from the owner-controlled HNS zone, which is itself the ownership proof.
+func TestValidateDNS_SelfHostedHNSPrimary_DoesNotDeadEnd(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, ws)
@@ -776,25 +777,29 @@ func TestValidateDNS_SelfHostedHNSPrimary_RequiresDelegation(t *testing.T) {
 			},
 		}, nil)
 		// No LookupTXT expectation: the token check is skipped for the
-		// delegated (HNS) namespace.
+		// delegated (HNS) namespace; the DNSLink from the owner's HNS zone is
+		// the ownership proof.
 		setMockResolver(ws, mockResolver)
 
 		mockDelegated := &testDelegatedDomainService{
 			// HNS uses delegation for ownership, so the token check is skipped.
 			uses: func(d string) bool { return d == "selfhosted.hns" },
-			// A self-hosted (zone-less) HNS binding has no delegated zone
-			// published, so VerifyDomain returns false: no ownership proof.
+			// Mirror the real VerifyDomain on a zone-less binding: it returns
+			// (false, nil). checkDelegation must NOT route zone-less bindings
+			// through it (that is an unreachable dead-end), so it must pass.
 			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error) {
-				return false, nil
+				if wd.ZoneID == 0 {
+					return false, nil
+				}
+				return true, nil
 			},
 		}
 		setMockDelegatedDomainSvc(ws, mockDelegated)
 
 		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
-		assert.False(tb, result.Valid, "self-hosted HNS primary must not activate on DNSLink alone")
-		assert.Equal(tb, pluginCore.ValidationReasonDelegationPending, result.Reason)
-		assert.Contains(tb, result.Message, "Domain delegation not yet published")
+		assert.True(tb, result.Valid, "self-hosted HNS primary must not dead-end at delegation pending")
+		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
 	}, TestOptions)
 }
 
