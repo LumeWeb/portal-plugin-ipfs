@@ -163,6 +163,42 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		}
 
 		h.setProgressOrWarn(tracker, 90)
+	} else {
+		// Single-block DAG (root block only, no children). There are no child
+		// CIDs to collect, but the root block must still be fetched and stored
+		// so a Ready IPFSBlock row exists for the store/confirm operations.
+		// Without it, StoreOperationHandler.MarkBlockReady finds no row and
+		// ConfirmOperationHandler.BlockExists fails with "block not ready",
+		// leaving the workflow stuck in a retry loop.
+		dagResult, err = collectDAGCids(h.Context(), proto, c, false)
+		if err != nil {
+			h.Logger().Error("Failed to collect and store DAG CIDs", zap.Error(err))
+			cleanupDownloadReservation(checkResults.Download)
+			return fmt.Errorf("failed to collect and store DAG CIDs: %w", err)
+		}
+
+		// Flush buffered metadata to the database before any DB lookups.
+		// collectDAGCids stores blocks via BlockStore.Put -> batcher.Add,
+		// but the batcher only auto-flushes at batch-size boundaries. If the
+		// flush fails, no Ready IPFSBlock row is committed, so ConfirmOperation
+		// would fail with "block not ready" and retry forever. Surface the
+		// error (and release the download reservation) instead of proceeding.
+		if flusher := proto.GetBlockstoreFlusher(); flusher != nil {
+			if err := flusher.Flush(ctx); err != nil {
+				h.Logger().Error("Failed to flush block metadata", zap.Error(err))
+				cleanupDownloadReservation(checkResults.Download)
+				return fmt.Errorf("failed to flush block metadata: %w", err)
+			}
+		}
+
+		// Persist the root CID so the store/confirm operations can process it.
+		workflowData.Cids = []string{c.String()}
+		err = h.UpdateWorkflowDataStruct(req.ID, &workflowData)
+		if err != nil {
+			h.Logger().Error("Failed to update workflow data", zap.Error(err))
+			cleanupDownloadReservation(checkResults.Download)
+			return err
+		}
 	}
 
 	// ==== UPLOAD PROCESSING ====
