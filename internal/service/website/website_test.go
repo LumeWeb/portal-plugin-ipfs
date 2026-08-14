@@ -1934,6 +1934,12 @@ func TestWebsiteService_EnableDNSHosting_RecordFailurePreservesDelegationZone(t 
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
 		website.ID = 9013
+		// The enable transition loads the owning Website row for target/token
+		// state, so it must exist in the DB (this test bypasses CreateWebsite in
+		// favor of a prebound primary domain). A valid status satisfies the
+		// Website.BeforeSave hook.
+		website.Status = string(pluginDb.WebsiteStatusActive)
+		require.NoError(tb, ctx.DB().Create(website).Error)
 		wd := prebindPrimaryDomain(tb, ctx, website, domain, false)
 		wd.ZoneID = testZoneID
 		wd.Status = pluginDb.DomainStatusRecordsGenerated
@@ -2840,6 +2846,13 @@ func TestWebsiteService_DisableDNSHosting_PreservesDelegationOwnedZone(t *testin
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
 		website.ID = 9012
+
+		// The disable transition loads and rewrites the owning Website row, so
+		// it must actually exist in the DB (this test bypasses CreateWebsite in
+		// favor of a prebound primary domain). A valid status satisfies the
+		// Website.BeforeSave hook.
+		website.Status = string(pluginDb.WebsiteStatusActive)
+		require.NoError(tb, ctx.DB().Create(website).Error)
 
 		// Bind the primary domain as a delegation-owned binding: it has
 		// progressed into the delegation lifecycle (delegation_data present,
