@@ -163,6 +163,18 @@ func (h *RetrieveOperationHandler) Execute(ctx context.Context, req *models.Requ
 		}
 
 		h.setProgressOrWarn(tracker, 90)
+	} else {
+		// Single-block DAG (root block only, no children). There are no child
+		// CIDs to collect, but the confirm operation still needs the root CID
+		// present in the workflow data. Without it, ConfirmOperationHandler
+		// fails with "no CIDs to confirm" and the workflow step retries forever.
+		workflowData.Cids = []string{c.String()}
+
+		err = h.UpdateWorkflowDataStruct(req.ID, &workflowData)
+		if err != nil {
+			h.Logger().Error("Failed to update workflow data", zap.Error(err))
+			return err
+		}
 	}
 
 	// ==== UPLOAD PROCESSING ====
