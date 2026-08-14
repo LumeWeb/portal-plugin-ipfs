@@ -1589,8 +1589,26 @@ func (s *WebsiteServiceDefault) checkValidationToken(ctx context.Context, websit
 // primary (apex) binding gates website validation: secondaries own their own
 // DNS and validate independently, so a pending secondary must not block a
 // site whose primary hosting DNS is correct.
+//
+// A self-hosted primary (ZoneID == 0) owns no portal-managed zone, so the
+// delegation gate passes once its hosting DNS validated earlier in ValidateDNS.
+// The presence of a real PowerDNS zone (ZoneID != 0) is the authoritative
+// marker of a portal-hosted, delegatable binding. VerifyDomain structurally
+// cannot succeed for a zone-less binding (it no-ops with false), so routing one
+// through the delegation gate is an unreachable dead-end.
+//
+// Ownership for a self-hosted binding is proven by its hosting DNS, which
+// ValidateDNS already validated just before this gate: ICANN runs the TXT token
+// check, and for a delegated namespace (HNS) the DNSLink record resolves from
+// the owner-controlled HNS zone (only the domain owner can publish it there),
+// so a DNSLink that matches the website's exact target is itself an ownership
+// proof for that namespace.
 func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *pluginDb.WebsiteDomain) (bool, string, pluginCore.ValidationReason, error) {
 	if s.delegatedDomainSvc == nil {
+		return true, "", "", nil
+	}
+
+	if primaryWD.ZoneID == 0 {
 		return true, "", "", nil
 	}
 
