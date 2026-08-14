@@ -20,21 +20,26 @@ import (
 	"go.lumeweb.com/portal/core"
 )
 
-// provideManyProvider is the minimal interface we need from a DHT that natively
-// implements batched ProvideMany (e.g. FullRT). Using an interface here keeps
-// provide.go free of fullrt imports.
-type provideManyProvider interface {
-	ProvideMany(ctx context.Context, keys []multihash.Multihash) error
+// provideProvider is the minimal interface we need for per-CID provides. Both
+// *fullrt.FullRT and basic IpfsDHT satisfy routing.ContentRouting, whose
+// Provide returns an error unless THAT key was put to at least one peer. Using
+// a narrow interface keeps provide.go free of fullrt imports.
+type provideProvider interface {
+	Provide(ctx context.Context, key cid.Cid, brdcst bool) error
 }
 
-// fullrtProvider delegates to FullRT.ProvideMany, which does keyspace-region
-// batching internally: one GetClosestPeers lookup per key (local trie, no
-// network round-trips), then groups keys by target peer so each peer receives
-// multiple ADD_PROVIDER messages over a single connection. This eliminates the
-// per-CID GCP bottleneck that basicDHTProvider has.
+// fullrtProvider delegates to FullRT.Provide per CID with a bounded worker
+// pool. Unlike FullRT.ProvideMany (which reports success at batch granularity
+// and returns nil when just one key succeeds), per-CID Provide preserves the
+// error semantics needed to mark only the CIDs that actually reached the DHT
+// as announced. FullRT.Provide's GetClosestPeers is a local trie lookup
+// (microseconds), so this avoids the per-CID network bottleneck that made the
+// companion basic DHT slow.
 type fullrtProvider struct {
-	dht   provideManyProvider
-	ready func() bool
+	dht            provideProvider
+	ready          func() bool
+	perCIDTimeout  time.Duration
+	provideWorkers int
 }
 
 func (f *fullrtProvider) Ready() bool {
@@ -45,32 +50,74 @@ func (f *fullrtProvider) Ready() bool {
 }
 
 func (f *fullrtProvider) ProvideMany(ctx context.Context, keys []multihash.Multihash) error {
-	start := time.Now()
+	var (
+		mu     sync.Mutex
+		failed []multihash.Multihash
+	)
 
-	err := f.dht.ProvideMany(ctx, keys)
+	workers := f.provideWorkers
+	if workers <= 0 {
+		workers = len(keys)
+	}
 
-	elapsed := time.Since(start).Seconds()
-	if err != nil {
-		ReprovideCIDDuration.WithLabelValues(classifyProvideError(err)).Observe(elapsed)
-		// FullRT.ProvideMany returns a single error, not per-CID. Treat all
-		// keys as failed so the reprovider can retry them next cycle.
-		ReprovideCIDsTotal.WithLabelValues(LabelResultFailure).Add(float64(len(keys)))
-		ReprovideCIDFailures.WithLabelValues(classifyProvideError(err)).Add(float64(len(keys)))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(workers)
+
+	for i, k := range keys {
+		if gctx.Err() != nil {
+			mu.Lock()
+			failed = append(failed, keys[i:]...)
+			mu.Unlock()
+			break
+		}
+
+		k := k
+		g.Go(func() error {
+			provideCtx := gctx
+			var cancel context.CancelFunc
+			if f.perCIDTimeout > 0 {
+				provideCtx, cancel = context.WithTimeout(gctx, f.perCIDTimeout)
+			}
+
+			cidStart := time.Now()
+			err := f.dht.Provide(provideCtx, cid.NewCidV1(cid.Raw, k), true)
+			cidElapsed := time.Since(cidStart).Seconds()
+			if cancel != nil {
+				cancel()
+			}
+
+			if err != nil {
+				ReprovideCIDDuration.WithLabelValues(classifyProvideError(err)).Observe(cidElapsed)
+				ReprovideCIDFailures.WithLabelValues(classifyProvideError(err)).Inc()
+				ReprovideCIDsTotal.WithLabelValues(LabelResultFailure).Inc()
+				mu.Lock()
+				failed = append(failed, k)
+				mu.Unlock()
+			} else {
+				ReprovideCIDDuration.WithLabelValues(LabelCIDResultSuccess).Observe(cidElapsed)
+				ReprovideCIDsTotal.WithLabelValues(LabelResultSuccess).Inc()
+			}
+			return nil
+		})
+	}
+
+	_ = g.Wait()
+
+	if len(failed) > 0 {
+		ReprovideCIDsTotal.WithLabelValues(LabelResultFailure).Add(float64(len(failed)))
 		return &provideManyError{
-			failed:     len(keys),
+			failed:     len(failed),
 			total:      len(keys),
-			err:        err,
-			failedKeys: keys,
+			err:        errors.New("provide failed for some CIDs"),
+			failedKeys: failed,
 		}
 	}
 
-	ReprovideCIDDuration.WithLabelValues(LabelCIDResultSuccess).Observe(elapsed)
-	ReprovideCIDsTotal.WithLabelValues(LabelResultSuccess).Add(float64(len(keys)))
 	return nil
 }
 
-func newFullrtProvider(dht provideManyProvider, ready func() bool) pluginCore.Provider {
-	return &fullrtProvider{dht: dht, ready: ready}
+func newFullrtProvider(dht provideProvider, ready func() bool, perCIDTimeout time.Duration, provideWorkers int) pluginCore.Provider {
+	return &fullrtProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout, provideWorkers: provideWorkers}
 }
 
 // basicDHTProvider wraps a basic DHT that doesn't implement ProvideMany
@@ -164,15 +211,16 @@ func newBasicDHTProvider(dht routing.ContentRouting, ready func() bool, perCIDTi
 // fullrt vs basic DHT choice behind a single call so node.go never branches
 // on DHT mode.
 //
-// When fullrt is non-nil, it delegates to FullRT.ProvideMany (keyspace-region
-// batching, local GetClosestPeers, bulk ADD_PROVIDER per peer).
+// When fullrt is non-nil, it uses fullrtProvider (per-CID FullRT.Provide with a
+// bounded worker pool). Per-CID Provide preserves per-key success semantics so
+// the reprovider only marks CIDs that actually reached the DHT as announced.
 //
 // When fullrt is nil, it uses basicDHTProvider with the provided DHT (the
 // primary DHT in basic mode, or the companion DHT in fullrt mode without
 // fullRT available). The ready function gates health if needed.
-func NewDHTProvider(fullrt provideManyProvider, dht routing.ContentRouting, ready func() bool, cfg config.IPFSProvider) pluginCore.Provider {
+func NewDHTProvider(fullrt provideProvider, dht routing.ContentRouting, ready func() bool, cfg config.IPFSProvider) pluginCore.Provider {
 	if fullrt != nil {
-		return newFullrtProvider(fullrt, ready)
+		return newFullrtProvider(fullrt, ready, cfg.PerCIDTimeout, cfg.ProvideWorkers)
 	}
 	return newBasicDHTProvider(dht, ready, cfg.PerCIDTimeout, cfg.ProvideWorkers)
 }

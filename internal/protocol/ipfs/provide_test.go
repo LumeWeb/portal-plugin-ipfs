@@ -497,119 +497,119 @@ func TestBasicDHTProvider_ProvideMany(t *testing.T) {
 	})
 }
 
-// stubProvideMany is a minimal provideManyProvider stub for testing fullrtProvider.
-type stubProvideMany struct {
+// stubProvide is a minimal provideProvider stub for testing fullrtProvider.
+// It records per-CID provide calls and lets the caller control which keys fail,
+// so fullrtProvider's per-CID success tracking can be verified.
+type stubProvide struct {
 	mu        sync.Mutex
-	calls     int
-	keys      []multihash.Multihash
-	err       error
-	provideFn func(keys []multihash.Multihash) error
+	provideFn func(ctx context.Context, key cid.Cid) error
 }
 
-func (s *stubProvideMany) ProvideMany(_ context.Context, keys []multihash.Multihash) error {
+func (s *stubProvide) Provide(ctx context.Context, key cid.Cid, _ bool) error {
 	s.mu.Lock()
-	s.calls++
-	s.keys = keys
 	fn := s.provideFn
 	s.mu.Unlock()
 	if fn != nil {
-		return fn(keys)
+		return fn(ctx, key)
 	}
-	return s.err
-}
-
-func (s *stubProvideMany) getCalls() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.calls
+	return nil
 }
 
 func TestFullrtProvider_ProvideMany(t *testing.T) {
 	t.Run("ready_returns_false_when_fn_returns_false", func(t *testing.T) {
-		provider := newFullrtProvider(&stubProvideMany{}, func() bool { return false })
+		provider := newFullrtProvider(&stubProvide{}, func() bool { return false }, 0, 0)
 		assert.False(t, provider.Ready())
 	})
 
 	t.Run("ready_returns_true_when_fn_returns_true", func(t *testing.T) {
-		provider := newFullrtProvider(&stubProvideMany{}, func() bool { return true })
+		provider := newFullrtProvider(&stubProvide{}, func() bool { return true }, 0, 0)
 		assert.True(t, provider.Ready())
 	})
 
 	t.Run("ready_defaults_to_true_when_fn_is_nil", func(t *testing.T) {
-		provider := newFullrtProvider(&stubProvideMany{}, nil)
+		provider := newFullrtProvider(&stubProvide{}, nil, 0, 0)
 		assert.True(t, provider.Ready())
 	})
 
-	t.Run("provide_many_delegates_all_keys", func(t *testing.T) {
+	t.Run("provide_many_all_succeed_returns_nil", func(t *testing.T) {
 		c1 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-key1"))
 		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-key2"))
 
-		stub := &stubProvideMany{}
-		provider := newFullrtProvider(stub, nil)
+		provider := newFullrtProvider(&stubProvide{}, nil, 0, 0)
 
 		keys := []multihash.Multihash{c1.Hash(), c2.Hash()}
 		err := provider.ProvideMany(context.Background(), keys)
 		assert.NoError(t, err)
-		assert.Equal(t, 1, stub.getCalls())
-		assert.Equal(t, keys, stub.keys)
 	})
 
-	t.Run("provide_many_returns_provideManyError_on_failure", func(t *testing.T) {
-		c1 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-err1"))
-		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-err2"))
+	t.Run("provide_many_only_reports_actually_failed_keys", func(t *testing.T) {
+		// Regression: FullRT.ProvideMany returns nil if just one key in a batch
+		// succeeded, masking per-CID failures. Per-CID Provide must only mark
+		// the keys that genuinely failed, so the reprovider does not record
+		// false confirmations for CIDs that never reached the DHT.
+		c1 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-ok1"))
+		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-bad2"))
+		c3 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-bad3"))
 
-		testErr := errors.New("fullrtbulk send failed")
-		stub := &stubProvideMany{err: testErr}
-		provider := newFullrtProvider(stub, nil)
-
-		keys := []multihash.Multihash{c1.Hash(), c2.Hash()}
-		err := provider.ProvideMany(context.Background(), keys)
-
-		require.Error(t, err)
-
-		var pme *provideManyError
-		require.ErrorAs(t, err, &pme)
-		assert.Equal(t, 2, pme.failed)
-		assert.Equal(t, 2, pme.total)
-		assert.Equal(t, testErr, pme.err)
-		assert.Equal(t, keys, pme.failedKeys)
-	})
-
-	t.Run("provide_many_returns_all_keys_as_failed_on_error", func(t *testing.T) {
-		c1 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-fail1"))
-		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-fail2"))
-		c3 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-fail3"))
-
-		stub := &stubProvideMany{err: errors.New("network error")}
-		provider := newFullrtProvider(stub, nil)
+		bad := map[string]bool{string(c2.Hash()): true, string(c3.Hash()): true}
+		stub := &stubProvide{
+			provideFn: func(_ context.Context, key cid.Cid) error {
+				if bad[string(key.Hash())] {
+					return errors.New("send failed")
+				}
+				return nil
+			},
+		}
+		provider := newFullrtProvider(stub, nil, 0, 0)
 
 		keys := []multihash.Multihash{c1.Hash(), c2.Hash(), c3.Hash()}
 		err := provider.ProvideMany(context.Background(), keys)
 
+		require.Error(t, err)
 		var pme *provideManyError
 		require.ErrorAs(t, err, &pme)
-		// All 3 keys should be in failedKeys for retry
-		assert.Equal(t, 3, len(pme.failedKeys))
+		// Only the 2 failing CIDs should be reported failed; the successful one
+		// must NOT be retried.
+		assert.Equal(t, 2, pme.failed)
+		assert.Equal(t, 3, pme.total)
+		assert.ElementsMatch(t, []multihash.Multihash{c2.Hash(), c3.Hash()}, pme.failedKeys)
+	})
+
+	t.Run("provide_many_all_fail_returns_all_keys", func(t *testing.T) {
+		c1 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-fail1"))
+		c2 := cid.NewCidV1(cid.Raw, mustMultihash(t, "frt-fail2"))
+
+		stub := &stubProvide{
+			provideFn: func(_ context.Context, _ cid.Cid) error {
+				return errors.New("network error")
+			},
+		}
+		provider := newFullrtProvider(stub, nil, 0, 0)
+
+		keys := []multihash.Multihash{c1.Hash(), c2.Hash()}
+		err := provider.ProvideMany(context.Background(), keys)
+
+		var pme *provideManyError
+		require.ErrorAs(t, err, &pme)
+		assert.Equal(t, 2, len(pme.failedKeys))
 	})
 
 	t.Run("provide_many_with_empty_keys_returns_nil", func(t *testing.T) {
-		stub := &stubProvideMany{}
-		provider := newFullrtProvider(stub, nil)
+		provider := newFullrtProvider(&stubProvide{}, nil, 0, 0)
 
 		err := provider.ProvideMany(context.Background(), []multihash.Multihash{})
 		assert.NoError(t, err)
-		assert.Equal(t, 1, stub.getCalls())
 	})
 
 	t.Run("provide_many_respects_context_cancellation", func(t *testing.T) {
 		key := mustMultihash(t, "frt-cancel-key")
 
-		stub := &stubProvideMany{
-			provideFn: func(_ []multihash.Multihash) error {
+		stub := &stubProvide{
+			provideFn: func(_ context.Context, _ cid.Cid) error {
 				return context.Canceled
 			},
 		}
-		provider := newFullrtProvider(stub, nil)
+		provider := newFullrtProvider(stub, nil, 0, 0)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
