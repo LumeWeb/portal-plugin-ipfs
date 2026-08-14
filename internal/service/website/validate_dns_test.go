@@ -586,6 +586,63 @@ func TestValidateDNS_DelegatedAttached_Success(t *testing.T) {
 	}, TestOptions)
 }
 
+// TestValidateDNS_SecondaryPending_DoesNotBlockPrimary validates the primary-only
+// delegation gate: a website remains valid when its primary domain delegation
+// verifies, even if a secondary attached domain's delegation is still pending.
+// Secondaries own their own DNS and validate independently; they must not hold
+// the whole site at "Domain delegation not yet published".
+func TestValidateDNS_SecondaryPending_DoesNotBlockPrimary(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "secondary-pending")
+		website := createTestIPFSWebsite(testUserID1, "primary.com", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "primary.com", false)
+
+		// Insert a secondary HNS binding whose delegation is pending (verifies
+		// false). This must NOT fail the website's DNS validation.
+		svc := ws.(*WebsiteServiceDefault)
+		require.NotNil(tb, svc.DB())
+		require.NoError(tb, svc.DB().Create(&pluginDb.WebsiteDomain{
+			WebsiteID:      created.ID,
+			UserID:         testUserID1,
+			Domain:         "secondary.hns",
+			Namespace:      pluginDb.DomainNamespaceHNS,
+			DelegationData: datatypes.JSONMap{},
+		}).Error)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("primary.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		mockDelegated := &testDelegatedDomainService{
+			// Ownership proven via delegation for both bindings, so the token
+			// lookup is skipped and only the delegation gate is exercised.
+			uses: func(d string) bool { return true },
+			// The primary verifies; the secondary would fail if ever checked.
+			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error) {
+				if wd.Domain == "secondary.hns" {
+					return false, nil
+				}
+				return true, nil
+			},
+		}
+		setMockDelegatedDomainSvc(ws, mockDelegated)
+
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, result.Valid, "secondary pending delegation must not block primary validation")
+		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
+	}, TestOptions)
+}
+
 func TestValidateDNS_DelegatedAttached_FailsVerification(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
