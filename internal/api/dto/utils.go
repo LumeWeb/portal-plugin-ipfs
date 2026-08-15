@@ -9,14 +9,20 @@ import (
 	"go.lumeweb.com/ipfs-content/paths"
 )
 
-// IPFSPath creates a properly formatted IPFS path from a CID string
+// IPFSPath creates a properly formatted IPFS path from a CID string.
+// It defensively strips a leading /ipfs/ prefix so a path or already-prefixed
+// value is not doubled (e.g. "/ipfs/ipfs/<cid>").
 func IPFSPath(cid string) string {
-	return paths.IPFSPathPrefix + trimPath(cid)
+	trimmed := strings.TrimPrefix(cid, paths.IPFSPathPrefix)
+	return paths.IPFSPathPrefix + trimPath(trimmed)
 }
 
-// IPNSPath creates a properly formatted IPNS path from a peer ID string
+// IPNSPath creates a properly formatted IPNS path from a peer ID string.
+// It defensively strips a leading /ipns/ prefix so a path or already-prefixed
+// value is not doubled (e.g. "/ipns/ipns/<peerID>").
 func IPNSPath(peerID string) string {
-	return paths.IPNSPathPrefix + trimPath(peerID)
+	trimmed := strings.TrimPrefix(peerID, paths.IPNSPathPrefix)
+	return paths.IPNSPathPrefix + trimPath(trimmed)
 }
 
 // trimPath defensively trims leading and trailing slashes from path components
