@@ -549,4 +549,22 @@ func TestWebsiteResponse_SetValidationRecordInfo(t *testing.T) {
 		assert.Equal(t, "lumeweb-verify=abc123", resp.ValidationToken)
 		assert.Equal(t, "lumeweb-verify.dev.pinner.xyz", resp.ValidationRecordHost)
 	})
+
+	// Regression: both handlers (get and list) call FromModel before
+	// SetValidationRecordInfo. The token format must converge to the prefixed
+	// form regardless, so websites_list and websites_get never disagree on the
+	// same resource's validation_token (raw vs pinner-verify= prefix).
+	t.Run("FromModel-before-SetValidationRecordInfo still prefixes token", func(t *testing.T) {
+		resp := &WebsiteResponse{}
+		err := resp.FromModel(model)
+		require.NoError(t, err)
+		assert.Equal(t, "abc123", resp.ValidationToken, "raw before tokenKey known")
+		resp.SetValidationRecordInfo("pinner-verify")
+		assert.Equal(t, "pinner-verify=abc123", resp.ValidationToken)
+
+		// Idempotent across the EncodeResponse re-FromModel the get path hits.
+		err = resp.FromModel(model)
+		require.NoError(t, err)
+		assert.Equal(t, "pinner-verify=abc123", resp.ValidationToken)
+	})
 }
