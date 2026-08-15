@@ -397,8 +397,12 @@ type WebsiteResponse struct {
 	// Whether validation token has expired
 	Expired bool           `json:"expired"`
 	SSL     *SSLStatusInfo `json:"ssl,omitempty"`
-	// Set by SetValidationRecordInfo; consumed by FromModel to format ValidationToken/ValidationRecordHost
+	// tokenKey is set by SetValidationRecordInfo; rawToken holds the raw
+	// per-resource validation token set by FromModel. Backing ValidationToken
+	// off rawToken makes the token format deterministic regardless of whether
+	// SetValidationRecordInfo runs before or after FromModel.
 	tokenKey string
+	rawToken string
 }
 
 func (r *WebsiteResponse) FromModel(model *db.Website) error {
@@ -412,14 +416,24 @@ func (r *WebsiteResponse) FromModel(model *db.Website) error {
 	r.Created = model.CreatedAt
 	r.Updated = model.UpdatedAt
 	r.Expired = model.IsExpired()
-
-	if r.tokenKey != "" && model.ValidationToken != "" {
-		r.ValidationToken = r.tokenKey + "=" + model.ValidationToken
-	} else {
-		r.ValidationToken = model.ValidationToken
-	}
+	// Keep the raw model token in rawToken so the format can be derived
+	// consistently once tokenKey is known, independent of call order.
+	r.rawToken = model.ValidationToken
+	r.applyTokenFormat()
 
 	return nil
+}
+
+// applyTokenFormat derives ValidationToken from the raw token and tokenKey.
+// It is idempotent: repeated calls (e.g. EncodeResponse re-running FromModel)
+// never double the prefix, and calling it with an unset tokenKey yields the
+// raw token.
+func (r *WebsiteResponse) applyTokenFormat() {
+	if r.tokenKey != "" && r.rawToken != "" {
+		r.ValidationToken = r.tokenKey + "=" + r.rawToken
+	} else {
+		r.ValidationToken = r.rawToken
+	}
 }
 
 // SetPrimaryDomain populates the website-level domain/DNS fields from the
@@ -441,7 +455,7 @@ func (r *WebsiteResponse) SetPrimaryDomain(primary *db.WebsiteDomain) {
 		r.ZoneID = nil
 	}
 	r.Enabled = primary.DNSHostingEnabled
-	if r.tokenKey != "" && r.ValidationToken != "" {
+	if r.tokenKey != "" && r.rawToken != "" {
 		r.ValidationRecordHost = r.tokenKey + "." + primary.Domain
 	}
 }
@@ -471,11 +485,10 @@ func (r *WebsiteResponse) SetSubdomainInfo(zoneDomain string) {
 
 func (r *WebsiteResponse) SetValidationRecordInfo(tokenKey string) {
 	r.tokenKey = tokenKey
-	// The primary domain may already be set; recompute the validation record
-	// host so it is populated regardless of whether SetPrimaryDomain ran before
-	// or after this call (a website has no validation record host without a
-	// primary domain, so leave it empty if Domain is blank).
-	if r.Domain != "" && r.ValidationToken != "" {
+	// Re-derive the token format (and record host) so the result is correct
+	// regardless of whether this runs before or after FromModel.
+	r.applyTokenFormat()
+	if r.Domain != "" && r.rawToken != "" {
 		r.ValidationRecordHost = tokenKey + "." + r.Domain
 	}
 }
