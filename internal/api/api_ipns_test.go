@@ -473,6 +473,12 @@ func TestAPI_ResolveIPNS(t *testing.T) {
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/api/ipns/resolve/%s?check_routing=0", TestIPNSName), token, nil)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
+
+			// The /ipfs/ prefix must not be doubled by IPFSPath.
+			var resp dto.IPNSResolveResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			assert.Equal(t, "/ipfs/"+TestCID, resp.Value)
+			assert.Equal(t, "/ipfs/"+TestCID, resp.Path)
 		}, TestOptions)
 	})
 
