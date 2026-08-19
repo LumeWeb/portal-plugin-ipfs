@@ -41,7 +41,7 @@ require (
 	github.com/pires/go-proxyproto v0.15.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/samber/lo v1.53.0
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.1
 	github.com/tus/tusd/v2 v2.10.0
 	go.lumeweb.com/dane v0.0.3
 	go.lumeweb.com/httputil v0.5.7
@@ -358,7 +358,7 @@ require (
 	go.uber.org/mock v0.6.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
 	golang.org/x/exp v0.0.0-20260813180055-c1d0aacb2297 // indirect
 	golang.org/x/image v0.34.0 // indirect
