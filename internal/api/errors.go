@@ -54,7 +54,13 @@ const (
 
 	// Website domain binding error types
 	ErrKeyDomainNotFound core.ErrorType = "DOMAIN_NOT_FOUND"
-	ErrKeyInvalidPathID  core.ErrorType = "INVALID_PATH_ID"
+	// ErrKeyDomainInUse is returned when a website update tries to set a
+	// primary domain that is already live-bound to a different website. The
+	// create-only CreateDomain path would otherwise surface a raw MySQL 1062
+	// duplicate-key as a 500; this surfaces it as an explicit ownership
+	// conflict (409) instead.
+	ErrKeyDomainInUse   core.ErrorType = "DOMAIN_IN_USE"
+	ErrKeyInvalidPathID core.ErrorType = "INVALID_PATH_ID"
 	// ErrKeyNoStoredCertificate is returned when a DANE republish is requested
 	// for a domain that has no certificate/key stored (e.g. none was ever
 	// pushed via the cert webhook, or the binding is not DANE-capable).
@@ -104,6 +110,7 @@ func init() {
 		ErrKeyInvalidCID:            {Key: ErrKeyInvalidCID, Message: "Invalid CID provided"},
 		ErrKeyInvalidTarget:         {Key: ErrKeyInvalidTarget, Message: "Invalid target hash or peer ID provided"},
 		ErrKeyDomainNotFound:        {Key: ErrKeyDomainNotFound, Message: "Domain not found"},
+		ErrKeyDomainInUse:           {Key: ErrKeyDomainInUse, Message: "Domain is already in use by another website"},
 		ErrKeyInvalidPathID:         {Key: ErrKeyInvalidPathID, Message: "Invalid path parameter: %s"},
 		ErrKeyNoStoredCertificate:   {Key: ErrKeyNoStoredCertificate, Message: "No stored certificate for domain; nothing to republish"},
 		ErrKeyDeleteFailed:          {Key: ErrKeyDeleteFailed, Message: "Failed to delete zone"},
@@ -136,6 +143,7 @@ func init() {
 		ErrKeyInvalidTarget:         http.StatusUnprocessableEntity,
 		ErrKeyPermissionDenied:      http.StatusForbidden,
 		ErrKeyDomainNotFound:        http.StatusNotFound,
+		ErrKeyDomainInUse:           http.StatusConflict,
 		ErrKeyInvalidPathID:         http.StatusBadRequest,
 		ErrKeyNoStoredCertificate:   http.StatusConflict,
 		ErrKeyDeleteFailed:          http.StatusInternalServerError,
