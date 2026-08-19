@@ -906,6 +906,143 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 		}, TestOptions)
 	})
 
+	t.Run("success_redeploy_existing_primary_reuses_binding", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			// Re-deploying to a domain that is already THIS website's primary
+			// binding must reuse the existing binding (idempotent), not attempt
+			// to create a second one (which would trip the unique key and 500).
+			// Persist the website and its live (domain, namespace) binding so
+			// the real DelegatedDomainService.GetWebsiteDomainByDomainAndNamespace
+			// resolves it and the reuse path runs.
+			require.NoError(tb, ctx.DB().Create(createTestIPFSGatewayWebsite(1, userID, "get.pinner.xyz", cid.MustParse(TestCID), pluginDb.WebsiteStatusActive)).Error)
+			require.NoError(tb, ctx.DB().Create(&pluginDb.WebsiteDomain{
+				ID:        1,
+				WebsiteID: 1,
+				UserID:    userID,
+				Domain:    "get.pinner.xyz",
+				Namespace: pluginDb.DomainNamespaceICANN,
+				Status:    pluginDb.DomainStatusActive,
+			}).Error)
+
+			mockWebsite := createMockIPFSWebsite(1, userID, "get.pinner.xyz", TestCID, pluginDb.WebsiteStatusActive, "")
+			mockWebsiteService.EXPECT().UpdateWebsite(mock.Anything, userID, uint(1), mock.AnythingOfType("map[string]interface {}")).Return(mockWebsite, nil)
+
+			// The existing binding is already primary for this website, so
+			// SetPrimaryDomain is a no-op returning the same binding. The reuse
+			// path preserves the binding's DNS hosting state (no DNS zone or
+			// SetDomainDNSEnabled call without an explicit dns_hosting_enabled).
+			existingBinding := &pluginDb.WebsiteDomain{
+				ID:        1,
+				WebsiteID: 1,
+				UserID:    userID,
+				Domain:    "get.pinner.xyz",
+				Namespace: pluginDb.DomainNamespaceICANN,
+				Status:    pluginDb.DomainStatusActive,
+			}
+			mockWebsiteService.EXPECT().SetPrimaryDomain(mock.Anything, userID, uint(1), uint(1)).Return(existingBinding, nil)
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(existingBinding, nil).Maybe()
+
+			reqBody := fmt.Sprintf(`{"domain":"get.pinner.xyz","target_type":"ipfs","target_hash":"%s"}`, TestCID)
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
+
+			// The reported bug returned 500 ("Duplicate entry ... for key
+			// 'website_domains.uk_domain_namespace'"); the fix reuses the
+			// existing binding and succeeds.
+			assert.Equal(t, http.StatusOK, rec.Code)
+
+			var response dto.WebsiteResponse
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			require.NoError(t, err)
+			assert.Equal(t, uint(1), response.ID)
+			assert.Equal(t, "get.pinner.xyz", response.Domain)
+		}, TestOptions)
+	})
+
+	t.Run("success_redeploy_preserves_self_hosted_dns_state", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			// Re-deploying (no dns_hosting_enabled in the request) to a primary
+			// binding the user deliberately self-hosted (DNS hosting off, no
+			// portal zone) must preserve that state, not silently re-provision
+			// DNS hosting. Only an explicit dns_hosting_enabled override may
+			// change it.
+			require.NoError(tb, ctx.DB().Create(createTestIPFSGatewayWebsite(1, userID, "selfhost.xyz", cid.MustParse(TestCID), pluginDb.WebsiteStatusActive)).Error)
+			require.NoError(tb, ctx.DB().Create(&pluginDb.WebsiteDomain{
+				ID:                1,
+				WebsiteID:         1,
+				UserID:            userID,
+				Domain:            "selfhost.xyz",
+				Namespace:         pluginDb.DomainNamespaceICANN,
+				Status:            pluginDb.DomainStatusSelfHosted,
+				DNSHostingEnabled: false,
+				ZoneID:            0,
+			}).Error)
+
+			mockWebsite := createMockIPFSWebsite(1, userID, "selfhost.xyz", TestCID, pluginDb.WebsiteStatusActive, "")
+			mockWebsiteService.EXPECT().UpdateWebsite(mock.Anything, userID, uint(1), mock.AnythingOfType("map[string]interface {}")).Return(mockWebsite, nil)
+
+			selfHostedBinding := &pluginDb.WebsiteDomain{
+				ID:                1,
+				WebsiteID:         1,
+				UserID:            userID,
+				Domain:            "selfhost.xyz",
+				Namespace:         pluginDb.DomainNamespaceICANN,
+				Status:            pluginDb.DomainStatusSelfHosted,
+				DNSHostingEnabled: false,
+				ZoneID:            0,
+			}
+			mockWebsiteService.EXPECT().SetPrimaryDomain(mock.Anything, userID, uint(1), uint(1)).Return(selfHostedBinding, nil)
+			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(selfHostedBinding, nil).Maybe()
+
+			reqBody := fmt.Sprintf(`{"domain":"selfhost.xyz","target_type":"ipfs","target_hash":"%s"}`, TestCID)
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+			// No silent DNS takeover: the self-hosted binding must not be
+			// flipped to portal-managed DNS merely by a target re-deploy.
+			mockWebsiteService.AssertNotCalled(tb, "SetDomainDNSEnabled", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		}, TestOptions)
+	})
+
+	t.Run("error_domain_owned_by_another_website_conflict", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			// A domain live-bound to a DIFFERENT website must be refused as an
+			// ownership conflict (409), never re-bound to this website.
+			require.NoError(tb, ctx.DB().Create(createTestIPFSGatewayWebsite(1, userID, "conflict.xyz", cid.MustParse(TestCID), pluginDb.WebsiteStatusActive)).Error)
+			require.NoError(tb, ctx.DB().Create(&pluginDb.WebsiteDomain{
+				ID:        1,
+				WebsiteID: 99, // owned by another website
+				UserID:    userID,
+				Domain:    "conflict.xyz",
+				Namespace: pluginDb.DomainNamespaceICANN,
+				Status:    pluginDb.DomainStatusActive,
+			}).Error)
+
+			mockWebsite := createMockIPFSWebsite(1, userID, "conflict.xyz", TestCID, pluginDb.WebsiteStatusActive, "")
+			mockWebsiteService.EXPECT().UpdateWebsite(mock.Anything, userID, uint(1), mock.AnythingOfType("map[string]interface {}")).Return(mockWebsite, nil)
+
+			reqBody := fmt.Sprintf(`{"domain":"conflict.xyz","target_type":"ipfs","target_hash":"%s"}`, TestCID)
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
+
+			// The lookup finds a live binding owned by website 99 → 409, not 500.
+			assert.Equal(t, http.StatusConflict, rec.Code)
+		}, TestOptions)
+	})
+
 	t.Run("success_dns_hosting_only", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)

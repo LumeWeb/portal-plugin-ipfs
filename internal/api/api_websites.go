@@ -21,6 +21,7 @@ import (
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // ipnsKeyCIDResolver adapts IPNSKeyService to satisfy dto.IPNSKeyCIDResolver
@@ -392,7 +393,13 @@ func (a *API) updateWebsite(c echo.Context) error {
 	var primary *pluginDb.WebsiteDomain
 
 	// 1. Change the primary domain: create the requested domain binding and
-	// make it the website's new primary (apex) domain.
+	// make it the website's new primary (apex) domain. Setting a domain is
+	// idempotent for a binding that already belongs to this website: the
+	// deployed domain is re-used and repointed as primary rather than
+	// re-created (CreateDomain is create-only and would otherwise trip the
+	// (domain, namespace) unique key with a 500 on every re-deploy). A domain
+	// live-bound to a different website is an ownership conflict (409), not a
+	// 500.
 	if req.Domain != nil {
 		if a.delegatedDomainSvc == nil {
 			return ctx.Error(NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service unavailable")), http.StatusInternalServerError)
@@ -407,18 +414,53 @@ func (a *API) updateWebsite(c echo.Context) error {
 		if req.DNSEnabled != nil {
 			newDomainDNS = *req.DNSEnabled
 		}
-		wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw)
-		if derr != nil {
-			a.Logger().Error("Failed to create primary domain for website",
-				zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Error(derr))
-			apiErr := NewError(ErrKeyFileProcessingFailed, derr)
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-		primary, derr = a.websiteService.SetPrimaryDomain(reqCtx, user, website.ID, wd.ID)
-		if derr != nil {
-			a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", wd.ID), zap.Error(derr))
-			apiErr := NewError(ErrKeyFileProcessingFailed, derr)
-			return ctx.Error(apiErr, apiErr.HttpStatus())
+
+		// Reuse an existing live binding for this (domain, namespace) when it
+		// already belongs to the website; otherwise fall through to a genuine
+		// create (change-primary). A binding owned by a different website is
+		// surfaced as an explicit ownership conflict.
+		existing, eerr := a.delegatedDomainSvc.GetWebsiteDomainByDomainAndNamespace(reqCtx, *req.Domain, pluginDb.DomainNamespace(namespace))
+		switch {
+		case eerr == nil && !existing.DeletedAt.Valid && existing.WebsiteID == website.ID:
+			// Re-deploy to an already-bound primary: reuse, don't re-create.
+			// The binding's DNS hosting state is preserved as-is; only an
+			// explicit dns_hosting_enabled override (step 2 below) changes it.
+			// Silently defaulting DNS hosting on here would re-provision a
+			// PowerDNS zone on a binding the user deliberately self-hosted,
+			// defeating the idempotent re-deploy guarantee.
+			wd := existing
+			rerp, derr := a.websiteService.SetPrimaryDomain(reqCtx, user, website.ID, wd.ID)
+			if derr != nil {
+				a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", wd.ID), zap.Error(derr))
+				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			primary = rerp
+		case eerr == nil:
+			// Domain is live-bound to a different website — refuse to repoint.
+			a.Logger().Warn("Refusing to bind domain owned by another website",
+				zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Uint("domain_owner_website_id", existing.WebsiteID))
+			apiErr := NewError(ErrKeyDomainInUse, fmt.Errorf("domain %q is already in use by another website", *req.Domain))
+			return ctx.Error(apiErr, http.StatusConflict)
+		default:
+			if !errors.Is(eerr, gorm.ErrRecordNotFound) {
+				a.Logger().Error("Failed to look up existing domain binding", zap.String("domain", *req.Domain), zap.Error(eerr))
+				apiErr := NewError(ErrKeyFileProcessingFailed, eerr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw)
+			if derr != nil {
+				a.Logger().Error("Failed to create primary domain for website",
+					zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Error(derr))
+				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			primary, derr = a.websiteService.SetPrimaryDomain(reqCtx, user, website.ID, wd.ID)
+			if derr != nil {
+				a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", wd.ID), zap.Error(derr))
+				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
 		}
 	}
 
