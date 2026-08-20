@@ -411,17 +411,22 @@ func (a *API) deleteRecord(c echo.Context) error {
 	}
 
 	// Optional body may narrow the delete to a specific record content. When
-	// absent or empty, the whole RRSet for (name, type) is deleted.
+	// absent or when content is empty, the whole RRSet for (name, type) is
+	// deleted.
 	body, _ := io.ReadAll(c.Request().Body)
-	if len(bytes.TrimSpace(body)) == 0 {
-		err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType)
-	} else {
+	if len(bytes.TrimSpace(body)) > 0 {
 		c.Request().Body = io.NopCloser(bytes.NewReader(body))
 		var req dto.RecordDeleteRequest
 		if _, ok := httputil.DecodeAndValidateRequest(ctx, &req); !ok {
 			return nil
 		}
-		err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType, req.Content)
+		if req.Content != "" {
+			err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType, req.Content)
+		} else {
+			err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType)
+		}
+	} else {
+		err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType)
 	}
 	if err != nil {
 		a.Logger().Error("Failed to delete DNS record", zap.Error(err), zap.String("name", name), zap.String("type", recordType))

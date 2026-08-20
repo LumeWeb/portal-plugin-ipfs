@@ -729,16 +729,22 @@ func (_c *MockDNSService_DB_Call) RunAndReturn(run func() *gorm.DB) *MockDNSServ
 }
 
 // DeleteRecord provides a mock function for the type MockDNSService
-func (_mock *MockDNSService) DeleteRecord(ctx context.Context, zoneID uint, name string, recordType string) error {
-	ret := _mock.Called(ctx, zoneID, name, recordType)
+func (_mock *MockDNSService) DeleteRecord(ctx context.Context, zoneID uint, name string, recordType string, contents ...string) error {
+	var tmpRet mock.Arguments
+	if len(contents) > 0 {
+		tmpRet = _mock.Called(ctx, zoneID, name, recordType, contents)
+	} else {
+		tmpRet = _mock.Called(ctx, zoneID, name, recordType)
+	}
+	ret := tmpRet
 
 	if len(ret) == 0 {
 		panic("no return value specified for DeleteRecord")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, string) error); ok {
-		r0 = returnFunc(ctx, zoneID, name, recordType)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, string, ...string) error); ok {
+		r0 = returnFunc(ctx, zoneID, name, recordType, contents...)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -755,11 +761,12 @@ type MockDNSService_DeleteRecord_Call struct {
 //   - zoneID uint
 //   - name string
 //   - recordType string
-func (_e *MockDNSService_Expecter) DeleteRecord(ctx any, zoneID any, name any, recordType any) *MockDNSService_DeleteRecord_Call {
-	return &MockDNSService_DeleteRecord_Call{Call: _e.mock.On("DeleteRecord", ctx, zoneID, name, recordType)}
+//   - contents ...string
+func (_e *MockDNSService_Expecter) DeleteRecord(ctx any, zoneID any, name any, recordType any, contents ...any) *MockDNSService_DeleteRecord_Call {
+	return &MockDNSService_DeleteRecord_Call{Call: _e.mock.On("DeleteRecord", append([]any{ctx, zoneID, name, recordType}, contents...)...)}
 }
 
-func (_c *MockDNSService_DeleteRecord_Call) Run(run func(ctx context.Context, zoneID uint, name string, recordType string)) *MockDNSService_DeleteRecord_Call {
+func (_c *MockDNSService_DeleteRecord_Call) Run(run func(ctx context.Context, zoneID uint, name string, recordType string, contents ...string)) *MockDNSService_DeleteRecord_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -777,11 +784,16 @@ func (_c *MockDNSService_DeleteRecord_Call) Run(run func(ctx context.Context, zo
 		if args[3] != nil {
 			arg3 = args[3].(string)
 		}
+		var arg4 []string
+		if args[4] != nil {
+			arg4 = args[4].([]string)
+		}
 		run(
 			arg0,
 			arg1,
 			arg2,
 			arg3,
+			arg4...,
 		)
 	})
 	return _c
@@ -792,7 +804,7 @@ func (_c *MockDNSService_DeleteRecord_Call) Return(err error) *MockDNSService_De
 	return _c
 }
 
-func (_c *MockDNSService_DeleteRecord_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, name string, recordType string) error) *MockDNSService_DeleteRecord_Call {
+func (_c *MockDNSService_DeleteRecord_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, name string, recordType string, contents ...string) error) *MockDNSService_DeleteRecord_Call {
 	_c.Call.Return(run)
 	return _c
 }
