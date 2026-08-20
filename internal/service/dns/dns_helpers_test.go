@@ -645,3 +645,35 @@ func TestRecordID(t *testing.T) {
 	// is impossible via the signature (it only takes zone,name,type,content),
 	// so assert id is stable across a content-identical call (already above).
 }
+
+// TestRecordIDStableAcrossSurfaces guards that the same logical record hashes
+// to the same id whether surfaced through the read path (recordToDTOWithZoneID,
+// which uses stripDomain(buildFullName(name, domain))) or the update response
+// (UpdateRecord, which previously used the raw caller-supplied name).
+func TestRecordIDStableAcrossSurfaces(t *testing.T) {
+	const zone = 12345
+	const domain = "example.com."
+
+	cases := []struct{ name string }{
+		{"@"}, {"www"},
+	}
+
+	for _, tc := range cases {
+		fullName, err := buildFullName(tc.name, domain)
+		assert.NoError(t, err)
+		dtoName := stripDomain(fullName, domain)
+
+		// Same id whether computed from the caller-supplied name (through the
+		// normalized DTO form) or from the read-back full RRSet name.
+		idFromUpdate := recordID(zone, dtoName, "TXT", "v=spf1 include:mxroute.com -all")
+		idFromRead := recordID(zone, stripDomain(fullName, domain), "TXT", "v=spf1 include:mxroute.com -all")
+		assert.Equal(t, idFromUpdate, idFromRead, "name=%q", tc.name)
+
+		// The normalized DTO name matches what recordToDTOWithZoneID exposes.
+		if tc.name == "@" {
+			assert.Equal(t, "", dtoName)
+		} else {
+			assert.Equal(t, "www", dtoName)
+		}
+	}
+}

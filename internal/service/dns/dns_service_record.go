@@ -154,6 +154,11 @@ func (s *DNSServiceDefault) UpdateRecord(ctx context.Context, zoneID uint, name 
 		return nil, fmt.Errorf("invalid record name: %w", err)
 	}
 
+	// Normalize to the DTO form used by the list/GetRRSet read paths so a
+	// record surfaces with the same Name and ID whether it comes from an
+	// update response or a subsequent read (e.g. "www" / "" for apex).
+	dtoName := stripDomain(fullName, zone.Domain)
+
 	pdnsRecords := lo.Map(records, func(r string, _ int) powerdns.Record {
 		return powerdns.Record{Content: formatRecordContent(recordType, r)}
 	})
@@ -177,8 +182,8 @@ func (s *DNSServiceDefault) UpdateRecord(ctx context.Context, zoneID uint, name 
 	result := lo.Map(records, func(r string, _ int) *apiDTO.DNSRecord {
 		return &apiDTO.DNSRecord{
 			ZoneID:   zoneID,
-			ID:       recordID(zoneID, name, recordType, r),
-			Name:     name,
+			ID:       recordID(zoneID, dtoName, recordType, r),
+			Name:     dtoName,
 			Type:     recordType,
 			Content:  r,
 			TTL:      ttl,

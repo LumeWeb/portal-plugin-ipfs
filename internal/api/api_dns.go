@@ -411,20 +411,24 @@ func (a *API) deleteRecord(c echo.Context) error {
 	}
 
 	// Optional body may narrow the delete to a specific record content. When
-	// absent or when content is empty, the whole RRSet for (name, type) is
-	// deleted.
-	body, _ := io.ReadAll(c.Request().Body)
+	// no body is sent the whole RRSet for (name, type) is deleted. A supplied
+	// body that yields no content selector is rejected (4xx) rather than
+	// silently broad-deleting.
+	body, err := io.ReadAll(io.LimitReader(c.Request().Body, 1<<20))
+	if err != nil {
+		return err
+	}
 	if len(bytes.TrimSpace(body)) > 0 {
 		c.Request().Body = io.NopCloser(bytes.NewReader(body))
 		var req dto.RecordDeleteRequest
 		if _, ok := httputil.DecodeAndValidateRequest(ctx, &req); !ok {
 			return nil
 		}
-		if req.Content != "" {
-			err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType, req.Content)
-		} else {
-			err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType)
+		if req.Content == "" {
+			apiErr := NewError(ErrKeyInvalidRequest, nil)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
+		err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType, req.Content)
 	} else {
 		err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType)
 	}
