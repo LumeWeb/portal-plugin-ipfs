@@ -169,6 +169,7 @@ var _ httputil.DTOValidator = (*RecordRequest)(nil)
 // RecordResponse represents a DNS record response
 type RecordResponse struct {
 	ZoneID   uint    `json:"zone_id"`
+	ID       string  `json:"id"`
 	Name     string  `json:"name"`
 	Type     string  `json:"type"`
 	Content  string  `json:"content"`
@@ -178,6 +179,7 @@ type RecordResponse struct {
 
 func (r *RecordResponse) FromModel(model *DNSRecord) error {
 	r.ZoneID = model.ZoneID
+	r.ID = model.ID
 	r.Name = model.Name
 	r.Type = model.Type
 	r.Content = model.Content

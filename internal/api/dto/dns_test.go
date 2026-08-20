@@ -1281,3 +1281,29 @@ func TestImportZoneResponse_ComplexValidation(t *testing.T) {
 		assert.Len(t, resp.CreatedRecords, 8)
 	})
 }
+
+// TestRecordResponseFromModelCarriesID guards that the synthesized record ID
+// computed in the service layer (DNSRecord.ID) is surfaced to callers through
+// the API response DTO. Previously FromModel dropped it, so the id a client
+// could use to target a content-scoped delete was never returned.
+func TestRecordResponseFromModelCarriesID(t *testing.T) {
+	r := &RecordResponse{}
+	model := &DNSRecord{
+		ZoneID:   42,
+		ID:       "aB3dE5fG7hJ",
+		Name:     "www",
+		Type:     "TXT",
+		Content:  "v=spf1 include:mxroute.com -all",
+		TTL:      300,
+		Disabled: false,
+	}
+	assert.NoError(t, r.FromModel(model))
+	assert.Equal(t, "aB3dE5fG7hJ", r.ID)
+	assert.Equal(t, uint(42), r.ZoneID)
+	assert.Equal(t, "www", r.Name)
+
+	// JSON serialization exposes the id field to clients.
+	b, err := json.Marshal(r)
+	assert.NoError(t, err)
+	assert.Contains(t, string(b), "\"id\":\"aB3dE5fG7hJ\"")
+}
