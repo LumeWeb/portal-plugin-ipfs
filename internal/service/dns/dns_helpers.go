@@ -2,7 +2,11 @@ package dns
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"io"
+	"strconv"
 	"strings"
 
 	"github.com/bwesterb/go-zonefile"
@@ -203,17 +207,37 @@ func buildRRSet(name, recordType string, changetype powerdns.RRSetChangetype, tt
 	}
 }
 
+// recordID returns a compact, deterministic identifier for a DNS record value,
+// stable within a zone and across TTL/disabled edits. It is computed over the
+// DTO form of the record (the Name as returned by stripDomain, the uppercased
+// Type, and the Content as returned by stripTXTQuotes), so the id a caller sees
+// in dns records list is the same id they can use to target the record for
+// deletion. The id is 8 bytes of a SHA-256, base64url-encoded (11 chars), to
+// stay short for CLI use.
+//
+// Limits (documented): two byte-identical (name, type, content) values within
+// one RRSet hash to the same id; changing the content changes the id.
+func recordID(zoneID uint, name, recordType, content string) string {
+	h := sha256.New()
+	_, _ = io.WriteString(h, strconv.FormatUint(uint64(zoneID), 10))
+	_, _ = io.WriteString(h, "\x00"+name+"\x00"+strings.ToUpper(recordType)+"\x00"+content)
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil)[:8])
+}
+
 // recordToDTOWithZoneID converts a PowerDNS RRSet and Record to an API DNSRecord DTO
 // It strips the domain from the record name and extracts TTL and disabled status
 // It populates all fields including ZoneID and timestamps
 func recordToDTOWithZoneID(rrset powerdns.RRSet, record powerdns.Record, zoneDomain string, zoneID uint) *apiDTO.DNSRecord {
+	name := stripDomain(rrset.Name, zoneDomain)
+	content := stripTXTQuotes(rrset.Type, record.Content)
 	return &apiDTO.DNSRecord{
 		ZoneID:   zoneID,
-		Name:     stripDomain(rrset.Name, zoneDomain),
+		Name:     name,
 		Type:     rrset.Type,
-		Content:  stripTXTQuotes(rrset.Type, record.Content),
+		Content:  content,
 		TTL:      uint(getTTL(rrset.Ttl)),
 		Disabled: getDisabled(record.Disabled),
+		ID:       recordID(zoneID, name, rrset.Type, content),
 	}
 }
 

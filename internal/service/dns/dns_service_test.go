@@ -1286,3 +1286,174 @@ func TestDNSServiceEnableDNSSEC(t *testing.T) {
 		}, testOptions)
 	})
 }
+
+// TestDNSServiceDeleteRecordContentScoped guards that DeleteRecord with one or
+// more contents sends a content-scoped PowerDNS DELETE RRSet (only those
+// values listed), while DeleteRecord with no contents sends an empty-records
+// DELETE RRSet (the whole RRSet).
+func TestDNSServiceDeleteRecordContentScoped(t *testing.T) {
+	mux := http.NewServeMux()
+
+	// Zone creation.
+	mux.HandleFunc("POST /servers/localhost/zones", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(powerdns.Zone{
+			Id:   new("example.com."),
+			Name: new("example.com."),
+			Kind: (*powerdns.ZoneKind)(new("Native")),
+		})
+	})
+
+	// Zone retrieval (needed by CreateRecord's post-create fetch).
+	mux.HandleFunc("GET /servers/localhost/zones/example.com.", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(powerdns.Zone{
+			Id:     new("example.com."),
+			Name:   new("example.com."),
+			Kind:   (*powerdns.ZoneKind)(new("Native")),
+			Rrsets: &[]powerdns.RRSet{},
+		})
+	})
+
+	var captured []powerdns.RRSet
+	// Capture the rrsets from a PATCH (used by UpdateZoneRRSets).
+	mux.HandleFunc("PATCH /servers/localhost/zones/example.com.", func(w http.ResponseWriter, r *http.Request) {
+		var patch powerdns.ZonePatch
+		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+			t.Errorf("failed to decode PATCH body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if patch.Rrsets != nil {
+			captured = append(captured, *patch.Rrsets...)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	testOptions := createTestOptionsWithServer(server)
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, svc)
+
+		zone, err := svc.CreateZone(ctx, "example.com.", 1)
+		require.NoError(tb, err)
+		require.NotNil(tb, zone)
+
+		t.Run("no content deletes whole RRSet", func(t *testing.T) {
+			captured = nil
+			err := svc.DeleteRecord(ctx, zone.ID, "www", "A")
+			require.NoError(tb, err)
+			require.Len(tb, captured, 1)
+			rrset := captured[0]
+			require.Equal(t, "DELETE", string(rrset.Changetype))
+			require.Equal(t, "www.example.com.", rrset.Name)
+			require.Equal(t, "A", rrset.Type)
+			require.Len(tb, rrset.Records, 0)
+		})
+
+		t.Run("content deletes only that value", func(t *testing.T) {
+			captured = nil
+			err := svc.DeleteRecord(ctx, zone.ID, "www", "TXT", "v=spf1 include:mxroute.com -all")
+			require.NoError(tb, err)
+			require.Len(tb, captured, 1)
+			rrset := captured[0]
+			require.Equal(t, "DELETE", string(rrset.Changetype))
+			require.Len(tb, rrset.Records, 1)
+			// TXT content is quoted for the PowerDNS wire.
+			require.Equal(t, `"v=spf1 include:mxroute.com -all"`, rrset.Records[0].Content)
+		})
+
+		t.Run("multiple contents delete each value", func(t *testing.T) {
+			captured = nil
+			err := svc.DeleteRecord(ctx, zone.ID, "@", "MX",
+				"10 mail.example.com", "20 backup.example.com")
+			require.NoError(tb, err)
+			require.Len(tb, captured, 1)
+			rrset := captured[0]
+			require.Equal(t, "DELETE", string(rrset.Changetype))
+			require.Len(tb, rrset.Records, 2)
+		})
+	}, testOptions)
+}
+
+// TestDNSServiceBulkDeleteRecordsContentScoped guards that BulkDeleteRecords
+// sends a content-scoped PowerDNS DELETE RRSet when a RecordIdentifier carries
+// Content, and a whole-RRSet DELETE when it does not.
+func TestDNSServiceBulkDeleteRecordsContentScoped(t *testing.T) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST /servers/localhost/zones", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(powerdns.Zone{
+			Id:   new("example.com."),
+			Name: new("example.com."),
+			Kind: (*powerdns.ZoneKind)(new("Native")),
+		})
+	})
+	mux.HandleFunc("GET /servers/localhost/zones/example.com.", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(powerdns.Zone{
+			Id:     new("example.com."),
+			Name:   new("example.com."),
+			Kind:   (*powerdns.ZoneKind)(new("Native")),
+			Rrsets: &[]powerdns.RRSet{},
+		})
+	})
+
+	var captured []powerdns.RRSet
+	mux.HandleFunc("PATCH /servers/localhost/zones/example.com.", func(w http.ResponseWriter, r *http.Request) {
+		var patch powerdns.ZonePatch
+		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+			t.Errorf("failed to decode PATCH body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if patch.Rrsets != nil {
+			captured = append(captured, *patch.Rrsets...)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	testOptions := createTestOptionsWithServer(server)
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DNSServiceDefault](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, svc)
+
+		zone, err := svc.CreateZone(ctx, "example.com.", 1)
+		require.NoError(tb, err)
+		require.NotNil(tb, zone)
+
+		captured = nil
+		records := []apiDTO.RecordIdentifier{
+			{Name: "@", Type: "TXT"}, // whole RRSet
+			{Name: "@", Type: "TXT", Content: "v=spf1 include:mxroute.com -all"}, // content-scoped
+		}
+		response, err := svc.BulkDeleteRecords(ctx, zone.ID, 1, records, false)
+		require.NoError(tb, err)
+		require.NotNil(tb, response)
+		require.Len(tb, response.Results, 2)
+
+		require.Len(tb, captured, 2)
+
+		// First: no content -> whole RRSet (no records listed).
+		require.Equal(t, "DELETE", string(captured[0].Changetype))
+		require.Len(tb, captured[0].Records, 0)
+
+		// Second: content -> only that value listed (TXT quoted on the wire).
+		require.Equal(t, "DELETE", string(captured[1].Changetype))
+		require.Len(tb, captured[1].Records, 1)
+		require.Equal(t, `"v=spf1 include:mxroute.com -all"`, captured[1].Records[0].Content)
+	}, testOptions)
+}

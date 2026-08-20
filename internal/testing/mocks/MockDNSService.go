@@ -83,7 +83,7 @@ type MockDNSService_BulkDeleteRecords_Call struct {
 //   - userID uint
 //   - records []dto.RecordIdentifier
 //   - dryRun bool
-func (_e *MockDNSService_Expecter) BulkDeleteRecords(ctx any, zoneID any, userID any, records any, dryRun any) *MockDNSService_BulkDeleteRecords_Call {
+func (_e *MockDNSService_Expecter) BulkDeleteRecords(ctx interface{}, zoneID interface{}, userID interface{}, records interface{}, dryRun interface{}) *MockDNSService_BulkDeleteRecords_Call {
 	return &MockDNSService_BulkDeleteRecords_Call{Call: _e.mock.On("BulkDeleteRecords", ctx, zoneID, userID, records, dryRun)}
 }
 
@@ -250,7 +250,7 @@ type MockDNSService_CreateApexRecord_Call struct {
 //   - domain string
 //   - recordType core0.RecordType
 //   - content string
-func (_e *MockDNSService_Expecter) CreateApexRecord(ctx any, zoneID any, domain any, recordType any, content any) *MockDNSService_CreateApexRecord_Call {
+func (_e *MockDNSService_Expecter) CreateApexRecord(ctx interface{}, zoneID interface{}, domain interface{}, recordType interface{}, content interface{}) *MockDNSService_CreateApexRecord_Call {
 	return &MockDNSService_CreateApexRecord_Call{Call: _e.mock.On("CreateApexRecord", ctx, zoneID, domain, recordType, content)}
 }
 
@@ -324,7 +324,7 @@ type MockDNSService_CreateDNSLinkRecord_Call struct {
 //   - zoneID uint
 //   - domain string
 //   - target string
-func (_e *MockDNSService_Expecter) CreateDNSLinkRecord(ctx any, zoneID any, domain any, target any) *MockDNSService_CreateDNSLinkRecord_Call {
+func (_e *MockDNSService_Expecter) CreateDNSLinkRecord(ctx interface{}, zoneID interface{}, domain interface{}, target interface{}) *MockDNSService_CreateDNSLinkRecord_Call {
 	return &MockDNSService_CreateDNSLinkRecord_Call{Call: _e.mock.On("CreateDNSLinkRecord", ctx, zoneID, domain, target)}
 }
 
@@ -406,7 +406,7 @@ type MockDNSService_CreateRecord_Call struct {
 //   - recordType string
 //   - content string
 //   - ttl uint
-func (_e *MockDNSService_Expecter) CreateRecord(ctx any, zoneID any, name any, recordType any, content any, ttl any) *MockDNSService_CreateRecord_Call {
+func (_e *MockDNSService_Expecter) CreateRecord(ctx interface{}, zoneID interface{}, name interface{}, recordType interface{}, content interface{}, ttl interface{}) *MockDNSService_CreateRecord_Call {
 	return &MockDNSService_CreateRecord_Call{Call: _e.mock.On("CreateRecord", ctx, zoneID, name, recordType, content, ttl)}
 }
 
@@ -487,7 +487,7 @@ type MockDNSService_CreateWebsiteDNSRecords_Call struct {
 //   - targetHash string
 //   - targetType db.WebsiteTargetType
 //   - validationToken string
-func (_e *MockDNSService_Expecter) CreateWebsiteDNSRecords(ctx any, zoneID any, websiteDomain any, targetHash any, targetType any, validationToken any) *MockDNSService_CreateWebsiteDNSRecords_Call {
+func (_e *MockDNSService_Expecter) CreateWebsiteDNSRecords(ctx interface{}, zoneID interface{}, websiteDomain interface{}, targetHash interface{}, targetType interface{}, validationToken interface{}) *MockDNSService_CreateWebsiteDNSRecords_Call {
 	return &MockDNSService_CreateWebsiteDNSRecords_Call{Call: _e.mock.On("CreateWebsiteDNSRecords", ctx, zoneID, websiteDomain, targetHash, targetType, validationToken)}
 }
 
@@ -566,7 +566,7 @@ type MockDNSService_CreateWebsiteValidationRecord_Call struct {
 //   - zoneID uint
 //   - websiteDomain string
 //   - validationToken string
-func (_e *MockDNSService_Expecter) CreateWebsiteValidationRecord(ctx any, zoneID any, websiteDomain any, validationToken any) *MockDNSService_CreateWebsiteValidationRecord_Call {
+func (_e *MockDNSService_Expecter) CreateWebsiteValidationRecord(ctx interface{}, zoneID interface{}, websiteDomain interface{}, validationToken interface{}) *MockDNSService_CreateWebsiteValidationRecord_Call {
 	return &MockDNSService_CreateWebsiteValidationRecord_Call{Call: _e.mock.On("CreateWebsiteValidationRecord", ctx, zoneID, websiteDomain, validationToken)}
 }
 
@@ -645,7 +645,7 @@ type MockDNSService_CreateZone_Call struct {
 //   - ctx context.Context
 //   - domain string
 //   - userID uint
-func (_e *MockDNSService_Expecter) CreateZone(ctx any, domain any, userID any) *MockDNSService_CreateZone_Call {
+func (_e *MockDNSService_Expecter) CreateZone(ctx interface{}, domain interface{}, userID interface{}) *MockDNSService_CreateZone_Call {
 	return &MockDNSService_CreateZone_Call{Call: _e.mock.On("CreateZone", ctx, domain, userID)}
 }
 
@@ -729,16 +729,22 @@ func (_c *MockDNSService_DB_Call) RunAndReturn(run func() *gorm.DB) *MockDNSServ
 }
 
 // DeleteRecord provides a mock function for the type MockDNSService
-func (_mock *MockDNSService) DeleteRecord(ctx context.Context, zoneID uint, name string, recordType string) error {
-	ret := _mock.Called(ctx, zoneID, name, recordType)
+func (_mock *MockDNSService) DeleteRecord(ctx context.Context, zoneID uint, name string, recordType string, contents ...string) error {
+	var tmpRet mock.Arguments
+	if len(contents) > 0 {
+		tmpRet = _mock.Called(ctx, zoneID, name, recordType, contents)
+	} else {
+		tmpRet = _mock.Called(ctx, zoneID, name, recordType)
+	}
+	ret := tmpRet
 
 	if len(ret) == 0 {
 		panic("no return value specified for DeleteRecord")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, string) error); ok {
-		r0 = returnFunc(ctx, zoneID, name, recordType)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, string, ...string) error); ok {
+		r0 = returnFunc(ctx, zoneID, name, recordType, contents...)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -755,11 +761,13 @@ type MockDNSService_DeleteRecord_Call struct {
 //   - zoneID uint
 //   - name string
 //   - recordType string
-func (_e *MockDNSService_Expecter) DeleteRecord(ctx any, zoneID any, name any, recordType any) *MockDNSService_DeleteRecord_Call {
-	return &MockDNSService_DeleteRecord_Call{Call: _e.mock.On("DeleteRecord", ctx, zoneID, name, recordType)}
+//   - contents ...string
+func (_e *MockDNSService_Expecter) DeleteRecord(ctx interface{}, zoneID interface{}, name interface{}, recordType interface{}, contents ...interface{}) *MockDNSService_DeleteRecord_Call {
+	return &MockDNSService_DeleteRecord_Call{Call: _e.mock.On("DeleteRecord",
+		append([]interface{}{ctx, zoneID, name, recordType}, contents...)...)}
 }
 
-func (_c *MockDNSService_DeleteRecord_Call) Run(run func(ctx context.Context, zoneID uint, name string, recordType string)) *MockDNSService_DeleteRecord_Call {
+func (_c *MockDNSService_DeleteRecord_Call) Run(run func(ctx context.Context, zoneID uint, name string, recordType string, contents ...string)) *MockDNSService_DeleteRecord_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -777,11 +785,18 @@ func (_c *MockDNSService_DeleteRecord_Call) Run(run func(ctx context.Context, zo
 		if args[3] != nil {
 			arg3 = args[3].(string)
 		}
+		var arg4 []string
+		var variadicArgs []string
+		if len(args) > 4 {
+			variadicArgs = args[4].([]string)
+		}
+		arg4 = variadicArgs
 		run(
 			arg0,
 			arg1,
 			arg2,
 			arg3,
+			arg4...,
 		)
 	})
 	return _c
@@ -792,7 +807,7 @@ func (_c *MockDNSService_DeleteRecord_Call) Return(err error) *MockDNSService_De
 	return _c
 }
 
-func (_c *MockDNSService_DeleteRecord_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, name string, recordType string) error) *MockDNSService_DeleteRecord_Call {
+func (_c *MockDNSService_DeleteRecord_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, name string, recordType string, contents ...string) error) *MockDNSService_DeleteRecord_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -823,7 +838,7 @@ type MockDNSService_DeleteWebsiteDNSRecords_Call struct {
 //   - ctx context.Context
 //   - zoneID uint
 //   - websiteDomain string
-func (_e *MockDNSService_Expecter) DeleteWebsiteDNSRecords(ctx any, zoneID any, websiteDomain any) *MockDNSService_DeleteWebsiteDNSRecords_Call {
+func (_e *MockDNSService_Expecter) DeleteWebsiteDNSRecords(ctx interface{}, zoneID interface{}, websiteDomain interface{}) *MockDNSService_DeleteWebsiteDNSRecords_Call {
 	return &MockDNSService_DeleteWebsiteDNSRecords_Call{Call: _e.mock.On("DeleteWebsiteDNSRecords", ctx, zoneID, websiteDomain)}
 }
 
@@ -886,7 +901,7 @@ type MockDNSService_DeleteWebsiteValidationRecord_Call struct {
 //   - ctx context.Context
 //   - zoneID uint
 //   - websiteDomain string
-func (_e *MockDNSService_Expecter) DeleteWebsiteValidationRecord(ctx any, zoneID any, websiteDomain any) *MockDNSService_DeleteWebsiteValidationRecord_Call {
+func (_e *MockDNSService_Expecter) DeleteWebsiteValidationRecord(ctx interface{}, zoneID interface{}, websiteDomain interface{}) *MockDNSService_DeleteWebsiteValidationRecord_Call {
 	return &MockDNSService_DeleteWebsiteValidationRecord_Call{Call: _e.mock.On("DeleteWebsiteValidationRecord", ctx, zoneID, websiteDomain)}
 }
 
@@ -948,7 +963,7 @@ type MockDNSService_DeleteZone_Call struct {
 // DeleteZone is a helper method to define mock.On call
 //   - ctx context.Context
 //   - zoneID uint
-func (_e *MockDNSService_Expecter) DeleteZone(ctx any, zoneID any) *MockDNSService_DeleteZone_Call {
+func (_e *MockDNSService_Expecter) DeleteZone(ctx interface{}, zoneID interface{}) *MockDNSService_DeleteZone_Call {
 	return &MockDNSService_DeleteZone_Call{Call: _e.mock.On("DeleteZone", ctx, zoneID)}
 }
 
@@ -1014,7 +1029,7 @@ type MockDNSService_EnableDNSSEC_Call struct {
 // EnableDNSSEC is a helper method to define mock.On call
 //   - ctx context.Context
 //   - zoneID uint
-func (_e *MockDNSService_Expecter) EnableDNSSEC(ctx any, zoneID any) *MockDNSService_EnableDNSSEC_Call {
+func (_e *MockDNSService_Expecter) EnableDNSSEC(ctx interface{}, zoneID interface{}) *MockDNSService_EnableDNSSEC_Call {
 	return &MockDNSService_EnableDNSSEC_Call{Call: _e.mock.On("EnableDNSSEC", ctx, zoneID)}
 }
 
@@ -1073,7 +1088,7 @@ type MockDNSService_EnsureSOAMNAME_Call struct {
 //   - zoneID uint
 //   - domain string
 //   - nameservers []string
-func (_e *MockDNSService_Expecter) EnsureSOAMNAME(ctx any, zoneID any, domain any, nameservers any) *MockDNSService_EnsureSOAMNAME_Call {
+func (_e *MockDNSService_Expecter) EnsureSOAMNAME(ctx interface{}, zoneID interface{}, domain interface{}, nameservers interface{}) *MockDNSService_EnsureSOAMNAME_Call {
 	return &MockDNSService_EnsureSOAMNAME_Call{Call: _e.mock.On("EnsureSOAMNAME", ctx, zoneID, domain, nameservers)}
 }
 
@@ -1149,7 +1164,7 @@ type MockDNSService_GetActiveDNSSECDS_Call struct {
 // GetActiveDNSSECDS is a helper method to define mock.On call
 //   - ctx context.Context
 //   - zoneID uint
-func (_e *MockDNSService_Expecter) GetActiveDNSSECDS(ctx any, zoneID any) *MockDNSService_GetActiveDNSSECDS_Call {
+func (_e *MockDNSService_Expecter) GetActiveDNSSECDS(ctx interface{}, zoneID interface{}) *MockDNSService_GetActiveDNSSECDS_Call {
 	return &MockDNSService_GetActiveDNSSECDS_Call{Call: _e.mock.On("GetActiveDNSSECDS", ctx, zoneID)}
 }
 
@@ -1274,7 +1289,7 @@ type MockDNSService_GetRRSet_Call struct {
 //   - zoneID uint
 //   - name string
 //   - recordType string
-func (_e *MockDNSService_Expecter) GetRRSet(ctx any, zoneID any, name any, recordType any) *MockDNSService_GetRRSet_Call {
+func (_e *MockDNSService_Expecter) GetRRSet(ctx interface{}, zoneID interface{}, name interface{}, recordType interface{}) *MockDNSService_GetRRSet_Call {
 	return &MockDNSService_GetRRSet_Call{Call: _e.mock.On("GetRRSet", ctx, zoneID, name, recordType)}
 }
 
@@ -1352,7 +1367,7 @@ type MockDNSService_GetZone_Call struct {
 // GetZone is a helper method to define mock.On call
 //   - ctx context.Context
 //   - zoneID uint
-func (_e *MockDNSService_Expecter) GetZone(ctx any, zoneID any) *MockDNSService_GetZone_Call {
+func (_e *MockDNSService_Expecter) GetZone(ctx interface{}, zoneID interface{}) *MockDNSService_GetZone_Call {
 	return &MockDNSService_GetZone_Call{Call: _e.mock.On("GetZone", ctx, zoneID)}
 }
 
@@ -1420,7 +1435,7 @@ type MockDNSService_GetZoneByDomain_Call struct {
 // GetZoneByDomain is a helper method to define mock.On call
 //   - ctx context.Context
 //   - domain string
-func (_e *MockDNSService_Expecter) GetZoneByDomain(ctx any, domain any) *MockDNSService_GetZoneByDomain_Call {
+func (_e *MockDNSService_Expecter) GetZoneByDomain(ctx interface{}, domain interface{}) *MockDNSService_GetZoneByDomain_Call {
 	return &MockDNSService_GetZoneByDomain_Call{Call: _e.mock.On("GetZoneByDomain", ctx, domain)}
 }
 
@@ -1497,7 +1512,7 @@ type MockDNSService_GetZoneRecords_Call struct {
 //   - filters []queryutil.CrudFilter
 //   - sorts []queryutil.Sort
 //   - pagination queryutil.Pagination
-func (_e *MockDNSService_Expecter) GetZoneRecords(ctx any, zoneID any, filters any, sorts any, pagination any) *MockDNSService_GetZoneRecords_Call {
+func (_e *MockDNSService_Expecter) GetZoneRecords(ctx interface{}, zoneID interface{}, filters interface{}, sorts interface{}, pagination interface{}) *MockDNSService_GetZoneRecords_Call {
 	return &MockDNSService_GetZoneRecords_Call{Call: _e.mock.On("GetZoneRecords", ctx, zoneID, filters, sorts, pagination)}
 }
 
@@ -1632,7 +1647,7 @@ type MockDNSService_ListZones_Call struct {
 //   - filters []queryutil.CrudFilter
 //   - sorts []queryutil.Sort
 //   - pagination queryutil.Pagination
-func (_e *MockDNSService_Expecter) ListZones(ctx any, filters any, sorts any, pagination any) *MockDNSService_ListZones_Call {
+func (_e *MockDNSService_Expecter) ListZones(ctx interface{}, filters interface{}, sorts interface{}, pagination interface{}) *MockDNSService_ListZones_Call {
 	return &MockDNSService_ListZones_Call{Call: _e.mock.On("ListZones", ctx, filters, sorts, pagination)}
 }
 
@@ -1733,7 +1748,7 @@ type MockDNSService_SetConfig_Call struct {
 
 // SetConfig is a helper method to define mock.On call
 //   - cfg config.Manager
-func (_e *MockDNSService_Expecter) SetConfig(cfg any) *MockDNSService_SetConfig_Call {
+func (_e *MockDNSService_Expecter) SetConfig(cfg interface{}) *MockDNSService_SetConfig_Call {
 	return &MockDNSService_SetConfig_Call{Call: _e.mock.On("SetConfig", cfg)}
 }
 
@@ -1773,7 +1788,7 @@ type MockDNSService_SetContext_Call struct {
 
 // SetContext is a helper method to define mock.On call
 //   - ctx core.Context
-func (_e *MockDNSService_Expecter) SetContext(ctx any) *MockDNSService_SetContext_Call {
+func (_e *MockDNSService_Expecter) SetContext(ctx interface{}) *MockDNSService_SetContext_Call {
 	return &MockDNSService_SetContext_Call{Call: _e.mock.On("SetContext", ctx)}
 }
 
@@ -1813,7 +1828,7 @@ type MockDNSService_SetDB_Call struct {
 
 // SetDB is a helper method to define mock.On call
 //   - db1 *gorm.DB
-func (_e *MockDNSService_Expecter) SetDB(db1 any) *MockDNSService_SetDB_Call {
+func (_e *MockDNSService_Expecter) SetDB(db1 interface{}) *MockDNSService_SetDB_Call {
 	return &MockDNSService_SetDB_Call{Call: _e.mock.On("SetDB", db1)}
 }
 
@@ -1853,7 +1868,7 @@ type MockDNSService_SetLogger_Call struct {
 
 // SetLogger is a helper method to define mock.On call
 //   - logger *core.Logger
-func (_e *MockDNSService_Expecter) SetLogger(logger any) *MockDNSService_SetLogger_Call {
+func (_e *MockDNSService_Expecter) SetLogger(logger interface{}) *MockDNSService_SetLogger_Call {
 	return &MockDNSService_SetLogger_Call{Call: _e.mock.On("SetLogger", logger)}
 }
 
@@ -1907,7 +1922,7 @@ type MockDNSService_SetTLSARecord_Call struct {
 //   - zoneID uint
 //   - domain string
 //   - content string
-func (_e *MockDNSService_Expecter) SetTLSARecord(ctx any, zoneID any, domain any, content any) *MockDNSService_SetTLSARecord_Call {
+func (_e *MockDNSService_Expecter) SetTLSARecord(ctx interface{}, zoneID interface{}, domain interface{}, content interface{}) *MockDNSService_SetTLSARecord_Call {
 	return &MockDNSService_SetTLSARecord_Call{Call: _e.mock.On("SetTLSARecord", ctx, zoneID, domain, content)}
 }
 
@@ -1989,7 +2004,7 @@ type MockDNSService_UpdateRecord_Call struct {
 //   - recordType string
 //   - records []string
 //   - ttl uint
-func (_e *MockDNSService_Expecter) UpdateRecord(ctx any, zoneID any, name any, recordType any, records any, ttl any) *MockDNSService_UpdateRecord_Call {
+func (_e *MockDNSService_Expecter) UpdateRecord(ctx interface{}, zoneID interface{}, name interface{}, recordType interface{}, records interface{}, ttl interface{}) *MockDNSService_UpdateRecord_Call {
 	return &MockDNSService_UpdateRecord_Call{Call: _e.mock.On("UpdateRecord", ctx, zoneID, name, recordType, records, ttl)}
 }
 
@@ -2069,7 +2084,7 @@ type MockDNSService_UpdateWebsiteDNSRecords_Call struct {
 //   - websiteDomain string
 //   - targetHash string
 //   - targetType db.WebsiteTargetType
-func (_e *MockDNSService_Expecter) UpdateWebsiteDNSRecords(ctx any, zoneID any, websiteDomain any, targetHash any, targetType any) *MockDNSService_UpdateWebsiteDNSRecords_Call {
+func (_e *MockDNSService_Expecter) UpdateWebsiteDNSRecords(ctx interface{}, zoneID interface{}, websiteDomain interface{}, targetHash interface{}, targetType interface{}) *MockDNSService_UpdateWebsiteDNSRecords_Call {
 	return &MockDNSService_UpdateWebsiteDNSRecords_Call{Call: _e.mock.On("UpdateWebsiteDNSRecords", ctx, zoneID, websiteDomain, targetHash, targetType)}
 }
 
@@ -2142,7 +2157,7 @@ type MockDNSService_UpdateZone_Call struct {
 //   - ctx context.Context
 //   - zoneID uint
 //   - status db.DNSZoneStatus
-func (_e *MockDNSService_Expecter) UpdateZone(ctx any, zoneID any, status any) *MockDNSService_UpdateZone_Call {
+func (_e *MockDNSService_Expecter) UpdateZone(ctx interface{}, zoneID interface{}, status interface{}) *MockDNSService_UpdateZone_Call {
 	return &MockDNSService_UpdateZone_Call{Call: _e.mock.On("UpdateZone", ctx, zoneID, status)}
 }
 
@@ -2213,7 +2228,7 @@ type MockDNSService_ValidateNameservers_Call struct {
 // ValidateNameservers is a helper method to define mock.On call
 //   - ctx context.Context
 //   - zoneID uint
-func (_e *MockDNSService_Expecter) ValidateNameservers(ctx any, zoneID any) *MockDNSService_ValidateNameservers_Call {
+func (_e *MockDNSService_Expecter) ValidateNameservers(ctx interface{}, zoneID interface{}) *MockDNSService_ValidateNameservers_Call {
 	return &MockDNSService_ValidateNameservers_Call{Call: _e.mock.On("ValidateNameservers", ctx, zoneID)}
 }
 

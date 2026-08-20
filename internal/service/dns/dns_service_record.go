@@ -154,6 +154,11 @@ func (s *DNSServiceDefault) UpdateRecord(ctx context.Context, zoneID uint, name 
 		return nil, fmt.Errorf("invalid record name: %w", err)
 	}
 
+	// Normalize to the DTO form used by the list/GetRRSet read paths so a
+	// record surfaces with the same Name and ID whether it comes from an
+	// update response or a subsequent read (e.g. "www" / "" for apex).
+	dtoName := stripDomain(fullName, zone.Domain)
+
 	pdnsRecords := lo.Map(records, func(r string, _ int) powerdns.Record {
 		return powerdns.Record{Content: formatRecordContent(recordType, r)}
 	})
@@ -175,10 +180,13 @@ func (s *DNSServiceDefault) UpdateRecord(ctx context.Context, zoneID uint, name 
 		zap.String("type", recordType))
 
 	result := lo.Map(records, func(r string, _ int) *apiDTO.DNSRecord {
+		content := stripTXTQuotes(recordType, r)
 		return &apiDTO.DNSRecord{
-			Name:     name,
+			ZoneID:   zoneID,
+			ID:       recordID(zoneID, dtoName, recordType, content),
+			Name:     dtoName,
 			Type:     recordType,
-			Content:  r,
+			Content:  content,
 			TTL:      ttl,
 			Disabled: false,
 		}
@@ -187,8 +195,11 @@ func (s *DNSServiceDefault) UpdateRecord(ctx context.Context, zoneID uint, name 
 	return result, nil
 }
 
-// DeleteRecord deletes a DNS RRSet from PowerDNS
-func (s *DNSServiceDefault) DeleteRecord(ctx context.Context, zoneID uint, name string, recordType string) error {
+// DeleteRecord deletes DNS records from PowerDNS. When no contents are given it
+// removes the entire RRSet (all records with the name+type). When one or more
+// contents are given it removes only the records whose content matches, leaving
+// sibling records untouched.
+func (s *DNSServiceDefault) DeleteRecord(ctx context.Context, zoneID uint, name string, recordType string, contents ...string) error {
 	ctx, span := core.TraceMethod(ctx, "DNSService.DeleteRecord")
 	defer span.End()
 
@@ -202,7 +213,14 @@ func (s *DNSServiceDefault) DeleteRecord(ctx context.Context, zoneID uint, name 
 		return fmt.Errorf("invalid record name: %w", err)
 	}
 
-	rrset := buildRRSet(fullName, recordType, powerdns.DELETE, nil, nil)
+	var records []powerdns.Record
+	if len(contents) > 0 {
+		records = lo.Map(contents, func(c string, _ int) powerdns.Record {
+			return powerdns.Record{Content: formatRecordContent(recordType, c)}
+		})
+	}
+
+	rrset := buildRRSet(fullName, recordType, powerdns.DELETE, nil, records)
 
 	err = s.pdnsClient.UpdateZoneRRSets(ctx, zone.PowerDNSZoneID, []powerdns.RRSet{rrset})
 	if err != nil {
@@ -216,7 +234,8 @@ func (s *DNSServiceDefault) DeleteRecord(ctx context.Context, zoneID uint, name 
 	s.Logger().Debug("DNS record deleted",
 		zap.Uint("zone_id", zoneID),
 		zap.String("name", name),
-		zap.String("type", recordType))
+		zap.String("type", recordType),
+		zap.Int("content_count", len(contents)))
 
 	return nil
 }
@@ -231,14 +250,20 @@ func (s *DNSServiceDefault) BulkDeleteRecords(ctx context.Context, zoneID uint, 
 		return nil, err
 	}
 
-	// Convert RecordIdentifiers to PowerDNS DELETE RRSet operations
+	// Convert RecordIdentifiers to PowerDNS DELETE RRSet operations. A
+	// RecordIdentifier with an optional Content removes only that value; one
+	// without Content removes the entire RRSet (all records for the name+type).
 	rrsets := make([]powerdns.RRSet, 0, len(records))
 	for _, r := range records {
 		fullName, err := buildFullName(r.Name, zone.Domain)
 		if err != nil {
 			return nil, fmt.Errorf("invalid record name %q: %w", r.Name, err)
 		}
-		rrsets = append(rrsets, buildRRSet(fullName, r.Type, powerdns.DELETE, nil, nil))
+		var recs []powerdns.Record
+		if r.Content != "" {
+			recs = []powerdns.Record{{Content: formatRecordContent(r.Type, r.Content)}}
+		}
+		rrsets = append(rrsets, buildRRSet(fullName, r.Type, powerdns.DELETE, nil, recs))
 	}
 
 	// If dryRun is true, return success results without actually deleting

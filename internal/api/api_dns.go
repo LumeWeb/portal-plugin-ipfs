@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -10,12 +12,12 @@ import (
 	"github.com/samber/lo"
 	"go.lumeweb.com/httputil"
 	"go.lumeweb.com/ipfs-sdk/dnsname"
-	"go.lumeweb.com/queryutil"
-	"go.lumeweb.com/queryutil/filter"
-	queryutilHttp "go.lumeweb.com/queryutil/http"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	dnsservice "go.lumeweb.com/portal-plugin-ipfs/internal/service/dns"
+	"go.lumeweb.com/queryutil"
+	"go.lumeweb.com/queryutil/filter"
+	queryutilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
 )
 
@@ -408,7 +410,28 @@ func (a *API) deleteRecord(c echo.Context) error {
 		return err
 	}
 
-	err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType)
+	// Optional body may narrow the delete to a specific record content. When
+	// no body is sent the whole RRSet for (name, type) is deleted. A supplied
+	// body that yields no content selector is rejected (4xx) rather than
+	// silently broad-deleting.
+	body, err := io.ReadAll(io.LimitReader(c.Request().Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(body)) > 0 {
+		c.Request().Body = io.NopCloser(bytes.NewReader(body))
+		var req dto.RecordDeleteRequest
+		if _, ok := httputil.DecodeAndValidateRequest(ctx, &req); !ok {
+			return nil
+		}
+		if req.Content == "" {
+			apiErr := NewError(ErrKeyInvalidRequest, nil)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType, req.Content)
+	} else {
+		err = a.dnsService.DeleteRecord(reqCtx, zoneID, name, recordType)
+	}
 	if err != nil {
 		a.Logger().Error("Failed to delete DNS record", zap.Error(err), zap.String("name", name), zap.String("type", recordType))
 		apiErr := NewError(mapDNSErrorToAPIError(err, "record"), err)
