@@ -180,12 +180,13 @@ func (s *DNSServiceDefault) UpdateRecord(ctx context.Context, zoneID uint, name 
 		zap.String("type", recordType))
 
 	result := lo.Map(records, func(r string, _ int) *apiDTO.DNSRecord {
+		content := stripTXTQuotes(recordType, r)
 		return &apiDTO.DNSRecord{
 			ZoneID:   zoneID,
-			ID:       recordID(zoneID, dtoName, recordType, r),
+			ID:       recordID(zoneID, dtoName, recordType, content),
 			Name:     dtoName,
 			Type:     recordType,
-			Content:  r,
+			Content:  content,
 			TTL:      ttl,
 			Disabled: false,
 		}

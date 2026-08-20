@@ -648,8 +648,9 @@ func TestRecordID(t *testing.T) {
 
 // TestRecordIDStableAcrossSurfaces guards that the same logical record hashes
 // to the same id whether surfaced through the read path (recordToDTOWithZoneID,
-// which uses stripDomain(buildFullName(name, domain))) or the update response
-// (UpdateRecord, which previously used the raw caller-supplied name).
+// which uses stripDomain(buildFullName(name, domain)) and stripTXTQuotes) or
+// the update response (UpdateRecord, which previously used the raw
+// caller-supplied name and content).
 func TestRecordIDStableAcrossSurfaces(t *testing.T) {
 	const zone = 12345
 	const domain = "example.com."
@@ -676,4 +677,13 @@ func TestRecordIDStableAcrossSurfaces(t *testing.T) {
 			assert.Equal(t, "www", dtoName)
 		}
 	}
+
+	// Id is stable across TXT quoting: UpdateRecord must normalize content with
+	// stripTXTQuotes before hashing, matching the read path, so a caller that
+	// passes an already-quoted TXT value still gets the same id as a read.
+	// Quoted and unquoted forms of the same TXT value collide onto one id.
+	const raw = "v=spf1 include:mxroute.com -all"
+	unquoted := recordID(zone, "www", "TXT", stripTXTQuotes("TXT", raw))
+	quoted := recordID(zone, "www", "TXT", stripTXTQuotes("TXT", "\""+raw+"\""))
+	assert.Equal(t, unquoted, quoted)
 }
