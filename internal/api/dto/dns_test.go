@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/Oudwins/zog"
@@ -539,6 +540,18 @@ func TestRecordIdentifier(t *testing.T) {
 		}
 		assert.Equal(t, "mail.example.com", ri.Name)
 		assert.Equal(t, "MX", ri.Type)
+	})
+
+	t.Run("record identifier carries optional content and omits it when empty", func(t *testing.T) {
+		ri := RecordIdentifier{Name: "@", Type: "TXT", Content: "v=spf1 include:mxroute.com -all"}
+		b, err := json.Marshal(ri)
+		assert.NoError(t, err)
+		assert.Contains(t, string(b), `"content"`)
+
+		empty := RecordIdentifier{Name: "@", Type: "TXT"}
+		b, err = json.Marshal(empty)
+		assert.NoError(t, err)
+		assert.NotContains(t, string(b), "content")
 	})
 }
 

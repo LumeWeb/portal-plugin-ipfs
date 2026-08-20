@@ -98,8 +98,12 @@ type DNSService interface {
 	// records: list of record contents to update
 	UpdateRecord(ctx context.Context, zoneID uint, name string, recordType string, records []string, ttl uint) ([]*apiDTO.DNSRecord, error)
 
-	// DeleteRecord deletes a DNS RRSet from PowerDNS
-	DeleteRecord(ctx context.Context, zoneID uint, name string, recordType string) error
+	// DeleteRecord deletes DNS records from PowerDNS. When no contents are
+	// given it removes the entire RRSet (all records with the name+type). When
+	// one or more contents are given it removes only the records whose content
+	// matches, leaving sibling records (e.g. other TXT values at the same name)
+	// untouched.
+	DeleteRecord(ctx context.Context, zoneID uint, name string, recordType string, contents ...string) error
 
 	// BulkDeleteRecords deletes multiple DNS records in a single PowerDNS API call
 	BulkDeleteRecords(ctx context.Context, zoneID uint, userID uint, records []apiDTO.RecordIdentifier, dryRun bool) (*apiDTO.BulkDeleteResponse, error)

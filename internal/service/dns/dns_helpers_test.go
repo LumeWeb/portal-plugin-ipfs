@@ -601,3 +601,47 @@ func TestFormatRecordContent(t *testing.T) {
 		})
 	}
 }
+
+func TestRecordID(t *testing.T) {
+	c := []struct {
+		name           string
+		zone           uint
+		n, ty, content string
+	}{
+		{"spf at apex", 12345, "@", "TXT", "v=spf1 include:mxroute.com -all"},
+		{"google verify", 12345, "@", "TXT", "google-site-verification=abc123xyz"},
+		{"mx 10", 12345, "@", "MX", "10 mail.example.com"},
+		{"mx 20", 12345, "@", "MX", "20 backup.example.com"},
+		{"a www 10", 12345, "www", "A", "192.0.2.10"},
+		{"a www 11", 12345, "www", "A", "192.0.2.11"},
+		{"same content different zone", 99999, "@", "TXT", "v=spf1 include:mxroute.com -all"},
+	}
+	// Distinct inputs must yield distinct ids where expected.
+	distinct := [][2]string{
+		{c[0].name, c[1].name},
+		{c[1].name, c[2].name},
+		{c[2].name, c[3].name},
+		{c[4].name, c[5].name},
+		{c[0].name, c[6].name}, // same content+name+type, different zone scope
+	}
+	ids := map[string]string{}
+	for _, tc := range c {
+		id := recordID(tc.zone, tc.n, tc.ty, tc.content)
+		// 11 chars, URL-safe base64.
+		assert.Len(t, id, 11, tc.name)
+		assert.Regexp(t, `^[A-Za-z0-9_-]{11}$`, id, tc.name)
+		ids[tc.name] = id
+		// Deterministic.
+		assert.Equal(t, id, recordID(tc.zone, tc.n, tc.ty, tc.content), tc.name)
+	}
+	for _, pair := range distinct {
+		assert.NotEqual(t, ids[pair[0]], ids[pair[1]], "%s vs %s", pair[0], pair[1])
+	}
+
+	// Type is case-insensitive in the hash: txt vs TXT yield the same id.
+	assert.Equal(t, ids["spf at apex"], recordID(12345, "@", "txt", "v=spf1 include:mxroute.com -all"))
+
+	// TTL/disabled are not part of the hash: recomputing with a different TTL
+	// is impossible via the signature (it only takes zone,name,type,content),
+	// so assert id is stable across a content-identical call (already above).
+}

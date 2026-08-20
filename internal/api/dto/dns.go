@@ -125,9 +125,11 @@ func (r ZoneListRequest) ToModel() (ZoneListRequest, error) {
 
 // DNSRecord represents a DNS record from PowerDNS
 // This is a data structure for API responses, records are managed entirely by PowerDNS
-// Records are identified by (name, type) within a zone, not by persistent IDs
+// ID is a compact synthesized identifier for the record value (see recordID);
+// it lets a caller target one record among several sharing the same name+type.
 type DNSRecord struct {
 	ZoneID   uint    `json:"zone_id"`
+	ID       string  `json:"id"`
 	Name     string  `json:"name"`
 	Type     string  `json:"type"`
 	Content  string  `json:"content"`
@@ -215,11 +217,34 @@ func (r RecordListRequest) ToModel() (RecordListRequest, error) {
 	return r, nil
 }
 
-// RecordIdentifier represents a DNS record identifier for deletion operations
+// RecordIdentifier represents a DNS record identifier for deletion operations.
+// Name+Type select the RRSet; an optional Content narrows the delete to a
+// specific record value (e.g. one TXT value among several at the same name).
+// When Content is empty the whole RRSet is deleted.
 type RecordIdentifier struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Content string `json:"content,omitempty"`
 }
+
+// RecordDeleteRequest is the optional body for a single DNS record delete. It
+// narrows the delete to a specific record content (e.g. one TXT value among
+// several at the same name); when Content is empty the whole RRSet is deleted.
+type RecordDeleteRequest struct {
+	Content string `json:"content,omitempty"`
+}
+
+func (r RecordDeleteRequest) Schema() *zog.StructSchema {
+	return zog.Struct(zog.Shape{
+		"Content": zog.String().Optional().Max(1024),
+	})
+}
+
+func (r *RecordDeleteRequest) ToModel() (*RecordDeleteRequest, error) {
+	return r, nil
+}
+
+var _ httputil.DTOValidator = (*RecordDeleteRequest)(nil)
 
 // BulkRecordRequest represents a request to bulk create/update DNS records
 type BulkRecordRequest struct {
