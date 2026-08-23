@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -217,6 +218,41 @@ func TestAPI_CreateWebsite(t *testing.T) {
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
 
 			assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("error_domain_owned_by_another_website_conflict", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			// A domain live-bound to a DIFFERENT website must be refused as an
+			// ownership conflict (409) during create, not surface a raw MySQL
+			// 1062 duplicate-key ("Duplicate entry 'example.org-icann' for key
+			// 'website_domains.uk_domain_namespace'") as a 500. The guard runs
+			// before the website is persisted, so CreateWebsite is not called,
+			// leaving no dangling website row behind.
+			require.NoError(tb, ctx.DB().Create(&pluginDb.WebsiteDomain{
+				ID:        1,
+				WebsiteID: 99, // owned by another website
+				UserID:    userID,
+				Domain:    "example.org",
+				Namespace: pluginDb.DomainNamespaceICANN,
+				Status:    pluginDb.DomainStatusActive,
+			}).Error)
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+			mockWebsiteService.AssertNotCalled(tb, "CreateWebsite", mock.Anything, mock.Anything)
+
+			// Request the domain as a www.-prefixed, mixed-case variant: the
+			// guard must normalize it to the stored apex ("example.org") before
+			// the ownership lookup, still returning 409 rather than leaking a
+			// raw 1062 duplicate-key 500 from CreateDomain.
+			reqBody := fmt.Sprintf(`{"domain":"WWW.Example.org","target_type":"ipfs","target_hash":"%s"}`, TestCID)
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
+
+			// The normalized lookup finds a live binding owned by website 99 → 409, not 500.
+			assert.Equal(t, http.StatusConflict, rec.Code)
 		}, TestOptions)
 	})
 
@@ -1443,4 +1479,21 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 			assert.Equal(t, http.StatusUnauthorized, rec.Code)
 		}, TestOptions)
 	})
+}
+
+func TestIsDuplicateKeyError(t *testing.T) {
+	// GORM sentinel — only returned when gorm.Config{TranslateError:true} is set.
+	assert.True(t, isDuplicateKeyError(gorm.ErrDuplicatedKey))
+
+	// Raw MySQL 1062 — the actual production path when TranslateError is off.
+	assert.True(t, isDuplicateKeyError(&mysql.MySQLError{Number: 1062}))
+	assert.False(t, isDuplicateKeyError(&mysql.MySQLError{Number: 1146})) // table missing
+
+	// Driver-agnostic string fallback (as surfaced on real MySQL / SQLite).
+	assert.True(t, isDuplicateKeyError(errors.New("Error 1062 (23000): Duplicate entry 'test2.web3ready.org-icann' for key 'website_domains.uk_domain_namespace'")))
+	assert.True(t, isDuplicateKeyError(errors.New("UNIQUE constraint failed: website_domains.domain, website_domains.namespace")))
+
+	// Non-duplicate / nil errors are not flagged.
+	assert.False(t, isDuplicateKeyError(errors.New("some other database error")))
+	assert.False(t, isDuplicateKeyError(nil))
 }
