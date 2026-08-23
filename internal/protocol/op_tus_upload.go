@@ -257,8 +257,10 @@ func processUploadWithServices(ctx context.Context, helper core.OperationHelper,
 
 	err = pinSvc.UpdatePinStatus(ctx, ipfsPin.RequestID, pluginDb.PinningStatusPinned, nil)
 	if err != nil {
-		helper.Logger().Error("Failed to update pin status to pinned", zap.Error(err))
-		// Don't fail the whole operation for this
+		// Return the error so the workflow retries via RetryStep.
+		// Swallowing it leaves the pin stuck at "queued" with no
+		// reconciliation mechanism.
+		return nil, fmt.Errorf("failed to update pin status to pinned: %w", err)
 	}
 
 	return ipfsPin, nil

@@ -106,11 +106,10 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 			h.Logger().Warn("Failed to update progress", zap.Error(err))
 		}
 
-		// Create IPFS pin record for the root CID (first CID in the list)
-		_, err = uploadSvc.CreateRootPin(ctx, cidList[0], lo.FromPtrOr(req.UserID, 0))
-		if err != nil {
-			return fmt.Errorf("failed to create root pin: %w", err)
-		}
+		// Note: The IPFSPin record was already created by the API's addPin/
+		// replacePin endpoint and is tracked via workflowData.PinRequestID
+		// (updated to "pinned" below). Creating a duplicate here would leave
+		// an orphaned pin stuck at "queued" — see UpdatePinStatus below.
 	}
 
 	// Set progress - updating pin status

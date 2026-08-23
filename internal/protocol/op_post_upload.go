@@ -189,8 +189,10 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	if pinSvc != nil {
 		err = pinSvc.UpdatePinStatus(ctx, ipfsPin.RequestID, db.PinningStatusPinned, nil)
 		if err != nil {
-			h.Logger().Error("Failed to update pin status to pinned", zap.Error(err))
-			// Don't fail the whole operation for this
+			// Return the error so the workflow retries via RetryStep.
+			// Swallowing it leaves the pin stuck at "queued" with no
+			// reconciliation mechanism.
+			return fmt.Errorf("failed to update pin status to pinned: %w", err)
 		}
 	} else {
 		h.Logger().Warn("Pin service not available for status update")
