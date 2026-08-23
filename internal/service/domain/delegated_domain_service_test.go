@@ -157,6 +157,34 @@ func TestDelegatedDomainService_CreateDomain_SelfHosted(t *testing.T) {
 	}, TestOptions)
 }
 
+func TestDelegatedDomainService_CreateDomain_DuplicateKey(t *testing.T) {
+	// Re-binding a domain that is already live-bound (the create-time race) must
+	// fail on the (domain, namespace) unique key. On MySQL this surfaces as
+	// gorm.ErrDuplicatedKey (translated from 1062) so the API rolls back the
+	// just-created website and returns 409 instead of leaking a dangling row and
+	// raw 500; the SQLite test driver reports it as a generic UNIQUE constraint
+	// error, so we assert only that the duplicate bind is rejected.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "example.com")
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		// First bind succeeds (self-hosted to avoid DNS provisioning) and fires
+		// the created notification.
+		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
+
+		_, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, false, true, nil)
+		require.NoError(tb, err)
+
+		// A second bind of the same (domain, namespace) hits the unique key.
+		_, err = svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, false, true, nil)
+		require.Error(tb, err)
+	}, TestOptions)
+}
+
 func TestDelegatedDomainService_CreateDomain_SelfHostedDANEFailurePurgesBinding(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/labstack/echo/v4"
 	"go.lumeweb.com/httputil"
 	mcontext "go.lumeweb.com/portal-middleware/context"
@@ -138,6 +139,47 @@ func (a *API) createWebsite(c echo.Context) error {
 	// Set user ID
 	model.UserID = user
 
+	// Domain ownership guard: a given (domain, namespace) can be live-bound to
+	// only one website. CreateDomain is create-only and would otherwise surface
+	// a raw MySQL 1062 duplicate-key as a 500 (and, because the website is
+	// persisted below before the binding, leave a dangling website row behind).
+	// Mirror the update path: refuse up front with a 409 ownership conflict
+	// instead. Soft-deleted tombstones still occupy the unique key but are
+	// purged by CreateDomain, so they fall through to a fresh binding.
+	namespace := string(pluginDb.DomainNamespaceICANN)
+	if req.Namespace != nil {
+		namespace = string(*req.Namespace)
+	}
+	// Guard on the delegated domain service's DB availability: the lookup
+	// runs against GetWebsiteDomainByDomainAndNamespace, which (unlike
+	// CreateDomain) dereferences s.DB() without an internal nil guard. Gate on
+	// that service's DB, not the API's own, so the exact "service not wired to
+	// a DB" scenario is skipped rather than crashing with a nil-pointer.
+	if a.delegatedDomainSvc != nil && a.delegatedDomainSvc.DB() != nil {
+		// Normalize before the lookup: CreateDomain persists the canonical apex
+		// form, so a www.-prefixed or mixed-case request for an already
+		// live-bound domain must still hit the ownership guard (otherwise the
+		// raw 1062 duplicate-key 500 this guard replaces would surface).
+		domain := pluginDb.NormalizeDomain(req.Domain)
+		existing, eerr := a.delegatedDomainSvc.GetWebsiteDomainByDomainAndNamespace(reqCtx, domain, pluginDb.DomainNamespace(namespace))
+		switch {
+		case eerr == nil && !existing.DeletedAt.Valid:
+			// Domain is live-bound to another website — refuse to rebind.
+			a.Logger().Warn("Refusing to bind domain owned by another website",
+				zap.String("domain", req.Domain), zap.Uint("domain_owner_website_id", existing.WebsiteID))
+			apiErr := NewError(ErrKeyDomainInUse, fmt.Errorf("domain %q is already in use by another website", req.Domain))
+			return ctx.Error(apiErr, http.StatusConflict)
+		case eerr == nil:
+			// Soft-deleted tombstone: fall through so CreateDomain purges it.
+		default:
+			if !errors.Is(eerr, gorm.ErrRecordNotFound) {
+				a.Logger().Error("Failed to look up existing domain binding", zap.String("domain", req.Domain), zap.Error(eerr))
+				apiErr := NewError(ErrKeyFileProcessingFailed, eerr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+		}
+	}
+
 	website, err := a.websiteService.CreateWebsite(reqCtx, model)
 	if err != nil {
 		a.Logger().Error("Failed to create website", zap.Error(err), zap.Uint("user_id", user), zap.String("domain", req.Domain))
@@ -156,12 +198,25 @@ func (a *API) createWebsite(c echo.Context) error {
 		dnsEnabled = *req.DNSEnabled
 	}
 	if a.delegatedDomainSvc != nil {
-		namespace := string(pluginDb.DomainNamespaceICANN)
-		if req.Namespace != nil {
-			namespace = string(*req.Namespace)
-		}
 		var cfgRaw json.RawMessage
 		if _, err := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, req.Domain, website.ID, user, dnsEnabled, true, cfgRaw); err != nil {
+			// A concurrent create may have won the (domain, namespace) unique key
+			// race after this request's pre-check passed. The guard is not atomic,
+			// so on a duplicate-key violation roll back the just-persisted website
+			// (which has no primary domain binding) before surfacing a clean 409,
+			// leaving no dangling website row behind.
+			if isDuplicateKeyError(err) {
+				if a.delegatedDomainSvc.DB() != nil {
+					if derr := a.delegatedDomainSvc.DB().WithContext(reqCtx).Unscoped().Delete(&pluginDb.Website{}, website.ID).Error; derr != nil {
+						a.Logger().Error("Failed to roll back website after duplicate domain conflict",
+							zap.Uint("website_id", website.ID), zap.Error(derr))
+					}
+				}
+				a.Logger().Warn("Refusing to bind domain raced/owned by another website",
+					zap.String("domain", req.Domain), zap.Uint("website_id", website.ID))
+				apiErr := NewError(ErrKeyDomainInUse, fmt.Errorf("domain %q is already in use by another website", req.Domain))
+				return ctx.Error(apiErr, http.StatusConflict)
+			}
 			a.Logger().Error("Failed to create primary domain for website",
 				zap.Uint("website_id", website.ID), zap.String("domain", req.Domain), zap.Error(err))
 			apiErr := NewError(ErrKeyFileProcessingFailed, err)
@@ -214,6 +269,31 @@ func (a *API) createWebsite(c echo.Context) error {
 	})
 
 	return httputil.EncodeResponse(ctx, website, &resp)
+}
+
+// isDuplicateKeyError reports whether err is a database unique-key (duplicate)
+// violation. GORM only returns gorm.ErrDuplicatedKey when gorm.Config{
+// TranslateError:true} is set — this deployment does not enable it — so on
+// MySQL a duplicate surfaces as a raw *mysql.MySQLError with code 1062 that
+// errors.Is cannot match. Mirror the portal core detection (see
+// go.lumeweb.com/portal/service/user.go isDuplicateKeyError): check the GORM
+// sentinel, the structured MySQL error, and fall back to driver-agnostic
+// string matching.
+func isDuplicateKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) && mysqlErr != nil && mysqlErr.Number == 1062 {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") ||
+		strings.Contains(msg, "Duplicate entry") ||
+		strings.Contains(msg, "duplicate key value")
 }
 
 func (a *API) listWebsites(c echo.Context) error {
@@ -435,8 +515,11 @@ func (a *API) updateWebsite(c echo.Context) error {
 		// Reuse an existing live binding for this (domain, namespace) when it
 		// already belongs to the website; otherwise fall through to a genuine
 		// create (change-primary). A binding owned by a different website is
-		// surfaced as an explicit ownership conflict.
-		existing, eerr := a.delegatedDomainSvc.GetWebsiteDomainByDomainAndNamespace(reqCtx, *req.Domain, pluginDb.DomainNamespace(namespace))
+		// surfaced as an explicit ownership conflict. The lookup compares the
+		// canonical apex form (lowercased, www.-stripped) that CreateDomain
+		// stores, so a www.-prefixed or mixed-case request resolves correctly.
+		domain := pluginDb.NormalizeDomain(*req.Domain)
+		existing, eerr := a.delegatedDomainSvc.GetWebsiteDomainByDomainAndNamespace(reqCtx, domain, pluginDb.DomainNamespace(namespace))
 		switch {
 		case eerr == nil && !existing.DeletedAt.Valid && existing.WebsiteID == website.ID:
 			// Re-deploy to an already-bound primary: reuse, don't re-create.
