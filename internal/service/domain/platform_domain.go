@@ -277,9 +277,13 @@ func (s *DelegatedDomainService) CreatePlatformSubdomain(ctx context.Context, we
 	// (non-generate) label path is a single attempt and returns a clean
 	// "already taken" error on contention.
 	if generate {
+		gen := s.slugGen
+		if gen == nil {
+			gen = pluginConfig.GenerateDNSSlug
+		}
 		var fqdn string
 		for attempt := 0; attempt < 100; attempt++ {
-			candidate := pluginConfig.GenerateDNSSlug()
+			candidate := gen()
 			fqdn = labelFor(candidate, pd.Domain)
 			if provider.Validate(fqdn) != nil {
 				continue

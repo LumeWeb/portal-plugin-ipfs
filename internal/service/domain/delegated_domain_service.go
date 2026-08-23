@@ -25,6 +25,10 @@ type DelegatedDomainService struct {
 	*core.BaseComponent
 	registry *Registry
 	dnsSvc   DNSZoneService
+	// slugGen produces a DNS-safe label for auto-generated platform
+	// subdomains. It defaults to pluginConfig.GenerateDNSSlug and is
+	// injectable so tests can control the slug sequence.
+	slugGen func() string
 }
 
 type DNSZoneService interface {
@@ -86,6 +90,7 @@ func NewDelegatedDomainService(reg *Registry, dns DNSZoneService) *DelegatedDoma
 	return &DelegatedDomainService{
 		registry: reg,
 		dnsSvc:   dns,
+		slugGen:  pluginConfig.GenerateDNSSlug,
 	}
 }
 

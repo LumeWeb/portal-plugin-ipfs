@@ -359,4 +359,80 @@ func TestCreateDomain_NonPlatformSubdomainOfRoot_Rejected(t *testing.T) {
 	}, TestOptions)
 }
 
+// platformApexTestOptions configures a gateway domain so the managed-DNS flow
+// publishes an ALIAS apex record for a binding. TestOptions deliberately leaves
+// the gateway unset, so default tests omit the apex-record call and this
+// variant is needed only where the apex publish path is under test.
+var platformApexTestOptions = coreTesting.CombineOptions(
+	TestOptions,
+	coreTesting.WithConfig("plugin.ipfs.service.dns.gateway_domain", "gw.example.com"),
+)
+
+// TestCreatePlatformSubdomain_Generate_RetriesOnCollision proves the C3
+// regenerate path: when a generated candidate label is already taken, the
+// service must roll to a fresh slug instead of failing. An injectable slugGen
+// makes the sequence deterministic.
+func TestCreatePlatformSubdomain_Generate_RetriesOnCollision(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "example.com")
+		pd := createPlatformRoot(tb, ctx, "pinner.site", pluginDb.DomainNamespaceICANN, 7, true)
+
+		// Occupy the first generated label so the loop must roll to the next.
+		require.NoError(tb, db.Create(&pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: "alpha.pinner.site", Namespace: pluginDb.DomainNamespaceICANN,
+		}).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		slugs := []string{"alpha", "beta"}
+		i := 0
+		svc.slugGen = func() string {
+			s := slugs[i]
+			if i < len(slugs)-1 {
+				i++
+			}
+			return s
+		}
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinner.site").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "pinner.site"}, nil).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), mock.Anything, mock.Anything).Return(nil).Once()
+
+		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "", true)
+		require.NoError(tb, err)
+		require.NotNil(tb, wd)
+		assert.Equal(tb, "beta.pinner.site", wd.Domain)
+		require.NotNil(tb, wd.PlatformDomainID)
+		assert.Equal(tb, pd.ID, *wd.PlatformDomainID)
+	}, TestOptions)
+}
+
+// TestCreatePlatformSubdomain_Generate_WritesApexToOperatorZone proves that a
+// platform claim publishes its apex record into the operator-owned platform
+// zone (ID 7 here), not a freshly created user zone.
+func TestCreatePlatformSubdomain_Generate_WritesApexToOperatorZone(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "example.com")
+		pd := createPlatformRoot(tb, ctx, "pinner.site", pluginDb.DomainNamespaceICANN, 7, true)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinner.site").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "pinner.site"}, nil).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), mock.Anything, mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(7), mock.Anything, pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
+
+		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "blog", false)
+		require.NoError(tb, err)
+		require.NotNil(tb, wd)
+		assert.Equal(tb, "blog.pinner.site", wd.Domain)
+		assert.Equal(tb, uint(7), wd.ZoneID)
+		assert.Equal(tb, "gw.example.com", wd.GatewayHost)
+		// The operator's zone is reused — no new zone is ever created.
+		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, mock.Anything, mock.Anything)
+	}, platformApexTestOptions)
+}
+
 var _ = mock.Anything
