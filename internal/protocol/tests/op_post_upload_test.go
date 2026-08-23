@@ -145,12 +145,17 @@ func TestPostUploadOperation_PinStatus(t *testing.T) {
 			t.Fatal("No pins found")
 		}
 
-		// Get the most recent pin (pins should be ordered by created_at desc)
-		pin := pins[0]
+		// Verify exactly one pin exists (no orphan queued duplicates)
+	if total != 1 {
+		t.Errorf("Expected exactly 1 pin, got %d", total)
+	}
 
-		// Verify the pin status is "pinned"
-		if pin.Status != db.PinningStatusPinned {
-			t.Errorf("Expected pin status to be 'pinned', got '%s'", pin.Status)
-		}
+	// Get the most recent pin (pins should be ordered by created_at desc)
+	pin := pins[0]
+
+	// Verify the pin status is "pinned"
+	if pin.Status != db.PinningStatusPinned {
+		t.Errorf("Expected pin status to be 'pinned', got '%s'", pin.Status)
+	}
 	}, GetStandardTestOptions()...)
 }

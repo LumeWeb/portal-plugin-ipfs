@@ -218,6 +218,14 @@ func (s *UploadServiceDefault) CreateRootPin(ctx context.Context, c cid.Cid, use
 		CreateRootPinDuration.WithLabelValues(),
 		CreateRootPinTotal.WithLabelValues(LabelStatusError),
 		func() (*pluginDb.IPFSPin, error) {
+			existing, err := s.pin.GetPinByCIDAndUser(ctx, c, userId)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check existing pin: %w", err)
+			}
+			if existing != nil {
+				return existing, nil
+			}
+
 			ipfsPin, err := s.pin.AddPin(ctx, &pluginDb.IPFSPin{
 				UserID:    userId,
 				CID:       c.Bytes(),
@@ -228,6 +236,9 @@ func (s *UploadServiceDefault) CreateRootPin(ctx context.Context, c cid.Cid, use
 				Info:      nil,
 			})
 			if err != nil {
+				if existing, getErr := s.pin.GetPinByCIDAndUser(ctx, c, userId); getErr == nil && existing != nil && existing.Status == pluginDb.PinningStatusPinned {
+					return existing, nil
+				}
 				return nil, fmt.Errorf("failed to create IPFS pin record: %w", err)
 			}
 

@@ -105,12 +105,6 @@ func (h *ConfirmOperationHandler) Execute(ctx context.Context, req *models.Reque
 		if err := tracker.SetProgress(60); err != nil {
 			h.Logger().Warn("Failed to update progress", zap.Error(err))
 		}
-
-		// Create IPFS pin record for the root CID (first CID in the list)
-		_, err = uploadSvc.CreateRootPin(ctx, cidList[0], lo.FromPtrOr(req.UserID, 0))
-		if err != nil {
-			return fmt.Errorf("failed to create root pin: %w", err)
-		}
 	}
 
 	// Set progress - updating pin status

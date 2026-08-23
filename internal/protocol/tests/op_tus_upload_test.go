@@ -104,6 +104,11 @@ func TestTUSUploadOperation_PinStatus(t *testing.T) {
 			t.Fatal("No pins found")
 		}
 
+		// Verify exactly one pin exists (no orphan queued duplicates)
+		if total != 1 {
+			t.Errorf("Expected exactly 1 pin, got %d", total)
+		}
+
 		// Get the most recent pin (pins should be ordered by created_at desc)
 		pin := pins[0]
 
