@@ -554,12 +554,15 @@ func (a *API) deleteWebsite(c echo.Context) error {
 	return ctx.NoContent(http.StatusNoContent)
 }
 
-// isDNSResolutionError reports whether err is (or wraps) a DNS resolution
-// failure, e.g. net.LookupTXT returning *net.DNSError because a verification
-// record is missing or the domain does not resolve.
+// isDNSResolutionError reports whether err is (or wraps) a genuine
+// domain-not-found resolution failure — *net.DNSError with IsNotFound set,
+// e.g. net.LookupTXT returning NXDOMAIN because a verification record is
+// missing or the domain does not resolve. Transient resolver faults (timeouts,
+// SERVFAIL, connection failures) are platform-side and deliberately excluded
+// so they stay on the generic 500 path.
 func isDNSResolutionError(err error) bool {
 	var dnsErr *net.DNSError
-	return errors.As(err, &dnsErr)
+	return errors.As(err, &dnsErr) && dnsErr.IsNotFound
 }
 
 func (a *API) validateWebsiteDNS(c echo.Context) error {
