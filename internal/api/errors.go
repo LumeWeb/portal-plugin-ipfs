@@ -51,6 +51,18 @@ const (
 	// Website validation error types
 	ErrKeyInvalidCID    core.ErrorType = "INVALID_CID"
 	ErrKeyInvalidTarget core.ErrorType = "INVALID_TARGET"
+	// ErrKeyCIDNotPinned is returned when a website update targets a CID that
+	// exists but is not pinned in the user's account. It is user-correctable
+	// (pin the CID first), so it surfaces as 422 rather than a generic 500.
+	ErrKeyCIDNotPinned core.ErrorType = "CID_NOT_PINNED"
+	// ErrKeyIPNSKeyNotFound is returned when an IPNS target references a key
+	// that does not exist or is not owned by the requesting user (422).
+	ErrKeyIPNSKeyNotFound core.ErrorType = "IPNS_KEY_NOT_FOUND"
+	// ErrKeyDNSValidationFailed is returned when website DNS validation cannot
+	// be completed because a required DNS record is missing or unresolvable
+	// (e.g. the verification TXT record is not yet published). User-correctable,
+	// so it surfaces as 422 rather than a generic 500.
+	ErrKeyDNSValidationFailed core.ErrorType = "DNS_VALIDATION_FAILED"
 
 	// Website domain binding error types
 	ErrKeyDomainNotFound core.ErrorType = "DOMAIN_NOT_FOUND"
@@ -109,6 +121,9 @@ func init() {
 		ErrKeyPermissionDenied:      {Key: ErrKeyPermissionDenied, Message: "Permission denied"},
 		ErrKeyInvalidCID:            {Key: ErrKeyInvalidCID, Message: "Invalid CID provided"},
 		ErrKeyInvalidTarget:         {Key: ErrKeyInvalidTarget, Message: "Invalid target hash or peer ID provided"},
+		ErrKeyCIDNotPinned:          {Key: ErrKeyCIDNotPinned, Message: "CID is not pinned. Please pin the CID and try again."},
+		ErrKeyIPNSKeyNotFound:       {Key: ErrKeyIPNSKeyNotFound, Message: "IPNS key not found or not owned by your account."},
+		ErrKeyDNSValidationFailed:   {Key: ErrKeyDNSValidationFailed, Message: "DNS validation could not be completed. Please ensure the required DNS records are published and reachable."},
 		ErrKeyDomainNotFound:        {Key: ErrKeyDomainNotFound, Message: "Domain not found"},
 		ErrKeyDomainInUse:           {Key: ErrKeyDomainInUse, Message: "Domain is already in use by another website"},
 		ErrKeyInvalidPathID:         {Key: ErrKeyInvalidPathID, Message: "Invalid path parameter: %s"},
@@ -141,6 +156,9 @@ func init() {
 		ErrKeyInvalidIdentifier:     http.StatusUnprocessableEntity,
 		ErrKeyInvalidCID:            http.StatusUnprocessableEntity,
 		ErrKeyInvalidTarget:         http.StatusUnprocessableEntity,
+		ErrKeyCIDNotPinned:          http.StatusUnprocessableEntity,
+		ErrKeyIPNSKeyNotFound:       http.StatusUnprocessableEntity,
+		ErrKeyDNSValidationFailed:   http.StatusUnprocessableEntity,
 		ErrKeyPermissionDenied:      http.StatusForbidden,
 		ErrKeyDomainNotFound:        http.StatusNotFound,
 		ErrKeyDomainInUse:           http.StatusConflict,

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	pluginservice "go.lumeweb.com/portal-plugin-ipfs/internal/service/website"
 	mocks "go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
@@ -1202,6 +1204,25 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 		}, TestOptions)
 	})
 
+	t.Run("error_cid_not_pinned", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			mockWebsiteService.EXPECT().UpdateWebsite(mock.Anything, userID, uint(1), mock.AnythingOfType("map[string]interface {}")).Return(nil, fmt.Errorf("CID validation failed: %w", pluginservice.ErrCIDNotPinned))
+
+			reqBody := fmt.Sprintf(`{"domain":"%s","target_type":"ipfs","target_hash":"%s"}`, TestDomain, TestCID)
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			assert.Equal(t, string(ErrKeyCIDNotPinned), body["error"])
+		}, TestOptions)
+	})
+
 	t.Run("unauthorized", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			reqBody := fmt.Sprintf(`{"domain":"%s","target_type":"ipfs","target_hash":"%s"}`, TestDomain, TestCID)
@@ -1375,6 +1396,26 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/1/validate", token, nil)
 
 			assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("error_dns_resolution_failed", func(t *testing.T) {
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			dnsErr := &net.DNSError{Err: "no such host", Name: "pinner-verify." + TestDomain, IsNotFound: true}
+			mockWebsiteService.EXPECT().ValidateDNS(mock.Anything, userID, uint(1)).
+				Return(pluginCore.ValidateDNSResult{}, fmt.Errorf("DNS TXT lookup failed for %s: %w", TestDomain, dnsErr))
+
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/1/validate", token, nil)
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			assert.Equal(t, string(ErrKeyDNSValidationFailed), body["error"])
 		}, TestOptions)
 	})
 
