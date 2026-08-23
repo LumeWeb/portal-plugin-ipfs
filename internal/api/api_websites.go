@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -104,6 +105,16 @@ func (a *API) handleWebsiteValidationError(err error, c echo.Context) (error, bo
 
 	if errors.Is(err, pluginservice.ErrInvalidDomain) {
 		apiErr := NewError(ErrKeyInvalidDomainFormat, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus()), true
+	}
+
+	if errors.Is(err, pluginservice.ErrCIDNotPinned) {
+		apiErr := NewError(ErrKeyCIDNotPinned, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus()), true
+	}
+
+	if errors.Is(err, pluginservice.ErrIPNSKeyNotFound) {
+		apiErr := NewError(ErrKeyIPNSKeyNotFound, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus()), true
 	}
 
@@ -385,6 +396,12 @@ func (a *API) updateWebsite(c echo.Context) error {
 	website, err := a.websiteService.UpdateWebsite(reqCtx, user, uint(websiteID), updates)
 	if err != nil {
 		a.Logger().Error("Failed to update website", zap.Error(err), zap.Uint("website_id", uint(websiteID)), zap.Uint("user_id", user))
+		// Surface user-correctable validation errors with specific messages
+		// (e.g. CID is not pinned, invalid CID/IPNS target) instead of a
+		// generic 500, mirroring the create-website path.
+		if handledErr, wasHandled := a.handleWebsiteValidationError(err, c); wasHandled {
+			return handledErr
+		}
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
@@ -537,6 +554,14 @@ func (a *API) deleteWebsite(c echo.Context) error {
 	return ctx.NoContent(http.StatusNoContent)
 }
 
+// isDNSResolutionError reports whether err is (or wraps) a DNS resolution
+// failure, e.g. net.LookupTXT returning *net.DNSError because a verification
+// record is missing or the domain does not resolve.
+func isDNSResolutionError(err error) bool {
+	var dnsErr *net.DNSError
+	return errors.As(err, &dnsErr)
+}
+
 func (a *API) validateWebsiteDNS(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
@@ -554,6 +579,13 @@ func (a *API) validateWebsiteDNS(c echo.Context) error {
 	result, err := a.websiteService.ValidateDNS(reqCtx, user, uint(websiteID))
 	if err != nil {
 		a.Logger().Error("Failed to validate website DNS", zap.Error(err), zap.Uint("website_id", uint(websiteID)), zap.Uint("user_id", user))
+		// A DNS resolution failure (e.g. the verification TXT record not yet
+		// published, or the domain not resolving) is user-correctable, so
+		// surface it with a specific message instead of a generic 500.
+		if isDNSResolutionError(err) {
+			apiErr := NewError(ErrKeyDNSValidationFailed, err)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
