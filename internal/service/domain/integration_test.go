@@ -77,7 +77,7 @@ func TestIntegration_CreateAndVerifyHNSDomain(t *testing.T) {
 		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
 
 		// Create domain
-		wd, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, true, true, nil)
+		wd, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, true, true, nil, false)
 		require.NoError(tb, err)
 		require.NotNil(tb, wd)
 		assert.Equal(tb, pluginDb.DomainStatusRecordsGenerated, wd.Status)

@@ -57,7 +57,38 @@ func (a *API) createDomain(c echo.Context) error {
 		dnsHostingEnabled = *req.DNSHostingEnabled
 	}
 
-	wd, err := a.delegatedDomainSvc.CreateDomain(reqCtx, req.Namespace, req.Domain, uint(websiteID), userID, dnsHostingEnabled, false, configRaw)
+	var wd *pluginDb.WebsiteDomain
+
+	if req.IsPlatformClaim() {
+		// Free subdomain under an operator-owned platform root. The platform
+		// root supplies the namespace and zone; DNS hosting is forced on (a
+		// user cannot self-host DNS for a subdomain of someone else's zone).
+		// The optional namespace disambiguates the root when it is registered
+		// under more than one alt-root namespace.
+		var platformNS pluginDb.DomainNamespace
+		if req.PlatformNamespace != "" {
+			platformNS = pluginDb.DomainNamespace(req.PlatformNamespace)
+		}
+		pd, perr := a.delegatedDomainSvc.GetEnabledPlatformDomain(reqCtx, req.PlatformDomain, platformNS)
+		if perr != nil {
+			a.Logger().Error("Failed to lookup platform domain", zap.Error(perr))
+			apiErr := NewError(ErrKeyValidationFailed, perr)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		if pd == nil {
+			apiErr := NewError(ErrKeyValidationFailed, fmt.Errorf("platform domain %q not found or disabled", req.PlatformDomain))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		wd, err = a.delegatedDomainSvc.CreatePlatformSubdomain(reqCtx, uint(websiteID), userID, pd.ID, req.Label, req.Generate)
+	} else {
+		// User-owned domain binding.
+		if req.Domain == "" || req.Namespace == "" {
+			apiErr := NewError(ErrKeyValidationFailed, fmt.Errorf("either domain+namespace or platform_domain must be provided"))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		wd, err = a.delegatedDomainSvc.CreateDomain(reqCtx, req.Namespace, req.Domain, uint(websiteID), userID, dnsHostingEnabled, false, configRaw, false)
+	}
+
 	if err != nil {
 		a.Logger().Error("Failed to create domain", zap.Error(err))
 		apiErr := NewError(ErrKeyValidationFailed, err)
@@ -559,4 +590,40 @@ func (a *API) republishDomainDANE(c echo.Context) error {
 		resp.TLSARecord = fmt.Sprintf("%s. 3600 IN TLSA %s", ownerName, tlsa)
 	}
 	return httputil.EncodeResponse(ctx, &wd, &resp)
+}
+
+// checkPlatformDomainAvailability returns, for the given label, whether it is
+// claimable on each enabled platform root. Auth-only (per-user rate limiting is
+// enforced by the auth middleware); it only ever probes platform roots, never
+// user-managed zones, so it reveals nothing about other users' bindings.
+func (a *API) checkPlatformDomainAvailability(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	req := dto.PlatformAvailabilityRequest{}
+	if _, ok := httputil.DecodeAndValidateQueryRequest(ctx, &req); !ok {
+		return nil
+	}
+
+	if a.delegatedDomainSvc == nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service not available"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	results, err := a.delegatedDomainSvc.CheckAvailability(reqCtx, req.Label)
+	if err != nil {
+		a.Logger().Error("Failed to check platform domain availability", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	resp := dto.PlatformAvailabilityResponse{Label: req.Label, Results: make([]dto.PlatformAvailabilityResult, 0, len(results))}
+	for _, r := range results {
+		resp.Results = append(resp.Results, dto.PlatformAvailabilityResult{
+			PlatformDomain: r.PlatformDomain,
+			Namespace:      string(r.Namespace),
+			Available:      r.Available,
+		})
+	}
+	return httputil.EncodeResponse(ctx, req, &resp)
 }

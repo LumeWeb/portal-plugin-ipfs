@@ -41,6 +41,13 @@ type WebsiteDomain struct {
 	DelegationData datatypes.JSONMap `gorm:"type:json"`
 	ProtocolData   datatypes.JSONMap `gorm:"type:json"`
 
+	// PlatformDomainID is set when this binding is a platform subdomain minted
+	// under a registered PlatformDomain (see PlatformDomain). NULL for
+	// user-owned apex/normal bindings. The binding's authoritative zone is the
+	// PlatformDomain's zone (resolved via resolveManagedZone), owned by the
+	// operator rather than the binding's UserID.
+	PlatformDomainID *uint `gorm:"column:platform_domain_id;index:idx_website_domains_platform_domain_id"`
+
 	// DNS hosting is a per-domain property, owning the PowerDNS hosting
 	// lifecycle for this binding (having moved off the owning Website, which
 	// now only references this domain via Website.PrimaryDomainID). The IPNS

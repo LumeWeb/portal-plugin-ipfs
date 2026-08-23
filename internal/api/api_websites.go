@@ -199,7 +199,7 @@ func (a *API) createWebsite(c echo.Context) error {
 	}
 	if a.delegatedDomainSvc != nil {
 		var cfgRaw json.RawMessage
-		if _, err := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, req.Domain, website.ID, user, dnsEnabled, true, cfgRaw); err != nil {
+		if _, err := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, req.Domain, website.ID, user, dnsEnabled, true, cfgRaw, false); err != nil {
 			// A concurrent create may have won the (domain, namespace) unique key
 			// race after this request's pre-check passed. The guard is not atomic,
 			// so on a duplicate-key violation roll back the just-persisted website
@@ -548,7 +548,7 @@ func (a *API) updateWebsite(c echo.Context) error {
 				apiErr := NewError(ErrKeyFileProcessingFailed, eerr)
 				return ctx.Error(apiErr, apiErr.HttpStatus())
 			}
-			wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw)
+			wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw, false)
 			if derr != nil {
 				a.Logger().Error("Failed to create primary domain for website",
 					zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Error(derr))
