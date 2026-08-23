@@ -16,6 +16,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
@@ -23,6 +24,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/fixtures"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal/db/types"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.lumeweb.com/portal/service"
 )
@@ -142,4 +144,43 @@ func TestUploadService_HandleUpload_WithMode(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestUploadService_CreateRootPin_Idempotent(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		uploadSvc := core.GetService[pluginCore.UploadService](ctx, pluginCore.UPLOAD_SERVICE)
+		require.NotNil(tb, uploadSvc)
+
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		require.NotNil(tb, mockPinSvc)
+
+		testCID, err := cid.NewPrefixV1(cid.Raw, 0x12).Sum([]byte("test content for idempotency"))
+		require.NoError(tb, err)
+		userID := uint(123)
+
+		existingPin := &pluginDb.IPFSPin{
+			RequestID: types.NewBinUUID(),
+			UserID:    userID,
+			CID:       testCID.Bytes(),
+		}
+
+		// First call: no existing pin found, AddPin creates one
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, testCID, userID).Return(nil, nil).Once()
+		mockPinSvc.EXPECT().AddPin(mock.Anything, mock.Anything).Return(existingPin, nil).Once()
+
+		pin1, err := uploadSvc.CreateRootPin(ctx, testCID, userID)
+		require.NoError(tb, err)
+		require.NotNil(tb, pin1)
+		require.Equal(tb, existingPin.RequestID, pin1.RequestID)
+
+		// Second call: existing pin found, AddPin should NOT be called
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, testCID, userID).Return(existingPin, nil).Once()
+
+		pin2, err := uploadSvc.CreateRootPin(ctx, testCID, userID)
+		require.NoError(tb, err)
+		require.NotNil(tb, pin2)
+		require.Equal(tb, pin1.RequestID, pin2.RequestID, "second call should return same pin")
+
+		mockPinSvc.AssertExpectations(tb)
+	})
 }
