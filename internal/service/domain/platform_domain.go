@@ -119,16 +119,13 @@ func (s *DelegatedDomainService) GetPlatformDomainByName(ctx context.Context, do
 }
 
 // CreatePlatformDomain registers a new platform-owned root. It is an
-// operator-only operation (admin API). It does not provision the zone itself:
-// the caller must supply a zone already owned by the operator (a PlatformDomain
-// without a provisioned zone is invalid, so callers should create/designate the
-// zone before registering).
-//
-// Operator ownership of the zone is enforced by the admin-only route (only an
-// operator can register a root); here we at least verify the zone actually
-// exists so we never register a root that would fail at claim time with a
-// dangling zone reference.
-func (s *DelegatedDomainService) CreatePlatformDomain(ctx context.Context, domain string, namespace pluginDb.DomainNamespace, zoneID uint, enabled bool) (*pluginDb.PlatformDomain, error) {
+// operator-only operation (admin API). Auto-creates (idempotently) the DNS
+// zone the operator owns for the root domain: if a zone already exists for the
+// domain it is reused (owned by the same operator), otherwise a new zone is
+// provisioned. The resulting zone ID is stored on the PlatformDomain row, so a
+// root never references a dangling zone. Operator ownership of the zone is
+// enforced by the admin-only route (only an operator can register a root).
+func (s *DelegatedDomainService) CreatePlatformDomain(ctx context.Context, domain string, namespace pluginDb.DomainNamespace, operatorUserID uint, enabled bool) (*pluginDb.PlatformDomain, error) {
 	if s.DB() == nil {
 		return nil, fmt.Errorf("database not available")
 	}
@@ -138,27 +135,20 @@ func (s *DelegatedDomainService) CreatePlatformDomain(ctx context.Context, domai
 	if s.dnsSvc == nil {
 		return nil, fmt.Errorf("DNS service not configured")
 	}
-	if zoneID == 0 {
-		return nil, fmt.Errorf("platform domain requires a provisioned zone")
+	if operatorUserID == 0 {
+		return nil, fmt.Errorf("platform domain requires an operator user")
 	}
 	domain = NormalizeDomain(domain)
-	// The DNSZoneService has no by-ID lookup; GetZoneByDomain serves the same
-	// purpose for a root (the root's domain == its zone apex domain).
-	z, err := s.dnsSvc.GetZoneByDomain(ctx, domain)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("lookup platform zone: %w", err)
+	// Create (or reuse) the operator's zone for the root apex. CreateZone is
+	// idempotent: when a zone already exists for this domain it returns the
+	// existing one (owned by the same operator), otherwise it provisions a new
+	// zone. This guarantees the PlatformDomain always references a live zone.
+	z, err := s.dnsSvc.CreateZone(ctx, domain, operatorUserID)
+	if err != nil {
+		return nil, fmt.Errorf("provision platform zone: %w", err)
 	}
 	if z == nil {
 		return nil, fmt.Errorf("platform root %q has no provisioned zone", domain)
-	}
-	// GetZoneByDomain intentionally returns soft-deleted zones; never register a
-	// root against a logically-removed zone — claims would silently write
-	// DNSLink/apex records into a dead zone.
-	if z.DeletedAt.Valid {
-		return nil, fmt.Errorf("platform root %q references a deleted zone", domain)
-	}
-	if z.ID != zoneID {
-		return nil, fmt.Errorf("zone %d does not match provisioned zone for %q", zoneID, domain)
 	}
 	// Soft deletes leave a tombstone that still occupies the strict
 	// (domain, namespace) unique key, so re-registering a root after
@@ -176,7 +166,7 @@ func (s *DelegatedDomainService) CreatePlatformDomain(ctx context.Context, domai
 	pd := &pluginDb.PlatformDomain{
 		Domain:    domain,
 		Namespace: namespace,
-		ZoneID:    zoneID,
+		ZoneID:    z.ID,
 		Enabled:   enabled,
 	}
 	if err := s.DB().WithContext(ctx).Create(pd).Error; err != nil {
@@ -244,6 +234,33 @@ func (s *DelegatedDomainService) DeletePlatformDomain(ctx context.Context, id ui
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+// BindPlatformRootApex binds an operator-owned website directly to the root
+// apex of a platform root (e.g. "pinner.site"), rather than to a subdomain
+// underneath it. The website must be owned by the same operator that owns the
+// PlatformDomain. Reuses the shared managed-DNS pipeline (DNSLink, apex
+// records, delegation, SSL) via createPlatformBinding with the FQDN being the
+// root itself, and marks the binding with the PlatformDomain reference.
+func (s *DelegatedDomainService) BindPlatformRootApex(ctx context.Context, websiteID, userID, platformDomainID uint) (*pluginDb.WebsiteDomain, error) {
+	if s.DB() == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+
+	var pd pluginDb.PlatformDomain
+	if err := s.DB().WithContext(ctx).First(&pd, platformDomainID).Error; err != nil {
+		return nil, fmt.Errorf("platform domain lookup failed: %w", err)
+	}
+	if !pd.Enabled {
+		return nil, fmt.Errorf("platform domain is disabled")
+	}
+
+	provider := s.registry.Get(string(pd.Namespace))
+	if provider == nil {
+		return nil, fmt.Errorf("unsupported namespace: %s", pd.Namespace)
+	}
+
+	return s.createPlatformBinding(ctx, websiteID, userID, &pd, provider, pd.Domain)
 }
 
 // CreatePlatformSubdomain claims a subdomain under a platform root for a

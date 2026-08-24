@@ -29,7 +29,7 @@ type PlatformDomain struct {
 	ID        uint           `gorm:"primaryKey"`
 	Domain    string         `gorm:"not null;uniqueIndex:idx_platform_domains_domain_namespace"`
 	Namespace DomainNamespace `gorm:"not null;uniqueIndex:idx_platform_domains_domain_namespace"`
-	ZoneID    uint           `gorm:"index:idx_platform_domains_zone_id"` // platform-owned DNSZone
+	ZoneID    uint           `gorm:"not null;index:idx_platform_domains_zone_id"` // platform-owned DNSZone, auto-created with the root
 	// No `default:true` gorm tag: GORM applies a default tag to zero-value
 	// fields on Create, which would silently persist an explicit Enabled=false
 	// as true (disabling a root would never stick). The migration keeps a DB
