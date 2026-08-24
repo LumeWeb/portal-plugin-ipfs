@@ -769,7 +769,7 @@ func filePathWorkflowOptions(
 		opts = append(opts, core.WithWorkflowProtocol(req.Protocol))
 	}
 
-	if len(req.Hash) > 0 {
+	if len(req.Hash) > 0 && req.CIDType != 0 {
 		opts = append(opts, core.WithWorkflowStorageHash(
 			core.NewStorageHashFromMultihash(req.Hash, req.CIDType, nil),
 		))
