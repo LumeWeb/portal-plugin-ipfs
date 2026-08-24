@@ -97,6 +97,28 @@ func TestCreatePlatformDomain_ZoneValidation(t *testing.T) {
 	})
 }
 
+func TestCreatePlatformDomain_DuplicateLiveRootRejected(t *testing.T) {
+	// Kody review: the old (domain, namespace, deleted_at) widening let two live
+	// rows with the same (domain, namespace) coexist (NULL deleted_at values are
+	// distinct), so re-registering a root created duplicates that made
+	// GetEnabledPlatformDomain report a spurious "multiple namespaces" ambiguity.
+	// With the strict (domain, namespace) unique key + tombstone purge, a second
+	// live registration must be rejected, not silently duplicated.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.test").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.test"}, nil).Times(2)
+
+		_, err := svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+		require.NoError(tb, err)
+
+		_, err = svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+		require.Error(tb, err)
+		assert.Contains(tb, err.Error(), "already registered")
+	}, TestOptions)
+}
+
 func TestDeletePlatformDomain_SoftDelete(t *testing.T) {
 	// C5: deleting a platform root is a soft delete — it disappears from
 	// lookups but can be re-registered (the unique key includes deleted_at).
@@ -118,7 +140,9 @@ func TestDeletePlatformDomain_SoftDelete(t *testing.T) {
 		require.NoError(tb, err)
 		assert.Nil(tb, got)
 
-		// Re-registration of the same domain works (unique key includes deleted_at).
+		// Re-registration of the same domain works: CreatePlatformDomain purges the
+		// soft-delete tombstone before inserting against the strict
+		// (domain, namespace) unique key.
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.test").
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.test"}, nil).Once()
@@ -285,6 +309,28 @@ func TestCreatePlatformSubdomain_ExplicitLabelAlreadyTaken(t *testing.T) {
 		_, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "taken", false)
 		require.Error(tb, err)
 		assert.Contains(tb, err.Error(), "already taken")
+	}, TestOptions)
+}
+
+func TestCreatePlatformSubdomain_LabelWWWRejected(t *testing.T) {
+	// "www" is deliberately reserved: composing a label whose FQDN starts with a
+	// leading "www." would be mangled by NormalizeDomain (and collapse to the
+	// apex for the bare "www" label), so the claim flow rejects it up front with
+	// a clear error rather than producing a broken binding.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "example.com")
+		pd := createPlatformRoot(tb, ctx, "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		_, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "www", false)
+		require.Error(tb, err)
+		assert.Contains(tb, err.Error(), "reserved")
+
+		// Any www.-prefixed label is likewise rejected.
+		_, err = svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "www.blog", false)
+		require.Error(tb, err)
+		assert.Contains(tb, err.Error(), "reserved")
 	}, TestOptions)
 }
 

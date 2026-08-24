@@ -160,6 +160,19 @@ func (s *DelegatedDomainService) CreatePlatformDomain(ctx context.Context, domai
 	if z.ID != zoneID {
 		return nil, fmt.Errorf("zone %d does not match provisioned zone for %q", zoneID, domain)
 	}
+	// Soft deletes leave a tombstone that still occupies the strict
+	// (domain, namespace) unique key, so re-registering a root after
+	// DeletePlatformDomain would violate the constraint. Matching the
+	// website_domains soft-delete semantics (see CreateDomain), purge any prior
+	// tombstone for this key so re-registration via a strict unique key works.
+	// Only tombstones (deleted_at IS NOT NULL) are removed; a live same-key row
+	// is a genuine conflict and left to the unique key to reject.
+	if err := s.DB().WithContext(ctx).
+		Where("domain = ? AND namespace = ? AND deleted_at IS NOT NULL", domain, string(namespace)).
+		Unscoped().Delete(&pluginDb.PlatformDomain{}).Error; err != nil {
+		return nil, fmt.Errorf("failed to purge stale platform domain: %w", err)
+	}
+
 	pd := &pluginDb.PlatformDomain{
 		Domain:    domain,
 		Namespace: namespace,
@@ -167,6 +180,9 @@ func (s *DelegatedDomainService) CreatePlatformDomain(ctx context.Context, domai
 		Enabled:   enabled,
 	}
 	if err := s.DB().WithContext(ctx).Create(pd).Error; err != nil {
+		if isDuplicateKeyError(err) {
+			return nil, fmt.Errorf("platform domain %q is already registered for namespace %q", domain, namespace)
+		}
 		return nil, fmt.Errorf("persist platform domain: %w", err)
 	}
 	return pd, nil
@@ -304,6 +320,14 @@ func (s *DelegatedDomainService) CreatePlatformSubdomain(ctx context.Context, we
 	fqdn := labelFor(label, pd.Domain)
 	if fqdn == pd.Domain {
 		return nil, fmt.Errorf("platform subdomain label %q resolves to the root apex %q; it must be a proper subdomain", label, fqdn)
+	}
+	// The "www" label is deliberately reserved: NormalizeDomain strips a leading
+	// "www." on write (WebsiteDomain.BeforeSave), so composing any label whose
+	// fully-qualified name starts with "www." would be mangled (or collapse to
+	// the root apex). Reject it explicitly up front instead of letting it fail
+	// obscurely downstream, keeping "www" special and unusable.
+	if NormalizeDomain(fqdn) != fqdn {
+		return nil, fmt.Errorf("label %q is reserved: the resulting subdomain %q starts with a leading \"www.\" and is not allowed", label, fqdn)
 	}
 	if err := provider.Validate(fqdn); err != nil {
 		return nil, fmt.Errorf("invalid platform subdomain: %w", err)

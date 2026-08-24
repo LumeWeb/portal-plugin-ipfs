@@ -12,12 +12,13 @@
 -- apex/normal bindings (today's behavior); set when the binding is a platform
 -- subdomain minted under the referenced PlatformDomain.
 --
--- website_domains keeps its original strict UNIQUE(domain, namespace) index:
--- live-row uniqueness stays DB-enforced (the (domain, namespace, deleted_at)
--- widening would let NULL deleted_at values coexist for duplicate live rows).
--- Re-registration after a soft delete works because CreateDomain purges the
--- tombstone (deleted_at IS NOT NULL) for the key before inserting a fresh
--- binding. Only the new nullable platform_domain_id column is added here.
+-- platform_domains uses the same strict UNIQUE(domain, namespace) as
+-- website_domains: live-row uniqueness stays DB-enforced. The (domain,
+-- namespace, deleted_at) widening is intentionally avoided — NULL deleted_at
+-- values are distinct in SQLite, so it would let duplicate live rows coexist.
+-- Re-registration after a soft delete works because CreatePlatformDomain purges
+-- the tombstone (deleted_at IS NOT NULL) for the key before inserting a fresh
+-- root. Only the new nullable platform_domain_id column is added here.
 
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS platform_domains (
@@ -29,7 +30,7 @@ CREATE TABLE IF NOT EXISTS platform_domains (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP NULL DEFAULT NULL,
-    UNIQUE (domain, namespace, deleted_at)
+    UNIQUE (domain, namespace)
 );
 -- +goose StatementEnd
 

@@ -12,13 +12,15 @@
 -- apex/normal bindings (today's behavior); set when the binding is a platform
 -- subdomain minted under the referenced PlatformDomain.
 --
--- website_domains keeps its original strict UNIQUE(domain, namespace) index:
--- live-row uniqueness stays DB-enforced. A (domain, namespace, deleted_at)
--- widening would let NULL deleted_at values coexist for duplicate live rows,
--- defeating the duplicate-key race detection CreateDomain and the createWebsite
--- handler rely on. Re-registration after a soft delete works because CreateDomain
--- purges the tombstone (deleted_at IS NOT NULL) for the key before inserting a
--- fresh binding, so the strict unique key never blocks rebinding.
+-- platform_domains uses the same strict UNIQUE(domain, namespace) as
+-- website_domains: live-row uniqueness stays DB-enforced. The (domain,
+-- namespace, deleted_at) widening is intentionally avoided — NULL deleted_at
+-- values are distinct in both MySQL and SQLite, so it would let duplicate live
+-- rows coexist and defeat the duplicate-key race detection CreateDomain and the
+-- createWebsite handler rely on. Re-registration after a soft delete works
+-- because CreatePlatformDomain purges the tombstone (deleted_at IS NOT NULL)
+-- for the key before inserting a fresh root, so the strict unique key never
+-- blocks re-registration.
 
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS platform_domains (
@@ -30,7 +32,7 @@ CREATE TABLE IF NOT EXISTS platform_domains (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP NULL DEFAULT NULL,
-    UNIQUE KEY uk_platform_domains_domain_namespace (domain, namespace, deleted_at),
+    UNIQUE KEY uk_platform_domains_domain_namespace (domain, namespace),
     INDEX idx_platform_domains_zone_id (zone_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- +goose StatementEnd
