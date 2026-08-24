@@ -7,25 +7,30 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"go.lumeweb.com/httputil"
+	"go.lumeweb.com/ipfs-content/paths"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/portal-router"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
-	"go.lumeweb.com/ipfs-content/paths"
+	"go.lumeweb.com/queryutil"
+	queryutilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 // AdminExtension extends the Admin API with IPFS website management functionality
 type AdminExtension struct {
-	ctx            core.Context
-	logger         *core.Logger
-	config         config.Manager
-	db             *gorm.DB
-	websiteService pluginCore.WebsiteService
-	ipnsKeyService pluginCore.IPNSKeyService
+	ctx                core.Context
+	logger             *core.Logger
+	config             config.Manager
+	db                 *gorm.DB
+	websiteService     pluginCore.WebsiteService
+	ipnsKeyService     pluginCore.IPNSKeyService
+	delegatedDomainSvc *domain.DelegatedDomainService
 }
 
 // NewAdminExtension creates a new Admin API extension for IPFS website management
@@ -39,15 +44,17 @@ func NewAdminExtension() core.APIExtensionFactory {
 			ext.config = ctx.Config()
 
 			// Get and verify required services
-		ext.websiteService = core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		if ext.websiteService == nil {
-			return fmt.Errorf("website service not available")
-		}
+			ext.websiteService = core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+			if ext.websiteService == nil {
+				return fmt.Errorf("website service not available")
+			}
 
-		ext.ipnsKeyService = core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
-		if ext.ipnsKeyService == nil {
-			return fmt.Errorf("ipns key service not available")
-		}
+			ext.ipnsKeyService = core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+			if ext.ipnsKeyService == nil {
+				return fmt.Errorf("ipns key service not available")
+			}
+
+			ext.delegatedDomainSvc = core.GetServiceOptional[*domain.DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 
 			return nil
 		})), nil
@@ -71,6 +78,10 @@ func (e *AdminExtension) Configure(gRouter router.Router, accessSvc core.AccessS
 	}
 
 	if err := e.registerIPNSHandlers(ipfsRouter, accessSvc); err != nil {
+		return err
+	}
+
+	if err := e.registerPlatformDomainHandlers(ipfsRouter, accessSvc); err != nil {
 		return err
 	}
 
@@ -293,4 +304,164 @@ func (e *AdminExtension) republishIPNS(c echo.Context) error {
 	}
 
 	return httputil.EncodeResponse(ctx, nil, &resp)
+}
+func (e *AdminExtension) registerPlatformDomainHandlers(gRouter router.Router, accessSvc core.AccessService) error {
+	routes := router.DefineRoutes(
+		router.NewRoute(http.MethodPost, "/platform-domains", e.createPlatformDomain,
+			router.WithAccess(core.ACCESS_ADMIN_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Register platform domain"),
+				router.WithDescription(`Registers a platform-owned root domain that users can claim free subdomains under.
+
+Operator-only operation. The zone referenced by zone_id must already be provisioned and owned by the operator.
+
+See also: GET /platform-domains (list), PATCH /platform-domains/:id (enable/disable), DELETE /platform-domains/:id`),
+				router.WithTags("Admin", "PlatformDomains"),
+				router.WithRequestBody(dto.PlatformDomainRequest{}, "Platform domain to register", true),
+				router.WithSuccessResponse(http.StatusCreated, "Platform domain registered", router.WithJSONContent(dto.PlatformDomainResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/platform-domains", e.listPlatformDomains,
+			router.WithAccess(core.ACCESS_ADMIN_ROLE),
+			router.WithSwagger(
+				router.WithSummary("List platform domains"),
+				router.WithDescription(`Lists all registered platform-owned roots, including disabled ones. Returns the standard paginated list shape ({data, total}) with query-param filtering and paging.`),
+				router.WithTags("Admin", "PlatformDomains"),
+				router.WithSuccessResponse(http.StatusOK, "Platform domains listed", router.WithJSONContent(dto.PlatformDomainListResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPatch, "/platform-domains/:id", e.updatePlatformDomain,
+			router.WithAccess(core.ACCESS_ADMIN_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Update platform domain"),
+				router.WithDescription(`Enables or disables a registered platform root. Disabling prevents new claims but does not delete existing bindings.`),
+				router.WithTags("Admin", "PlatformDomains"),
+				router.WithPathParam("id", "Platform domain ID", ""),
+				router.WithRequestBody(dto.PlatformDomainUpdateRequest{}, "Platform domain update", true),
+				router.WithSuccessResponse(http.StatusOK, "Platform domain updated", router.WithJSONContent(dto.PlatformDomainResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodDelete, "/platform-domains/:id", e.deletePlatformDomain,
+			router.WithAccess(core.ACCESS_ADMIN_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Delete platform domain"),
+				router.WithDescription(`Removes a registered platform root. Existing subdomain bindings remain but can no longer be reconciled as platform subdomains.`),
+				router.WithTags("Admin", "PlatformDomains"),
+				router.WithPathParam("id", "Platform domain ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Platform domain deleted", router.WithJSONContent(nil)),
+			),
+		),
+	)
+
+	apiGroup := internal.ProtocolName
+	return router.RegisterRoutes(gRouter, accessSvc, apiGroup, routes)
+}
+
+func (e *AdminExtension) createPlatformDomain(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	if e.delegatedDomainSvc == nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service not available"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	req := dto.PlatformDomainRequest{}
+	if _, ok := httputil.DecodeAndValidateRequest(ctx, &req); !ok {
+		return nil
+	}
+
+	pd, err := e.delegatedDomainSvc.CreatePlatformDomain(reqCtx, req.Domain, pluginDb.DomainNamespace(req.Namespace), req.ZoneID, req.Enabled)
+	if err != nil {
+		e.logger.Error("Failed to create platform domain", zap.Error(err))
+		apiErr := NewError(ErrKeyValidationFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	resp := dto.PlatformDomainResponse{}
+	resp.FromModel(pd)
+	ctx.Response().Before(func() {
+		ctx.Response().Status = http.StatusCreated
+	})
+	return httputil.EncodeResponse(ctx, pd, &resp)
+}
+
+func (e *AdminExtension) listPlatformDomains(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	if e.delegatedDomainSvc == nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service not available"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	return queryutilHttp.ProcessListRequest[*pluginDb.PlatformDomain, dto.PlatformDomainResponse](
+		c.Response(),
+		c.Request(),
+		"platform-domains",
+		func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.PlatformDomain, int64, error) {
+			return e.delegatedDomainSvc.ListPlatformDomains(reqCtx, filters, sorts, pagination)
+		},
+		func(pd *pluginDb.PlatformDomain) dto.PlatformDomainResponse {
+			var r dto.PlatformDomainResponse
+			_ = r.FromModel(pd)
+			return r
+		},
+	)
+}
+
+func (e *AdminExtension) updatePlatformDomain(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	if e.delegatedDomainSvc == nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service not available"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	id, err := e.parsePathID(c, "id")
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidUUIDFormat, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	req := dto.PlatformDomainUpdateRequest{}
+	if _, ok := httputil.DecodeAndValidateRequest(ctx, &req); !ok {
+		return nil
+	}
+
+	pd, err := e.delegatedDomainSvc.UpdatePlatformDomain(reqCtx, id, req.Enabled)
+	if err != nil {
+		e.logger.Error("Failed to update platform domain", zap.Error(err), zap.Uint("id", id))
+		apiErr := NewError(ErrKeyValidationFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	resp := dto.PlatformDomainResponse{}
+	resp.FromModel(pd)
+	return httputil.EncodeResponse(ctx, pd, &resp)
+}
+
+func (e *AdminExtension) deletePlatformDomain(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	if e.delegatedDomainSvc == nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service not available"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	id, err := e.parsePathID(c, "id")
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidUUIDFormat, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	if err := e.delegatedDomainSvc.DeletePlatformDomain(reqCtx, id); err != nil {
+		e.logger.Error("Failed to delete platform domain", zap.Error(err), zap.Uint("id", id))
+		apiErr := NewError(ErrKeyValidationFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	return ctx.NoContent(http.StatusOK)
 }

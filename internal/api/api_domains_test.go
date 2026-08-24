@@ -565,6 +565,36 @@ func TestAPI_UpdateDomain(t *testing.T) {
 		}, TestOptions)
 	})
 
+	t.Run("platform_subdomain_dns_hosting_readonly", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID, testCID, _ := helper.SetupAuthenticatedTest()
+
+			website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
+			require.NoError(t, ctx.DB().Create(website).Error)
+
+			pdID := uint(1)
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID:         1,
+				UserID:            userID,
+				Domain:            "blog.platform.test",
+				Namespace:         pluginDb.DomainNamespaceICANN,
+				Status:            pluginDb.DomainStatusActive,
+				DNSHostingEnabled: true,
+				PlatformDomainID:  &pdID,
+			}
+			require.NoError(t, ctx.DB().Create(wd).Error)
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+			mockWebsiteService.AssertNotCalled(tb, "SetDomainDNSEnabled", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+
+			reqBody := `{"dns_hosting_enabled":false}`
+			rec := helper.makeAuthenticatedRequest(http.MethodPatch, "/api/websites/1/domains/1", token, []byte(reqBody))
+			assert.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "read-only")
+		}, TestOptions)
+	})
+
 	t.Run("no_updates_returns_422", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
