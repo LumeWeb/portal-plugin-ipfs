@@ -48,6 +48,10 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.Execute")
 	defer span.End()
 
+	h.Logger().Debug("upload operation started",
+		zap.Uint("requestID", req.ID),
+		zap.Uint("userID", lo.FromPtrOr(req.UserID, 0)))
+
 	// Initialize progress tracker with manual mode for simple milestones
 	tracker, err := InitializeManualProgressTracker(h, req.ID, core.OpTypeUpload, 10)
 	if err != nil {
@@ -208,6 +212,22 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 	}
 
 	h.logProcessingResult(allCids, rootCids)
+
+	// Check if context was cancelled during processing — this would cause
+	// the cron job to fail before CompleteWorkflowStep can run, leaving
+	// the operation stuck in "Processing" with progress=100.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		h.Logger().Warn("upload operation completed with cancelled context",
+			zap.Uint("requestID", req.ID),
+			zap.Int("numCids", len(allCids)),
+			zap.Int("numRoots", len(rootCids)),
+			zap.Error(ctxErr))
+	} else {
+		h.Logger().Debug("upload operation completed successfully",
+			zap.Uint("requestID", req.ID),
+			zap.Int("numCids", len(allCids)),
+			zap.Int("numRoots", len(rootCids)))
+	}
 
 	// Complete
 	if err := tracker.SetProgress(100); err != nil {

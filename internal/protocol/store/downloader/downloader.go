@@ -201,15 +201,32 @@ func (bd *BlockDownloaderDefault) queueRelated(ctx context.Context, c cid.Cid) {
 	defer span.End()
 
 	log := bd.log.Named("queueRelated").With(zap.Stringer("cid", c))
+
+	// Log context state before DB queries. ctx is created via DetachContext
+	// (context.WithoutCancel) and should never be cancelled. If ctx.Err() is
+	// non-nil here, the detached context was somehow cancelled before we
+	// even started — indicating a bug in context propagation. If ctx.Err()
+	// is nil but BlockSiblings returns context.Canceled below, it points to
+	// a GORM PrepareStmt race condition cross-contaminating the error from
+	// a different goroutine's cancelled context.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		log.Warn("queueRelated called with already-cancelled detached context",
+			zap.Error(ctxErr))
+	}
+
 	siblings, err := bd.store.BlockSiblings(ctx, c, 64)
 	if err != nil {
-		log.Error("failed to get block siblings", zap.Error(err))
+		log.Error("failed to get block siblings",
+			zap.Error(err),
+			zap.NamedError("ctxErr", ctx.Err()))
 		return
 	}
 
 	children, err := bd.store.BlockChildren(ctx, c, lo.ToPtr(64))
 	if err != nil {
-		log.Error("failed to get block children", zap.Error(err))
+		log.Error("failed to get block children",
+			zap.Error(err),
+			zap.NamedError("ctxErr", ctx.Err()))
 		return
 	}
 

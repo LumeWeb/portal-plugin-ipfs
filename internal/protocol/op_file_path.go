@@ -119,8 +119,13 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 		}
 
 		if len(cids) > 0 {
+			h.Logger().Debug("processing missing UnixFS names",
+				zap.Int("cidCount", len(cids)),
+				zap.NamedError("ctxErr", ctx.Err()))
 			if err := metadataStore.ProcessMissingUnixFSNames(ctx, cids); err != nil {
-				h.Logger().Warn("Failed to process missing UnixFS names", zap.Error(err))
+				h.Logger().Warn("Failed to process missing UnixFS names",
+					zap.Error(err),
+					zap.NamedError("ctxErr", ctx.Err()))
 			}
 		}
 	}
