@@ -169,6 +169,38 @@ func TestPostUpload_StartsFilePathWorkflow(t *testing.T) {
 	}, GetStandardTestOptions()...)
 }
 
+// TestPostUpload_StartsFilePathWorkflow_RelaysParentProtoAndCID is a regression
+// test verifying that the FILE_PATH_WORKFLOW ("Update File System") request
+// relays the parent request's protocol and CID so operation listings show them.
+func TestPostUpload_StartsFilePathWorkflow_RelaysParentProtoAndCID(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		root, wfTest := testPostUploadWorkflow(
+			t, ctx,
+			pluginUpload.NewUniversalReader(bytes.NewReader([]byte("filepath proto/cid relay test"))),
+			contentArchive.FormatFile, pluginUpload.ArchiveConvert,
+			withProtocol(internal.ProtocolName),
+		)
+
+		inst := wfTest.WaitForWorkflowInstance(
+			protocol.FILE_PATH_WORKFLOW,
+			core.RequestFilter{},
+			10*time.Second,
+		)
+		require.NotNil(tb, inst, "FILE_PATH_WORKFLOW instance should be found")
+		require.NotNil(tb, inst.Request, "FILE_PATH_WORKFLOW request should be found")
+
+		// Parent request protocol should be relayed onto the child.
+		assert.Equal(tb, internal.ProtocolName, inst.Request.Protocol)
+
+		// Parent request CID should be relayed onto the child.
+		childCID, err := internal.CIDFromHash(inst.Request.Hash, inst.Request.CIDType)
+		require.NoError(tb, err, "child request CID should be reconstructable")
+		assert.Equal(tb, root, childCID)
+
+		assertRootBlockFetchable(t, ctx, root)
+	}, GetStandardTestOptions()...)
+}
+
 // TestTUSUpload_StartsFilePathWorkflow verifies that after a TUS upload
 // workflow completes, a FILE_PATH_WORKFLOW request has been started.
 func TestTUSUpload_StartsFilePathWorkflow(t *testing.T) {
