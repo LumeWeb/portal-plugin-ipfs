@@ -1057,8 +1057,10 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 			return fmt.Errorf("failed to create DNS records: %w", err)
 		}
 
-		// Update website with new token and status (reset to pending_validation
-		// via the state machine — a change in DNS records forces re-validation).
+		// Update website with new token and status. Active/broken websites are
+		// reset to pending_validation via target_changed (a change in DNS
+		// records forces re-validation). A blocked website keeps its status —
+		// an admin block is lifted only via UnblockWebsite, not by a DNS toggle.
 		expiresAt := time.Now().Add(s.config.ValidationTokenTTL)
 		sm := NewWebsiteStateMachine(&website)
 		if sm.Can(EventWebsiteTargetChanged) {
@@ -1205,9 +1207,10 @@ func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context,
 // after DNS-hosting teardown. It is the part of handleDNSDisabledTransition
 // that also applies when the zone is delegation-owned and must be preserved.
 func (s *WebsiteServiceDefault) resetWebsiteValidationState(ctx context.Context, website pluginDb.Website) error {
-	// Reset to pending_validation via the state machine; the website must be
-	// re-validated before it can be served again. An already-pending website
-	// needs no transition.
+	// Reset active/broken websites to pending_validation via target_changed so
+	// they must be re-validated before being served again. A blocked website is
+	// left blocked — an admin block is only lifted via UnblockWebsite. An
+	// already-pending website needs no transition.
 	sm := NewWebsiteStateMachine(&website)
 	if sm.Can(EventWebsiteTargetChanged) {
 		if err := sm.Fire(ctx, EventWebsiteTargetChanged); err != nil {
