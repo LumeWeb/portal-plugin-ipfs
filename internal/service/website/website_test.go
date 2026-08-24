@@ -969,11 +969,12 @@ func TestWebsiteService_UnblockWebsite(t *testing.T) {
 		// Assert
 		require.NoError(tb, err)
 
-		// Verify website is now active
+		// Verify website is now pending_validation (must re-validate before
+		// being served again).
 		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.NotNil(tb, retrievedWebsite)
-		assert.Equal(t, string(pluginDb.WebsiteStatusActive), retrievedWebsite.Status)
+		assert.Equal(t, string(pluginDb.WebsiteStatusPendingValidation), retrievedWebsite.Status)
 	}, TestOptions)
 }
 

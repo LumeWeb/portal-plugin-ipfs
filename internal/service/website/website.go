@@ -222,8 +222,16 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 			expiresAt := time.Now().Add(s.config.ValidationTokenTTL)
 			website.ValidationExpiresAt = &expiresAt
 
-			// Set initial status
-			website.Status = string(pluginDb.WebsiteStatusPendingValidation)
+			// Set initial status via the website state machine. Only a fresh
+			// website (empty status) transitions to pending_validation; an
+			// already-statused website (e.g. the API layer pre-sets active) is
+			// left untouched.
+			createSM := NewWebsiteStateMachine(website)
+			if createSM.Can(EventWebsiteCreate) {
+				if err := createSM.Fire(ctx, EventWebsiteCreate); err != nil {
+					return nil, fmt.Errorf("failed to set initial website status: %w", err)
+				}
+			}
 
 			// Resolve the primary (apex) WebsiteDomain, which owns the DNS hosting
 			// state for this site. The primary domain may have been bound before
@@ -1049,13 +1057,22 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 			return fmt.Errorf("failed to create DNS records: %w", err)
 		}
 
-		// Update website with new token and status
+		// Update website with new token and status. Active/broken websites are
+		// reset to pending_validation via target_changed (a change in DNS
+		// records forces re-validation). A blocked website keeps its status —
+		// an admin block is lifted only via UnblockWebsite, not by a DNS toggle.
 		expiresAt := time.Now().Add(s.config.ValidationTokenTTL)
+		sm := NewWebsiteStateMachine(&website)
+		if sm.Can(EventWebsiteTargetChanged) {
+			if err := sm.Fire(ctx, EventWebsiteTargetChanged); err != nil {
+				return fmt.Errorf("failed to reset website validation status: %w", err)
+			}
+		}
 		err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 			return tx.Model(&website).Updates(map[string]interface{}{
 				"validation_token":      newToken,
 				"validation_expires_at": expiresAt,
-				"status":                string(pluginDb.WebsiteStatusPendingValidation),
+				"status":                website.Status,
 			})
 		})
 		if err != nil {
@@ -1190,11 +1207,18 @@ func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context,
 // after DNS-hosting teardown. It is the part of handleDNSDisabledTransition
 // that also applies when the zone is delegation-owned and must be preserved.
 func (s *WebsiteServiceDefault) resetWebsiteValidationState(ctx context.Context, website pluginDb.Website) error {
-	updates := map[string]interface{}{
-		"status": string(pluginDb.WebsiteStatusPendingValidation),
+	// Reset active/broken websites to pending_validation via target_changed so
+	// they must be re-validated before being served again. A blocked website is
+	// left blocked — an admin block is only lifted via UnblockWebsite. An
+	// already-pending website needs no transition.
+	sm := NewWebsiteStateMachine(&website)
+	if sm.Can(EventWebsiteTargetChanged) {
+		if err := sm.Fire(ctx, EventWebsiteTargetChanged); err != nil {
+			return fmt.Errorf("failed to reset website validation state: %w", err)
+		}
 	}
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		return tx.Model(&website).Updates(updates)
+		return tx.Save(&website)
 	})
 	if err != nil {
 		s.Logger().Error("Failed to update website",
@@ -1334,8 +1358,15 @@ func (s *WebsiteServiceDefault) BlockWebsite(ctx context.Context, websiteID uint
 					return tx
 				}
 
-				// Update the status
-				website.Status = string(pluginDb.WebsiteStatusBlocked)
+				// Update the status via the state machine (idempotent if already
+				// blocked).
+				sm := NewWebsiteStateMachine(&website)
+				if sm.Can(EventWebsiteBlock) {
+					if err := sm.Fire(ctx, EventWebsiteBlock); err != nil {
+						_ = tx.AddError(fmt.Errorf("failed to block website: %w", err))
+						return tx
+					}
+				}
 				if err := tx.Save(&website).Error; err != nil {
 					_ = tx.AddError(fmt.Errorf("failed to block website: %w", err))
 					return tx
@@ -1378,8 +1409,13 @@ func (s *WebsiteServiceDefault) UnblockWebsite(ctx context.Context, websiteID ui
 					return tx
 				}
 
-				// Update the status
-				website.Status = string(pluginDb.WebsiteStatusActive)
+				// Update the status via the state machine. Unblocking returns the
+				// website to pending_validation so it must re-validate before
+				// being served again.
+				if err := NewWebsiteStateMachine(&website).Fire(ctx, EventWebsiteUnblock); err != nil {
+					_ = tx.AddError(fmt.Errorf("failed to unblock website: %w", err))
+					return tx
+				}
 				if err := tx.Save(&website).Error; err != nil {
 					_ = tx.AddError(fmt.Errorf("failed to unblock website: %w", err))
 					return tx
@@ -1675,7 +1711,14 @@ func (s *WebsiteServiceDefault) regenerateExpiredToken(ctx context.Context, webs
 
 func (s *WebsiteServiceDefault) activateValidatedWebsite(ctx context.Context, website *pluginDb.Website) error {
 	return db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		website.Status = string(pluginDb.WebsiteStatusActive)
+		// Activate from pending_validation. A website that is already active
+		// (e.g. a re-validation) needs no transition.
+		sm := NewWebsiteStateMachine(website)
+		if sm.Can(EventWebsiteValidate) {
+			if err := sm.Fire(ctx, EventWebsiteValidate); err != nil {
+				_ = tx.AddError(fmt.Errorf("failed to activate website: %w", err))
+			}
+		}
 		newExpiry := time.Now().Add(s.config.ValidationTokenTTL)
 		website.ValidationExpiresAt = &newExpiry
 		return tx.Save(website)
