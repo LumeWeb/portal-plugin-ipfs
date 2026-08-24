@@ -25,6 +25,10 @@ type DelegatedDomainService struct {
 	*core.BaseComponent
 	registry *Registry
 	dnsSvc   DNSZoneService
+	// slugGen produces a DNS-safe label for auto-generated platform
+	// subdomains. It defaults to pluginConfig.GenerateDNSSlug and is
+	// injectable so tests can control the slug sequence.
+	slugGen func() string
 }
 
 type DNSZoneService interface {
@@ -86,6 +90,7 @@ func NewDelegatedDomainService(reg *Registry, dns DNSZoneService) *DelegatedDoma
 	return &DelegatedDomainService{
 		registry: reg,
 		dnsSvc:   dns,
+		slugGen:  pluginConfig.GenerateDNSSlug,
 	}
 }
 
@@ -128,9 +133,63 @@ func (s *DelegatedDomainService) gatewayIP() string {
 // user — otherwise the subdomain would create a competing authoritative zone
 // and let another user squat authority over a name their neighbor already
 // hosts. A new zone is only created when no parent zone exists at all.
-func (s *DelegatedDomainService) resolveManagedZone(ctx context.Context, domain string, userID uint) (*pluginDb.DNSZone, bool, error) {
-	// A subdomain (e.g. docs.pinner.xyz) lives inside its parent's zone
-	// (pinner.xyz); only the apex owns a zone.
+//
+// platformRootID, when non-nil, marks this as a genuine platform claim and
+// carries the exact PlatformDomain the claim was granted under. A platform
+// root (e.g. "platform.test") is operator-owned; a subdomain under it reuses
+// the operator's zone even though the binding's UserID differs. This is the
+// intended, narrow relaxation of the one-zone invariant, and it must be gated
+// on an actual platform claim — otherwise any user could mint arbitrary
+// hostnames under a platform root via the normal bind flow (bypassing label
+// validation, availability, and claim semantics) by setting
+// domain="anything.<root>" directly. The root is threaded in by the caller
+// (the claim was already authorized against it) rather than re-derived by
+// suffix-matching the domain across every registered root: a re-derivation
+// could mis-allocate a claim to a longer, differently-registered nested root
+// whose zone should not be touched.
+//
+// Sharing the operator's zone (rather than delegating a child zone per
+// claim) is a deliberate topology decision: every claim inherits the root's
+// one-time DNSSEC setup (a single DS/keyset for the root against its parent)
+// with zero per-claim DNSSEC work, and for DANE-capable namespaces (HNS)
+// each claim still gets its own _443._tcp.<label>.<root> TLSA inside that
+// shared signed zone. Per-claim child zones are intentionally avoided (see
+// docs/platform-subdomains-dane-zones.md).
+func (s *DelegatedDomainService) resolveManagedZone(ctx context.Context, domain string, userID uint, platformRootID *uint) (*pluginDb.DNSZone, bool, error) {
+	// Platform claim: resolve the operator zone for the exact granted root.
+	// This never creates a new zone (zoneCreated is always false), so a
+	// failing claim cannot take down the shared zone via a later stray
+	// DeleteZone — callers must still guard cleanup with zoneCreated.
+	if platformRootID != nil {
+		var pd pluginDb.PlatformDomain
+		if err := s.DB().WithContext(ctx).First(&pd, *platformRootID).Error; err != nil {
+			return nil, false, fmt.Errorf("load platform root %d: %w", *platformRootID, err)
+		}
+		if !pd.Enabled {
+			return nil, false, fmt.Errorf("platform root %q is disabled", pd.Domain)
+		}
+		// The claim must actually descend from the granted root (and not be
+		// the root apex itself). createPlatformBinding already guarantees this,
+		// but resolveManagedZone is the enforcement point of record for the
+		// one-zone platform relaxation, so re-check cheaply here.
+		if domain == pd.Domain {
+			return nil, false, fmt.Errorf("domain %q is the platform root apex, not a subdomain", domain)
+		}
+		if !strings.HasSuffix(domain, "."+pd.Domain) {
+			return nil, false, fmt.Errorf("domain %q is not a subdomain of platform root %q", domain, pd.Domain)
+		}
+		z, err := s.dnsSvc.GetZoneByDomain(ctx, pd.Domain)
+		if err != nil {
+			return nil, false, fmt.Errorf("lookup platform zone for %q: %w", pd.Domain, err)
+		}
+		if z == nil {
+			return nil, false, fmt.Errorf("platform root %q has no provisioned zone", pd.Domain)
+		}
+		return z, false, nil
+	}
+
+	// A subdomain (e.g. docs.example.xyz) lives inside its parent's zone
+	// (example.xyz); only the apex owns a zone.
 	if parent := parentDomain(domain); parent != "" {
 		z, err := s.dnsSvc.GetZoneByDomain(ctx, parent)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -165,7 +224,7 @@ func parentDomain(domain string) string {
 
 func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	namespace, domain string, websiteID, userID uint, dnsHostingEnabled bool,
-	notifyCreated bool, config json.RawMessage) (*pluginDb.WebsiteDomain, error) {
+	notifyCreated bool, config json.RawMessage, platformRootID *uint) (*pluginDb.WebsiteDomain, error) {
 
 	// Require a database connection up front: many call sites feed through a
 	// service that may not be wired to a DB (e.g. the website-create API when
@@ -265,7 +324,7 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	// Managed DNS: create DNS resources only after the DB row is committed.
 	// The authoritative zone follows the one-zone rule — apex owns, subdomain
 	// reuses the parent's zone.
-	zone, zoneCreated, err := s.resolveManagedZone(ctx, domain, userID)
+	zone, zoneCreated, err := s.resolveManagedZone(ctx, domain, userID, platformRootID)
 	if err != nil {
 		s.DB().WithContext(ctx).Unscoped().Delete(wd)
 		return nil, fmt.Errorf("zone resolution failed: %w", err)
@@ -316,13 +375,21 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	delegationAny, err := provider.BuildDelegation(ctx, zone.ID, domain, &website, config)
 	if err != nil {
 		s.DB().WithContext(ctx).Unscoped().Delete(wd)
-		_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+		// Only tear down a zone this call created. For a platform claim the
+		// zone is the operator's shared platform-root zone (zoneCreated is
+		// false), which must never be deleted on a per-claim failure —
+		// doing so would take down every subdomain on that root.
+		if zoneCreated {
+			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+		}
 		return nil, fmt.Errorf("delegation build failed: %w", err)
 	}
 	delegationBytes, err := json.Marshal(delegationAny)
 	if err != nil {
 		s.DB().WithContext(ctx).Unscoped().Delete(wd)
-		_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+		if zoneCreated {
+			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+		}
 		return nil, fmt.Errorf("marshal delegation data: %w", err)
 	}
 
@@ -382,6 +449,21 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 	provider := s.registry.Get(string(wd.Namespace))
 	if provider == nil {
 		return false, fmt.Errorf("unsupported namespace: %s", wd.Namespace)
+	}
+
+	// A platform subdomain is minted under an operator-owned root: the platform
+	// controls both sides of the DNS check, so there is no user-side TXT
+	// verification to perform and no external delegation to wait on. It is
+	// considered active as soon as it exists. This is the single content
+	// special-case for platform subdomains and is deliberately a guard clause.
+	if wd.PlatformDomainID != nil {
+		wd.Status = pluginDb.DomainStatusActive
+		if s.DB() != nil {
+			if err := s.DB().WithContext(ctx).Model(wd).Update("status", wd.Status).Error; err != nil {
+				return false, fmt.Errorf("failed to persist domain status: %w", err)
+			}
+		}
+		return true, nil
 	}
 
 	// A self-hosted DNS binding owns no portal-managed zone to verify: the user

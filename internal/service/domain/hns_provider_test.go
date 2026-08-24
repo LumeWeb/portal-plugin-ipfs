@@ -45,10 +45,14 @@ func TestHNSProvider_Validate(t *testing.T) {
 	assert.NoError(t, p.Validate("EXAMPLE"))
 	assert.NoError(t, p.Validate("example/"))
 	assert.NoError(t, p.Validate("example."))
+	// Subdomains (multi-label) are valid: each label must be DNS-compliant.
+	assert.NoError(t, p.Validate("blog.altroot"))
+	assert.NoError(t, p.Validate("sub.blog.altroot"))
 
 	assert.Error(t, p.Validate(""))
-	assert.Error(t, p.Validate("example.com"))
 	assert.Error(t, p.Validate("-invalid"))
+	// Empty labels are invalid.
+	assert.Error(t, p.Validate("example..com"))
 }
 
 func TestHNSProvider_BuildDelegation_DefaultDelegated(t *testing.T) {

@@ -68,7 +68,7 @@ func TestDelegatedDomainService_CreateDomain(t *testing.T) {
 		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
 
-		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, true, true, nil)
+		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, true, true, nil, nil)
 		assert.NoError(tb, err)
 		assert.NotNil(tb, wd)
 		assert.Equal(tb, "example.com", wd.Domain)
@@ -103,7 +103,7 @@ func TestDelegatedDomainService_CreateDomain_NotifyEvenWhenPrimarySet(t *testing
 		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
 
-		wd, err := svc.CreateDomain(context.Background(), "icann", "alt-example.com", website.ID, 1, true, true, nil)
+		wd, err := svc.CreateDomain(context.Background(), "icann", "alt-example.com", website.ID, 1, true, true, nil, nil)
 		assert.NoError(tb, err)
 		assert.NotNil(tb, wd)
 		assert.Equal(tb, "alt-example.com", wd.Domain)
@@ -139,7 +139,7 @@ func TestDelegatedDomainService_CreateDomain_SelfHosted(t *testing.T) {
 		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
 
-		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, false, true, nil)
+		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, false, true, nil, nil)
 		assert.NoError(tb, err)
 		assert.NotNil(tb, wd)
 		assert.Equal(tb, pluginDb.DomainStatusSelfHosted, wd.Status)
@@ -176,11 +176,11 @@ func TestDelegatedDomainService_CreateDomain_DuplicateKey(t *testing.T) {
 		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
 
-		_, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, false, true, nil)
+		_, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, false, true, nil, nil)
 		require.NoError(tb, err)
 
 		// A second bind of the same (domain, namespace) hits the unique key.
-		_, err = svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, false, true, nil)
+		_, err = svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, false, true, nil, nil)
 		require.Error(tb, err)
 	}, TestOptions)
 }
@@ -193,7 +193,7 @@ func TestDelegatedDomainService_CreateDomain_SelfHostedDANEFailurePurgesBinding(
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		require.NotNil(tb, svc)
 
-		_, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, false, false, nil)
+		_, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, false, false, nil, nil)
 		require.Error(tb, err)
 		assert.Contains(tb, err.Error(), "failed to bootstrap DANE identity")
 
@@ -248,7 +248,7 @@ func TestDelegatedDomainService_CreateDomain_SubdomainReusesParentZone(t *testin
 		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
 
-		wd, err := svc.CreateDomain(context.Background(), "icann", "docs.example.com", website.ID, 1, true, true, nil)
+		wd, err := svc.CreateDomain(context.Background(), "icann", "docs.example.com", website.ID, 1, true, true, nil, nil)
 		assert.NoError(tb, err)
 		assert.NotNil(tb, wd)
 		// DNSLink/apex/delegation are written into the reused parent zone; the
@@ -290,7 +290,7 @@ func TestDelegatedDomainService_CreateDomain_SubdomainForeignParentRejected(t *t
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: parent.ID}, Domain: "example.com", UserID: 2}, nil).Once()
 		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, "docs.example.com", mock.Anything)
 
-		_, err := svc.CreateDomain(context.Background(), "icann", "docs.example.com", website.ID, 1, true, false, nil)
+		_, err := svc.CreateDomain(context.Background(), "icann", "docs.example.com", website.ID, 1, true, false, nil, nil)
 		require.Error(tb, err)
 		assert.Contains(tb, err.Error(), "owned by another user")
 	}, TestOptions)
@@ -301,7 +301,7 @@ func TestDelegatedDomainService_CreateDomain_UnsupportedNamespace(t *testing.T) 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		require.NotNil(tb, svc)
 
-		_, err := svc.CreateDomain(context.Background(), "ens", "example.eth", 1, 1, true, false, nil)
+		_, err := svc.CreateDomain(context.Background(), "ens", "example.eth", 1, 1, true, false, nil, nil)
 		assert.Error(tb, err)
 		assert.Contains(tb, err.Error(), "unsupported namespace")
 	}, TestOptions)

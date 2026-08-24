@@ -9,9 +9,28 @@ import (
 )
 
 // DomainRequest binds a domain to a website.
+//
+// Two mutually exclusive shapes are supported:
+//   - A user-owned domain: set Domain + Namespace.
+//   - A platform subdomain (free subdomain under an operator-owned root): set
+//     PlatformDomain (the root, e.g. "pinner.site") plus exactly one of Label
+//     (an explicit subdomain label) or Generate (true — let the platform choose
+//     a computed label). The namespace and DNS hosting are derived from the
+//     platform root.
 type DomainRequest struct {
 	Domain    string `json:"domain"`
 	Namespace string `json:"namespace"` // e.g. "icann", "hns"
+
+	// Platform subdomain claim (mutually exclusive with Domain/Namespace).
+	PlatformDomain string `json:"platform_domain,omitempty"`
+	// PlatformNamespace optionally disambiguates which alt-root namespace to
+	// claim under when the same root is registered under multiple namespaces
+	// (e.g. both ICANN and HNS). Empty means "the single registered/unique
+	// namespace"; an error is raised if the root is ambiguous.
+	PlatformNamespace string `json:"platform_namespace,omitempty"`
+	Label             string `json:"label,omitempty"`
+	Generate          bool   `json:"generate,omitempty"`
+
 	// DNSHostingEnabled controls whether the portal manages DNS for this
 	// binding. Managed-by-default: when omitted (nil), the binding is created
 	// DNS-hosted, matching the creation of its authoritative zone.
@@ -21,11 +40,21 @@ type DomainRequest struct {
 
 func (r DomainRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
-		"Domain":            zog.String().Required().Min(1).Max(255),
-		"Namespace":         zog.String().Required().OneOf([]string{string(db.DomainNamespaceICANN), string(db.DomainNamespaceHNS)}),
+		"Domain":            zog.String().Min(1).Max(255),
+		"Namespace":         zog.String().OneOf([]string{string(db.DomainNamespaceICANN), string(db.DomainNamespaceHNS)}),
+		"PlatformDomain":    zog.String().Min(1).Max(255),
+		"PlatformNamespace": zog.String().OneOf([]string{string(db.DomainNamespaceICANN), string(db.DomainNamespaceHNS)}),
+		"Label":             zog.String().Min(1).Max(63),
+		"Generate":          zog.Bool(),
 		"DNSHostingEnabled": zog.Ptr(zog.Bool()),
 		// Config is intentionally unvalidated here; the namespace provider validates its contents.
 	})
+}
+
+// IsPlatformClaim reports whether this request claims a platform subdomain
+// rather than a user-owned domain.
+func (r DomainRequest) IsPlatformClaim() bool {
+	return r.PlatformDomain != ""
 }
 
 func (r *DomainRequest) ToModel() (*DomainRequest, error) {

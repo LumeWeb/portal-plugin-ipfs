@@ -163,14 +163,20 @@ func (p *HNSProvider) Validate(domain string) error {
 	if domain == "" {
 		return fmt.Errorf("domain is required")
 	}
-	if strings.Contains(domain, ".") {
-		return fmt.Errorf("HNS domain must be single-label (no dots)")
-	}
-	if len(domain) > 63 {
-		return fmt.Errorf("HNS domain exceeds 63 characters")
-	}
-	if !hnsDomainRe.MatchString(domain) {
-		return fmt.Errorf("HNS domain contains invalid characters")
+	// An HNS domain may be a TLD (single label, e.g. "altroot") or a
+	// subdomain under a TLD (e.g. "blog.altroot"). Each label must be
+	// DNS-compliant and within the 63-character limit.
+	labels := strings.Split(domain, ".")
+	for _, label := range labels {
+		if label == "" {
+			return fmt.Errorf("HNS domain contains empty label")
+		}
+		if len(label) > 63 {
+			return fmt.Errorf("HNS domain label exceeds 63 characters")
+		}
+		if !hnsDomainRe.MatchString(label) {
+			return fmt.Errorf("HNS domain contains invalid characters")
+		}
 	}
 	return nil
 }
@@ -199,9 +205,18 @@ func (p *HNSProvider) BuildDelegation(ctx context.Context, zoneID uint,
 	}
 
 	// Ensure DNSSEC is enabled on the zone so it is signed and has a key to
-	// derive the DS from. The DS itself is NOT persisted in the delegation
-	// bundle — it is derived live from PowerDNS on demand (see
-	// GetActiveDNSSECDS), so it can never go stale on key rotation.
+	// derive the DS from. This zone is either the claim's own apex zone or, for
+	// a platform subdomain, the shared operator platform-root zone that all of
+	// that root's claims live in (see resolveManagedZone). In both cases the
+	// zone must be DNSSEC-active for DANE/TLSA and DS verification to work.
+	//
+	// This call is idempotent self-heal, not per-claim key minting: EnableDNSSEC
+	// reuses the zone's existing active signing key, so a platform claim never
+	// rolls the root's key or introduces a new keypair of its own. It exists
+	// mainly to recover a zone that an ops error left unsigned. The DS itself is
+	// NOT persisted in the delegation bundle — it is derived live from PowerDNS
+	// on demand (see GetActiveDNSSECDS), so it can never go stale on key
+	// rotation.
 	if p.dnsSvc != nil {
 		if err := p.enableDNSSEC(ctx, zoneID); err != nil {
 			return nil, fmt.Errorf("dnssec enablement failed: %w", err)
@@ -227,10 +242,14 @@ func (p *HNSProvider) BuildDelegation(ctx context.Context, zoneID uint,
 }
 
 // enableDNSSEC ensures DNSSEC is enabled on the zone via PowerDNS. It is
-// idempotent (EnableDNSSEC reuses an existing active signing key) and exists so
-// fresh delegation guarantees a signed zone. The DS is deliberately NOT
-// computed or stored here: the portal keeps the delegation bundle free of the
-// derived DS, which is instead computed live from PowerDNS on demand.
+// idempotent: PowerDNS reuses the zone's existing active signing key, so a
+// claim against an already-signed zone (including a platform subdomain
+// reusing the operator's platform-root zone) costs no new key material and
+// does not roll the root's key. It exists so fresh delegation guarantees a
+// signed zone and to self-heal a zone that an ops error left unsigned. The DS
+// is deliberately NOT computed or stored here: the portal keeps the
+// delegation bundle free of the derived DS, which is instead computed live
+// from PowerDNS on demand.
 func (p *HNSProvider) enableDNSSEC(ctx context.Context, zoneID uint) error {
 	if _, err := p.dnsSvc.EnableDNSSEC(ctx, zoneID); err != nil {
 		return fmt.Errorf("enable dnssec: %w", err)

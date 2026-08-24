@@ -199,7 +199,7 @@ func (a *API) createWebsite(c echo.Context) error {
 	}
 	if a.delegatedDomainSvc != nil {
 		var cfgRaw json.RawMessage
-		if _, err := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, req.Domain, website.ID, user, dnsEnabled, true, cfgRaw); err != nil {
+		if _, err := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, req.Domain, website.ID, user, dnsEnabled, true, cfgRaw, nil); err != nil {
 			// A concurrent create may have won the (domain, namespace) unique key
 			// race after this request's pre-check passed. The guard is not atomic,
 			// so on a duplicate-key violation roll back the just-persisted website
@@ -548,7 +548,7 @@ func (a *API) updateWebsite(c echo.Context) error {
 				apiErr := NewError(ErrKeyFileProcessingFailed, eerr)
 				return ctx.Error(apiErr, apiErr.HttpStatus())
 			}
-			wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw)
+			wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw, nil)
 			if derr != nil {
 				a.Logger().Error("Failed to create primary domain for website",
 					zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Error(derr))
@@ -576,6 +576,13 @@ func (a *API) updateWebsite(c echo.Context) error {
 			}
 		}
 		if primary != nil {
+			// Platform subdomains have DNS hosting forced on; reject attempts
+			// to disable it so records in the operator's shared zone are not
+			// torn out.
+			if primary.PlatformDomainID != nil && !*req.DNSEnabled {
+				apiErr := NewError(ErrKeyValidationFailed, fmt.Errorf("DNS hosting is read-only for platform subdomains"))
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
 			updated, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, *req.DNSEnabled)
 			if derr != nil {
 				a.Logger().Error("failed to set DNS hosting on primary domain", zap.Uint("domain_id", primary.ID), zap.Error(derr))
