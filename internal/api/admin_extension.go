@@ -16,6 +16,9 @@ import (
 	"go.lumeweb.com/portal-router"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal-middleware/auth/jwt"
+	mcontext "go.lumeweb.com/portal-middleware/context"
+	portalMw "go.lumeweb.com/portal-middleware/middleware"
 	"go.lumeweb.com/queryutil"
 	queryutilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
@@ -73,6 +76,14 @@ func (e *AdminExtension) Configure(gRouter router.Router, accessSvc core.AccessS
 		return err
 	}
 
+	// Authenticate operator tokens end-to-end so platform-domain handlers can
+	// derive the operator's identity via GetUserID (same middleware as the main
+	// API). Scoped to the platform-domain routes; the other admin handlers do
+	// not require a per-request identity.
+	authMw := portalMw.AuthMiddleware(e.Context(),
+		portalMw.WithAuthPurpose(jwt.PurposeLogin, jwt.PurposeAPI),
+	)
+
 	if err := e.registerWebsiteHandlers(ipfsRouter, accessSvc); err != nil {
 		return err
 	}
@@ -81,7 +92,7 @@ func (e *AdminExtension) Configure(gRouter router.Router, accessSvc core.AccessS
 		return err
 	}
 
-	if err := e.registerPlatformDomainHandlers(ipfsRouter, accessSvc); err != nil {
+	if err := e.registerPlatformDomainHandlers(ipfsRouter, accessSvc, authMw); err != nil {
 		return err
 	}
 
@@ -305,7 +316,7 @@ func (e *AdminExtension) republishIPNS(c echo.Context) error {
 
 	return httputil.EncodeResponse(ctx, nil, &resp)
 }
-func (e *AdminExtension) registerPlatformDomainHandlers(gRouter router.Router, accessSvc core.AccessService) error {
+func (e *AdminExtension) registerPlatformDomainHandlers(gRouter router.Router, accessSvc core.AccessService, authMw echo.MiddlewareFunc) error {
 	routes := router.DefineRoutes(
 		router.NewRoute(http.MethodPost, "/platform-domains", e.createPlatformDomain,
 			router.WithAccess(core.ACCESS_ADMIN_ROLE),
@@ -313,12 +324,27 @@ func (e *AdminExtension) registerPlatformDomainHandlers(gRouter router.Router, a
 				router.WithSummary("Register platform domain"),
 				router.WithDescription(`Registers a platform-owned root domain that users can claim free subdomains under.
 
-Operator-only operation. The zone referenced by zone_id must already be provisioned and owned by the operator.
+Operator-only operation. The operator's DNS zone for the root is auto-created (idempotently) from the authenticated operator.
 
-See also: GET /platform-domains (list), PATCH /platform-domains/:id (enable/disable), DELETE /platform-domains/:id`),
+See also: GET /platform-domains (list), PATCH /platform-domains/:id (enable/disable), DELETE /platform-domains/:id, POST /platform-domains/:id/bind`),
 				router.WithTags("Admin", "PlatformDomains"),
 				router.WithRequestBody(dto.PlatformDomainRequest{}, "Platform domain to register", true),
 				router.WithSuccessResponse(http.StatusCreated, "Platform domain registered", router.WithJSONContent(dto.PlatformDomainResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/platform-domains/:id/bind", e.bindPlatformRootApex,
+			router.WithAccess(core.ACCESS_ADMIN_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Bind website to platform root apex"),
+				router.WithDescription(`Binds an operator-owned website directly to the root apex of a platform domain (e.g. "pinner.site").
+
+Operator-only operation. The website must be owned by the authenticated operator. The apex binding reuses the platform root's auto-created zone.
+
+See also: POST /platform-domains (register), PATCH /platform-domains/:id (enable/disable)`),
+				router.WithTags("Admin", "PlatformDomains"),
+				router.WithPathParam("id", "Platform domain ID", ""),
+				router.WithRequestBody(dto.PlatformDomainBindRequest{}, "Website to bind to the root apex", true),
+				router.WithSuccessResponse(http.StatusOK, "Website bound to platform root apex", router.WithJSONContent(dto.DomainResponse{})),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/platform-domains", e.listPlatformDomains,
@@ -355,7 +381,7 @@ See also: GET /platform-domains (list), PATCH /platform-domains/:id (enable/disa
 	)
 
 	apiGroup := internal.ProtocolName
-	return router.RegisterRoutes(gRouter, accessSvc, apiGroup, routes)
+	return router.RegisterRoutes(gRouter, accessSvc, apiGroup, routes, router.WithMiddlewares(authMw))
 }
 
 func (e *AdminExtension) createPlatformDomain(c echo.Context) error {
@@ -367,12 +393,19 @@ func (e *AdminExtension) createPlatformDomain(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
+	// The operator's zone is auto-created for the root; the operator is
+	// derived from the authenticated admin context (never trusted from input).
+	operatorUserID, err := mcontext.GetUserID(c)
+	if err != nil {
+		return err
+	}
+
 	req := dto.PlatformDomainRequest{}
 	if _, ok := httputil.DecodeAndValidateRequest(ctx, &req); !ok {
 		return nil
 	}
 
-	pd, err := e.delegatedDomainSvc.CreatePlatformDomain(reqCtx, req.Domain, pluginDb.DomainNamespace(req.Namespace), req.ZoneID, req.Enabled)
+	pd, err := e.delegatedDomainSvc.CreatePlatformDomain(reqCtx, req.Domain, pluginDb.DomainNamespace(req.Namespace), operatorUserID, req.Enabled)
 	if err != nil {
 		e.logger.Error("Failed to create platform domain", zap.Error(err))
 		apiErr := NewError(ErrKeyValidationFailed, err)
@@ -385,6 +418,49 @@ func (e *AdminExtension) createPlatformDomain(c echo.Context) error {
 		ctx.Response().Status = http.StatusCreated
 	})
 	return httputil.EncodeResponse(ctx, pd, &resp)
+}
+
+// bindPlatformRootApex binds an operator-owned website to the root apex of a
+// platform domain.
+func (e *AdminExtension) bindPlatformRootApex(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	if e.delegatedDomainSvc == nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service not available"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	id, err := e.parsePathID(c, "id")
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidUUIDFormat, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	userID, err := mcontext.GetUserID(c)
+	if err != nil {
+		return err
+	}
+
+	req := dto.PlatformDomainBindRequest{}
+	if _, ok := httputil.DecodeAndValidateRequest(ctx, &req); !ok {
+		return nil
+	}
+
+	wd, err := e.delegatedDomainSvc.BindPlatformRootApex(reqCtx, req.WebsiteID, userID, id)
+	if err != nil {
+		e.logger.Error("Failed to bind platform root apex", zap.Error(err), zap.Uint("platform_domain_id", id), zap.Uint("website_id", req.WebsiteID))
+		apiErr := NewError(ErrKeyValidationFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	resp := dto.DomainResponse{}
+	if err := resp.FromModel(wd); err != nil {
+		e.logger.Error("Failed to build domain response", zap.Error(err))
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	return httputil.EncodeResponse(ctx, wd, &resp)
 }
 
 func (e *AdminExtension) listPlatformDomains(c echo.Context) error {
@@ -431,7 +507,11 @@ func (e *AdminExtension) updatePlatformDomain(c echo.Context) error {
 		return nil
 	}
 
-	pd, err := e.delegatedDomainSvc.UpdatePlatformDomain(reqCtx, id, req.Enabled)
+	if req.Enabled == nil {
+		apiErr := NewError(ErrKeyValidationFailed, fmt.Errorf("enabled is required"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	pd, err := e.delegatedDomainSvc.UpdatePlatformDomain(reqCtx, id, *req.Enabled)
 	if err != nil {
 		e.logger.Error("Failed to update platform domain", zap.Error(err), zap.Uint("id", id))
 		apiErr := NewError(ErrKeyValidationFailed, err)

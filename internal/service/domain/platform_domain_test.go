@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,70 +30,56 @@ func createPlatformRoot(tb testing.TB, ctx coreTesting.TestContext, domain strin
 	return pd
 }
 
-func TestCreatePlatformDomain_ZoneValidation(t *testing.T) {
-	// S2: a platform root may only be registered against a zone that actually
-	// exists and whose ID matches the root's domain.
-	t.Run("registers_when_zone_exists", func(t *testing.T) {
+func TestCreatePlatformDomain_AutoCreatesZone(t *testing.T) {
+	// The operator's zone is auto-created (idempotently) from the operator
+	// user; the resulting zone ID is stored on the PlatformDomain row. A root
+	// is registered only when zone creation succeeds.
+	t.Run("creates_zone_and_registers_root", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
-			mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.test").
-				Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.test"}, nil).Once()
+			mockDNS.EXPECT().CreateZone(mock.Anything, "platform.test", uint(1)).
+				Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.test", UserID: 1}, nil).Once()
 
-			pd, err := svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+			pd, err := svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 1, true)
 			require.NoError(tb, err)
 			assert.Equal(tb, uint(7), pd.ZoneID)
 			assert.Equal(tb, "platform.test", pd.Domain)
 		}, TestOptions)
 	})
-	t.Run("rejects_when_zone_missing", func(t *testing.T) {
+	t.Run("reuses_existing_zone_idempotently", func(t *testing.T) {
+		// CreateZone is idempotent: when a zone already exists for the domain it
+		// returns the existing zone. CreatePlatformDomain must store THAT zone's
+		// ID, never assume a fresh one.
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
-			mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.test").Return(nil, nil).Once()
-			_, err := svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
-			require.Error(tb, err)
-			assert.Contains(tb, err.Error(), "no provisioned zone")
-		}, TestOptions)
-	})
-	t.Run("rejects_when_zone_id_mismatch", func(t *testing.T) {
-		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
-			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
-			mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.test").
-				Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.test"}, nil).Once()
+			mockDNS.EXPECT().CreateZone(mock.Anything, "platform.test", uint(1)).
+				Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 9}, Domain: "platform.test", UserID: 1}, nil).Once()
 
-			_, err := svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 99, true)
-			require.Error(tb, err)
-			assert.Contains(tb, err.Error(), "does not match")
+			pd, err := svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 1, true)
+			require.NoError(tb, err)
+			assert.Equal(tb, uint(9), pd.ZoneID)
 		}, TestOptions)
 	})
-	t.Run("rejects_when_zone_id_zero", func(t *testing.T) {
+	t.Run("rejects_when_zone_creation_fails", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+			mockDNS.EXPECT().CreateZone(mock.Anything, "platform.test", uint(1)).
+				Return(nil, errors.New("boom")).Once()
+
+			_, err := svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 1, true)
+			require.Error(tb, err)
+			assert.Contains(tb, err.Error(), "provision platform zone")
+		}, TestOptions)
+	})
+	t.Run("rejects_zero_operator_user", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 			_, err := svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 0, true)
 			require.Error(tb, err)
-			assert.Contains(tb, err.Error(), "requires a provisioned zone")
-		}, TestOptions)
-	})
-	t.Run("rejects_soft_deleted_zone", func(t *testing.T) {
-		// N2 regression: GetZoneByDomain intentionally returns soft-deleted
-		// zones, but a platform root must never be registered against a
-		// logically-removed zone.
-		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
-			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
-			mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "retired.site").
-				Return(&pluginDb.DNSZone{
-					Model:  gorm.Model{ID: 7, DeletedAt: gorm.DeletedAt{Valid: true}},
-					Domain: "retired.site",
-					UserID: 1,
-					Status: string(pluginDb.DNSZoneStatusActive),
-				}, nil).Once()
-
-			_, err := svc.CreatePlatformDomain(context.Background(), "retired.site", pluginDb.DomainNamespaceICANN, 7, true)
-			require.Error(tb, err)
-			assert.Contains(tb, err.Error(), "deleted zone")
+			assert.Contains(tb, err.Error(), "operator user")
 		}, TestOptions)
 	})
 }
@@ -107,13 +94,13 @@ func TestCreatePlatformDomain_DuplicateLiveRootRejected(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
-		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.test").
-			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.test"}, nil).Times(2)
+		mockDNS.EXPECT().CreateZone(mock.Anything, "platform.test", uint(1)).
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.test", UserID: 1}, nil).Times(2)
 
-		_, err := svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+		_, err := svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 1, true)
 		require.NoError(tb, err)
 
-		_, err = svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+		_, err = svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 1, true)
 		require.Error(tb, err)
 		assert.Contains(tb, err.Error(), "already registered")
 	}, TestOptions)
@@ -144,9 +131,10 @@ func TestDeletePlatformDomain_SoftDelete(t *testing.T) {
 		// soft-delete tombstone before inserting against the strict
 		// (domain, namespace) unique key.
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
-		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.test").
+		// Re-registration auto-creates (idempotently) the operator zone again.
+		mockDNS.EXPECT().CreateZone(mock.Anything, "platform.test", uint(1)).
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.test"}, nil).Once()
-		recreated, err := svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+		recreated, err := svc.CreatePlatformDomain(context.Background(), "platform.test", pluginDb.DomainNamespaceICANN, 1, true)
 		require.NoError(tb, err)
 		assert.Equal(tb, "platform.test", recreated.Domain)
 		_ = db
@@ -621,10 +609,15 @@ func TestResolveManagedZone_PlatformGuard_HNSSingleLabel(t *testing.T) {
 
 		pd := createPlatformRoot(tb, ctx, "altroot", pluginDb.DomainNamespaceHNS, 7, true)
 
-		// Apex of the root is not a subdomain of itself.
-		_, _, err := svc.resolveManagedZone(context.Background(), "altroot", 1, &pd.ID)
-		require.Error(tb, err)
-		assert.Contains(tb, err.Error(), "apex")
+		// Apex of the root resolves to the operator's platform zone (the
+		// root-apex binding path via BindPlatformRootApex), never a new zone.
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "altroot").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "altroot"}, nil).Once()
+		z, created, err := svc.resolveManagedZone(context.Background(), "altroot", 1, &pd.ID)
+		require.NoError(tb, err)
+		require.NotNil(tb, z)
+		assert.Equal(t, uint(7), z.ID)
+		assert.False(t, created, "a platform apex must never create a new zone")
 
 		// An unrelated name is not a subdomain of the granted root.
 		_, _, err = svc.resolveManagedZone(context.Background(), "other.xyz", 1, &pd.ID)
@@ -634,10 +627,115 @@ func TestResolveManagedZone_PlatformGuard_HNSSingleLabel(t *testing.T) {
 		// A proper subdomain resolves to the granted root's zone.
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "altroot").
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "altroot"}, nil).Once()
-		z, created, err := svc.resolveManagedZone(context.Background(), "blog.altroot", 1, &pd.ID)
+		z, created, err = svc.resolveManagedZone(context.Background(), "blog.altroot", 1, &pd.ID)
 		require.NoError(tb, err)
 		require.NotNil(tb, z)
 		assert.Equal(t, uint(7), z.ID)
 		assert.False(t, created, "a platform claim must never create a new zone")
 	}, TestOptions)
+}
+
+// TestBindPlatformRootApex_WritesApexIntoOperatorZone proves the root-apex
+// binding path (BindPlatformRootApex): an operator-owned website is bound
+// directly to the platform root's apex, and the DNSLink + apex records are
+// written into the operator's platform zone (ID 7), never a freshly created
+// zone.
+func TestBindPlatformRootApex_WritesApexIntoOperatorZone(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		// Operator owns the website and the platform root.
+		website := createTestWebsite(tb, db, 1, "pinner.site")
+		pd := createPlatformRoot(tb, ctx, "pinner.site", pluginDb.DomainNamespaceICANN, 7, true)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		// Apex match resolves the operator's zone; records are written into it.
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinner.site").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "pinner.site"}, nil).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), "pinner.site", mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(7), "pinner.site", pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
+
+		wd, err := svc.BindPlatformRootApex(context.Background(), website.ID, 1, pd.ID)
+		require.NoError(tb, err)
+		require.NotNil(tb, wd)
+		assert.Equal(tb, "pinner.site", wd.Domain)
+		assert.Equal(tb, uint(7), wd.ZoneID)
+		assert.Equal(tb, "gw.example.com", wd.GatewayHost)
+		require.NotNil(tb, wd.PlatformDomainID)
+		assert.Equal(tb, pd.ID, *wd.PlatformDomainID)
+		assert.Equal(tb, pluginDb.DomainStatusActive, wd.Status)
+		// No new zone is ever created for a platform apex binding.
+		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, mock.Anything, mock.Anything)
+	}, platformApexTestOptions)
+}
+
+// TestBindPlatformRootApex_DisabledRootRejected ensures a disabled platform
+// root cannot be apex-bound.
+func TestBindPlatformRootApex_DisabledRootRejected(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "pinner.site")
+		pd := createPlatformRoot(tb, ctx, "pinner.site", pluginDb.DomainNamespaceICANN, 7, false)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		_, err := svc.BindPlatformRootApex(context.Background(), website.ID, 1, pd.ID)
+		require.Error(tb, err)
+		assert.Contains(tb, err.Error(), "disabled")
+	}, TestOptions)
+}
+
+// TestBindPlatformRootApex_MultipleRootsAsAdditionalDomains proves that two
+// distinct platform roots can both be apex-bound to one operator-owned website
+// as additional domains: each root's apex lands in its own operator zone and
+// carries its own PlatformDomain reference. The first binding becomes the
+// website primary; the second is an additional domain (primary stays the
+// first).
+func TestBindPlatformRootApex_MultipleRootsAsAdditionalDomains(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "pinner.site")
+		pdSite := createPlatformRoot(tb, ctx, "pinner.site", pluginDb.DomainNamespaceICANN, 11, true)
+		pdXyz := createPlatformRoot(tb, ctx, "pinner.xyz", pluginDb.DomainNamespaceICANN, 22, true)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinner.site").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 11}, Domain: "pinner.site"}, nil).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(11), "pinner.site", mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(11), "pinner.site", pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinner.xyz").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 22}, Domain: "pinner.xyz"}, nil).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(22), "pinner.xyz", mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(22), "pinner.xyz", pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
+
+		wdSite, err := svc.BindPlatformRootApex(context.Background(), website.ID, 1, pdSite.ID)
+		require.NoError(tb, err)
+		require.NotNil(tb, wdSite)
+		assert.Equal(tb, "pinner.site", wdSite.Domain)
+		assert.Equal(tb, uint(11), wdSite.ZoneID)
+		require.NotNil(tb, wdSite.PlatformDomainID)
+		assert.Equal(tb, pdSite.ID, *wdSite.PlatformDomainID)
+
+		wdXyz, err := svc.BindPlatformRootApex(context.Background(), website.ID, 1, pdXyz.ID)
+		require.NoError(tb, err)
+		require.NotNil(tb, wdXyz)
+		assert.Equal(tb, "pinner.xyz", wdXyz.Domain)
+		assert.Equal(tb, uint(22), wdXyz.ZoneID)
+		require.NotNil(tb, wdXyz.PlatformDomainID)
+		assert.Equal(tb, pdXyz.ID, *wdXyz.PlatformDomainID)
+
+		// Both bindings belong to the same website, and the first remains primary.
+		var siteDomain, xyzDomain pluginDb.WebsiteDomain
+		require.NoError(tb, db.Where("id = ?", wdSite.ID).First(&siteDomain).Error)
+		require.NoError(tb, db.Where("id = ?", wdXyz.ID).First(&xyzDomain).Error)
+		assert.Equal(tb, website.ID, siteDomain.WebsiteID)
+		assert.Equal(tb, website.ID, xyzDomain.WebsiteID)
+
+		var websiteAfter pluginDb.Website
+		require.NoError(tb, db.First(&websiteAfter, website.ID).Error)
+		require.NotNil(tb, websiteAfter.PrimaryDomainID)
+		assert.Equal(tb, wdSite.ID, *websiteAfter.PrimaryDomainID)
+
+		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, mock.Anything, mock.Anything)
+	}, platformApexTestOptions)
 }

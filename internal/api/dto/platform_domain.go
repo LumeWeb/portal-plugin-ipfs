@@ -6,10 +6,11 @@ import (
 )
 
 // PlatformDomainRequest registers a new platform-owned root (admin operation).
+// The operator's zone is auto-created (idempotently) from the authenticated
+// operator user; zone_id is no longer supplied by the client.
 type PlatformDomainRequest struct {
 	Domain    string `json:"domain"`
 	Namespace string `json:"namespace"` // icann | hns
-	ZoneID    uint   `json:"zone_id"`   // operator-owned DNSZone for the root
 	Enabled   bool   `json:"enabled,omitempty"`
 }
 
@@ -17,7 +18,6 @@ func (r PlatformDomainRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
 		"Domain":    zog.String().Required().Min(1).Max(255),
 		"Namespace": zog.String().Required().OneOf([]string{string(db.DomainNamespaceICANN), string(db.DomainNamespaceHNS)}),
-		"ZoneID":    zog.Uint().Required().GT(0),
 		"Enabled":   zog.Bool(),
 	})
 }
@@ -26,24 +26,43 @@ func (r PlatformDomainRequest) ToModel() (*db.PlatformDomain, error) {
 	return &db.PlatformDomain{
 		Domain:    r.Domain,
 		Namespace: db.DomainNamespace(r.Namespace),
-		ZoneID:    r.ZoneID,
 		Enabled:   r.Enabled,
 	}, nil
 }
 
+// PlatformDomainBindRequest binds an operator-owned website to the root apex
+// of a platform domain (admin operation).
+type PlatformDomainBindRequest struct {
+	WebsiteID uint `json:"website_id"`
+}
+
+func (r PlatformDomainBindRequest) Schema() *zog.StructSchema {
+	return zog.Struct(zog.Shape{
+		"WebsiteID": zog.Uint().Required().GT(0),
+	})
+}
+
+func (r PlatformDomainBindRequest) ToModel() (*db.Website, error) {
+	return &db.Website{ID: r.WebsiteID}, nil
+}
+
 // PlatformDomainUpdateRequest toggles registration state of a platform root.
 type PlatformDomainUpdateRequest struct {
-	Enabled bool `json:"enabled"`
+	Enabled *bool `json:"enabled"`
 }
 
 func (r PlatformDomainUpdateRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
-		"Enabled": zog.Bool().Required(),
+		"Enabled": zog.Ptr(zog.Bool()),
 	})
 }
 
 func (r PlatformDomainUpdateRequest) ToModel() (*db.PlatformDomain, error) {
-	return &db.PlatformDomain{Enabled: r.Enabled}, nil
+	enabled := false
+	if r.Enabled != nil {
+		enabled = *r.Enabled
+	}
+	return &db.PlatformDomain{Enabled: enabled}, nil
 }
 
 // PlatformDomainResponse is a registered platform root.

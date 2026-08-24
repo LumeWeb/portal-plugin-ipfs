@@ -72,16 +72,24 @@ func TestAdminPlatformDomainCRUD(t *testing.T) {
 		require.NotNil(tb, mockDNS)
 
 		t.Run("create_and_list", func(t *testing.T) {
-			mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.test").
+			helper := newMockHelper(t, ctx)
+			token, userID, _, _ := helper.SetupAuthenticatedTest()
+
+			// CreatePlatformDomain auto-creates (idempotently) the operator's DNS
+			// zone for the root from the authenticated admin user; the operator is
+			// derived from the request context, never trusted from client input.
+			mockDNS.EXPECT().CreateZone(mock.Anything, "platform.test", userID).
 				Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.test"}, nil).Once()
 
 			req := ctx.NewAPIRequest(http.MethodPost, "/api/ipfs/platform-domains",
-				[]byte(`{"domain":"platform.test","namespace":"icann","zone_id":7,"enabled":true}`))
+				[]byte(`{"domain":"platform.test","namespace":"icann","enabled":true}`))
+			setAuthHeader(req, token)
 			rec := httptest.NewRecorder()
 			ctx.Router().ServeHTTP(rec, req)
 			require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 
 			req = ctx.NewAPIRequest(http.MethodGet, "/api/ipfs/platform-domains", nil)
+			setAuthHeader(req, token)
 			rec = httptest.NewRecorder()
 			ctx.Router().ServeHTTP(rec, req)
 			require.Equal(t, http.StatusOK, rec.Code)
@@ -94,15 +102,19 @@ func TestAdminPlatformDomainCRUD(t *testing.T) {
 		})
 
 		t.Run("update_disable_and_soft_delete", func(t *testing.T) {
+			helper := newMockHelper(t, ctx)
+			token, _, _, _ := helper.SetupAuthenticatedTest()
+
 			require.NoError(tb, ctx.DB().Create(&pluginDb.PlatformDomain{
-				Domain: "platform.test", Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 7, Enabled: true,
+				Domain: "update.test", Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 7, Enabled: true,
 			}).Error)
 			var pd pluginDb.PlatformDomain
-			require.NoError(tb, ctx.DB().First(&pd).Error)
+			require.NoError(tb, ctx.DB().Where("domain = ?", "update.test").First(&pd).Error)
 			path := fmt.Sprintf("/api/ipfs/platform-domains/%d", pd.ID)
 
 			// Disable: future claims blocked, but the row remains queryable.
 			req := ctx.NewAPIRequest(http.MethodPatch, path, []byte(`{"enabled":false}`))
+			setAuthHeader(req, token)
 			rec := httptest.NewRecorder()
 			ctx.Router().ServeHTTP(rec, req)
 			require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
@@ -113,9 +125,10 @@ func TestAdminPlatformDomainCRUD(t *testing.T) {
 
 			// Delete -> soft delete (tombstone present via Unscoped).
 			req = ctx.NewAPIRequest(http.MethodDelete, path, nil)
+			setAuthHeader(req, token)
 			rec = httptest.NewRecorder()
 			ctx.Router().ServeHTTP(rec, req)
-			require.Equal(t, http.StatusOK, rec.Code)
+			require.Equal(t, http.StatusNoContent, rec.Code)
 
 			var after pluginDb.PlatformDomain
 			require.NoError(tb, ctx.DB().Unscoped().First(&after, pd.ID).Error)

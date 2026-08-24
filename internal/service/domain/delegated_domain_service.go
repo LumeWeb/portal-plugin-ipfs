@@ -168,14 +168,14 @@ func (s *DelegatedDomainService) resolveManagedZone(ctx context.Context, domain 
 		if !pd.Enabled {
 			return nil, false, fmt.Errorf("platform root %q is disabled", pd.Domain)
 		}
-		// The claim must actually descend from the granted root (and not be
-		// the root apex itself). createPlatformBinding already guarantees this,
-		// but resolveManagedZone is the enforcement point of record for the
-		// one-zone platform relaxation, so re-check cheaply here.
-		if domain == pd.Domain {
-			return nil, false, fmt.Errorf("domain %q is the platform root apex, not a subdomain", domain)
-		}
-		if !strings.HasSuffix(domain, "."+pd.Domain) {
+		// The claim must reference the granted root itself: an apex match
+		// (domain == pd.Domain) for a root-apex binding (BindPlatformRootApex),
+		// or a name that descends from the granted root for a subdomain claim.
+		// Either way the authoritative zone is the operator's platform-root
+		// zone. The subdomain path is also guarded upstream (CreatePlatformSubdomain
+		// rejects compositions that collapse to the apex), so this is the
+		// enforcement point of record for the one-zone platform relaxation.
+		if domain != pd.Domain && !strings.HasSuffix(domain, "."+pd.Domain) {
 			return nil, false, fmt.Errorf("domain %q is not a subdomain of platform root %q", domain, pd.Domain)
 		}
 		z, err := s.dnsSvc.GetZoneByDomain(ctx, pd.Domain)
