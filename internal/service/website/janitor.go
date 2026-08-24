@@ -8,19 +8,19 @@ import (
 	"github.com/gammazero/workerpool"
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
-	"go.lumeweb.com/portal/core"
-	"go.uber.org/zap"
-	"gorm.io/gorm"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
+	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
+	"go.lumeweb.com/portal/core"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 const (
 	JanitorJobSourceID = "ipfs"
-JanitorJobType     = "plugin.ipfs.website_janitor"
+	JanitorJobType     = "plugin.ipfs.website_janitor"
 )
 
 // WebsiteJanitorJob implements core.CronJob for periodic website validation
@@ -98,6 +98,7 @@ func (j *WebsiteJanitorJob) Run(ctx core.Context, eventCtx context.Context) erro
 	var websites []*pluginDb.Website
 	err := j.db.WithContext(eventCtx).
 		Where("deleted_at IS NULL").
+		Where("status != ?", string(pluginDb.WebsiteStatusPendingValidation)).
 		Where("last_checked_at IS NULL OR last_checked_at < ?", time.Now().Add(-j.config.CheckInterval)).
 		Find(&websites).Error
 
@@ -167,6 +168,15 @@ func (j *WebsiteJanitorJob) Run(ctx core.Context, eventCtx context.Context) erro
 func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *pluginDb.Website) error {
 	ctx, span := core.TraceMethod(ctx, "WebsiteJanitorJob.validateWebsite")
 	defer span.End()
+
+	// Websites awaiting DNS validation must not be subjected to CID-only
+	// liveness checks. They transition to active solely via ValidateDNS.
+	// Skip them here (refreshing last_checked_at so they aren't re-picked
+	// every minute) instead of risking an incorrect broken status.
+	if website.Status == string(pluginDb.WebsiteStatusPendingValidation) {
+		website.LastCheckedAt = new(time.Now())
+		return j.db.WithContext(ctx).Save(website).Error
+	}
 
 	oldStatus := website.Status
 	newStatus := pluginDb.WebsiteStatusActive
