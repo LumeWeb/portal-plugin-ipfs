@@ -348,7 +348,8 @@ See also: GET /platform-domains (list), PATCH /platform-domains/:id (enable/disa
 				router.WithDescription(`Removes a registered platform root. Existing subdomain bindings remain but can no longer be reconciled as platform subdomains.`),
 				router.WithTags("Admin", "PlatformDomains"),
 				router.WithPathParam("id", "Platform domain ID", ""),
-				router.WithSuccessResponse(http.StatusOK, "Platform domain deleted", router.WithJSONContent(nil)),
+				router.WithSuccessResponse(http.StatusNoContent, "Platform domain deleted"),
+			router.WithoutDefaultSuccessResponse(),
 			),
 		),
 	)
@@ -463,5 +464,5 @@ func (e *AdminExtension) deletePlatformDomain(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	return ctx.NoContent(http.StatusOK)
+	return ctx.NoContent(http.StatusNoContent)
 }
