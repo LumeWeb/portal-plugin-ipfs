@@ -169,19 +169,25 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 	ctx, span := core.TraceMethod(ctx, "WebsiteJanitorJob.validateWebsite")
 	defer span.End()
 
+	sm := NewWebsiteStateMachine(website)
+
 	// Websites awaiting DNS validation must not be subjected to CID-only
-	// liveness checks. They transition to active solely via ValidateDNS.
-	// Skip them here (refreshing last_checked_at so they aren't re-picked
-	// every minute) instead of risking an incorrect broken status.
+	// liveness checks. They transition to active solely via ValidateDNS. Skip
+	// them here (refreshing last_checked_at so they aren't re-picked every
+	// minute) instead of risking an incorrect broken status. The FSM also
+	// enforces this: revalidate_ok/cid_unpinned are not legal from
+	// pending_validation.
 	if website.Status == string(pluginDb.WebsiteStatusPendingValidation) {
 		website.LastCheckedAt = new(time.Now())
 		return j.db.WithContext(ctx).Save(website).Error
 	}
 
 	oldStatus := website.Status
-	newStatus := pluginDb.WebsiteStatusActive
 
-	// Check target based on type
+	// Determine the health-driven outcome for the target. The FSM turns this
+	// into a legal status transition (and is a no-op when the website is
+	// already in the target state).
+	var targetStatus pluginDb.WebsiteStatus
 	switch website.TargetType {
 	case string(pluginDb.WebsiteTargetTypeIPFS):
 		valid, err := j.validateCIDTarget(ctx, website.TargetHash())
@@ -189,11 +195,13 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 			j.logger.Warn("Failed to validate CID target",
 				zap.Error(err),
 				zap.String("target", website.TargetHash()))
-			newStatus = pluginDb.WebsiteStatusBroken
+			targetStatus = pluginDb.WebsiteStatusBroken
 		} else if !valid {
 			j.logger.Debug("CID target is not valid or not pinned",
 				zap.String("target", website.TargetHash()))
-			newStatus = pluginDb.WebsiteStatusBroken
+			targetStatus = pluginDb.WebsiteStatusBroken
+		} else {
+			targetStatus = pluginDb.WebsiteStatusActive
 		}
 
 	case string(pluginDb.WebsiteTargetTypeIPNS):
@@ -202,10 +210,12 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 			j.logger.Warn("Failed to validate IPNS target",
 				zap.Error(err),
 				zap.String("target", website.TargetHash()))
-			newStatus = pluginDb.WebsiteStatusBroken
+			targetStatus = pluginDb.WebsiteStatusBroken
+		} else {
+			targetStatus = pluginDb.WebsiteStatusActive
 		}
-		// validateIPNSTarget handles status and LastCheckedAt updates internally
-		// Save the changes immediately
+		// validateIPNSTarget handles status and LastCheckedAt updates internally.
+		// Save the changes immediately.
 		if err := j.db.WithContext(ctx).Save(website).Error; err != nil {
 			return fmt.Errorf("failed to update website: %w", err)
 		}
@@ -213,27 +223,38 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 
 	default:
 		j.logger.Warn("Unknown target type", zap.String("target_type", website.TargetType))
-		newStatus = pluginDb.WebsiteStatusBroken
+		targetStatus = pluginDb.WebsiteStatusBroken
 	}
 
-	// Update website status if changed
-	if string(newStatus) != oldStatus {
+	// Fire the health-driven transition via the FSM (a no-op when the website
+	// is already in the desired state):
+	//   valid   → revalidate_ok (broken → active; already-active is a no-op
+	//              guarded by Can)
+	//   invalid → cid_unpinned  (active → broken; an already-broken website
+	//              that fails again is a no-op, still refreshing the timestamp)
+	var transitionErr error
+	if targetStatus == pluginDb.WebsiteStatusActive {
+		if sm.Can(EventWebsiteRevalidateOK) {
+			transitionErr = sm.Fire(ctx, EventWebsiteRevalidateOK)
+		}
+	} else if sm.Can(EventWebsiteCIDUnpinned) {
+		transitionErr = sm.Fire(ctx, EventWebsiteCIDUnpinned)
+	}
+	if transitionErr != nil {
+		j.logger.Warn("Failed to apply website status transition",
+			zap.Error(transitionErr),
+			zap.Uint("website_id", website.ID),
+			zap.String("event", "revalidate_ok/cid_unpinned"))
+		return fmt.Errorf("failed to transition website status: %w", transitionErr)
+	}
+
+	// Log status changes
+	if website.Status != oldStatus {
 		j.logger.Info("Website status changed",
 			zap.Uint("website_id", website.ID),
 			zap.String("domain", j.primaryDomainName(ctx, website)),
 			zap.String("old_status", oldStatus),
-			zap.String("new_status", string(newStatus)))
-
-		website.Status = string(newStatus)
-
-		// Trigger notification if status changed to broken
-		if newStatus == pluginDb.WebsiteStatusBroken {
-			// Note: notifyStatusChange requires core.Context, but we have context.Context here
-			// Skip notification in janitor context - notifications will be handled in user-facing operations
-			j.logger.Debug("Status changed to broken, skipping notification in janitor context",
-				zap.Uint("website_id", website.ID),
-				zap.String("domain", j.primaryDomainName(ctx, website)))
-		}
+			zap.String("new_status", website.Status))
 	}
 
 	// Update last_checked_at timestamp
@@ -283,6 +304,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	ctx, span := core.TraceMethod(ctx, "WebsiteJanitorJob.validateIPNSTarget")
 	defer span.End()
 
+	sm := NewWebsiteStateMachine(website)
 	peerID := website.TargetHash()
 
 	privKey, userID, err := j.ipnsKeyService.GetPrivateKeyByPeerID(ctx, peerID)
@@ -293,8 +315,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.String("domain", j.primaryDomainName(ctx, website)),
 			zap.String("peer_id", peerID),
 		)
-		website.Status = string(pluginDb.WebsiteStatusBroken)
-		website.LastCheckedAt = new(time.Now())
+		j.markBroken(ctx, sm, website)
 		return nil
 	}
 
@@ -307,8 +328,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.Uint("website_user_id", website.UserID),
 			zap.Uint("key_user_id", userID),
 		)
-		website.Status = string(pluginDb.WebsiteStatusBroken)
-		website.LastCheckedAt = new(time.Now())
+		j.markBroken(ctx, sm, website)
 		return nil
 	}
 
@@ -320,8 +340,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.String("domain", j.primaryDomainName(ctx, website)),
 			zap.String("peer_id", peerID),
 		)
-		website.Status = string(pluginDb.WebsiteStatusBroken)
-		website.LastCheckedAt = new(time.Now())
+		j.markBroken(ctx, sm, website)
 		return nil
 	}
 
@@ -331,8 +350,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.String("domain", j.primaryDomainName(ctx, website)),
 			zap.String("peer_id", peerID),
 		)
-		website.Status = string(pluginDb.WebsiteStatusBroken)
-		website.LastCheckedAt = new(time.Now())
+		j.markBroken(ctx, sm, website)
 		return nil
 	}
 
@@ -344,8 +362,7 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.String("domain", j.primaryDomainName(ctx, website)),
 			zap.String("cid", key.LastPublishedCID),
 		)
-		website.Status = string(pluginDb.WebsiteStatusBroken)
-		website.LastCheckedAt = new(time.Now())
+		j.markBroken(ctx, sm, website)
 		return nil
 	}
 
@@ -355,13 +372,11 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 			zap.String("domain", j.primaryDomainName(ctx, website)),
 			zap.String("cid", key.LastPublishedCID),
 		)
-		website.Status = string(pluginDb.WebsiteStatusBroken)
-		website.LastCheckedAt = new(time.Now())
+		j.markBroken(ctx, sm, website)
 		return nil
 	}
 
-	website.Status = string(pluginDb.WebsiteStatusActive)
-	website.LastCheckedAt = new(time.Now())
+	j.markActive(ctx, sm, website)
 
 	j.logger.Debug("IPNS target validated successfully",
 		zap.Uint("website_id", website.ID),
@@ -371,6 +386,33 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	)
 
 	return nil
+}
+
+// markBroken transitions the website to broken via the state machine when that
+// transition is legal, and refreshes its last_checked_at. It is a no-op for a
+// website already in broken state.
+func (j *WebsiteJanitorJob) markBroken(ctx context.Context, sm *WebsiteStateMachine, website *pluginDb.Website) {
+	if sm.Can(EventWebsiteCIDUnpinned) {
+		if err := sm.Fire(ctx, EventWebsiteCIDUnpinned); err != nil {
+			j.logger.Warn("failed to mark website broken",
+				zap.Error(err),
+				zap.Uint("website_id", website.ID))
+		}
+	}
+	website.LastCheckedAt = new(time.Now())
+}
+
+// markActive transitions the website to active via the state machine when that
+// transition is legal, and refreshes its last_checked_at.
+func (j *WebsiteJanitorJob) markActive(ctx context.Context, sm *WebsiteStateMachine, website *pluginDb.Website) {
+	if sm.Can(EventWebsiteRevalidateOK) {
+		if err := sm.Fire(ctx, EventWebsiteRevalidateOK); err != nil {
+			j.logger.Warn("failed to mark website active",
+				zap.Error(err),
+				zap.Uint("website_id", website.ID))
+		}
+	}
+	website.LastCheckedAt = new(time.Now())
 }
 
 // validateDNSZones validates DNS zones that are pending nameserver verification
