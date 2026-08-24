@@ -461,12 +461,11 @@ func (h *PostUploadOperationHandler) startFilePathWorkflow(
 
 	_, err := h.StartWorkflow(
 		FILE_PATH_WORKFLOW,
-		core.WithWorkflowStructData(FilePathWorkflowInputData{
+		filePathWorkflowOptions(req, userID, FilePathWorkflowInputData{
 			CIDs:        cids,
 			RelatedCIDs: relatedCIDs,
 			UserID:      userID,
-		}, "json"),
-		core.WithWorkflowUserID(userID),
+		})...,
 	)
 	return err
 }

@@ -751,6 +751,33 @@ func (h *FilePathOperationHandler) walkDAGForTotalSize(ctx context.Context, c ci
 	return totalSize, nil
 }
 
+// filePathWorkflowOptions builds the StartWorkflow options for the
+// FILE_PATH_WORKFLOW ("Update File System") request. It relays the parent
+// request's protocol and CID onto the new workflow request so downstream
+// tooling (e.g. operation listings) can display them.
+func filePathWorkflowOptions(
+	req *models.Request,
+	userID uint,
+	input FilePathWorkflowInputData,
+) []core.WorkflowOption {
+	opts := []core.WorkflowOption{
+		core.WithWorkflowStructData(input, "json"),
+		core.WithWorkflowUserID(userID),
+	}
+
+	if len(req.Protocol) > 0 {
+		opts = append(opts, core.WithWorkflowProtocol(req.Protocol))
+	}
+
+	if len(req.Hash) > 0 && req.CIDType != 0 {
+		opts = append(opts, core.WithWorkflowStorageHash(
+			core.NewStorageHashFromMultihash(req.Hash, req.CIDType, nil),
+		))
+	}
+
+	return opts
+}
+
 func NewFilePathOperation(ctx core.Context) core.Operation {
 	return core.NewNamedOperation(
 		FilePathOperationName(),

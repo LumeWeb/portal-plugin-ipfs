@@ -323,12 +323,11 @@ func startTUSFilePathWorkflow(
 
 	_, err := helper.StartWorkflow(
 		FILE_PATH_WORKFLOW,
-		core.WithWorkflowStructData(FilePathWorkflowInputData{
+		filePathWorkflowOptions(request, userID, FilePathWorkflowInputData{
 			CIDs:        cids,
 			RelatedCIDs: relatedCIDs,
 			UserID:      userID,
-		}, "json"),
-		core.WithWorkflowUserID(userID),
+		})...,
 	)
 	return err
 }

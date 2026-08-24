@@ -183,11 +183,18 @@ type uploadWorkflowOption func(*uploadWorkflowConfig)
 type uploadWorkflowConfig struct {
 	existingUser *models.User
 	existingWf   *coreTesting.WorkflowTest
+	protocol     string
 }
 
 func withExistingUser(user *models.User) uploadWorkflowOption {
 	return func(cfg *uploadWorkflowConfig) {
 		cfg.existingUser = user
+	}
+}
+
+func withProtocol(protocol string) uploadWorkflowOption {
+	return func(cfg *uploadWorkflowConfig) {
+		cfg.protocol = protocol
 	}
 }
 
@@ -228,6 +235,10 @@ func testUploadWorkflow(t *testing.T, ctx coreTesting.TestContext, universalRead
 		core.WithWorkflowUserID(testUser.ID),
 		core.WithWorkflowSourceIP("127.0.0.1"),
 	)
+
+	if cfg.protocol != "" {
+		workflowOptions = append(workflowOptions, core.WithWorkflowProtocol(cfg.protocol))
+	}
 
 	if workflowDataBuilder != nil {
 		workflowData := workflowDataBuilder(uploadId)
