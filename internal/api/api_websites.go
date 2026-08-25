@@ -523,20 +523,6 @@ func (a *API) updateWebsite(c echo.Context) error {
 		if req.Namespace != nil {
 			namespace = string(*req.Namespace)
 		}
-		// Platform root apex guard: mirror the website-create check. An end user
-		// must never bind a platform root apex (e.g. "pinner.site") as their
-		// primary domain via update — that apex is operator-owned and reachable
-		// only through the admin apex-binding flow.
-		isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, *req.Domain)
-		if rerr != nil {
-			apiErr := NewError(ErrKeyInvalidRequest, rerr)
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-		if isRoot {
-			apiErr := NewError(ErrKeyInvalidRequest,
-				fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", *req.Domain))
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
 		var cfgRaw json.RawMessage
 		// Managed-DNS by default; explicit DNSEnabled override flows through.
 		newDomainDNS := true
@@ -578,6 +564,21 @@ func (a *API) updateWebsite(c echo.Context) error {
 			if !errors.Is(eerr, gorm.ErrRecordNotFound) {
 				a.Logger().Error("Failed to look up existing domain binding", zap.String("domain", *req.Domain), zap.Error(eerr))
 				apiErr := NewError(ErrKeyFileProcessingFailed, eerr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			// Platform root apex guard: an end user must never bind a platform
+			// root apex (e.g. "pinner.site") as a NEW primary domain via update.
+			// It only runs when no live binding already owns the domain — a
+			// legitimate re-deploy of an apex the website already owns (handled
+			// by the reuse branch above) is preserved.
+			isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, *req.Domain)
+			if rerr != nil {
+				apiErr := NewError(ErrKeyInvalidRequest, rerr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			if isRoot {
+				apiErr := NewError(ErrKeyInvalidRequest,
+					fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", *req.Domain))
 				return ctx.Error(apiErr, apiErr.HttpStatus())
 			}
 			wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw, nil)
