@@ -372,7 +372,8 @@ type WebsiteResponse struct {
 	// IPFS or IPNS
 	TargetType string `json:"target_type" sort:"true"`
 	// CID (IPFS) or peer ID (IPNS)
-	TargetHash string `json:"target_hash" sort:"true"`
+	// Not sortable: derived from target_multihash (no matching column).
+	TargetHash string `json:"target_hash"`
 	// FK to the linked IPNS key (set when DNS hosting auto-creates a key)
 	IPNSKeyID *uint `json:"ipns_key_id,omitempty"`
 	// The currently-published IPFS content CID (distinct from target_hash when target is IPNS)
@@ -392,8 +393,9 @@ type WebsiteResponse struct {
 	IsSubdomain bool `json:"is_subdomain"`
 	// Gateway domain for constructing public URLs (e.g. ipfs.example.com)
 	GatewayDomain string    `json:"gateway_domain,omitempty"`
-	Created       time.Time `json:"created" sort:"true"`
-	Updated       time.Time `json:"updated" sort:"true"`
+	// Created/Updated are not sortable: columns are created_at/updated_at.
+	Created time.Time `json:"created"`
+	Updated time.Time `json:"updated"`
 	// Whether validation token has expired
 	Expired bool           `json:"expired"`
 	SSL     *SSLStatusInfo `json:"ssl,omitempty"`
