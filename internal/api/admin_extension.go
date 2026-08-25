@@ -405,7 +405,12 @@ func (e *AdminExtension) createPlatformDomain(c echo.Context) error {
 		return nil
 	}
 
-	pd, err := e.delegatedDomainSvc.CreatePlatformDomain(reqCtx, req.Domain, pluginDb.DomainNamespace(req.Namespace), operatorUserID, req.Enabled)
+	namespace := string(pluginDb.DomainNamespaceHNS)
+	if req.Namespace != nil {
+		namespace = *req.Namespace
+	}
+
+	pd, err := e.delegatedDomainSvc.CreatePlatformDomain(reqCtx, req.Domain, pluginDb.DomainNamespace(namespace), operatorUserID, req.Enabled)
 	if err != nil {
 		e.logger.Error("Failed to create platform domain", zap.Error(err))
 		apiErr := NewError(ErrKeyValidationFailed, err)

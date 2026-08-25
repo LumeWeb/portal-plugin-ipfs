@@ -9,23 +9,27 @@ import (
 // The operator's zone is auto-created (idempotently) from the authenticated
 // operator user; zone_id is no longer supplied by the client.
 type PlatformDomainRequest struct {
-	Domain    string `json:"domain"`
-	Namespace string `json:"namespace"` // icann | hns
-	Enabled   bool   `json:"enabled,omitempty"`
+	Domain    string  `json:"domain"`
+	Namespace *string `json:"namespace,omitempty"` // hns (default) or icann
+	Enabled   bool    `json:"enabled,omitempty"`
 }
 
 func (r PlatformDomainRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
 		"Domain":    zog.String().Required().Min(1).Max(255),
-		"Namespace": zog.String().Required().OneOf([]string{string(db.DomainNamespaceICANN), string(db.DomainNamespaceHNS)}),
+		"Namespace": zog.Ptr(zog.String().OneOf([]string{string(db.DomainNamespaceHNS), string(db.DomainNamespaceICANN)})),
 		"Enabled":   zog.Bool(),
 	})
 }
 
 func (r PlatformDomainRequest) ToModel() (*db.PlatformDomain, error) {
+	namespace := string(db.DomainNamespaceHNS)
+	if r.Namespace != nil {
+		namespace = *r.Namespace
+	}
 	return &db.PlatformDomain{
 		Domain:    r.Domain,
-		Namespace: db.DomainNamespace(r.Namespace),
+		Namespace: db.DomainNamespace(namespace),
 		Enabled:   r.Enabled,
 	}, nil
 }
