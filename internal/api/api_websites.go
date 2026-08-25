@@ -216,41 +216,95 @@ func (a *API) createWebsite(c echo.Context) error {
 		dnsEnabled = *req.DNSEnabled
 	}
 	if a.delegatedDomainSvc != nil {
-		var cfgRaw json.RawMessage
-		if _, err := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, req.Domain, website.ID, user, dnsEnabled, true, cfgRaw, nil); err != nil {
-			// A concurrent create may have won the (domain, namespace) unique key
-			// race after this request's pre-check passed. The guard is not atomic,
-			// so on a duplicate-key violation roll back the just-persisted website
-			// (which has no primary domain binding) before surfacing a clean 409,
-			// leaving no dangling website row behind.
-			if isDuplicateKeyError(err) {
-				if a.delegatedDomainSvc.DB() != nil {
-					if derr := a.delegatedDomainSvc.DB().WithContext(reqCtx).Unscoped().Delete(&pluginDb.Website{}, website.ID).Error; derr != nil {
-						a.Logger().Error("Failed to roll back website after duplicate domain conflict",
-							zap.Uint("website_id", website.ID), zap.Error(derr))
-					}
-				}
-				a.Logger().Warn("Refusing to bind domain raced/owned by another website",
-					zap.String("domain", req.Domain), zap.Uint("website_id", website.ID))
-				apiErr := NewError(ErrKeyDomainInUse, fmt.Errorf("domain %q is already in use by another website", req.Domain))
-				return ctx.Error(apiErr, http.StatusConflict)
+		if req.IsPlatformClaim() {
+			// Explicit platform-subdomain claim (mirrors the domain-bind flow):
+			// resolve the operator-owned root, then claim a subdomain with the
+			// requested label (or a generated one). Platform subdomains are DNS-
+			// hosted by construction, so an explicit dns_hosting_enabled=false is
+			// contradictory and rejected up front.
+			if !dnsEnabled {
+				apiErr := NewError(ErrKeyInvalidRequest, fmt.Errorf("DNS hosting cannot be disabled for a platform subdomain"))
+				return ctx.Error(apiErr, apiErr.HttpStatus())
 			}
-			a.Logger().Error("Failed to create primary domain for website",
-				zap.Uint("website_id", website.ID), zap.String("domain", req.Domain), zap.Error(err))
-			apiErr := NewError(ErrKeyFileProcessingFailed, err)
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-		// Enable per-domain DNS hosting (default true) so the binding is set up
-		// for DNS as the legacy website-level dns_hosting_enabled did.
-		if a.websiteService != nil {
-			// The primary binding just created is the website's primary domain.
-			primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-			if perr == nil && primary != nil {
-				if _, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, dnsEnabled); derr != nil {
-					a.Logger().Error("failed to set DNS hosting on primary domain",
-						zap.Uint("domain_id", primary.ID), zap.Error(derr))
-					apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+			var platformNS pluginDb.DomainNamespace
+			if req.PlatformNamespace != "" {
+				platformNS = pluginDb.DomainNamespace(req.PlatformNamespace)
+			}
+			pd, perr := a.delegatedDomainSvc.GetEnabledPlatformDomain(reqCtx, req.PlatformDomain, platformNS)
+			if perr != nil {
+				a.Logger().Error("Failed to resolve platform domain", zap.String("platform_domain", req.PlatformDomain), zap.Error(perr))
+				apiErr := NewError(ErrKeyInvalidRequest, perr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			if pd == nil {
+				apiErr := NewError(ErrKeyInvalidRequest, fmt.Errorf("platform domain %q not found or disabled", req.PlatformDomain))
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			if _, cerr := a.delegatedDomainSvc.CreatePlatformSubdomain(reqCtx, website.ID, user, pd.ID, req.Label, req.Generate); cerr != nil {
+				// Platform-subdomain claim failures are user-correctable (label
+				// taken, reserved, disabled). The website is not persisted until
+				// after this block, so there is nothing to roll back here.
+				if isDuplicateKeyError(cerr) || strings.Contains(cerr.Error(), "already taken") {
+					a.Logger().Warn("Platform subdomain already claimed",
+						zap.String("platform_domain", req.PlatformDomain), zap.String("label", req.Label), zap.Error(cerr))
+					apiErr := NewError(ErrKeyDomainInUse, cerr)
+					return ctx.Error(apiErr, http.StatusConflict)
+				}
+				a.Logger().Error("Failed to create platform subdomain for website",
+					zap.Uint("website_id", website.ID), zap.String("platform_domain", req.PlatformDomain), zap.Error(cerr))
+				apiErr := NewError(ErrKeyPlatformSubdomainRequired, cerr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			// Platform subdomains are created active and DNS-hosted, so the
+			// custom-domain SetDomainDNSEnabled toggle below is intentionally
+			// skipped (it would reject disabling DNS).
+		} else {
+			// User-owned custom-domain path.
+			var cfgRaw json.RawMessage
+			if _, err := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, req.Domain, website.ID, user, dnsEnabled, true, cfgRaw, nil); err != nil {
+				// A plain domain that actually sits under an operator-owned
+				// platform root must be claimed via the explicit platform shape.
+				// Surface a precise 422 instead of the misleading 500
+				// file-processing fallback, and roll back the just-persisted
+				// website (it has no primary domain binding) so no orphan row is
+				// left behind.
+				if strings.Contains(err.Error(), "must be claimed via the platform subdomain flow") {
+					a.rollbackWebsite(reqCtx, website.ID)
+					a.Logger().Warn("Requested domain is a platform subdomain but not claimed via the platform shape",
+						zap.String("domain", req.Domain), zap.Uint("website_id", website.ID))
+					apiErr := NewError(ErrKeyPlatformSubdomainRequired,
+						fmt.Errorf("domain %q must be claimed via the platform subdomain shape (platform_domain + label/generate)", req.Domain))
 					return ctx.Error(apiErr, apiErr.HttpStatus())
+				}
+				// A concurrent create may have won the (domain, namespace) unique key
+				// race after this request's pre-check passed. The guard is not atomic,
+				// so on a duplicate-key violation roll back the just-persisted website
+				// (which has no primary domain binding) before surfacing a clean 409,
+				// leaving no dangling website row behind.
+				if isDuplicateKeyError(err) {
+					a.rollbackWebsite(reqCtx, website.ID)
+					a.Logger().Warn("Refusing to bind domain raced/owned by another website",
+						zap.String("domain", req.Domain), zap.Uint("website_id", website.ID))
+					apiErr := NewError(ErrKeyDomainInUse, fmt.Errorf("domain %q is already in use by another website", req.Domain))
+					return ctx.Error(apiErr, http.StatusConflict)
+				}
+				a.Logger().Error("Failed to create primary domain for website",
+					zap.Uint("website_id", website.ID), zap.String("domain", req.Domain), zap.Error(err))
+				apiErr := NewError(ErrKeyFileProcessingFailed, err)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			// Enable per-domain DNS hosting (default true) so the binding is set up
+			// for DNS as the legacy website-level dns_hosting_enabled did.
+			if a.websiteService != nil {
+				// The primary binding just created is the website's primary domain.
+				primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
+				if perr == nil && primary != nil {
+					if _, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, dnsEnabled); derr != nil {
+						a.Logger().Error("failed to set DNS hosting on primary domain",
+							zap.Uint("domain_id", primary.ID), zap.Error(derr))
+						apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+						return ctx.Error(apiErr, apiErr.HttpStatus())
+					}
 				}
 			}
 		}
@@ -287,6 +341,20 @@ func (a *API) createWebsite(c echo.Context) error {
 	})
 
 	return httputil.EncodeResponse(ctx, website, &resp)
+}
+
+// rollbackWebsite hard-deletes a just-created website row after its primary
+// domain bind failed. The website has no primary domain binding and would
+// otherwise linger as an orphan, so it is rolled back best-effort (any error is
+// logged, not returned).
+func (a *API) rollbackWebsite(ctx context.Context, websiteID uint) {
+	if a.delegatedDomainSvc == nil || a.delegatedDomainSvc.DB() == nil {
+		return
+	}
+	if derr := a.delegatedDomainSvc.DB().WithContext(ctx).Unscoped().Delete(&pluginDb.Website{}, websiteID).Error; derr != nil {
+		a.Logger().Error("Failed to roll back website after domain bind failure",
+			zap.Uint("website_id", websiteID), zap.Error(derr))
+	}
 }
 
 // isDuplicateKeyError reports whether err is a database unique-key (duplicate)
