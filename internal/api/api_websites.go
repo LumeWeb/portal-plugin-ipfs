@@ -21,7 +21,7 @@ import (
 	pluginEvents "go.lumeweb.com/portal-plugin-ipfs/internal/errors"
 	pluginservice "go.lumeweb.com/portal-plugin-ipfs/internal/service/website"
 	"go.lumeweb.com/queryutil"
-	"go.lumeweb.com/queryutil/filter"
+	queryUtilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -322,67 +322,55 @@ func (a *API) listWebsites(c echo.Context) error {
 		return err
 	}
 
-	websiteFilter := dto.WebsiteFilter{}
-	if _, ok := httputil.DecodeAndValidateQueryRequest(ctx, &websiteFilter); !ok {
-		return nil
-	}
+	return queryUtilHttp.ProcessListRequest[*dto.WebsiteItem, dto.WebsiteItem](
+		c.Response(),
+		c.Request(),
+		"websites",
+		func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*dto.WebsiteItem, int64, error) {
+			// The website service always scopes queries to the authenticated
+			// user, so drop any client-supplied user_id filter to prevent
+			// conflicting access conditions.
+			scopedFilters := make([]queryutil.CrudFilter, 0, len(filters))
+			for _, f := range filters {
+				if f.GetField() != "user_id" {
+					scopedFilters = append(scopedFilters, f)
+				}
+			}
 
-	// Build filters from request
-	var filters []queryutil.CrudFilter
-	if websiteFilter.Domain != nil {
-		filters = append(filters, queryutil.NewLogicalFilter("domain", filter.OpEq, *websiteFilter.Domain))
-	}
-	if websiteFilter.TargetType != nil {
-		filters = append(filters, queryutil.NewLogicalFilter("target_type", filter.OpEq, *websiteFilter.TargetType))
-	}
-	if websiteFilter.Status != nil {
-		filters = append(filters, queryutil.NewLogicalFilter("status", filter.OpEq, *websiteFilter.Status))
-	}
+			websites, total, err := a.websiteService.ListWebsites(reqCtx, user, scopedFilters, sorts, pagination)
+			if err != nil {
+				return nil, 0, err
+			}
 
-	// Add user filter
-	filters = append(filters, queryutil.NewLogicalFilter("user_id", filter.OpEq, user))
+			items := make([]*dto.WebsiteItem, len(websites))
+			for i, website := range websites {
+				var resp dto.WebsiteResponse
+				if err := resp.FromModel(website); err != nil {
+					return nil, 0, err
+				}
+				primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
+				if perr != nil {
+					a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
+				}
+				resp.SetPrimaryDomain(primary)
+				resp.GatewayDomain = a.gatewayDomain()
+				if primary != nil {
+					resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
+				} else {
+					resp.SetSubdomainInfo("")
+				}
+				resp.SetValidationRecordInfo(a.verificationTokenKey())
+				resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
+				item := dto.WebsiteItem(resp)
+				items[i] = &item
+			}
 
-	// Default pagination
-	pagination := filter.DefaultPagination
-
-	websites, total, err := a.websiteService.ListWebsites(reqCtx, user, filters, []queryutil.Sort{}, pagination)
-	if err != nil {
-		a.Logger().Error("Failed to list websites", zap.Error(err), zap.Uint("user_id", user))
-		apiErr := NewError(ErrKeyFileProcessingFailed, err)
-		return ctx.Error(apiErr, apiErr.HttpStatus())
-	}
-
-	responses := make([]dto.WebsiteResponse, len(websites))
-	for i, website := range websites {
-		if err := responses[i].FromModel(website); err != nil {
-			a.Logger().Error("Failed to convert website to response", zap.Error(err))
-			apiErr := NewError(ErrKeyFileProcessingFailed, err)
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-		primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-		if perr != nil {
-			a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
-		}
-		responses[i].SetPrimaryDomain(primary)
-		responses[i].GatewayDomain = a.gatewayDomain()
-		if primary != nil {
-			responses[i].SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-		} else {
-			responses[i].SetSubdomainInfo("")
-		}
-		responses[i].SetValidationRecordInfo(a.verificationTokenKey())
-		responses[i].EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
-	}
-
-	// Convert to WebsiteItem for list response
-	items := make([]dto.WebsiteItem, len(responses))
-	for i := range responses {
-		items[i] = dto.WebsiteItem(responses[i])
-	}
-
-	result := queryutil.BuildResponse(items, total)
-
-	return ctx.JSON(http.StatusOK, result)
+			return items, total, nil
+		},
+		func(item *dto.WebsiteItem) dto.WebsiteItem {
+			return *item
+		},
+	)
 }
 
 func (a *API) getWebsite(c echo.Context) error {

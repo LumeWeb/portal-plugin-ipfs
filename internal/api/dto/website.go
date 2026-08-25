@@ -370,14 +370,15 @@ type WebsiteResponse struct {
 	ID     uint   `json:"id"`
 	Domain string `json:"domain"`
 	// IPFS or IPNS
-	TargetType string `json:"target_type"`
+	TargetType string `json:"target_type" sort:"true"`
 	// CID (IPFS) or peer ID (IPNS)
+	// Not sortable: derived from target_multihash (no matching column).
 	TargetHash string `json:"target_hash"`
 	// FK to the linked IPNS key (set when DNS hosting auto-creates a key)
 	IPNSKeyID *uint `json:"ipns_key_id,omitempty"`
 	// The currently-published IPFS content CID (distinct from target_hash when target is IPNS)
 	ActiveCID string `json:"active_cid,omitempty"`
-	Status    string `json:"status"`
+	Status    string `json:"status" sort:"true"`
 	// The full TXT record value (e.g. "lumeweb-verify=abc123...")
 	ValidationToken string `json:"validation_token"`
 	// The DNS hostname for the TXT record (e.g. "lumeweb-verify.example.com")
@@ -392,8 +393,9 @@ type WebsiteResponse struct {
 	IsSubdomain bool `json:"is_subdomain"`
 	// Gateway domain for constructing public URLs (e.g. ipfs.example.com)
 	GatewayDomain string    `json:"gateway_domain,omitempty"`
-	Created       time.Time `json:"created"`
-	Updated       time.Time `json:"updated"`
+	// Created/Updated are not sortable: columns are created_at/updated_at.
+	Created time.Time `json:"created"`
+	Updated time.Time `json:"updated"`
 	// Whether validation token has expired
 	Expired bool           `json:"expired"`
 	SSL     *SSLStatusInfo `json:"ssl,omitempty"`
@@ -520,9 +522,9 @@ type WebsiteItemResponse struct {
 
 // WebsiteFilter represents filtering options for website listings
 type WebsiteFilter struct {
-	Domain     *string               `json:"domain,omitempty" query:"domain"`
-	TargetType *db.WebsiteTargetType `json:"target_type,omitempty" query:"target_type"`
-	Status     *db.WebsiteStatus     `json:"status,omitempty" query:"status"`
+	Domain     *string               `json:"domain,omitempty" filter:"true"`
+	TargetType *db.WebsiteTargetType `json:"target_type,omitempty" filter:"true"`
+	Status     *db.WebsiteStatus     `json:"status,omitempty" filter:"true"`
 }
 
 func (f WebsiteFilter) Schema() *zog.StructSchema {
