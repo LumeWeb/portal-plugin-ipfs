@@ -633,3 +633,30 @@ func (a *API) checkPlatformDomainAvailability(c echo.Context) error {
 	}
 	return httputil.EncodeResponse(ctx, req, &resp)
 }
+
+// listPlatformDomains lists the supported (enabled) platform roots available
+// for free-subdomain claims. User-facing, so only enabled roots are returned;
+// disabled roots are excluded.
+func (a *API) listPlatformDomains(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	if a.delegatedDomainSvc == nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service not available"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	return queryutilHttp.ProcessListRequest[*pluginDb.PlatformDomain, dto.PlatformDomainResponse](
+		c.Response(),
+		c.Request(),
+		"platform-domains",
+		func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.PlatformDomain, int64, error) {
+			return a.delegatedDomainSvc.ListEnabledPlatformDomains(reqCtx, pagination)
+		},
+		func(pd *pluginDb.PlatformDomain) dto.PlatformDomainResponse {
+			var r dto.PlatformDomainResponse
+			_ = r.FromModel(pd)
+			return r
+		},
+	)
+}

@@ -35,7 +35,7 @@ func TestAPI_PlatformDomainAvailability(t *testing.T) {
 			Domain: "altroot", Namespace: pluginDb.DomainNamespaceHNS, ZoneID: 2, Enabled: false,
 		}).Error)
 
-		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/platform-domains/availability?label=myblog", token, nil)
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites/platform-domains/availability?label=myblog", token, nil)
 		require.Equal(tb, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
 		var resp dto.PlatformAvailabilityResponse
@@ -44,6 +44,53 @@ func TestAPI_PlatformDomainAvailability(t *testing.T) {
 		require.Len(tb, resp.Results, 1)
 		assert.Equal(tb, "platform.test", resp.Results[0].PlatformDomain)
 		assert.True(tb, resp.Results[0].Available)
+	}, TestOptions)
+}
+
+// TestAPI_ListSupportedPlatformDomains exercises the user-facing list endpoint.
+// It must return only enabled (supported) platform roots, ordered by domain, in
+// the standard paginated {data, total} shape.
+func TestAPI_ListSupportedPlatformDomains(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, _, _, _ := helper.SetupAuthenticatedTest()
+
+		require.NoError(tb, ctx.DB().Create(&pluginDb.PlatformDomain{
+			Domain: "platform.test", Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 1, Enabled: true,
+		}).Error)
+		require.NoError(tb, ctx.DB().Create(&pluginDb.PlatformDomain{
+			Domain: "aplatform.test", Namespace: pluginDb.DomainNamespaceHNS, ZoneID: 2, Enabled: true,
+		}).Error)
+		require.NoError(tb, ctx.DB().Create(&pluginDb.PlatformDomain{
+			Domain: "disabled.test", Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 3, Enabled: false,
+		}).Error)
+
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites/platform-domains", token, nil)
+		require.Equal(tb, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+		var resp dto.PlatformDomainListResponse
+		require.NoError(tb, json.Unmarshal(rec.Body.Bytes(), &resp))
+		// Only the two enabled roots are returned, ordered by domain.
+		require.Equal(tb, int64(2), resp.Total)
+		require.Len(tb, resp.Data, 2)
+		assert.Equal(tb, "aplatform.test", resp.Data[0].Domain)
+		assert.Equal(tb, "platform.test", resp.Data[1].Domain)
+		assert.NotEqual(tb, "disabled.test", resp.Data[0].Domain)
+	}, TestOptions)
+}
+
+// TestAPI_ListSupportedPlatformDomains_Unauthenticated ensures the user-facing
+// list endpoint is auth-only, mirroring the availability endpoint.
+func TestAPI_ListSupportedPlatformDomains_Unauthenticated(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		require.NoError(tb, ctx.DB().Create(&pluginDb.PlatformDomain{
+			Domain: "platform.test", Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 1, Enabled: true,
+		}).Error)
+
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/websites/platform-domains", nil)
+		rec := httptest.NewRecorder()
+		ctx.Router().ServeHTTP(rec, req)
+		assert.NotEqual(tb, http.StatusOK, rec.Code)
 	}, TestOptions)
 }
 
@@ -56,7 +103,7 @@ func TestAPI_PlatformDomainAvailability_Unauthenticated(t *testing.T) {
 			Domain: "platform.test", Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 1, Enabled: true,
 		}).Error)
 
-		req := ctx.NewAPIRequest(http.MethodGet, "/api/platform-domains/availability?label=myblog", nil)
+		req := ctx.NewAPIRequest(http.MethodGet, "/api/websites/platform-domains/availability?label=myblog", nil)
 		rec := httptest.NewRecorder()
 		ctx.Router().ServeHTTP(rec, req)
 		// Unauthenticated access is rejected, never a 200.

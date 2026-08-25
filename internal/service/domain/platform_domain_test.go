@@ -13,6 +13,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	"go.lumeweb.com/queryutil"
 	"gorm.io/gorm"
 )
 
@@ -185,6 +186,35 @@ func TestGetEnabledPlatformDomain_DisabledAndDeletedExcluded(t *testing.T) {
 		pd3, err := svc.GetEnabledPlatformDomainByDomain(context.Background(), "deleted.site")
 		require.NoError(tb, err)
 		assert.Nil(tb, pd3)
+	}, TestOptions)
+}
+
+func TestListEnabledPlatformDomains_FiltersDisabledAndPaginates(t *testing.T) {
+	// The user-facing list must expose only enabled (supported) roots, ordered
+	// by domain, and honor pagination.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+
+		createPlatformRoot(tb, ctx, "b.site", pluginDb.DomainNamespaceICANN, 1, true)
+		createPlatformRoot(tb, ctx, "a.site", pluginDb.DomainNamespaceICANN, 2, true)
+		createPlatformRoot(tb, ctx, "disabled.site", pluginDb.DomainNamespaceICANN, 3, false)
+
+		// Lists only enabled roots, ordered by domain asc.
+		domains, total, err := svc.ListEnabledPlatformDomains(context.Background(), queryutil.Pagination{})
+		require.NoError(tb, err)
+		require.Equal(tb, int64(2), total)
+		require.Len(tb, domains, 2)
+		assert.Equal(tb, "a.site", domains[0].Domain)
+		assert.Equal(tb, "b.site", domains[1].Domain)
+
+		// Honors pagination (total is pre-pagination).
+		paginated, err := queryutil.NewPagination(0, 1)
+		require.NoError(tb, err)
+		domains, total, err = svc.ListEnabledPlatformDomains(context.Background(), paginated)
+		require.NoError(tb, err)
+		require.Equal(tb, int64(2), total)
+		require.Len(tb, domains, 1)
+		assert.Equal(tb, "a.site", domains[0].Domain)
 	}, TestOptions)
 }
 
