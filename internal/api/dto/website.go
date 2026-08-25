@@ -185,7 +185,7 @@ func (r *IPNSRepublishResponse) FromModel(any) error {
 //     a computed label). The namespace and DNS hosting are derived from the
 //     platform root, mirroring the domain-bind flow.
 type WebsiteRequest struct {
-	Domain     string               `json:"domain"`                        // primary domain (transparently created as a WebsiteDomain binding)
+	Domain     string               `json:"domain,omitempty"`               // primary domain (transparently created as a WebsiteDomain binding); omitted when claiming a platform subdomain
 	Namespace  *db.DomainNamespace  `json:"namespace,omitempty"`           // icann (default) or hns
 	TargetType db.WebsiteTargetType `json:"target_type"`                   // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
 	TargetHash string               `json:"target_hash"`                   // CID or IPNS peer ID
