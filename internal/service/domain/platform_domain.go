@@ -201,6 +201,30 @@ func (s *DelegatedDomainService) ListPlatformDomains(ctx context.Context, filter
 	return domains, total, nil
 }
 
+// ListEnabledPlatformDomains returns only enabled platform roots, ordered by
+// domain, with pagination. This is the user-facing view of supported platform
+// domains: only enabled roots are claimable, so disabled ones are filtered out.
+func (s *DelegatedDomainService) ListEnabledPlatformDomains(ctx context.Context, pagination queryutil.Pagination) ([]*pluginDb.PlatformDomain, int64, error) {
+	if s.DB() == nil {
+		return nil, 0, nil
+	}
+	query := s.DB().WithContext(ctx).Model(&pluginDb.PlatformDomain{}).
+		Where("enabled = ?", true).
+		Order("domain ASC")
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	query = queryutil.ApplyPagination(query, pagination)
+	var domains []*pluginDb.PlatformDomain
+	if err := query.Find(&domains).Error; err != nil {
+		return nil, 0, err
+	}
+	return domains, total, nil
+}
+
 // UpdatePlatformDomain toggles registration state (currently only Enabled).
 func (s *DelegatedDomainService) UpdatePlatformDomain(ctx context.Context, id uint, enabled bool) (*pluginDb.PlatformDomain, error) {
 	if s.DB() == nil {
