@@ -170,6 +170,56 @@ func TestGetEnabledPlatformDomain_NamespaceAmbiguity(t *testing.T) {
 	}, TestOptions)
 }
 
+func TestIsPlatformRootDomain(t *testing.T) {
+	// The apex of a platform root is operator-owned and may not be claimed by
+	// end users as a custom domain. IsPlatformRootDomain must return true for
+	// an enabled root apex (in any normalized form) and false for a subdomain,
+	// a disabled/soft-deleted root, or a non-platform domain.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+
+		createPlatformRoot(tb, ctx, "platform.test", pluginDb.DomainNamespaceICANN, 1, true)
+		createPlatformRoot(tb, ctx, "disabled.test", pluginDb.DomainNamespaceICANN, 1, false)
+		pd := createPlatformRoot(tb, ctx, "deleted.test", pluginDb.DomainNamespaceICANN, 1, true)
+		require.NoError(tb, svc.DeletePlatformDomain(context.Background(), pd.ID))
+
+		// Enabled apex is detected in its canonical form.
+		isRoot, err := svc.IsPlatformRootDomain(context.Background(), "platform.test")
+		require.NoError(tb, err)
+		assert.True(tb, isRoot)
+
+		// Normalization (www. prefix, case, whitespace) still detects the apex.
+		isRoot, err = svc.IsPlatformRootDomain(context.Background(), "  WWW.PLATFORM.TEST  ")
+		require.NoError(tb, err)
+		assert.True(tb, isRoot)
+
+		// Disabled and soft-deleted roots are not claimable apexes.
+		isRoot, err = svc.IsPlatformRootDomain(context.Background(), "disabled.test")
+		require.NoError(tb, err)
+		assert.False(tb, isRoot)
+
+		isRoot, err = svc.IsPlatformRootDomain(context.Background(), "deleted.test")
+		require.NoError(tb, err)
+		assert.False(tb, isRoot)
+
+		// A subdomain of a platform root is NOT the apex — it must be allowed
+		// through to the platform-subdomain claim flow.
+		isRoot, err = svc.IsPlatformRootDomain(context.Background(), "blog.platform.test")
+		require.NoError(tb, err)
+		assert.False(tb, isRoot)
+
+		// A completely unrelated domain is not a platform root.
+		isRoot, err = svc.IsPlatformRootDomain(context.Background(), "example.com")
+		require.NoError(tb, err)
+		assert.False(tb, isRoot)
+
+		// Empty domain (auto-generate path) is not a platform root.
+		isRoot, err = svc.IsPlatformRootDomain(context.Background(), "")
+		require.NoError(tb, err)
+		assert.False(tb, isRoot)
+	}, TestOptions)
+}
+
 func TestGetEnabledPlatformDomain_DisabledAndDeletedExcluded(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)

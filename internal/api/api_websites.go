@@ -150,6 +150,24 @@ func (a *API) createWebsite(c echo.Context) error {
 	if req.Namespace != nil {
 		namespace = string(*req.Namespace)
 	}
+	// Platform root apex guard: the apex of a platform root (e.g. "pinner.site")
+	// is operator-owned and must never be claimed by an end user as a custom
+	// domain. A request that names a platform root as its primary domain must go
+	// through the platform-subdomain claim flow (or omit the domain so a
+	// subdomain is minted); otherwise the site would silently sit on the
+	// operator's apex.
+	if a.delegatedDomainSvc != nil {
+		isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, req.Domain)
+		if rerr != nil {
+			apiErr := NewError(ErrKeyInvalidRequest, rerr)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		if isRoot {
+			apiErr := NewError(ErrKeyInvalidRequest,
+				fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", req.Domain))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+	}
 	// Guard on the delegated domain service's DB availability: the lookup
 	// runs against GetWebsiteDomainByDomainAndNamespace, which (unlike
 	// CreateDomain) dereferences s.DB() without an internal nil guard. Gate on
