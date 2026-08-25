@@ -175,18 +175,40 @@ func (r *IPNSRepublishResponse) FromModel(any) error {
 
 // Website DTOs
 
-// WebsiteRequest represents a request to create a website
+// WebsiteRequest represents a request to create a website.
+//
+// Its primary domain can be supplied in one of two mutually exclusive ways:
+//   - A user-owned domain: set Domain (plus an optional Namespace).
+//   - A platform subdomain (free subdomain under an operator-owned root): set
+//     PlatformDomain (the root, e.g. "pinned.site") plus exactly one of Label
+//     (an explicit subdomain label) or Generate (true — let the platform choose
+//     a computed label). The namespace and DNS hosting are derived from the
+//     platform root, mirroring the domain-bind flow.
 type WebsiteRequest struct {
 	Domain     string               `json:"domain"`                        // primary domain (transparently created as a WebsiteDomain binding)
 	Namespace  *db.DomainNamespace  `json:"namespace,omitempty"`           // icann (default) or hns
 	TargetType db.WebsiteTargetType `json:"target_type"`                   // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
 	TargetHash string               `json:"target_hash"`                   // CID or IPNS peer ID
 	DNSEnabled *bool                `json:"dns_hosting_enabled,omitempty"` // Whether DNS hosting is enabled for the primary domain (defaults to true if not specified)
+
+	// Platform subdomain claim (mutually exclusive with Domain/Namespace).
+	PlatformDomain string `json:"platform_domain,omitempty"`
+	// PlatformNamespace optionally disambiguates which alt-root namespace to
+	// claim under when the same root is registered under multiple namespaces.
+	PlatformNamespace string `json:"platform_namespace,omitempty"`
+	Label             string `json:"label,omitempty"`
+	Generate          bool   `json:"generate,omitempty"`
+}
+
+// IsPlatformClaim reports whether this request claims a platform subdomain
+// rather than a user-owned domain.
+func (r WebsiteRequest) IsPlatformClaim() bool {
+	return r.PlatformDomain != ""
 }
 
 func (r WebsiteRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
-		"Domain": zog.String().Required().Min(1).Max(255),
+		"Domain": zog.String().Min(1).Max(255),
 		"Namespace": zog.Ptr(config.ZogStringLike[db.DomainNamespace]().OneOf([]db.DomainNamespace{
 			db.DomainNamespaceICANN,
 			db.DomainNamespaceHNS,
@@ -195,8 +217,12 @@ func (r WebsiteRequest) Schema() *zog.StructSchema {
 			db.WebsiteTargetTypeIPFS,
 			db.WebsiteTargetTypeIPNS,
 		}).Required(),
-		"TargetHash": zog.String().Required().Min(1).Max(255),
-		"DNSEnabled": zog.Ptr(zog.Bool()),
+		"TargetHash":        zog.String().Required().Min(1).Max(255),
+		"DNSEnabled":        zog.Ptr(zog.Bool()),
+		"PlatformDomain":    zog.String().Min(1).Max(255),
+		"PlatformNamespace": zog.String().OneOf([]string{string(db.DomainNamespaceICANN), string(db.DomainNamespaceHNS)}),
+		"Label":             zog.String().Min(1).Max(63),
+		"Generate":          zog.Bool(),
 	})
 }
 
@@ -392,7 +418,7 @@ type WebsiteResponse struct {
 	// True if domain is a subdomain of a shared DNS zone
 	IsSubdomain bool `json:"is_subdomain"`
 	// Gateway domain for constructing public URLs (e.g. ipfs.example.com)
-	GatewayDomain string    `json:"gateway_domain,omitempty"`
+	GatewayDomain string `json:"gateway_domain,omitempty"`
 	// Created/Updated are not sortable: columns are created_at/updated_at.
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`

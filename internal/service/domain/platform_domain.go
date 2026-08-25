@@ -302,7 +302,7 @@ func (s *DelegatedDomainService) DeletePlatformDomain(ctx context.Context, id ui
 }
 
 // BindPlatformRootApex binds an operator-owned website directly to the root
-// apex of a platform root (e.g. "pinner.site"), rather than to a subdomain
+// apex of a platform root (e.g. "pinned.site"), rather than to a subdomain
 // underneath it. The website must be owned by the same operator that owns the
 // PlatformDomain. Reuses the shared managed-DNS pipeline (DNSLink, apex
 // records, delegation, SSL) via createPlatformBinding with the FQDN being the

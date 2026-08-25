@@ -13,7 +13,7 @@ import (
 // Two mutually exclusive shapes are supported:
 //   - A user-owned domain: set Domain + Namespace.
 //   - A platform subdomain (free subdomain under an operator-owned root): set
-//     PlatformDomain (the root, e.g. "pinner.site") plus exactly one of Label
+//     PlatformDomain (the root, e.g. "pinned.site") plus exactly one of Label
 //     (an explicit subdomain label) or Generate (true — let the platform choose
 //     a computed label). The namespace and DNS hosting are derived from the
 //     platform root.

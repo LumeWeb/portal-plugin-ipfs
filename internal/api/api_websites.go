@@ -20,6 +20,7 @@ import (
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	pluginEvents "go.lumeweb.com/portal-plugin-ipfs/internal/errors"
 	pluginservice "go.lumeweb.com/portal-plugin-ipfs/internal/service/website"
+	core "go.lumeweb.com/portal/core"
 	"go.lumeweb.com/queryutil"
 	queryUtilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
@@ -122,6 +123,39 @@ func (a *API) handleWebsiteValidationError(err error, c echo.Context) (error, bo
 	return err, false
 }
 
+// rejectPlatformRootDomain returns an API error (for ctx.Error) when domain is
+// the apex of an enabled platform root that an end user must not claim directly,
+// or nil if it may be bound. It returns nil when the delegated domain service is
+// unavailable so callers keep their own nil-service handling. Shared by the
+// website-create, website-update, and domain-create paths.
+func (a *API) rejectPlatformRootDomain(ctx context.Context, domain string) *core.Error {
+	if a.delegatedDomainSvc == nil {
+		return nil
+	}
+	isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(ctx, domain)
+	if rerr != nil {
+		return NewError(ErrKeyInvalidRequest, rerr)
+	}
+	if isRoot {
+		return NewError(ErrKeyInvalidRequest,
+			fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", domain))
+	}
+	return nil
+}
+
+// rejectDNSDisableForPlatformSubdomain returns an API error (for ctx.Error) when
+// an attempt is made to turn DNS hosting OFF on a platform subdomain, whose DNS
+// is forced on because its records live in the operator's shared zone. It
+// returns nil when the binding is not a platform subdomain or DNS is being
+// enabled or left unchanged. Shared by the website-update and domain-update
+// paths.
+func (a *API) rejectDNSDisableForPlatformSubdomain(binding *pluginDb.WebsiteDomain, dnsEnabled bool) *core.Error {
+	if binding.PlatformDomainID != nil && !dnsEnabled {
+		return NewError(ErrKeyDNSHostingReadOnly, fmt.Errorf("DNS hosting is read-only for platform subdomains"))
+	}
+	return nil
+}
+
 func (a *API) createWebsite(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
@@ -150,51 +184,54 @@ func (a *API) createWebsite(c echo.Context) error {
 	if req.Namespace != nil {
 		namespace = string(*req.Namespace)
 	}
-	// Platform root apex guard: the apex of a platform root (e.g. "pinner.site")
+
+	// A website needs a destination: either a user-owned domain (non-empty
+	// Domain) or an explicit platform-subdomain claim. An empty domain with no
+	// platform claim would otherwise persist an orphan website with no binding,
+	// so reject it before CreateWebsite.
+	if !req.IsPlatformClaim() && req.Domain == "" {
+		apiErr := NewError(ErrKeyInvalidRequest, fmt.Errorf("a domain is required unless claiming a platform subdomain"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	// A domain or platform-subdomain claim can only be bound when the delegated
+	// domain service is available; otherwise the website row would persist with
+	// no primary domain (an orphan). Reject up front, matching the update and
+	// domain-create flows. Every check below relies on the delegated domain
+	// service, so it is guaranteed non-nil from here on.
+	if a.delegatedDomainSvc == nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service unavailable"))
+		return ctx.Error(apiErr, http.StatusInternalServerError)
+	}
+
+	// Platform root apex guard: the apex of a platform root (e.g. "pinned.site")
 	// is operator-owned and must never be claimed by an end user as a custom
 	// domain. A request that names a platform root as its primary domain must go
 	// through the platform-subdomain claim flow (or omit the domain so a
 	// subdomain is minted); otherwise the site would silently sit on the
 	// operator's apex.
-	if a.delegatedDomainSvc != nil {
-		isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, req.Domain)
-		if rerr != nil {
-			apiErr := NewError(ErrKeyInvalidRequest, rerr)
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-		if isRoot {
-			apiErr := NewError(ErrKeyInvalidRequest,
-				fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", req.Domain))
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
+	if apiErr := a.rejectPlatformRootDomain(reqCtx, req.Domain); apiErr != nil {
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
-	// Guard on the delegated domain service's DB availability: the lookup
-	// runs against GetWebsiteDomainByDomainAndNamespace, which (unlike
-	// CreateDomain) dereferences s.DB() without an internal nil guard. Gate on
-	// that service's DB, not the API's own, so the exact "service not wired to
-	// a DB" scenario is skipped rather than crashing with a nil-pointer.
-	if a.delegatedDomainSvc != nil && a.delegatedDomainSvc.DB() != nil {
-		// Normalize before the lookup: CreateDomain persists the canonical apex
-		// form, so a www.-prefixed or mixed-case request for an already
-		// live-bound domain must still hit the ownership guard (otherwise the
-		// raw 1062 duplicate-key 500 this guard replaces would surface).
-		domain := pluginDb.NormalizeDomain(req.Domain)
-		existing, eerr := a.delegatedDomainSvc.GetWebsiteDomainByDomainAndNamespace(reqCtx, domain, pluginDb.DomainNamespace(namespace))
-		switch {
-		case eerr == nil && !existing.DeletedAt.Valid:
-			// Domain is live-bound to another website — refuse to rebind.
-			a.Logger().Warn("Refusing to bind domain owned by another website",
-				zap.String("domain", req.Domain), zap.Uint("domain_owner_website_id", existing.WebsiteID))
-			apiErr := NewError(ErrKeyDomainInUse, fmt.Errorf("domain %q is already in use by another website", req.Domain))
-			return ctx.Error(apiErr, http.StatusConflict)
-		case eerr == nil:
-			// Soft-deleted tombstone: fall through so CreateDomain purges it.
-		default:
-			if !errors.Is(eerr, gorm.ErrRecordNotFound) {
-				a.Logger().Error("Failed to look up existing domain binding", zap.String("domain", req.Domain), zap.Error(eerr))
-				apiErr := NewError(ErrKeyFileProcessingFailed, eerr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
+	// Normalize before the lookup: CreateDomain persists the canonical apex
+	// form, so a www.-prefixed or mixed-case request for an already
+	// live-bound domain must still hit the ownership guard (otherwise the
+	// raw 1062 duplicate-key 500 this guard replaces would surface).
+	domain := pluginDb.NormalizeDomain(req.Domain)
+	existing, eerr := a.delegatedDomainSvc.GetWebsiteDomainByDomainAndNamespace(reqCtx, domain, pluginDb.DomainNamespace(namespace))
+	switch {
+	case eerr == nil && !existing.DeletedAt.Valid:
+		// Domain is live-bound to another website — refuse to rebind.
+		a.Logger().Warn("Refusing to bind domain owned by another website",
+			zap.String("domain", req.Domain), zap.Uint("domain_owner_website_id", existing.WebsiteID))
+		apiErr := NewError(ErrKeyDomainInUse, fmt.Errorf("domain %q is already in use by another website", req.Domain))
+		return ctx.Error(apiErr, http.StatusConflict)
+	case eerr == nil:
+		// Soft-deleted tombstone: fall through so CreateDomain purges it.
+	default:
+		if !errors.Is(eerr, gorm.ErrRecordNotFound) {
+			a.Logger().Error("Failed to look up existing domain binding", zap.String("domain", req.Domain), zap.Error(eerr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, eerr)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
 	}
 
@@ -215,45 +252,8 @@ func (a *API) createWebsite(c echo.Context) error {
 	if req.DNSEnabled != nil {
 		dnsEnabled = *req.DNSEnabled
 	}
-	if a.delegatedDomainSvc != nil {
-		var cfgRaw json.RawMessage
-		if _, err := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, req.Domain, website.ID, user, dnsEnabled, true, cfgRaw, nil); err != nil {
-			// A concurrent create may have won the (domain, namespace) unique key
-			// race after this request's pre-check passed. The guard is not atomic,
-			// so on a duplicate-key violation roll back the just-persisted website
-			// (which has no primary domain binding) before surfacing a clean 409,
-			// leaving no dangling website row behind.
-			if isDuplicateKeyError(err) {
-				if a.delegatedDomainSvc.DB() != nil {
-					if derr := a.delegatedDomainSvc.DB().WithContext(reqCtx).Unscoped().Delete(&pluginDb.Website{}, website.ID).Error; derr != nil {
-						a.Logger().Error("Failed to roll back website after duplicate domain conflict",
-							zap.Uint("website_id", website.ID), zap.Error(derr))
-					}
-				}
-				a.Logger().Warn("Refusing to bind domain raced/owned by another website",
-					zap.String("domain", req.Domain), zap.Uint("website_id", website.ID))
-				apiErr := NewError(ErrKeyDomainInUse, fmt.Errorf("domain %q is already in use by another website", req.Domain))
-				return ctx.Error(apiErr, http.StatusConflict)
-			}
-			a.Logger().Error("Failed to create primary domain for website",
-				zap.Uint("website_id", website.ID), zap.String("domain", req.Domain), zap.Error(err))
-			apiErr := NewError(ErrKeyFileProcessingFailed, err)
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-		// Enable per-domain DNS hosting (default true) so the binding is set up
-		// for DNS as the legacy website-level dns_hosting_enabled did.
-		if a.websiteService != nil {
-			// The primary binding just created is the website's primary domain.
-			primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-			if perr == nil && primary != nil {
-				if _, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, dnsEnabled); derr != nil {
-					a.Logger().Error("failed to set DNS hosting on primary domain",
-						zap.Uint("domain_id", primary.ID), zap.Error(derr))
-					apiErr := NewError(ErrKeyFileProcessingFailed, derr)
-					return ctx.Error(apiErr, apiErr.HttpStatus())
-				}
-			}
-		}
+	if err := a.bindPrimaryDomain(ctx, reqCtx, user, website.ID, req, namespace, dnsEnabled); err != nil {
+		return err
 	}
 
 	// Check if website is broken and return 410 Gone
@@ -261,32 +261,134 @@ func (a *API) createWebsite(c echo.Context) error {
 		return ctx.Error(fmt.Errorf("website target is broken"), http.StatusGone)
 	}
 
-	var resp dto.WebsiteResponse
-	if err := resp.FromModel(website); err != nil {
+	resp, err := a.websiteResponse(reqCtx, website, user, nil)
+	if err != nil {
 		a.Logger().Error("Failed to convert website to response", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
-	// Resolve the primary domain for the response's domain/DNS fields.
-	primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-	if perr != nil {
-		a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
-	}
-	resp.SetPrimaryDomain(primary)
-	resp.GatewayDomain = a.gatewayDomain()
-	if primary != nil {
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-	} else {
-		resp.SetSubdomainInfo("")
-	}
-	resp.SetValidationRecordInfo(a.verificationTokenKey())
-	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
 
 	ctx.Response().Before(func() {
 		ctx.Response().Status = http.StatusCreated
 	})
 
 	return httputil.EncodeResponse(ctx, website, &resp)
+}
+
+// bindPrimaryDomain attaches the website's primary domain binding after the row
+// is persisted: either a free platform-subdomain claim or a user-owned custom
+// domain. On any failure it rolls back the just-created website (which has no
+// domain binding yet), leaving no orphan row behind.
+func (a *API) bindPrimaryDomain(ctx httputil.RequestContext, reqCtx context.Context, user, websiteID uint, req dto.WebsiteRequest, namespace string, dnsEnabled bool) error {
+	if req.IsPlatformClaim() {
+		return a.claimPlatformSubdomain(ctx, reqCtx, user, websiteID, req, dnsEnabled)
+	}
+	return a.bindCustomDomain(ctx, reqCtx, user, websiteID, req, namespace, dnsEnabled)
+}
+
+// claimPlatformSubdomain claims a free subdomain under an operator-owned
+// platform root (mirrors the domain-bind flow). Platform subdomains are created
+// active and DNS-hosted, so an explicit dns_hosting_enabled=false is
+// contradictory and rejected here. Failures are user-correctable (label taken,
+// reserved, disabled) and rolled back before surfacing.
+func (a *API) claimPlatformSubdomain(ctx httputil.RequestContext, reqCtx context.Context, user, websiteID uint, req dto.WebsiteRequest, dnsEnabled bool) error {
+	if !dnsEnabled {
+		return a.rollbackAndFail(ctx, reqCtx, user, websiteID, ErrKeyInvalidRequest, fmt.Errorf("DNS hosting cannot be disabled for a platform subdomain"))
+	}
+	var platformNS pluginDb.DomainNamespace
+	if req.PlatformNamespace != "" {
+		platformNS = pluginDb.DomainNamespace(req.PlatformNamespace)
+	}
+	pd, perr := a.delegatedDomainSvc.GetEnabledPlatformDomain(reqCtx, req.PlatformDomain, platformNS)
+	if perr != nil {
+		a.Logger().Error("Failed to resolve platform domain", zap.String("platform_domain", req.PlatformDomain), zap.Error(perr))
+		return a.rollbackAndFail(ctx, reqCtx, user, websiteID, ErrKeyInvalidRequest, perr)
+	}
+	if pd == nil {
+		return a.rollbackAndFail(ctx, reqCtx, user, websiteID, ErrKeyInvalidRequest, fmt.Errorf("platform domain %q not found or disabled", req.PlatformDomain))
+	}
+	if _, cerr := a.delegatedDomainSvc.CreatePlatformSubdomain(reqCtx, websiteID, user, pd.ID, req.Label, req.Generate); cerr != nil {
+		if isDuplicateKeyError(cerr) || strings.Contains(cerr.Error(), "already taken") {
+			a.Logger().Warn("Platform subdomain already claimed",
+				zap.String("platform_domain", req.PlatformDomain), zap.String("label", req.Label), zap.Error(cerr))
+			return a.rollbackAndFail(ctx, reqCtx, user, websiteID, ErrKeyDomainInUse, cerr)
+		}
+		a.Logger().Error("Failed to create platform subdomain for website",
+			zap.Uint("website_id", websiteID), zap.String("platform_domain", req.PlatformDomain), zap.Error(cerr))
+		return a.rollbackAndFail(ctx, reqCtx, user, websiteID, ErrKeyPlatformSubdomainRequired, cerr)
+	}
+	return nil
+}
+
+// bindCustomDomain attaches a user-owned custom domain as the primary binding
+// and enables per-domain DNS hosting (default true) as the legacy website-level
+// dns_hosting_enabled did.
+func (a *API) bindCustomDomain(ctx httputil.RequestContext, reqCtx context.Context, user, websiteID uint, req dto.WebsiteRequest, namespace string, dnsEnabled bool) error {
+	var cfgRaw json.RawMessage
+	if _, err := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, req.Domain, websiteID, user, dnsEnabled, true, cfgRaw, nil); err != nil {
+		// A plain domain that actually sits under an operator-owned platform
+		// root must be claimed via the explicit platform shape. Surface a
+		// precise 422 instead of the misleading 500 file-processing fallback.
+		if strings.Contains(err.Error(), "must be claimed via the platform subdomain flow") {
+			a.Logger().Warn("Requested domain is a platform subdomain but not claimed via the platform shape",
+				zap.String("domain", req.Domain), zap.Uint("website_id", websiteID))
+			return a.rollbackAndFail(ctx, reqCtx, user, websiteID, ErrKeyPlatformSubdomainRequired,
+				fmt.Errorf("domain %q must be claimed via the platform subdomain shape (platform_domain + label/generate)", req.Domain))
+		}
+		// A concurrent create may have won the (domain, namespace) unique key
+		// race after this request's pre-check passed. The guard is not atomic,
+		// so on a duplicate-key violation roll back the just-persisted website
+		// so a clean 409 is surfaced with no dangling row left behind.
+		if isDuplicateKeyError(err) {
+			a.Logger().Warn("Refusing to bind domain raced/owned by another website",
+				zap.String("domain", req.Domain), zap.Uint("website_id", websiteID))
+			return a.rollbackAndFail(ctx, reqCtx, user, websiteID, ErrKeyDomainInUse,
+				fmt.Errorf("domain %q is already in use by another website", req.Domain))
+		}
+		a.Logger().Error("Failed to create primary domain for website",
+			zap.Uint("website_id", websiteID), zap.String("domain", req.Domain), zap.Error(err))
+		return a.rollbackAndFail(ctx, reqCtx, user, websiteID, ErrKeyFileProcessingFailed, err)
+	}
+	// Enable per-domain DNS hosting (default true) so the binding is set up for
+	// DNS as the legacy website-level dns_hosting_enabled did. The website now
+	// has a binding, so a failure here returns the error without rolling back.
+	if a.websiteService != nil {
+		primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, websiteID)
+		if perr == nil && primary != nil {
+			if _, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, websiteID, primary.ID, dnsEnabled); derr != nil {
+				a.Logger().Error("failed to set DNS hosting on primary domain",
+					zap.Uint("domain_id", primary.ID), zap.Error(derr))
+				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+		}
+	}
+	return nil
+}
+
+// rollbackAndFail rolls back a just-created website after its primary domain
+// bind failed (it has no domain binding, so its row is removed best-effort) and
+// writes the translated API error. The error key is passed explicitly so each
+// call site keeps its intent.
+func (a *API) rollbackAndFail(ctx httputil.RequestContext, reqCtx context.Context, user, websiteID uint, key core.ErrorType, err error) error {
+	a.rollbackWebsite(reqCtx, user, websiteID)
+	apiErr := NewError(key, err)
+	return ctx.Error(apiErr, apiErr.HttpStatus())
+}
+
+// rollbackWebsite removes a just-created website row after its primary domain
+// bind failed. The website has no primary domain binding and would otherwise
+// linger as an orphan, so it is rolled back best-effort (any error is logged,
+// not returned). Delegates to the website service's delete so DB access stays
+// in the service layer.
+func (a *API) rollbackWebsite(ctx context.Context, userID uint, websiteID uint) {
+	if a.websiteService == nil {
+		return
+	}
+	if derr := a.websiteService.DeleteWebsite(ctx, userID, websiteID); derr != nil {
+		a.Logger().Error("Failed to roll back website after domain bind failure",
+			zap.Uint("website_id", websiteID), zap.Error(derr))
+	}
 }
 
 // isDuplicateKeyError reports whether err is a database unique-key (duplicate)
@@ -312,6 +414,54 @@ func isDuplicateKeyError(err error) bool {
 	return strings.Contains(msg, "UNIQUE constraint failed") ||
 		strings.Contains(msg, "Duplicate entry") ||
 		strings.Contains(msg, "duplicate key value")
+}
+
+// websiteResponse builds a WebsiteResponse for the given website, resolving its
+// primary (apex) domain binding (or accepting a pre-resolved one) and enriching
+// it with the gateway, subdomain, validation-record, and active-CID context used
+// across the create/update/get/list handlers.
+func (a *API) websiteResponse(ctx context.Context, website *pluginDb.Website, user uint, primary *pluginDb.WebsiteDomain) (dto.WebsiteResponse, error) {
+	var resp dto.WebsiteResponse
+	if err := resp.FromModel(website); err != nil {
+		return resp, err
+	}
+	if primary == nil {
+		p, perr := a.websiteService.GetApexDomainBinding(ctx, website.ID)
+		if perr != nil {
+			a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
+		}
+		primary = p
+	}
+	resp.SetPrimaryDomain(primary)
+	resp.GatewayDomain = a.gatewayDomain()
+	if primary != nil {
+		resp.SetSubdomainInfo(a.zoneDomain(ctx, primary.ZoneID))
+	} else {
+		resp.SetSubdomainInfo("")
+	}
+	resp.SetValidationRecordInfo(a.verificationTokenKey())
+	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: ctx}, user, website)
+	return resp, nil
+}
+
+// sslWebsiteResponse builds a WebsiteResponse for an SSL-status handler, where
+// the website is looked up by domain string. When the primary binding cannot be
+// resolved the response falls back to showing the requested domain. Shared by
+// the SSL-status getter and the cert webhook.
+func (a *API) sslWebsiteResponse(ctx context.Context, website *pluginDb.Website, requestedDomain string) *dto.WebsiteResponse {
+	resp := &dto.WebsiteResponse{}
+	resp.GatewayDomain = a.gatewayDomain()
+	primary, perr := a.websiteService.GetApexDomainBinding(ctx, website.ID)
+	if perr == nil && primary != nil {
+		resp.SetPrimaryDomain(primary)
+		resp.SetSubdomainInfo(a.zoneDomain(ctx, primary.ZoneID))
+	} else {
+		resp.Domain = requestedDomain
+		resp.SetSubdomainInfo("")
+	}
+	resp.SetValidationRecordInfo(a.verificationTokenKey())
+	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: ctx}, website.UserID, website)
+	return resp
 }
 
 func (a *API) listWebsites(c echo.Context) error {
@@ -344,23 +494,10 @@ func (a *API) listWebsites(c echo.Context) error {
 
 			items := make([]*dto.WebsiteItem, len(websites))
 			for i, website := range websites {
-				var resp dto.WebsiteResponse
-				if err := resp.FromModel(website); err != nil {
+				resp, err := a.websiteResponse(reqCtx, website, user, nil)
+				if err != nil {
 					return nil, 0, err
 				}
-				primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-				if perr != nil {
-					a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
-				}
-				resp.SetPrimaryDomain(primary)
-				resp.GatewayDomain = a.gatewayDomain()
-				if primary != nil {
-					resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-				} else {
-					resp.SetSubdomainInfo("")
-				}
-				resp.SetValidationRecordInfo(a.verificationTokenKey())
-				resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
 				item := dto.WebsiteItem(resp)
 				items[i] = &item
 			}
@@ -397,18 +534,10 @@ func (a *API) getWebsite(c echo.Context) error {
 	// Check if website is broken or deleted and return 410 Gone
 	isBroken := website.Status == string(pluginDb.WebsiteStatusBroken)
 	if isBroken || website.DeletedAt.Valid {
-		var resp dto.WebsiteResponse
-		if err := resp.FromModel(website); err == nil {
-			primary, _ := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-			resp.SetPrimaryDomain(primary)
-			resp.GatewayDomain = a.gatewayDomain()
-			if primary != nil {
-				resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-			} else {
-				resp.SetSubdomainInfo("")
-			}
-			resp.SetValidationRecordInfo(a.verificationTokenKey())
-			resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
+		// A broken or soft-deleted website is returned with 410 Gone so the
+		// client can distinguish it from a 404.
+		resp, err := a.websiteResponse(reqCtx, website, user, nil)
+		if err == nil {
 			ctx.Response().Before(func() {
 				ctx.Response().Status = http.StatusGone
 			})
@@ -416,26 +545,13 @@ func (a *API) getWebsite(c echo.Context) error {
 		}
 	}
 
-	primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-	if perr != nil {
-		a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
-	}
-	resp := &dto.WebsiteResponse{}
-	if err := resp.FromModel(website); err != nil {
+	resp, err := a.websiteResponse(reqCtx, website, user, nil)
+	if err != nil {
 		a.Logger().Error("Failed to convert website to response", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
-	resp.SetPrimaryDomain(primary)
-	resp.GatewayDomain = a.gatewayDomain()
-	if primary != nil {
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-	} else {
-		resp.SetSubdomainInfo("")
-	}
-	resp.SetValidationRecordInfo(a.verificationTokenKey())
-	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
-	return httputil.EncodeResponse(ctx, website, resp)
+	return httputil.EncodeResponse(ctx, website, &resp)
 }
 
 func (a *API) updateWebsite(c echo.Context) error {
@@ -459,6 +575,26 @@ func (a *API) updateWebsite(c echo.Context) error {
 
 	if !req.HasUpdates() {
 		return ctx.Error(NewError(ErrKeyInvalidRequest, fmt.Errorf("at least one field must be provided")), http.StatusUnprocessableEntity)
+	}
+
+	// Platform root apex guard: an end user must never bind a platform root
+	// apex (e.g. "pinned.site") as a website's primary domain via update, just
+	// as they cannot create one. Only reject genuine NEW claims (no live binding
+	// already owned by this website) before mutating, so a refused domain change
+	// cannot leave a partial update behind; an apex the website already owns
+	// (e.g. an operator apex-bound site) still reaches the reuse branch below.
+	if req.Domain != nil && a.delegatedDomainSvc != nil {
+		namespace := string(pluginDb.DomainNamespaceICANN)
+		if req.Namespace != nil {
+			namespace = string(*req.Namespace)
+		}
+		existing, eerr := a.delegatedDomainSvc.GetWebsiteDomainByDomainAndNamespace(reqCtx, pluginDb.NormalizeDomain(*req.Domain), pluginDb.DomainNamespace(namespace))
+		ownedReuse := eerr == nil && existing != nil && !existing.DeletedAt.Valid && existing.WebsiteID == uint(websiteID)
+		if !ownedReuse {
+			if apiErr := a.rejectPlatformRootDomain(reqCtx, *req.Domain); apiErr != nil {
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+		}
 	}
 
 	// Build updates map from non-nil fields. Target type and hash update the
@@ -496,13 +632,8 @@ func (a *API) updateWebsite(c echo.Context) error {
 	var primary *pluginDb.WebsiteDomain
 
 	// 1. Change the primary domain: create the requested domain binding and
-	// make it the website's new primary (apex) domain. Setting a domain is
-	// idempotent for a binding that already belongs to this website: the
-	// deployed domain is re-used and repointed as primary rather than
-	// re-created (CreateDomain is create-only and would otherwise trip the
-	// (domain, namespace) unique key with a 500 on every re-deploy). A domain
-	// live-bound to a different website is an ownership conflict (409), not a
-	// 500.
+	// make it the website's new primary (apex) domain. Idempotent — see
+	// applyDomainChange for the reuse/conflict/create semantics.
 	if req.Domain != nil {
 		if a.delegatedDomainSvc == nil {
 			return ctx.Error(NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service unavailable")), http.StatusInternalServerError)
@@ -511,135 +642,123 @@ func (a *API) updateWebsite(c echo.Context) error {
 		if req.Namespace != nil {
 			namespace = string(*req.Namespace)
 		}
-		var cfgRaw json.RawMessage
-		// Managed-DNS by default; explicit DNSEnabled override flows through.
-		newDomainDNS := true
-		if req.DNSEnabled != nil {
-			newDomainDNS = *req.DNSEnabled
-		}
-
-		// Reuse an existing live binding for this (domain, namespace) when it
-		// already belongs to the website; otherwise fall through to a genuine
-		// create (change-primary). A binding owned by a different website is
-		// surfaced as an explicit ownership conflict. The lookup compares the
-		// canonical apex form (lowercased, www.-stripped) that CreateDomain
-		// stores, so a www.-prefixed or mixed-case request resolves correctly.
-		domain := pluginDb.NormalizeDomain(*req.Domain)
-		existing, eerr := a.delegatedDomainSvc.GetWebsiteDomainByDomainAndNamespace(reqCtx, domain, pluginDb.DomainNamespace(namespace))
-		switch {
-		case eerr == nil && !existing.DeletedAt.Valid && existing.WebsiteID == website.ID:
-			// Re-deploy to an already-bound primary: reuse, don't re-create.
-			// The binding's DNS hosting state is preserved as-is; only an
-			// explicit dns_hosting_enabled override (step 2 below) changes it.
-			// Silently defaulting DNS hosting on here would re-provision a
-			// PowerDNS zone on a binding the user deliberately self-hosted,
-			// defeating the idempotent re-deploy guarantee.
-			wd := existing
-			rerp, derr := a.websiteService.SetPrimaryDomain(reqCtx, user, website.ID, wd.ID)
-			if derr != nil {
-				a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", wd.ID), zap.Error(derr))
-				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			primary = rerp
-		case eerr == nil:
-			// Domain is live-bound to a different website — refuse to repoint.
-			a.Logger().Warn("Refusing to bind domain owned by another website",
-				zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Uint("domain_owner_website_id", existing.WebsiteID))
-			apiErr := NewError(ErrKeyDomainInUse, fmt.Errorf("domain %q is already in use by another website", *req.Domain))
-			return ctx.Error(apiErr, http.StatusConflict)
-		default:
-			if !errors.Is(eerr, gorm.ErrRecordNotFound) {
-				a.Logger().Error("Failed to look up existing domain binding", zap.String("domain", *req.Domain), zap.Error(eerr))
-				apiErr := NewError(ErrKeyFileProcessingFailed, eerr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			// Platform root apex guard: an end user must never bind a platform
-			// root apex (e.g. "pinner.site") as a NEW primary domain via update.
-			// It only runs when no live binding already owns the domain — a
-			// legitimate re-deploy of an apex the website already owns (handled
-			// by the reuse branch above) is preserved.
-			isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, *req.Domain)
-			if rerr != nil {
-				apiErr := NewError(ErrKeyInvalidRequest, rerr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			if isRoot {
-				apiErr := NewError(ErrKeyInvalidRequest,
-					fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", *req.Domain))
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw, nil)
-			if derr != nil {
-				a.Logger().Error("Failed to create primary domain for website",
-					zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Error(derr))
-				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			primary, derr = a.websiteService.SetPrimaryDomain(reqCtx, user, website.ID, wd.ID)
-			if derr != nil {
-				a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", wd.ID), zap.Error(derr))
-				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
+		var err error
+		primary, err = a.applyDomainChange(ctx, reqCtx, user, website, req, namespace)
+		if err != nil {
+			return err
 		}
 	}
 
 	// 2. Toggle DNS hosting on the primary domain binding. Resolved after any
 	// domain change so the toggle applies to the current primary.
 	if req.DNSEnabled != nil {
-		if primary == nil {
-			p, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-			if perr != nil {
-				a.Logger().Warn("cannot toggle DNS hosting: no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
-			} else {
-				primary = p
-			}
-		}
-		if primary != nil {
-			// Platform subdomains have DNS hosting forced on; reject attempts
-			// to disable it so records in the operator's shared zone are not
-			// torn out.
-			if primary.PlatformDomainID != nil && !*req.DNSEnabled {
-				apiErr := NewError(ErrKeyValidationFailed, fmt.Errorf("DNS hosting is read-only for platform subdomains"))
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			updated, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, *req.DNSEnabled)
-			if derr != nil {
-				a.Logger().Error("failed to set DNS hosting on primary domain", zap.Uint("domain_id", primary.ID), zap.Error(derr))
-				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			// Use the toggled binding for the response so Enabled/ZoneID
-			// reflect the actual DNS state rather than the pre-toggle apex.
-			primary = updated
+		var err error
+		primary, err = a.toggleDomainDNS(ctx, reqCtx, user, website, req, primary)
+		if err != nil {
+			return err
 		}
 	}
 
-	var resp dto.WebsiteResponse
-	if err := resp.FromModel(website); err != nil {
+	resp, err := a.websiteResponse(reqCtx, website, user, primary)
+	if err != nil {
 		a.Logger().Error("Failed to convert website to response", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
-	if primary == nil {
-		var perr error
-		primary, perr = a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-		if perr != nil {
-			a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
-		}
-	}
-	resp.SetPrimaryDomain(primary)
-	resp.GatewayDomain = a.gatewayDomain()
-	if primary != nil {
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-	} else {
-		resp.SetSubdomainInfo("")
-	}
-	resp.SetValidationRecordInfo(a.verificationTokenKey())
-	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
 
 	return httputil.EncodeResponse(ctx, website, &resp)
+}
+
+// applyDomainChange repoints the website's primary (apex) domain binding to the
+// requested domain. It is idempotent: an existing live binding already owned by
+// this website is reused and re-promoted as primary (rather than re-created, to
+// avoid tripping the (domain, namespace) unique key), a domain owned by another
+// website is an ownership conflict (409), and anything else is a fresh binding
+// created and promoted. Returns the new primary binding on success.
+func (a *API) applyDomainChange(ctx httputil.RequestContext, reqCtx context.Context, user uint, website *pluginDb.Website, req dto.WebsiteUpdateRequest, namespace string) (*pluginDb.WebsiteDomain, error) {
+	var cfgRaw json.RawMessage
+	// Managed-DNS by default; explicit DNSEnabled override flows through.
+	newDomainDNS := true
+	if req.DNSEnabled != nil {
+		newDomainDNS = *req.DNSEnabled
+	}
+	// The lookup compares the canonical apex form (lowercased, www.-stripped)
+	// that CreateDomain stores, so a www.-prefixed or mixed-case request
+	// resolves correctly.
+	domain := pluginDb.NormalizeDomain(*req.Domain)
+	existing, eerr := a.delegatedDomainSvc.GetWebsiteDomainByDomainAndNamespace(reqCtx, domain, pluginDb.DomainNamespace(namespace))
+	switch {
+	case eerr == nil && !existing.DeletedAt.Valid && existing.WebsiteID == website.ID:
+		// Re-deploy to an already-bound primary: reuse, don't re-create. The
+		// binding's DNS hosting state is preserved as-is; only an explicit
+		// dns_hosting_enabled override (the toggle step) changes it. Silently
+		// defaulting DNS hosting on here would re-provision a PowerDNS zone on
+		// a binding the user deliberately self-hosted, defeating the idempotent
+		// re-deploy guarantee.
+		wd := existing
+		rerp, derr := a.websiteService.SetPrimaryDomain(reqCtx, user, website.ID, wd.ID)
+		if derr != nil {
+			a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", wd.ID), zap.Error(derr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+			return nil, ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		return rerp, nil
+	case eerr == nil:
+		// Domain is live-bound to a different website — refuse to repoint.
+		a.Logger().Warn("Refusing to bind domain owned by another website",
+			zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Uint("domain_owner_website_id", existing.WebsiteID))
+		apiErr := NewError(ErrKeyDomainInUse, fmt.Errorf("domain %q is already in use by another website", *req.Domain))
+		return nil, ctx.Error(apiErr, http.StatusConflict)
+	default:
+		if !errors.Is(eerr, gorm.ErrRecordNotFound) {
+			a.Logger().Error("Failed to look up existing domain binding", zap.String("domain", *req.Domain), zap.Error(eerr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, eerr)
+			return nil, ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw, nil)
+		if derr != nil {
+			a.Logger().Error("Failed to create primary domain for website",
+				zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Error(derr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+			return nil, ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		primary, derr := a.websiteService.SetPrimaryDomain(reqCtx, user, website.ID, wd.ID)
+		if derr != nil {
+			a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", wd.ID), zap.Error(derr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+			return nil, ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		return primary, nil
+	}
+}
+
+// toggleDomainDNS applies an explicit dns_hosting_enabled override to the
+// website's primary domain binding, resolving the primary first when no domain
+// change happened this request. Platform subdomains have DNS hosting forced on,
+// so attempts to disable it are rejected (records in the operator's shared zone
+// must not be torn out). Returns the binding carrying the effective DNS state.
+func (a *API) toggleDomainDNS(ctx httputil.RequestContext, reqCtx context.Context, user uint, website *pluginDb.Website, req dto.WebsiteUpdateRequest, primary *pluginDb.WebsiteDomain) (*pluginDb.WebsiteDomain, error) {
+	if primary == nil {
+		p, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
+		if perr != nil {
+			a.Logger().Warn("cannot toggle DNS hosting: no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
+		} else {
+			primary = p
+		}
+	}
+	if primary == nil {
+		return nil, nil
+	}
+	if apiErr := a.rejectDNSDisableForPlatformSubdomain(primary, *req.DNSEnabled); apiErr != nil {
+		return nil, ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	updated, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, *req.DNSEnabled)
+	if derr != nil {
+		a.Logger().Error("failed to set DNS hosting on primary domain", zap.Uint("domain_id", primary.ID), zap.Error(derr))
+		apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+		return nil, ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	return updated, nil
 }
 
 func (a *API) deleteWebsite(c echo.Context) error {
@@ -754,20 +873,7 @@ func (a *API) getSSLStatus(c echo.Context) error {
 		return ctx.Error(apiErr, http.StatusNotFound)
 	}
 
-	resp := &dto.WebsiteResponse{}
-	resp.GatewayDomain = a.gatewayDomain()
-	primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-	if perr == nil && primary != nil {
-		resp.SetPrimaryDomain(primary)
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-	} else {
-		// Fall back to the requested domain when the primary binding can't be
-		// resolved; the lookup was itself by domain string.
-		resp.Domain = domain
-		resp.SetSubdomainInfo("")
-	}
-	resp.SetValidationRecordInfo(a.verificationTokenKey())
-	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, website.UserID, website)
+	resp := a.sslWebsiteResponse(reqCtx, website, domain)
 	a.applyApexSSLStatus(reqCtx, resp, website)
 	return httputil.EncodeResponse(ctx, website, resp)
 }
@@ -850,20 +956,7 @@ func (a *API) updateSSLStatus(c echo.Context) error {
 		return ctx.Error(apiErr, http.StatusNotFound)
 	}
 
-	resp := &dto.WebsiteResponse{}
-	resp.GatewayDomain = a.gatewayDomain()
-	primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-	if perr == nil && primary != nil {
-		resp.SetPrimaryDomain(primary)
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-	} else {
-		// Fall back to the requested domain when the primary binding can't be
-		// resolved; the lookup was itself by domain string.
-		resp.Domain = domain
-		resp.SetSubdomainInfo("")
-	}
-	resp.SetValidationRecordInfo(a.verificationTokenKey())
-	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, website.UserID, website)
+	resp := a.sslWebsiteResponse(reqCtx, website, domain)
 	a.applyApexSSLStatus(reqCtx, resp, website)
 	return httputil.EncodeResponse(ctx, website, resp)
 }

@@ -89,14 +89,7 @@ func (a *API) createDomain(c echo.Context) error {
 		// Platform root apex guard: mirror the website-create check. An end user
 		// must never bind a platform root apex as a custom domain; that apex is
 		// operator-owned and reachable only via the admin apex-binding flow.
-		isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, req.Domain)
-		if rerr != nil {
-			apiErr := NewError(ErrKeyInvalidRequest, rerr)
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-		if isRoot {
-			apiErr := NewError(ErrKeyInvalidRequest,
-				fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", req.Domain))
+		if apiErr := a.rejectPlatformRootDomain(reqCtx, req.Domain); apiErr != nil {
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
 		wd, err = a.delegatedDomainSvc.CreateDomain(reqCtx, req.Namespace, req.Domain, uint(websiteID), userID, dnsHostingEnabled, false, configRaw, nil)
@@ -182,8 +175,7 @@ func (a *API) updateDomain(c echo.Context) error {
 	if req.DNSHostingEnabled != nil {
 		// Platform subdomains have DNS hosting forced on; reject attempts to
 		// disable it so records in the operator's shared zone are not torn out.
-		if existing.PlatformDomainID != nil && !*req.DNSHostingEnabled {
-			apiErr := NewError(ErrKeyValidationFailed, errors.New("DNS hosting is read-only for platform subdomains"))
+		if apiErr := a.rejectDNSDisableForPlatformSubdomain(&existing, *req.DNSHostingEnabled); apiErr != nil {
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
 		d, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, userID, uint(websiteID), uint(domainID), *req.DNSHostingEnabled)

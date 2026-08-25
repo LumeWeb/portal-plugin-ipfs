@@ -724,21 +724,21 @@ func TestBindPlatformRootApex_WritesApexIntoOperatorZone(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		// Operator owns the website and the platform root.
-		website := createTestWebsite(tb, db, 1, "pinner.site")
-		pd := createPlatformRoot(tb, ctx, "pinner.site", pluginDb.DomainNamespaceICANN, 7, true)
+		website := createTestWebsite(tb, db, 1, "pinned.site")
+		pd := createPlatformRoot(tb, ctx, "pinned.site", pluginDb.DomainNamespaceICANN, 7, true)
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 		// Apex match resolves the operator's zone; records are written into it.
-		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinner.site").
-			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "pinner.site"}, nil).Once()
-		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), "pinner.site", mock.Anything).Return(nil).Once()
-		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(7), "pinner.site", pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinned.site").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "pinned.site"}, nil).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), "pinned.site", mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(7), "pinned.site", pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
 
 		wd, err := svc.BindPlatformRootApex(context.Background(), website.ID, 1, pd.ID)
 		require.NoError(tb, err)
 		require.NotNil(tb, wd)
-		assert.Equal(tb, "pinner.site", wd.Domain)
+		assert.Equal(tb, "pinned.site", wd.Domain)
 		assert.Equal(tb, uint(7), wd.ZoneID)
 		assert.Equal(tb, "gw.example.com", wd.GatewayHost)
 		require.NotNil(tb, wd.PlatformDomainID)
@@ -754,8 +754,8 @@ func TestBindPlatformRootApex_WritesApexIntoOperatorZone(t *testing.T) {
 func TestBindPlatformRootApex_DisabledRootRejected(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
-		website := createTestWebsite(tb, db, 1, "pinner.site")
-		pd := createPlatformRoot(tb, ctx, "pinner.site", pluginDb.DomainNamespaceICANN, 7, false)
+		website := createTestWebsite(tb, db, 1, "pinned.site")
+		pd := createPlatformRoot(tb, ctx, "pinned.site", pluginDb.DomainNamespaceICANN, 7, false)
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		_, err := svc.BindPlatformRootApex(context.Background(), website.ID, 1, pd.ID)
@@ -773,16 +773,16 @@ func TestBindPlatformRootApex_DisabledRootRejected(t *testing.T) {
 func TestBindPlatformRootApex_MultipleRootsAsAdditionalDomains(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
-		website := createTestWebsite(tb, db, 1, "pinner.site")
-		pdSite := createPlatformRoot(tb, ctx, "pinner.site", pluginDb.DomainNamespaceICANN, 11, true)
+		website := createTestWebsite(tb, db, 1, "pinned.site")
+		pdSite := createPlatformRoot(tb, ctx, "pinned.site", pluginDb.DomainNamespaceICANN, 11, true)
 		pdXyz := createPlatformRoot(tb, ctx, "pinner.xyz", pluginDb.DomainNamespaceICANN, 22, true)
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
-		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinner.site").
-			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 11}, Domain: "pinner.site"}, nil).Once()
-		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(11), "pinner.site", mock.Anything).Return(nil).Once()
-		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(11), "pinner.site", pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinned.site").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 11}, Domain: "pinned.site"}, nil).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(11), "pinned.site", mock.Anything).Return(nil).Once()
+		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(11), "pinned.site", pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinner.xyz").
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 22}, Domain: "pinner.xyz"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(22), "pinner.xyz", mock.Anything).Return(nil).Once()
@@ -791,7 +791,7 @@ func TestBindPlatformRootApex_MultipleRootsAsAdditionalDomains(t *testing.T) {
 		wdSite, err := svc.BindPlatformRootApex(context.Background(), website.ID, 1, pdSite.ID)
 		require.NoError(tb, err)
 		require.NotNil(tb, wdSite)
-		assert.Equal(tb, "pinner.site", wdSite.Domain)
+		assert.Equal(tb, "pinned.site", wdSite.Domain)
 		assert.Equal(tb, uint(11), wdSite.ZoneID)
 		require.NotNil(tb, wdSite.PlatformDomainID)
 		assert.Equal(tb, pdSite.ID, *wdSite.PlatformDomainID)

@@ -888,6 +888,9 @@ func (s *DelegatedDomainService) GetWebsiteDomainByName(ctx context.Context, dom
 
 // GetWebsiteDomainByDomainAndNamespace looks up a domain by namespace.
 func (s *DelegatedDomainService) GetWebsiteDomainByDomainAndNamespace(ctx context.Context, domain string, ns pluginDb.DomainNamespace) (*pluginDb.WebsiteDomain, error) {
+	if s.DB() == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
 	var wd pluginDb.WebsiteDomain
 	err := s.DB().WithContext(ctx).Where("domain = ? AND namespace = ?", domain, ns).First(&wd).Error
 	if err != nil {

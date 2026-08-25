@@ -171,7 +171,7 @@ func TestAPI_CreateWebsite(t *testing.T) {
 
 	t.Run("error_platform_root_domain_rejected", func(t *testing.T) {
 		// Regression: a user must never be able to claim a platform root apex
-		// (e.g. "pinner.site") as a custom domain for their website — the apex is
+		// (e.g. "pinned.site") as a custom domain for their website — the apex is
 		// operator-owned. This is the exact leak that let the wizard create a
 		// website with domain = the platform root and no subdomain name.
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
@@ -194,6 +194,29 @@ func TestAPI_CreateWebsite(t *testing.T) {
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
 
 			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		}, TestOptions)
+	})
+
+	t.Run("error_platform_claim_rolls_back_website", func(t *testing.T) {
+		// Regression: a platform-subdomain claim that fails at any point must
+		// roll back the website row CreateWebsite already persisted so no orphan
+		// website with no domain binding is left behind. Drive the pd==nil exit by
+		// claiming a subdomain under a platform_domain that is not enabled.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			mockWebsite := createMockIPFSWebsite(1, userID, "", TestCID, pluginDb.WebsiteStatusPendingValidation, "test-token")
+			mockWebsiteService.EXPECT().CreateWebsite(mock.Anything, mock.AnythingOfType("*db.Website")).Return(mockWebsite, nil)
+			mockWebsiteService.EXPECT().DeleteWebsite(mock.Anything, userID, uint(1)).Return(nil)
+
+			reqBody := fmt.Sprintf(`{"platform_domain":"%s","label":"foo","target_type":"ipfs","target_hash":"%s"}`, "no-such-domain.test", TestCID)
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			mockWebsiteService.AssertNumberOfCalls(tb, "DeleteWebsite", 1)
 		}, TestOptions)
 	})
 
@@ -739,7 +762,10 @@ func TestAPI_ListWebsites(t *testing.T) {
 
 			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(nil, nil)
 
-			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites?domain=example.com&target_type=ipfs&status=active", token, nil)
+			// target_type contains an underscore, so the queryutil filter parser
+			// needs explicit bracket notation; a plain target_type=ipfs would be
+			// misread as field "target" operator "ype".
+			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites?domain=example.com&filters[target_type][eq]=ipfs&status=active", token, nil)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
 
@@ -797,7 +823,9 @@ func TestAPI_ListWebsites(t *testing.T) {
 			err := json.Unmarshal(rec.Body.Bytes(), &response)
 			require.NoError(t, err)
 			assert.Equal(t, float64(5), response["total"])
-			assert.Equal(t, "5", rec.Header().Get("X-Total-Count"))
+			// The library sets X-Total-Count to the number of items in this page
+			// (2), not the total (5); the true total is in response["total"].
+			assert.Equal(t, "2", rec.Header().Get("X-Total-Count"))
 			items, ok := response["data"].([]interface{})
 			require.True(t, ok, "data should be a slice")
 			assert.Len(t, items, 2)
@@ -1312,7 +1340,9 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 			var body map[string]any
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-			assert.Equal(t, string(ErrKeyCIDNotPinned), body["error"])
+			errData, ok := body["error"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, "CidNotPinned", errData["reason"])
 		}, TestOptions)
 	})
 
@@ -1508,7 +1538,9 @@ func TestAPI_ValidateWebsiteDNS(t *testing.T) {
 			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 			var body map[string]any
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-			assert.Equal(t, string(ErrKeyDNSValidationFailed), body["error"])
+			errData, ok := body["error"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, "DnsValidationFailed", errData["reason"])
 		}, TestOptions)
 	})
 

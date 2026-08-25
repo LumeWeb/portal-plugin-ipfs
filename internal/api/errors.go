@@ -71,12 +71,23 @@ const (
 	// create-only CreateDomain path would otherwise surface a raw MySQL 1062
 	// duplicate-key as a 500; this surfaces it as an explicit ownership
 	// conflict (409) instead.
-	ErrKeyDomainInUse   core.ErrorType = "DOMAIN_IN_USE"
-	ErrKeyInvalidPathID core.ErrorType = "INVALID_PATH_ID"
+	ErrKeyDomainInUse core.ErrorType = "DOMAIN_IN_USE"
+	// ErrKeyPlatformSubdomainRequired is returned when a request supplies a
+	// plain user-owned domain that actually sits under an operator-owned
+	// platform root (e.g. "lume.pinned.site" under "pinned.site") without
+	// claiming it via the explicit platform-subdomain shape
+	// (platform_domain + label/generate). It is user-correctable — retry using
+	// the platform shape — so it surfaces as 422 rather than a generic 500.
+	ErrKeyPlatformSubdomainRequired core.ErrorType = "PLATFORM_SUBDOMAIN_REQUIRED"
+	ErrKeyInvalidPathID             core.ErrorType = "INVALID_PATH_ID"
 	// ErrKeyNoStoredCertificate is returned when a DANE republish is requested
 	// for a domain that has no certificate/key stored (e.g. none was ever
 	// pushed via the cert webhook, or the binding is not DANE-capable).
 	ErrKeyNoStoredCertificate core.ErrorType = "NO_STORED_CERTIFICATE"
+	// ErrKeyDNSHostingReadOnly is returned when a user attempts to disable DNS
+	// hosting on a platform subdomain, whose DNS is forced on because its
+	// records live in the operator's shared zone and must not be torn out.
+	ErrKeyDNSHostingReadOnly core.ErrorType = "DNS_HOSTING_READ_ONLY"
 )
 
 // HTTP status classes (RFC 9110 / RFC 4918) — keep these consistent:
@@ -92,80 +103,84 @@ const (
 func init() {
 	core.MustRegisterNamespace(Namespace)
 	core.MustRegisterDefaultErrorMessages(Namespace, map[core.ErrorType]core.ErrorDefinition{
-		ErrKeyFileUploadAPIFailed:   {Key: ErrKeyFileUploadAPIFailed, Message: "File upload failed due to an internal error."},
-		ErrKeyMetadataFetchFailed:   {Key: ErrKeyMetadataFetchFailed, Message: "Failed to fetch metadata."},
-		ErrKeyPinFetchFailed:        {Key: ErrKeyPinFetchFailed, Message: "Failed to fetch pin."},
-		ErrKeyInvalidUUIDFormat:     {Key: ErrKeyInvalidUUIDFormat, Message: "Invalid ID format provided: %s"},
-		ErrKeyFileProcessingFailed:  {Key: ErrKeyFileProcessingFailed, Message: "Failed to process the file."},
-		ErrKeyCIDParseFailed:        {Key: ErrKeyCIDParseFailed, Message: "Failed to parse CID."},
-		ErrKeyBlockNotFound:         {Key: ErrKeyBlockNotFound, Message: "Block not found."},
-		ErrKeyUploadNotFound:        {Key: ErrKeyUploadNotFound, Message: "Upload not found."},
-		ErrKeyUnauthorized:          {Key: ErrKeyUnauthorized, Message: "Access denied. Please check your credentials and try again."},
-		ErrKeyUploadQuotaExceeded:   {Key: ErrKeyUploadQuotaExceeded, Message: "Upload quota exceeded. Please try again later."},
-		ErrKeyStorageQuotaExceeded:  {Key: ErrKeyStorageQuotaExceeded, Message: "Storage quota exceeded. Please try again later."},
-		ErrKeyDownloadQuotaExceeded: {Key: ErrKeyDownloadQuotaExceeded, Message: "Download quota exceeded. Please try again later."},
-		ErrKeyInvalidRequest:        {Key: ErrKeyInvalidRequest, Message: "Invalid request parameter: %s"},
-		ErrKeyInvalidIdentifier:     {Key: ErrKeyInvalidIdentifier, Message: "Invalid identifier format"},
-		ErrKeyUnsupportedFormat:     {Key: ErrKeyUnsupportedFormat, Message: "Unsupported file format. Supported formats: CAR, ZIP"},
-		ErrKeyCorruptedFile:         {Key: ErrKeyCorruptedFile, Message: "Corrupted or invalid file format"},
-		ErrKeyEmptyZIP:              {Key: ErrKeyEmptyZIP, Message: "Empty ZIP file cannot be converted"},
-		ErrKeyPasswordProtected:     {Key: ErrKeyPasswordProtected, Message: "Password-protected ZIP files are not supported"},
-		ErrKeyFileUploadFailed:      {Key: ErrKeyFileUploadFailed, Message: "Failed to process upload."},
-		ErrKeyInvalidRecordType:     {Key: ErrKeyInvalidRecordType, Message: "Invalid DNS record type"},
-		ErrKeyRecordNotFound:        {Key: ErrKeyRecordNotFound, Message: "DNS record not found"},
-		ErrKeyZoneNotFound:          {Key: ErrKeyZoneNotFound, Message: "DNS zone not found"},
-		ErrKeyInvalidDomainFormat:   {Key: ErrKeyInvalidDomainFormat, Message: "Invalid domain format"},
-		ErrKeyDuplicateRecord:       {Key: ErrKeyDuplicateRecord, Message: "Duplicate DNS record"},
-		ErrKeyValidationFailed:      {Key: ErrKeyValidationFailed, Message: "DNS validation failed"},
-		ErrKeyInvalidRecordName:     {Key: ErrKeyInvalidRecordName, Message: "Invalid DNS record name: %v"},
-		ErrKeyPermissionDenied:      {Key: ErrKeyPermissionDenied, Message: "Permission denied"},
-		ErrKeyInvalidCID:            {Key: ErrKeyInvalidCID, Message: "Invalid CID provided"},
-		ErrKeyInvalidTarget:         {Key: ErrKeyInvalidTarget, Message: "Invalid target hash or peer ID provided"},
-		ErrKeyCIDNotPinned:          {Key: ErrKeyCIDNotPinned, Message: "CID is not pinned. Please pin the CID and try again."},
-		ErrKeyIPNSKeyNotFound:       {Key: ErrKeyIPNSKeyNotFound, Message: "IPNS key not found or not owned by your account."},
-		ErrKeyDNSValidationFailed:   {Key: ErrKeyDNSValidationFailed, Message: "DNS validation could not be completed. Please ensure the required DNS records are published and reachable."},
-		ErrKeyDomainNotFound:        {Key: ErrKeyDomainNotFound, Message: "Domain not found"},
-		ErrKeyDomainInUse:           {Key: ErrKeyDomainInUse, Message: "Domain is already in use by another website"},
-		ErrKeyInvalidPathID:         {Key: ErrKeyInvalidPathID, Message: "Invalid path parameter: %s"},
-		ErrKeyNoStoredCertificate:   {Key: ErrKeyNoStoredCertificate, Message: "No stored certificate for domain; nothing to republish"},
-		ErrKeyDeleteFailed:          {Key: ErrKeyDeleteFailed, Message: "Failed to delete zone"},
-		ErrKeyUpdateFailed:          {Key: ErrKeyUpdateFailed, Message: "Failed to update zone"},
+		ErrKeyFileUploadAPIFailed:       {Key: ErrKeyFileUploadAPIFailed, Message: "File upload failed due to an internal error."},
+		ErrKeyMetadataFetchFailed:       {Key: ErrKeyMetadataFetchFailed, Message: "Failed to fetch metadata."},
+		ErrKeyPinFetchFailed:            {Key: ErrKeyPinFetchFailed, Message: "Failed to fetch pin."},
+		ErrKeyInvalidUUIDFormat:         {Key: ErrKeyInvalidUUIDFormat, Message: "Invalid ID format provided: %s"},
+		ErrKeyFileProcessingFailed:      {Key: ErrKeyFileProcessingFailed, Message: "Failed to process the file."},
+		ErrKeyCIDParseFailed:            {Key: ErrKeyCIDParseFailed, Message: "Failed to parse CID."},
+		ErrKeyBlockNotFound:             {Key: ErrKeyBlockNotFound, Message: "Block not found."},
+		ErrKeyUploadNotFound:            {Key: ErrKeyUploadNotFound, Message: "Upload not found."},
+		ErrKeyUnauthorized:              {Key: ErrKeyUnauthorized, Message: "Access denied. Please check your credentials and try again."},
+		ErrKeyUploadQuotaExceeded:       {Key: ErrKeyUploadQuotaExceeded, Message: "Upload quota exceeded. Please try again later."},
+		ErrKeyStorageQuotaExceeded:      {Key: ErrKeyStorageQuotaExceeded, Message: "Storage quota exceeded. Please try again later."},
+		ErrKeyDownloadQuotaExceeded:     {Key: ErrKeyDownloadQuotaExceeded, Message: "Download quota exceeded. Please try again later."},
+		ErrKeyInvalidRequest:            {Key: ErrKeyInvalidRequest, Message: "Invalid request parameter: %s"},
+		ErrKeyInvalidIdentifier:         {Key: ErrKeyInvalidIdentifier, Message: "Invalid identifier format"},
+		ErrKeyUnsupportedFormat:         {Key: ErrKeyUnsupportedFormat, Message: "Unsupported file format. Supported formats: CAR, ZIP"},
+		ErrKeyCorruptedFile:             {Key: ErrKeyCorruptedFile, Message: "Corrupted or invalid file format"},
+		ErrKeyEmptyZIP:                  {Key: ErrKeyEmptyZIP, Message: "Empty ZIP file cannot be converted"},
+		ErrKeyPasswordProtected:         {Key: ErrKeyPasswordProtected, Message: "Password-protected ZIP files are not supported"},
+		ErrKeyFileUploadFailed:          {Key: ErrKeyFileUploadFailed, Message: "Failed to process upload."},
+		ErrKeyInvalidRecordType:         {Key: ErrKeyInvalidRecordType, Message: "Invalid DNS record type"},
+		ErrKeyRecordNotFound:            {Key: ErrKeyRecordNotFound, Message: "DNS record not found"},
+		ErrKeyZoneNotFound:              {Key: ErrKeyZoneNotFound, Message: "DNS zone not found"},
+		ErrKeyInvalidDomainFormat:       {Key: ErrKeyInvalidDomainFormat, Message: "Invalid domain format"},
+		ErrKeyDuplicateRecord:           {Key: ErrKeyDuplicateRecord, Message: "Duplicate DNS record"},
+		ErrKeyValidationFailed:          {Key: ErrKeyValidationFailed, Message: "DNS validation failed"},
+		ErrKeyInvalidRecordName:         {Key: ErrKeyInvalidRecordName, Message: "Invalid DNS record name: %v"},
+		ErrKeyPermissionDenied:          {Key: ErrKeyPermissionDenied, Message: "Permission denied"},
+		ErrKeyInvalidCID:                {Key: ErrKeyInvalidCID, Message: "Invalid CID provided"},
+		ErrKeyInvalidTarget:             {Key: ErrKeyInvalidTarget, Message: "Invalid target hash or peer ID provided"},
+		ErrKeyCIDNotPinned:              {Key: ErrKeyCIDNotPinned, Message: "CID is not pinned. Please pin the CID and try again."},
+		ErrKeyIPNSKeyNotFound:           {Key: ErrKeyIPNSKeyNotFound, Message: "IPNS key not found or not owned by your account."},
+		ErrKeyDNSValidationFailed:       {Key: ErrKeyDNSValidationFailed, Message: "DNS validation could not be completed. Please ensure the required DNS records are published and reachable."},
+		ErrKeyDomainNotFound:            {Key: ErrKeyDomainNotFound, Message: "Domain not found"},
+		ErrKeyDomainInUse:               {Key: ErrKeyDomainInUse, Message: "Domain is already in use by another website"},
+		ErrKeyPlatformSubdomainRequired: {Key: ErrKeyPlatformSubdomainRequired, Message: "Domain %q is under an operator-owned platform root and must be claimed via the platform subdomain flow; retry with platform_domain plus label or generate."},
+		ErrKeyInvalidPathID:             {Key: ErrKeyInvalidPathID, Message: "Invalid path parameter: %s"},
+		ErrKeyNoStoredCertificate:       {Key: ErrKeyNoStoredCertificate, Message: "No stored certificate for domain; nothing to republish"},
+		ErrKeyDNSHostingReadOnly:        {Key: ErrKeyDNSHostingReadOnly, Message: "DNS hosting is read-only for platform subdomains"},
+		ErrKeyDeleteFailed:              {Key: ErrKeyDeleteFailed, Message: "Failed to delete zone"},
+		ErrKeyUpdateFailed:              {Key: ErrKeyUpdateFailed, Message: "Failed to update zone"},
 	})
 
 	core.MustRegisterErrorCodes(Namespace, map[core.ErrorType]int{
-		ErrKeyFileUploadAPIFailed:   http.StatusInternalServerError,
-		ErrKeyMetadataFetchFailed:   http.StatusInternalServerError,
-		ErrKeyPinFetchFailed:        http.StatusInternalServerError,
-		ErrKeyInvalidUUIDFormat:     http.StatusBadRequest,
-		ErrKeyFileProcessingFailed:  http.StatusInternalServerError,
-		ErrKeyCIDParseFailed:        http.StatusBadRequest,
-		ErrKeyBlockNotFound:         http.StatusNotFound,
-		ErrKeyUploadNotFound:        http.StatusNotFound,
-		ErrKeyUnauthorized:          http.StatusUnauthorized,
-		ErrKeyFileUploadFailed:      http.StatusInternalServerError,
-		ErrKeyUploadQuotaExceeded:   http.StatusTooManyRequests,
-		ErrKeyStorageQuotaExceeded:  http.StatusTooManyRequests,
-		ErrKeyDownloadQuotaExceeded: http.StatusTooManyRequests,
-		ErrKeyInvalidDomainFormat:   http.StatusBadRequest,
-		ErrKeyRecordNotFound:        http.StatusNotFound,
-		ErrKeyZoneNotFound:          http.StatusNotFound,
-		ErrKeyDuplicateRecord:       http.StatusConflict,
-		ErrKeyValidationFailed:      http.StatusInternalServerError,
-		ErrKeyInvalidRecordName:     http.StatusUnprocessableEntity,
-		ErrKeyInvalidRequest:        http.StatusUnprocessableEntity,
-		ErrKeyInvalidIdentifier:     http.StatusUnprocessableEntity,
-		ErrKeyInvalidCID:            http.StatusUnprocessableEntity,
-		ErrKeyInvalidTarget:         http.StatusUnprocessableEntity,
-		ErrKeyCIDNotPinned:          http.StatusUnprocessableEntity,
-		ErrKeyIPNSKeyNotFound:       http.StatusUnprocessableEntity,
-		ErrKeyDNSValidationFailed:   http.StatusUnprocessableEntity,
-		ErrKeyPermissionDenied:      http.StatusForbidden,
-		ErrKeyDomainNotFound:        http.StatusNotFound,
-		ErrKeyDomainInUse:           http.StatusConflict,
-		ErrKeyInvalidPathID:         http.StatusBadRequest,
-		ErrKeyNoStoredCertificate:   http.StatusConflict,
-		ErrKeyDeleteFailed:          http.StatusInternalServerError,
-		ErrKeyUpdateFailed:          http.StatusInternalServerError,
+		ErrKeyFileUploadAPIFailed:       http.StatusInternalServerError,
+		ErrKeyMetadataFetchFailed:       http.StatusInternalServerError,
+		ErrKeyPinFetchFailed:            http.StatusInternalServerError,
+		ErrKeyInvalidUUIDFormat:         http.StatusBadRequest,
+		ErrKeyFileProcessingFailed:      http.StatusInternalServerError,
+		ErrKeyCIDParseFailed:            http.StatusBadRequest,
+		ErrKeyBlockNotFound:             http.StatusNotFound,
+		ErrKeyUploadNotFound:            http.StatusNotFound,
+		ErrKeyUnauthorized:              http.StatusUnauthorized,
+		ErrKeyFileUploadFailed:          http.StatusInternalServerError,
+		ErrKeyUploadQuotaExceeded:       http.StatusTooManyRequests,
+		ErrKeyStorageQuotaExceeded:      http.StatusTooManyRequests,
+		ErrKeyDownloadQuotaExceeded:     http.StatusTooManyRequests,
+		ErrKeyInvalidDomainFormat:       http.StatusBadRequest,
+		ErrKeyRecordNotFound:            http.StatusNotFound,
+		ErrKeyZoneNotFound:              http.StatusNotFound,
+		ErrKeyDuplicateRecord:           http.StatusConflict,
+		ErrKeyValidationFailed:          http.StatusInternalServerError,
+		ErrKeyInvalidRecordName:         http.StatusUnprocessableEntity,
+		ErrKeyInvalidRequest:            http.StatusUnprocessableEntity,
+		ErrKeyInvalidIdentifier:         http.StatusUnprocessableEntity,
+		ErrKeyInvalidCID:                http.StatusUnprocessableEntity,
+		ErrKeyInvalidTarget:             http.StatusUnprocessableEntity,
+		ErrKeyCIDNotPinned:              http.StatusUnprocessableEntity,
+		ErrKeyIPNSKeyNotFound:           http.StatusUnprocessableEntity,
+		ErrKeyDNSValidationFailed:       http.StatusUnprocessableEntity,
+		ErrKeyPermissionDenied:          http.StatusForbidden,
+		ErrKeyDomainNotFound:            http.StatusNotFound,
+		ErrKeyDomainInUse:               http.StatusConflict,
+		ErrKeyPlatformSubdomainRequired: http.StatusUnprocessableEntity,
+		ErrKeyInvalidPathID:             http.StatusBadRequest,
+		ErrKeyNoStoredCertificate:       http.StatusConflict,
+		ErrKeyDNSHostingReadOnly:        http.StatusBadRequest,
+		ErrKeyDeleteFailed:              http.StatusInternalServerError,
+		ErrKeyUpdateFailed:              http.StatusInternalServerError,
 	})
 }
 
