@@ -197,6 +197,29 @@ func TestAPI_CreateWebsite(t *testing.T) {
 		}, TestOptions)
 	})
 
+	t.Run("error_platform_claim_rolls_back_website", func(t *testing.T) {
+		// Regression: a platform-subdomain claim that fails at any point must
+		// roll back the website row CreateWebsite already persisted so no orphan
+		// website with no domain binding is left behind. Drive the pd==nil exit by
+		// claiming a subdomain under a platform_domain that is not enabled.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			mockWebsite := createMockIPFSWebsite(1, userID, "", TestCID, pluginDb.WebsiteStatusPendingValidation, "test-token")
+			mockWebsiteService.EXPECT().CreateWebsite(mock.Anything, mock.AnythingOfType("*db.Website")).Return(mockWebsite, nil)
+			mockWebsiteService.EXPECT().DeleteWebsite(mock.Anything, userID, uint(1)).Return(nil)
+
+			reqBody := fmt.Sprintf(`{"platform_domain":"%s","label":"foo","target_type":"ipfs","target_hash":"%s"}`, "no-such-domain.test", TestCID)
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			mockWebsiteService.AssertNumberOfCalls(tb, "DeleteWebsite", 1)
+		}, TestOptions)
+	})
+
 	t.Run("error_invalid_target_type", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
