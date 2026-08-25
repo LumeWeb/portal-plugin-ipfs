@@ -168,12 +168,7 @@ func (a *API) createWebsite(c echo.Context) error {
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
 	}
-	// Guard on the delegated domain service's DB availability: the lookup
-	// runs against GetWebsiteDomainByDomainAndNamespace, which (unlike
-	// CreateDomain) dereferences s.DB() without an internal nil guard. Gate on
-	// that service's DB, not the API's own, so the exact "service not wired to
-	// a DB" scenario is skipped rather than crashing with a nil-pointer.
-	if a.delegatedDomainSvc != nil && a.delegatedDomainSvc.DB() != nil {
+	if a.delegatedDomainSvc != nil {
 		// Normalize before the lookup: CreateDomain persists the canonical apex
 		// form, so a www.-prefixed or mixed-case request for an already
 		// live-bound domain must still hit the ownership guard (otherwise the
@@ -205,6 +200,14 @@ func (a *API) createWebsite(c echo.Context) error {
 	if !req.IsPlatformClaim() && req.Domain == "" {
 		apiErr := NewError(ErrKeyInvalidRequest, fmt.Errorf("a domain is required unless claiming a platform subdomain"))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	// A domain or platform-subdomain claim can only be bound when the delegated
+	// domain service is available; otherwise the website row would persist with
+	// no primary domain (an orphan). Reject up front, matching the update and
+	// domain-create flows.
+	if a.delegatedDomainSvc == nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service unavailable"))
+		return ctx.Error(apiErr, http.StatusInternalServerError)
 	}
 
 	website, err := a.websiteService.CreateWebsite(reqCtx, model)
@@ -550,18 +553,28 @@ func (a *API) updateWebsite(c echo.Context) error {
 
 	// Platform root apex guard: an end user must never bind a platform root
 	// apex (e.g. "pinned.site") as a website's primary domain via update, just
-	// as they cannot create one. Reject before mutating the website so a
-	// refused domain change cannot leave a partial update behind.
+	// as they cannot create one. Only reject genuine NEW claims (no live binding
+	// already owned by this website) before mutating, so a refused domain change
+	// cannot leave a partial update behind; an apex the website already owns
+	// (e.g. an operator apex-bound site) still reaches the reuse branch below.
 	if req.Domain != nil && a.delegatedDomainSvc != nil {
-		isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, *req.Domain)
-		if rerr != nil {
-			apiErr := NewError(ErrKeyInvalidRequest, rerr)
-			return ctx.Error(apiErr, apiErr.HttpStatus())
+		namespace := string(pluginDb.DomainNamespaceICANN)
+		if req.Namespace != nil {
+			namespace = string(*req.Namespace)
 		}
-		if isRoot {
-			apiErr := NewError(ErrKeyInvalidRequest,
-				fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", *req.Domain))
-			return ctx.Error(apiErr, apiErr.HttpStatus())
+		existing, eerr := a.delegatedDomainSvc.GetWebsiteDomainByDomainAndNamespace(reqCtx, pluginDb.NormalizeDomain(*req.Domain), pluginDb.DomainNamespace(namespace))
+		ownedReuse := eerr == nil && existing != nil && !existing.DeletedAt.Valid && existing.WebsiteID == uint(websiteID)
+		if !ownedReuse {
+			isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, *req.Domain)
+			if rerr != nil {
+				apiErr := NewError(ErrKeyInvalidRequest, rerr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			if isRoot {
+				apiErr := NewError(ErrKeyInvalidRequest,
+					fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", *req.Domain))
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
 		}
 	}
 
