@@ -523,6 +523,20 @@ func (a *API) updateWebsite(c echo.Context) error {
 		if req.Namespace != nil {
 			namespace = string(*req.Namespace)
 		}
+		// Platform root apex guard: mirror the website-create check. An end user
+		// must never bind a platform root apex (e.g. "pinner.site") as their
+		// primary domain via update — that apex is operator-owned and reachable
+		// only through the admin apex-binding flow.
+		isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, *req.Domain)
+		if rerr != nil {
+			apiErr := NewError(ErrKeyInvalidRequest, rerr)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		if isRoot {
+			apiErr := NewError(ErrKeyInvalidRequest,
+				fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", *req.Domain))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
 		var cfgRaw json.RawMessage
 		// Managed-DNS by default; explicit DNSEnabled override flows through.
 		newDomainDNS := true

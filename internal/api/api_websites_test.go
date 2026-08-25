@@ -972,6 +972,34 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 		}, TestOptions)
 	})
 
+	t.Run("error_platform_root_domain_rejected_on_update", func(t *testing.T) {
+		// Regression: the update path (PUT /websites/:id with domain=...) must
+		// reject a platform root apex just like createWebsite/createDomain.
+		// Otherwise an end user could create a website, then re-point its
+		// primary domain onto the operator-owned apex to bypass the guard.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			// Persist a real website row so the update handler reaches the
+			// domain-change branch before the guard rejects it.
+			require.NoError(tb, ctx.DB().Create(createTestIPFSGatewayWebsite(1, userID, "example.com", cid.MustParse(TestCID), pluginDb.WebsiteStatusActive)).Error)
+
+			// Register an enabled platform root (as the admin flow would).
+			require.NoError(tb, ctx.DB().Create(&pluginDb.PlatformDomain{
+				Domain:    "platform.test",
+				Namespace: pluginDb.DomainNamespaceICANN,
+				ZoneID:    1,
+				Enabled:   true,
+			}).Error)
+
+			reqBody := fmt.Sprintf(`{"domain":"platform.test","target_type":"ipfs","target_hash":"%s"}`, TestCID)
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		}, TestOptions)
+	})
+
 	t.Run("success_redeploy_existing_primary_reuses_binding", func(t *testing.T) {
 		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
