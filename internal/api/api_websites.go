@@ -198,6 +198,15 @@ func (a *API) createWebsite(c echo.Context) error {
 		}
 	}
 
+	// A website needs a destination: either a user-owned domain (non-empty
+	// Domain) or an explicit platform-subdomain claim. An empty domain with no
+	// platform claim would otherwise persist an orphan website with no binding,
+	// so reject it before CreateWebsite.
+	if !req.IsPlatformClaim() && req.Domain == "" {
+		apiErr := NewError(ErrKeyInvalidRequest, fmt.Errorf("a domain is required unless claiming a platform subdomain"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
 	website, err := a.websiteService.CreateWebsite(reqCtx, model)
 	if err != nil {
 		a.Logger().Error("Failed to create website", zap.Error(err), zap.Uint("user_id", user), zap.String("domain", req.Domain))
