@@ -336,7 +336,7 @@ See also: GET /platform-domains (list), PATCH /platform-domains/:id (enable/disa
 			router.WithAccess(core.ACCESS_ADMIN_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Bind website to platform root apex"),
-				router.WithDescription(`Binds an operator-owned website directly to the root apex of a platform domain (e.g. "pinner.site").
+				router.WithDescription(`Binds an operator-owned website directly to the root apex of a platform domain (e.g. "pinned.site").
 
 Operator-only operation. The website must be owned by the authenticated operator. The apex binding reuses the platform root's auto-created zone.
 

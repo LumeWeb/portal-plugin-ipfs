@@ -196,23 +196,26 @@ func TestAPI_CreateDomain_PlatformClaim(t *testing.T) {
 		website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
 		require.NoError(tb, ctx.DB().Create(website).Error)
 
+		// The root must end in a real ICANN TLD: ICANNProvider.Validate rejects
+		// anything not in the IANA list, which would make every generated slug
+		// fail and exhaust the retry loop.
 		require.NoError(tb, ctx.DB().Create(&pluginDb.PlatformDomain{
-			Domain: "platform.test", Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 7, Enabled: true,
+			Domain: "pinned.site", Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 7, Enabled: true,
 		}).Error)
 
 		mockDNS := helper.SetupDNSServiceMocks()
 		// resolveManagedZone under the platform root resolves the operator zone.
-		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.test").
-			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.test"}, nil).Once()
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinned.site").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "pinned.site"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), mock.Anything, mock.Anything).Return(nil).Maybe()
 
 		rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/1/domains",
-			token, []byte(`{"platform_domain":"platform.test","generate":true}`))
+			token, []byte(`{"platform_domain":"pinned.site","generate":true}`))
 		require.Equal(tb, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 
 		var resp dto.DomainResponse
 		require.NoError(tb, json.Unmarshal(rec.Body.Bytes(), &resp))
-		assert.Contains(tb, resp.Domain, ".platform.test")
+		assert.Contains(tb, resp.Domain, ".pinned.site")
 
 		// The binding is recorded with the platform reference and active.
 		var wd pluginDb.WebsiteDomain

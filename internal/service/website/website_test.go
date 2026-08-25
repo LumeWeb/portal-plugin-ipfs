@@ -1723,7 +1723,7 @@ func TestWebsiteService_DeleteWebsite_DNSHostingEnabled_ZoneRemainsAfterDeletion
 
 // TestWebsiteService_DeleteWebsite_PlatformSubdomain_OperatorApexAndZoneIntact
 // proves the delete-scoping invariant for platform subdomains: Alice's website
-// hosts a subdomain (e.g. "alice.pinner.site") inside the operator-owned root
+// hosts a subdomain (e.g. "alice.pinned.site") inside the operator-owned root
 // zone, alongside the operator's apex binding on that same root. Deleting
 // Alice's website must clean up only Alice's subdomain DNS records — the
 // operator's shared zone (and therefore its apex records) must survive.
@@ -1737,21 +1737,21 @@ func TestWebsiteService_DeleteWebsite_PlatformSubdomain_OperatorApexAndZoneIntac
 
 		// Operator's platform root + its authoritative zone exist in the DB.
 		pd := &pluginDb.PlatformDomain{
-			Domain: "pinner.site", Namespace: pluginDb.DomainNamespaceICANN,
+			Domain: "pinned.site", Namespace: pluginDb.DomainNamespaceICANN,
 			ZoneID: operatorZoneID, Enabled: true,
 		}
 		require.NoError(tb, db.Create(pd).Error)
 		require.NoError(tb, db.Create(&pluginDb.DNSZone{
-			Model: gorm.Model{ID: operatorZoneID}, Domain: "pinner.site", UserID: 100,
+			Model: gorm.Model{ID: operatorZoneID}, Domain: "pinned.site", UserID: 100,
 			Status: string(pluginDb.DNSZoneStatusActive),
 		}).Error)
 
 		// Alice's website owns a platform subdomain under the operator root, and
 		// it is her primary binding (the binding the delete flow cleans).
-		website := createTestIPFSWebsite(testUserID1, "alice.pinner.site", util.GenerateTestCID(t, "alice data").String())
+		website := createTestIPFSWebsite(testUserID1, "alice.pinned.site", util.GenerateTestCID(t, "alice data").String())
 		website.Status = string(pluginDb.WebsiteStatusActive)
 		require.NoError(tb, db.Create(website).Error)
-		wd := createTestWebsiteDomain(website.ID, "alice.pinner.site")
+		wd := createTestWebsiteDomain(website.ID, "alice.pinned.site")
 		wd.ZoneID = operatorZoneID
 		wd.DNSHostingEnabled = true
 		wd.Status = pluginDb.DomainStatusActive
@@ -1761,21 +1761,21 @@ func TestWebsiteService_DeleteWebsite_PlatformSubdomain_OperatorApexAndZoneIntac
 
 		// Deleting Alice's website removes only her subdomain's DNS records from
 		// the shared operator zone; the zone (and operator apex) must survive.
-		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, operatorZoneID, "alice.pinner.site").Return(nil).Once()
+		mockDNS.EXPECT().DeleteWebsiteDNSRecords(mock.Anything, operatorZoneID, "alice.pinned.site").Return(nil).Once()
 
 		err := websiteService.DeleteWebsite(context.Background(), testUserID1, website.ID)
 		require.NoError(tb, err)
 
 		// The operator's shared zone is never deleted, so its apex records stay.
 		mockDNS.AssertNotCalled(t, "DeleteZone", mock.Anything, mock.Anything)
-		mockDNS.AssertNotCalled(t, "DeleteWebsiteDNSRecords", mock.Anything, mock.Anything, "pinner.site")
+		mockDNS.AssertNotCalled(t, "DeleteWebsiteDNSRecords", mock.Anything, mock.Anything, "pinned.site")
 
 		// The platform root and its zone row remain registered in the DB.
 		var pdAfter pluginDb.PlatformDomain
 		require.NoError(tb, db.Unscoped().First(&pdAfter, pd.ID).Error)
 		assert.Equal(tb, operatorZoneID, pdAfter.ZoneID)
 		var zoneCount int64
-		require.NoError(tb, db.Model(&pluginDb.DNSZone{}).Where("domain = ?", "pinner.site").Count(&zoneCount).Error)
+		require.NoError(tb, db.Model(&pluginDb.DNSZone{}).Where("domain = ?", "pinned.site").Count(&zoneCount).Error)
 		assert.Equal(tb, int64(1), zoneCount)
 	}, TestOptions)
 }
