@@ -269,7 +269,7 @@ func (a *API) createWebsite(c echo.Context) error {
 				// website (it has no primary domain binding) so no orphan row is
 				// left behind.
 				if strings.Contains(err.Error(), "must be claimed via the platform subdomain flow") {
-					a.rollbackWebsite(reqCtx, website.ID)
+					a.rollbackWebsite(reqCtx, user, website.ID)
 					a.Logger().Warn("Requested domain is a platform subdomain but not claimed via the platform shape",
 						zap.String("domain", req.Domain), zap.Uint("website_id", website.ID))
 					apiErr := NewError(ErrKeyPlatformSubdomainRequired,
@@ -282,7 +282,7 @@ func (a *API) createWebsite(c echo.Context) error {
 				// (which has no primary domain binding) before surfacing a clean 409,
 				// leaving no dangling website row behind.
 				if isDuplicateKeyError(err) {
-					a.rollbackWebsite(reqCtx, website.ID)
+					a.rollbackWebsite(reqCtx, user, website.ID)
 					a.Logger().Warn("Refusing to bind domain raced/owned by another website",
 						zap.String("domain", req.Domain), zap.Uint("website_id", website.ID))
 					apiErr := NewError(ErrKeyDomainInUse, fmt.Errorf("domain %q is already in use by another website", req.Domain))
@@ -343,15 +343,16 @@ func (a *API) createWebsite(c echo.Context) error {
 	return httputil.EncodeResponse(ctx, website, &resp)
 }
 
-// rollbackWebsite hard-deletes a just-created website row after its primary
-// domain bind failed. The website has no primary domain binding and would
-// otherwise linger as an orphan, so it is rolled back best-effort (any error is
-// logged, not returned).
-func (a *API) rollbackWebsite(ctx context.Context, websiteID uint) {
-	if a.delegatedDomainSvc == nil || a.delegatedDomainSvc.DB() == nil {
+// rollbackWebsite removes a just-created website row after its primary domain
+// bind failed. The website has no primary domain binding and would otherwise
+// linger as an orphan, so it is rolled back best-effort (any error is logged,
+// not returned). Delegates to the website service's delete so DB access stays
+// in the service layer.
+func (a *API) rollbackWebsite(ctx context.Context, userID uint, websiteID uint) {
+	if a.websiteService == nil {
 		return
 	}
-	if derr := a.delegatedDomainSvc.DB().WithContext(ctx).Unscoped().Delete(&pluginDb.Website{}, websiteID).Error; derr != nil {
+	if derr := a.websiteService.DeleteWebsite(ctx, userID, websiteID); derr != nil {
 		a.Logger().Error("Failed to roll back website after domain bind failure",
 			zap.Uint("website_id", websiteID), zap.Error(derr))
 	}
