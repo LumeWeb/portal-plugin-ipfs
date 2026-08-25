@@ -20,6 +20,7 @@ import (
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	pluginEvents "go.lumeweb.com/portal-plugin-ipfs/internal/errors"
 	pluginservice "go.lumeweb.com/portal-plugin-ipfs/internal/service/website"
+	core "go.lumeweb.com/portal/core"
 	"go.lumeweb.com/queryutil"
 	queryUtilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
@@ -122,6 +123,26 @@ func (a *API) handleWebsiteValidationError(err error, c echo.Context) (error, bo
 	return err, false
 }
 
+// rejectPlatformRootDomain returns an API error (for ctx.Error) when domain is
+// the apex of an enabled platform root that an end user must not claim directly,
+// or nil if it may be bound. It returns nil when the delegated domain service is
+// unavailable so callers keep their own nil-service handling. Shared by the
+// website-create, website-update, and domain-create paths.
+func (a *API) rejectPlatformRootDomain(ctx context.Context, domain string) *core.Error {
+	if a.delegatedDomainSvc == nil {
+		return nil
+	}
+	isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(ctx, domain)
+	if rerr != nil {
+		return NewError(ErrKeyInvalidRequest, rerr)
+	}
+	if isRoot {
+		return NewError(ErrKeyInvalidRequest,
+			fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", domain))
+	}
+	return nil
+}
+
 func (a *API) createWebsite(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
@@ -156,17 +177,8 @@ func (a *API) createWebsite(c echo.Context) error {
 	// through the platform-subdomain claim flow (or omit the domain so a
 	// subdomain is minted); otherwise the site would silently sit on the
 	// operator's apex.
-	if a.delegatedDomainSvc != nil {
-		isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, req.Domain)
-		if rerr != nil {
-			apiErr := NewError(ErrKeyInvalidRequest, rerr)
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-		if isRoot {
-			apiErr := NewError(ErrKeyInvalidRequest,
-				fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", req.Domain))
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
+	if apiErr := a.rejectPlatformRootDomain(reqCtx, req.Domain); apiErr != nil {
+		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 	if a.delegatedDomainSvc != nil {
 		// Normalize before the lookup: CreateDomain persists the canonical apex
@@ -565,14 +577,7 @@ func (a *API) updateWebsite(c echo.Context) error {
 		existing, eerr := a.delegatedDomainSvc.GetWebsiteDomainByDomainAndNamespace(reqCtx, pluginDb.NormalizeDomain(*req.Domain), pluginDb.DomainNamespace(namespace))
 		ownedReuse := eerr == nil && existing != nil && !existing.DeletedAt.Valid && existing.WebsiteID == uint(websiteID)
 		if !ownedReuse {
-			isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, *req.Domain)
-			if rerr != nil {
-				apiErr := NewError(ErrKeyInvalidRequest, rerr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			if isRoot {
-				apiErr := NewError(ErrKeyInvalidRequest,
-					fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", *req.Domain))
+			if apiErr := a.rejectPlatformRootDomain(reqCtx, *req.Domain); apiErr != nil {
 				return ctx.Error(apiErr, apiErr.HttpStatus())
 			}
 		}
