@@ -191,6 +191,19 @@ func (s *DelegatedDomainService) resolveManagedZone(ctx context.Context, domain 
 	// A subdomain (e.g. docs.example.xyz) lives inside its parent's zone
 	// (example.xyz); only the apex owns a zone.
 	if parent := parentDomain(domain); parent != "" {
+		// A subdomain nested under an operator-owned platform root must only be
+		// minted through the platform claim flow (CreatePlatformSubdomain /
+		// BindPlatformRootApex), which runs label validation, availability checks
+		// and sets PlatformDomainID. The normal bind path must refuse it even
+		// when the requesting user happens to own the parent zone — otherwise the
+		// operator admin (or anyone matching the zone owner) could mint arbitrary
+		// hostnames under the root, bypassing claim semantics entirely.
+		if rootPD, rerr := s.enabledPlatformRootForDomain(ctx, parent); rerr != nil {
+			return nil, false, rerr
+		} else if rootPD != nil {
+			return nil, false, fmt.Errorf("domain %q is under platform root %q; it must be claimed via the platform subdomain flow", domain, rootPD.Domain)
+		}
+
 		z, err := s.dnsSvc.GetZoneByDomain(ctx, parent)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, false, fmt.Errorf("lookup parent zone %q: %w", parent, err)
@@ -456,7 +469,22 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 	// verification to perform and no external delegation to wait on. It is
 	// considered active as soon as it exists. This is the single content
 	// special-case for platform subdomains and is deliberately a guard clause.
+	//
+	// The auto-activation is only sound when the binding's namespace actually
+	// matches the platform root's namespace — the platform-root zone where the
+	// records were created is namespace-specific. If a PlatformDomainID is set
+	// but the namespace does not match (data-integrity corruption or a stale
+	// pointer), falling through to the normal path lets the real DNS state
+	// decide rather than blindly marking an unknown-authoritative binding
+	// Active.
 	if wd.PlatformDomainID != nil {
+		var pd pluginDb.PlatformDomain
+		if err := s.DB().WithContext(ctx).First(&pd, *wd.PlatformDomainID).Error; err != nil {
+			return false, fmt.Errorf("load platform root %d for auto-activation: %w", *wd.PlatformDomainID, err)
+		}
+		if pd.Namespace != wd.Namespace {
+			return false, fmt.Errorf("platform root %d namespace mismatch: binding is %q, root is %q", *wd.PlatformDomainID, wd.Namespace, pd.Namespace)
+		}
 		wd.Status = pluginDb.DomainStatusActive
 		if s.DB() != nil {
 			if err := s.DB().WithContext(ctx).Model(wd).Update("status", wd.Status).Error; err != nil {

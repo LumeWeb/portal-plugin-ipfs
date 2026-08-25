@@ -296,6 +296,44 @@ func TestDelegatedDomainService_CreateDomain_SubdomainForeignParentRejected(t *t
 	}, TestOptions)
 }
 
+// TestDelegatedDomainService_CreateDomain_PlatformRootClaimRequired guards the
+// platform-root bypass: a subdomain nested under an operator-owned, registered
+// platform root must NOT be minted via the normal bind path (which skips label
+// validation, availability, and PlatformDomainID) even when the requesting user
+// owns the parent zone. It must be directed to the platform claim flow.
+func TestDelegatedDomainService_CreateDomain_PlatformRootClaimRequired(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+
+		website := createTestWebsite(tb, db, 1, "pinned.site")
+
+		// Register an enabled ICANN platform root (pinned.site ends in the
+		// ICANN TLD "site") whose zone is owned by the SAME requesting user
+		// (the operator-admin case from the bug report).
+		pd := createPlatformRoot(tb, ctx, "pinned.site", pluginDb.DomainNamespaceICANN, 7, true)
+		require.NoError(tb, db.Create(&pluginDb.DNSZone{
+			UserID: 1, Domain: pd.Domain, Status: string(pluginDb.DNSZoneStatusActive),
+			PowerDNSZoneID: "pdns-pinned",
+		}).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, mockDNS)
+
+		// The parent zone exists and is owned by the user — but the parent is a
+		// registered platform root, so CreateZone and zone reuse must both never
+		// happen; the claim must be rejected before any DNS work.
+		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, "starter.pinned.site", mock.Anything)
+		mockDNS.AssertNotCalled(tb, "GetZoneByDomain", mock.Anything, "pinned.site")
+
+		_, err := svc.CreateDomain(context.Background(), "icann", "starter.pinned.site", website.ID, 1, true, false, nil, nil)
+		require.Error(tb, err)
+		assert.Contains(tb, err.Error(), "platform subdomain flow")
+	}, TestOptions)
+}
+
 func TestDelegatedDomainService_CreateDomain_UnsupportedNamespace(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
@@ -521,6 +559,73 @@ func TestDelegatedDomainService_VerifyDomain_SelfHealsDNSSEC(t *testing.T) {
 			mockDNS.AssertExpectations(tb)
 		}, TestOptions)
 	})
+}
+
+// TestDelegatedDomainService_VerifyDomain_PlatformNamespaceMismatch_Rejects
+// guards the platform auto-activation path: a binding carrying a
+// PlatformDomainID may only be marked Active when its namespace matches the
+// platform root's namespace (the operator zone the records were written into).
+// A mismatch means the pointer is corrupt/stale and must NOT auto-activate.
+func TestDelegatedDomainService_VerifyDomain_PlatformNamespaceMismatch_Rejects(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+
+		// Registered HNS platform root...
+		pd := createPlatformRoot(tb, ctx, "pinned.site", pluginDb.DomainNamespaceHNS, 7, true)
+
+		// ...but the binding was (incorrectly) recorded as ICANN.
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID:        1,
+			UserID:           1,
+			Domain:           "starter.pinned.site",
+			Namespace:        pluginDb.DomainNamespaceICANN,
+			ZoneID:           7,
+			Status:           pluginDb.DomainStatusRecordsGenerated,
+			PlatformDomainID: &pd.ID,
+		}
+		require.NoError(tb, db.Create(wd).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		verified, err := svc.VerifyDomain(context.Background(), wd)
+		require.Error(tb, err, "namespace mismatch must not auto-activate")
+		assert.Contains(tb, err.Error(), "namespace mismatch")
+		assert.False(tb, verified)
+
+		// Must not have been promoted to Active.
+		var reloaded pluginDb.WebsiteDomain
+		require.NoError(tb, db.First(&reloaded, wd.ID).Error)
+		assert.NotEqual(tb, pluginDb.DomainStatusActive, reloaded.Status)
+	}, TestOptions)
+}
+
+// TestDelegatedDomainService_VerifyDomain_PlatformMatching_Activates guards the
+// happy path: a platform binding with a matching namespace still auto-activates
+// without touching DNS (operator controls both sides of the check).
+func TestDelegatedDomainService_VerifyDomain_PlatformMatching_Activates(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+
+		pd := createPlatformRoot(tb, ctx, "pinned.site", pluginDb.DomainNamespaceHNS, 7, true)
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID:        1,
+			UserID:           1,
+			Domain:           "starter.pinned.site",
+			Namespace:        pluginDb.DomainNamespaceHNS,
+			ZoneID:           7,
+			Status:           pluginDb.DomainStatusRecordsGenerated,
+			PlatformDomainID: &pd.ID,
+		}
+		require.NoError(tb, db.Create(wd).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		verified, err := svc.VerifyDomain(context.Background(), wd)
+		require.NoError(tb, err)
+		assert.True(tb, verified)
+
+		var reloaded pluginDb.WebsiteDomain
+		require.NoError(tb, db.First(&reloaded, wd.ID).Error)
+		assert.Equal(tb, pluginDb.DomainStatusActive, reloaded.Status)
+	}, TestOptions)
 }
 
 func TestDelegatedDomainService_GetPendingWebsiteDomainsPaginated(t *testing.T) {

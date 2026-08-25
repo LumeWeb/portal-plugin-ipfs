@@ -90,7 +90,7 @@ func (r *PlatformDomainResponse) FromModel(m *db.PlatformDomain) error {
 // PlatformAvailabilityRequest is the query for checking whether a label is
 // available across platform roots. Label is required.
 type PlatformAvailabilityRequest struct {
-	Label string `json:"label"`
+	Label string `json:"label" query:"label"`
 }
 
 func (r PlatformAvailabilityRequest) Schema() *zog.StructSchema {

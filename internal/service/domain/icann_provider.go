@@ -9,6 +9,7 @@ import (
 
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/tlds"
 )
 
 // ICANNDelegation is the typed result for ICANN BuildDelegation.
@@ -42,6 +43,12 @@ func (p *ICANNProvider) Validate(domain string) error {
 	}
 	if !strings.Contains(domain, ".") {
 		return fmt.Errorf("ICANN domain must contain a dot")
+	}
+	// A domain is ICANN only if its final label is a TLD registered in the
+	// IANA root zone list. The IANA list is the authoritative decision
+	// procedure — a name is never ICANN merely because it is dotted.
+	if !tlds.IsICANN(domain) {
+		return fmt.Errorf("%q does not end in an ICANN TLD", domain)
 	}
 	return nil
 }
