@@ -143,6 +143,19 @@ func (a *API) rejectPlatformRootDomain(ctx context.Context, domain string) *core
 	return nil
 }
 
+// rejectDNSDisableForPlatformSubdomain returns an API error (for ctx.Error) when
+// an attempt is made to turn DNS hosting OFF on a platform subdomain, whose DNS
+// is forced on because its records live in the operator's shared zone. It
+// returns nil when the binding is not a platform subdomain or DNS is being
+// enabled or left unchanged. Shared by the website-update and domain-update
+// paths.
+func (a *API) rejectDNSDisableForPlatformSubdomain(binding *pluginDb.WebsiteDomain, dnsEnabled bool) *core.Error {
+	if binding.PlatformDomainID != nil && !dnsEnabled {
+		return NewError(ErrKeyDNSHostingReadOnly, fmt.Errorf("DNS hosting is read-only for platform subdomains"))
+	}
+	return nil
+}
+
 func (a *API) createWebsite(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
@@ -752,8 +765,7 @@ func (a *API) toggleDomainDNS(ctx httputil.RequestContext, reqCtx context.Contex
 	if primary == nil {
 		return nil, nil
 	}
-	if primary.PlatformDomainID != nil && !*req.DNSEnabled {
-		apiErr := NewError(ErrKeyDNSHostingReadOnly, fmt.Errorf("DNS hosting is read-only for platform subdomains"))
+	if apiErr := a.rejectDNSDisableForPlatformSubdomain(primary, *req.DNSEnabled); apiErr != nil {
 		return nil, ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 	updated, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, *req.DNSEnabled)
