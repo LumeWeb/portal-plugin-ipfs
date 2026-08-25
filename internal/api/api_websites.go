@@ -261,26 +261,12 @@ func (a *API) createWebsite(c echo.Context) error {
 		return ctx.Error(fmt.Errorf("website target is broken"), http.StatusGone)
 	}
 
-	var resp dto.WebsiteResponse
-	if err := resp.FromModel(website); err != nil {
+	resp, err := a.websiteResponse(reqCtx, website, user, nil)
+	if err != nil {
 		a.Logger().Error("Failed to convert website to response", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
-	// Resolve the primary domain for the response's domain/DNS fields.
-	primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-	if perr != nil {
-		a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
-	}
-	resp.SetPrimaryDomain(primary)
-	resp.GatewayDomain = a.gatewayDomain()
-	if primary != nil {
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-	} else {
-		resp.SetSubdomainInfo("")
-	}
-	resp.SetValidationRecordInfo(a.verificationTokenKey())
-	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
 
 	ctx.Response().Before(func() {
 		ctx.Response().Status = http.StatusCreated
@@ -430,6 +416,54 @@ func isDuplicateKeyError(err error) bool {
 		strings.Contains(msg, "duplicate key value")
 }
 
+// websiteResponse builds a WebsiteResponse for the given website, resolving its
+// primary (apex) domain binding (or accepting a pre-resolved one) and enriching
+// it with the gateway, subdomain, validation-record, and active-CID context used
+// across the create/update/get/list handlers.
+func (a *API) websiteResponse(ctx context.Context, website *pluginDb.Website, user uint, primary *pluginDb.WebsiteDomain) (dto.WebsiteResponse, error) {
+	var resp dto.WebsiteResponse
+	if err := resp.FromModel(website); err != nil {
+		return resp, err
+	}
+	if primary == nil {
+		p, perr := a.websiteService.GetApexDomainBinding(ctx, website.ID)
+		if perr != nil {
+			a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
+		}
+		primary = p
+	}
+	resp.SetPrimaryDomain(primary)
+	resp.GatewayDomain = a.gatewayDomain()
+	if primary != nil {
+		resp.SetSubdomainInfo(a.zoneDomain(ctx, primary.ZoneID))
+	} else {
+		resp.SetSubdomainInfo("")
+	}
+	resp.SetValidationRecordInfo(a.verificationTokenKey())
+	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: ctx}, user, website)
+	return resp, nil
+}
+
+// sslWebsiteResponse builds a WebsiteResponse for an SSL-status handler, where
+// the website is looked up by domain string. When the primary binding cannot be
+// resolved the response falls back to showing the requested domain. Shared by
+// the SSL-status getter and the cert webhook.
+func (a *API) sslWebsiteResponse(ctx context.Context, website *pluginDb.Website, requestedDomain string) *dto.WebsiteResponse {
+	resp := &dto.WebsiteResponse{}
+	resp.GatewayDomain = a.gatewayDomain()
+	primary, perr := a.websiteService.GetApexDomainBinding(ctx, website.ID)
+	if perr == nil && primary != nil {
+		resp.SetPrimaryDomain(primary)
+		resp.SetSubdomainInfo(a.zoneDomain(ctx, primary.ZoneID))
+	} else {
+		resp.Domain = requestedDomain
+		resp.SetSubdomainInfo("")
+	}
+	resp.SetValidationRecordInfo(a.verificationTokenKey())
+	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: ctx}, website.UserID, website)
+	return resp
+}
+
 func (a *API) listWebsites(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
@@ -460,23 +494,10 @@ func (a *API) listWebsites(c echo.Context) error {
 
 			items := make([]*dto.WebsiteItem, len(websites))
 			for i, website := range websites {
-				var resp dto.WebsiteResponse
-				if err := resp.FromModel(website); err != nil {
+				resp, err := a.websiteResponse(reqCtx, website, user, nil)
+				if err != nil {
 					return nil, 0, err
 				}
-				primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-				if perr != nil {
-					a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
-				}
-				resp.SetPrimaryDomain(primary)
-				resp.GatewayDomain = a.gatewayDomain()
-				if primary != nil {
-					resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-				} else {
-					resp.SetSubdomainInfo("")
-				}
-				resp.SetValidationRecordInfo(a.verificationTokenKey())
-				resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
 				item := dto.WebsiteItem(resp)
 				items[i] = &item
 			}
@@ -513,18 +534,10 @@ func (a *API) getWebsite(c echo.Context) error {
 	// Check if website is broken or deleted and return 410 Gone
 	isBroken := website.Status == string(pluginDb.WebsiteStatusBroken)
 	if isBroken || website.DeletedAt.Valid {
-		var resp dto.WebsiteResponse
-		if err := resp.FromModel(website); err == nil {
-			primary, _ := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-			resp.SetPrimaryDomain(primary)
-			resp.GatewayDomain = a.gatewayDomain()
-			if primary != nil {
-				resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-			} else {
-				resp.SetSubdomainInfo("")
-			}
-			resp.SetValidationRecordInfo(a.verificationTokenKey())
-			resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
+		// A broken or soft-deleted website is returned with 410 Gone so the
+		// client can distinguish it from a 404.
+		resp, err := a.websiteResponse(reqCtx, website, user, nil)
+		if err == nil {
 			ctx.Response().Before(func() {
 				ctx.Response().Status = http.StatusGone
 			})
@@ -532,26 +545,13 @@ func (a *API) getWebsite(c echo.Context) error {
 		}
 	}
 
-	primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-	if perr != nil {
-		a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
-	}
-	resp := &dto.WebsiteResponse{}
-	if err := resp.FromModel(website); err != nil {
+	resp, err := a.websiteResponse(reqCtx, website, user, nil)
+	if err != nil {
 		a.Logger().Error("Failed to convert website to response", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
-	resp.SetPrimaryDomain(primary)
-	resp.GatewayDomain = a.gatewayDomain()
-	if primary != nil {
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-	} else {
-		resp.SetSubdomainInfo("")
-	}
-	resp.SetValidationRecordInfo(a.verificationTokenKey())
-	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
-	return httputil.EncodeResponse(ctx, website, resp)
+	return httputil.EncodeResponse(ctx, website, &resp)
 }
 
 func (a *API) updateWebsite(c echo.Context) error {
@@ -659,28 +659,12 @@ func (a *API) updateWebsite(c echo.Context) error {
 		}
 	}
 
-	var resp dto.WebsiteResponse
-	if err := resp.FromModel(website); err != nil {
+	resp, err := a.websiteResponse(reqCtx, website, user, primary)
+	if err != nil {
 		a.Logger().Error("Failed to convert website to response", zap.Error(err))
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
-	if primary == nil {
-		var perr error
-		primary, perr = a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-		if perr != nil {
-			a.Logger().Warn("website has no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
-		}
-	}
-	resp.SetPrimaryDomain(primary)
-	resp.GatewayDomain = a.gatewayDomain()
-	if primary != nil {
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-	} else {
-		resp.SetSubdomainInfo("")
-	}
-	resp.SetValidationRecordInfo(a.verificationTokenKey())
-	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
 
 	return httputil.EncodeResponse(ctx, website, &resp)
 }
@@ -889,20 +873,7 @@ func (a *API) getSSLStatus(c echo.Context) error {
 		return ctx.Error(apiErr, http.StatusNotFound)
 	}
 
-	resp := &dto.WebsiteResponse{}
-	resp.GatewayDomain = a.gatewayDomain()
-	primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-	if perr == nil && primary != nil {
-		resp.SetPrimaryDomain(primary)
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-	} else {
-		// Fall back to the requested domain when the primary binding can't be
-		// resolved; the lookup was itself by domain string.
-		resp.Domain = domain
-		resp.SetSubdomainInfo("")
-	}
-	resp.SetValidationRecordInfo(a.verificationTokenKey())
-	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, website.UserID, website)
+	resp := a.sslWebsiteResponse(reqCtx, website, domain)
 	a.applyApexSSLStatus(reqCtx, resp, website)
 	return httputil.EncodeResponse(ctx, website, resp)
 }
@@ -985,20 +956,7 @@ func (a *API) updateSSLStatus(c echo.Context) error {
 		return ctx.Error(apiErr, http.StatusNotFound)
 	}
 
-	resp := &dto.WebsiteResponse{}
-	resp.GatewayDomain = a.gatewayDomain()
-	primary, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-	if perr == nil && primary != nil {
-		resp.SetPrimaryDomain(primary)
-		resp.SetSubdomainInfo(a.zoneDomain(reqCtx, primary.ZoneID))
-	} else {
-		// Fall back to the requested domain when the primary binding can't be
-		// resolved; the lookup was itself by domain string.
-		resp.Domain = domain
-		resp.SetSubdomainInfo("")
-	}
-	resp.SetValidationRecordInfo(a.verificationTokenKey())
-	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, website.UserID, website)
+	resp := a.sslWebsiteResponse(reqCtx, website, domain)
 	a.applyApexSSLStatus(reqCtx, resp, website)
 	return httputil.EncodeResponse(ctx, website, resp)
 }
