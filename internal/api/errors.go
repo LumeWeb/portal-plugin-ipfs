@@ -95,7 +95,7 @@ func init() {
 		ErrKeyFileUploadAPIFailed:   {Key: ErrKeyFileUploadAPIFailed, Message: "File upload failed due to an internal error."},
 		ErrKeyMetadataFetchFailed:   {Key: ErrKeyMetadataFetchFailed, Message: "Failed to fetch metadata."},
 		ErrKeyPinFetchFailed:        {Key: ErrKeyPinFetchFailed, Message: "Failed to fetch pin."},
-		ErrKeyInvalidUUIDFormat:     {Key: ErrKeyInvalidUUIDFormat, Message: "Invalid UUID format provided: %s"},
+		ErrKeyInvalidUUIDFormat:     {Key: ErrKeyInvalidUUIDFormat, Message: "Invalid ID format provided: %s"},
 		ErrKeyFileProcessingFailed:  {Key: ErrKeyFileProcessingFailed, Message: "Failed to process the file."},
 		ErrKeyCIDParseFailed:        {Key: ErrKeyCIDParseFailed, Message: "Failed to parse CID."},
 		ErrKeyBlockNotFound:         {Key: ErrKeyBlockNotFound, Message: "Block not found."},
