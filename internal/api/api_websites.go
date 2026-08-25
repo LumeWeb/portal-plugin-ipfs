@@ -619,13 +619,8 @@ func (a *API) updateWebsite(c echo.Context) error {
 	var primary *pluginDb.WebsiteDomain
 
 	// 1. Change the primary domain: create the requested domain binding and
-	// make it the website's new primary (apex) domain. Setting a domain is
-	// idempotent for a binding that already belongs to this website: the
-	// deployed domain is re-used and repointed as primary rather than
-	// re-created (CreateDomain is create-only and would otherwise trip the
-	// (domain, namespace) unique key with a 500 on every re-deploy). A domain
-	// live-bound to a different website is an ownership conflict (409), not a
-	// 500.
+	// make it the website's new primary (apex) domain. Idempotent — see
+	// applyDomainChange for the reuse/conflict/create semantics.
 	if req.Domain != nil {
 		if a.delegatedDomainSvc == nil {
 			return ctx.Error(NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service unavailable")), http.StatusInternalServerError)
@@ -634,93 +629,20 @@ func (a *API) updateWebsite(c echo.Context) error {
 		if req.Namespace != nil {
 			namespace = string(*req.Namespace)
 		}
-		var cfgRaw json.RawMessage
-		// Managed-DNS by default; explicit DNSEnabled override flows through.
-		newDomainDNS := true
-		if req.DNSEnabled != nil {
-			newDomainDNS = *req.DNSEnabled
-		}
-
-		// Reuse an existing live binding for this (domain, namespace) when it
-		// already belongs to the website; otherwise fall through to a genuine
-		// create (change-primary). A binding owned by a different website is
-		// surfaced as an explicit ownership conflict. The lookup compares the
-		// canonical apex form (lowercased, www.-stripped) that CreateDomain
-		// stores, so a www.-prefixed or mixed-case request resolves correctly.
-		domain := pluginDb.NormalizeDomain(*req.Domain)
-		existing, eerr := a.delegatedDomainSvc.GetWebsiteDomainByDomainAndNamespace(reqCtx, domain, pluginDb.DomainNamespace(namespace))
-		switch {
-		case eerr == nil && !existing.DeletedAt.Valid && existing.WebsiteID == website.ID:
-			// Re-deploy to an already-bound primary: reuse, don't re-create.
-			// The binding's DNS hosting state is preserved as-is; only an
-			// explicit dns_hosting_enabled override (step 2 below) changes it.
-			// Silently defaulting DNS hosting on here would re-provision a
-			// PowerDNS zone on a binding the user deliberately self-hosted,
-			// defeating the idempotent re-deploy guarantee.
-			wd := existing
-			rerp, derr := a.websiteService.SetPrimaryDomain(reqCtx, user, website.ID, wd.ID)
-			if derr != nil {
-				a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", wd.ID), zap.Error(derr))
-				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			primary = rerp
-		case eerr == nil:
-			// Domain is live-bound to a different website — refuse to repoint.
-			a.Logger().Warn("Refusing to bind domain owned by another website",
-				zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Uint("domain_owner_website_id", existing.WebsiteID))
-			apiErr := NewError(ErrKeyDomainInUse, fmt.Errorf("domain %q is already in use by another website", *req.Domain))
-			return ctx.Error(apiErr, http.StatusConflict)
-		default:
-			if !errors.Is(eerr, gorm.ErrRecordNotFound) {
-				a.Logger().Error("Failed to look up existing domain binding", zap.String("domain", *req.Domain), zap.Error(eerr))
-				apiErr := NewError(ErrKeyFileProcessingFailed, eerr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw, nil)
-			if derr != nil {
-				a.Logger().Error("Failed to create primary domain for website",
-					zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Error(derr))
-				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			primary, derr = a.websiteService.SetPrimaryDomain(reqCtx, user, website.ID, wd.ID)
-			if derr != nil {
-				a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", wd.ID), zap.Error(derr))
-				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
+		var err error
+		primary, err = a.applyDomainChange(ctx, reqCtx, user, website, req, namespace)
+		if err != nil {
+			return err
 		}
 	}
 
 	// 2. Toggle DNS hosting on the primary domain binding. Resolved after any
 	// domain change so the toggle applies to the current primary.
 	if req.DNSEnabled != nil {
-		if primary == nil {
-			p, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
-			if perr != nil {
-				a.Logger().Warn("cannot toggle DNS hosting: no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
-			} else {
-				primary = p
-			}
-		}
-		if primary != nil {
-			// Platform subdomains have DNS hosting forced on; reject attempts
-			// to disable it so records in the operator's shared zone are not
-			// torn out.
-			if primary.PlatformDomainID != nil && !*req.DNSEnabled {
-				apiErr := NewError(ErrKeyDNSHostingReadOnly, fmt.Errorf("DNS hosting is read-only for platform subdomains"))
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			updated, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, *req.DNSEnabled)
-			if derr != nil {
-				a.Logger().Error("failed to set DNS hosting on primary domain", zap.Uint("domain_id", primary.ID), zap.Error(derr))
-				apiErr := NewError(ErrKeyFileProcessingFailed, derr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			// Use the toggled binding for the response so Enabled/ZoneID
-			// reflect the actual DNS state rather than the pre-toggle apex.
-			primary = updated
+		var err error
+		primary, err = a.toggleDomainDNS(ctx, reqCtx, user, website, req, primary)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -748,6 +670,99 @@ func (a *API) updateWebsite(c echo.Context) error {
 	resp.EnrichActiveCID(ipnsKeyCIDResolver{svc: a.ipnsKeyService, ctx: reqCtx}, user, website)
 
 	return httputil.EncodeResponse(ctx, website, &resp)
+}
+
+// applyDomainChange repoints the website's primary (apex) domain binding to the
+// requested domain. It is idempotent: an existing live binding already owned by
+// this website is reused and re-promoted as primary (rather than re-created, to
+// avoid tripping the (domain, namespace) unique key), a domain owned by another
+// website is an ownership conflict (409), and anything else is a fresh binding
+// created and promoted. Returns the new primary binding on success.
+func (a *API) applyDomainChange(ctx httputil.RequestContext, reqCtx context.Context, user uint, website *pluginDb.Website, req dto.WebsiteUpdateRequest, namespace string) (*pluginDb.WebsiteDomain, error) {
+	var cfgRaw json.RawMessage
+	// Managed-DNS by default; explicit DNSEnabled override flows through.
+	newDomainDNS := true
+	if req.DNSEnabled != nil {
+		newDomainDNS = *req.DNSEnabled
+	}
+	// The lookup compares the canonical apex form (lowercased, www.-stripped)
+	// that CreateDomain stores, so a www.-prefixed or mixed-case request
+	// resolves correctly.
+	domain := pluginDb.NormalizeDomain(*req.Domain)
+	existing, eerr := a.delegatedDomainSvc.GetWebsiteDomainByDomainAndNamespace(reqCtx, domain, pluginDb.DomainNamespace(namespace))
+	switch {
+	case eerr == nil && !existing.DeletedAt.Valid && existing.WebsiteID == website.ID:
+		// Re-deploy to an already-bound primary: reuse, don't re-create. The
+		// binding's DNS hosting state is preserved as-is; only an explicit
+		// dns_hosting_enabled override (the toggle step) changes it. Silently
+		// defaulting DNS hosting on here would re-provision a PowerDNS zone on
+		// a binding the user deliberately self-hosted, defeating the idempotent
+		// re-deploy guarantee.
+		wd := existing
+		rerp, derr := a.websiteService.SetPrimaryDomain(reqCtx, user, website.ID, wd.ID)
+		if derr != nil {
+			a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", wd.ID), zap.Error(derr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+			return nil, ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		return rerp, nil
+	case eerr == nil:
+		// Domain is live-bound to a different website — refuse to repoint.
+		a.Logger().Warn("Refusing to bind domain owned by another website",
+			zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Uint("domain_owner_website_id", existing.WebsiteID))
+		apiErr := NewError(ErrKeyDomainInUse, fmt.Errorf("domain %q is already in use by another website", *req.Domain))
+		return nil, ctx.Error(apiErr, http.StatusConflict)
+	default:
+		if !errors.Is(eerr, gorm.ErrRecordNotFound) {
+			a.Logger().Error("Failed to look up existing domain binding", zap.String("domain", *req.Domain), zap.Error(eerr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, eerr)
+			return nil, ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw, nil)
+		if derr != nil {
+			a.Logger().Error("Failed to create primary domain for website",
+				zap.Uint("website_id", website.ID), zap.String("domain", *req.Domain), zap.Error(derr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+			return nil, ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		primary, derr := a.websiteService.SetPrimaryDomain(reqCtx, user, website.ID, wd.ID)
+		if derr != nil {
+			a.Logger().Error("Failed to set primary domain", zap.Uint("domain_id", wd.ID), zap.Error(derr))
+			apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+			return nil, ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		return primary, nil
+	}
+}
+
+// toggleDomainDNS applies an explicit dns_hosting_enabled override to the
+// website's primary domain binding, resolving the primary first when no domain
+// change happened this request. Platform subdomains have DNS hosting forced on,
+// so attempts to disable it are rejected (records in the operator's shared zone
+// must not be torn out). Returns the binding carrying the effective DNS state.
+func (a *API) toggleDomainDNS(ctx httputil.RequestContext, reqCtx context.Context, user uint, website *pluginDb.Website, req dto.WebsiteUpdateRequest, primary *pluginDb.WebsiteDomain) (*pluginDb.WebsiteDomain, error) {
+	if primary == nil {
+		p, perr := a.websiteService.GetApexDomainBinding(reqCtx, website.ID)
+		if perr != nil {
+			a.Logger().Warn("cannot toggle DNS hosting: no primary domain binding", zap.Uint("website_id", website.ID), zap.Error(perr))
+		} else {
+			primary = p
+		}
+	}
+	if primary == nil {
+		return nil, nil
+	}
+	if primary.PlatformDomainID != nil && !*req.DNSEnabled {
+		apiErr := NewError(ErrKeyDNSHostingReadOnly, fmt.Errorf("DNS hosting is read-only for platform subdomains"))
+		return nil, ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	updated, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, *req.DNSEnabled)
+	if derr != nil {
+		a.Logger().Error("failed to set DNS hosting on primary domain", zap.Uint("domain_id", primary.ID), zap.Error(derr))
+		apiErr := NewError(ErrKeyFileProcessingFailed, derr)
+		return nil, ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	return updated, nil
 }
 
 func (a *API) deleteWebsite(c echo.Context) error {
