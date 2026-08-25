@@ -150,7 +150,7 @@ func (a *API) createWebsite(c echo.Context) error {
 	if req.Namespace != nil {
 		namespace = string(*req.Namespace)
 	}
-	// Platform root apex guard: the apex of a platform root (e.g. "pinner.site")
+	// Platform root apex guard: the apex of a platform root (e.g. "pinned.site")
 	// is operator-owned and must never be claimed by an end user as a custom
 	// domain. A request that names a platform root as its primary domain must go
 	// through the platform-subdomain claim flow (or omit the domain so a
@@ -548,6 +548,23 @@ func (a *API) updateWebsite(c echo.Context) error {
 		return ctx.Error(NewError(ErrKeyInvalidRequest, fmt.Errorf("at least one field must be provided")), http.StatusUnprocessableEntity)
 	}
 
+	// Platform root apex guard: an end user must never bind a platform root
+	// apex (e.g. "pinned.site") as a website's primary domain via update, just
+	// as they cannot create one. Reject before mutating the website so a
+	// refused domain change cannot leave a partial update behind.
+	if req.Domain != nil && a.delegatedDomainSvc != nil {
+		isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, *req.Domain)
+		if rerr != nil {
+			apiErr := NewError(ErrKeyInvalidRequest, rerr)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		if isRoot {
+			apiErr := NewError(ErrKeyInvalidRequest,
+				fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", *req.Domain))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+	}
+
 	// Build updates map from non-nil fields. Target type and hash update the
 	// Website record directly. Domain and DNS hosting are per-domain state that
 	// lives on the primary WebsiteDomain; they are applied after the update
@@ -641,21 +658,6 @@ func (a *API) updateWebsite(c echo.Context) error {
 				apiErr := NewError(ErrKeyFileProcessingFailed, eerr)
 				return ctx.Error(apiErr, apiErr.HttpStatus())
 			}
-			// Platform root apex guard: an end user must never bind a platform
-			// root apex (e.g. "pinner.site") as a NEW primary domain via update.
-			// It only runs when no live binding already owns the domain — a
-			// legitimate re-deploy of an apex the website already owns (handled
-			// by the reuse branch above) is preserved.
-			isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, *req.Domain)
-			if rerr != nil {
-				apiErr := NewError(ErrKeyInvalidRequest, rerr)
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
-			if isRoot {
-				apiErr := NewError(ErrKeyInvalidRequest,
-					fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", *req.Domain))
-				return ctx.Error(apiErr, apiErr.HttpStatus())
-			}
 			wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw, nil)
 			if derr != nil {
 				a.Logger().Error("Failed to create primary domain for website",
@@ -688,7 +690,7 @@ func (a *API) updateWebsite(c echo.Context) error {
 			// to disable it so records in the operator's shared zone are not
 			// torn out.
 			if primary.PlatformDomainID != nil && !*req.DNSEnabled {
-				apiErr := NewError(ErrKeyValidationFailed, fmt.Errorf("DNS hosting is read-only for platform subdomains"))
+				apiErr := NewError(ErrKeyDNSHostingReadOnly, fmt.Errorf("DNS hosting is read-only for platform subdomains"))
 				return ctx.Error(apiErr, apiErr.HttpStatus())
 			}
 			updated, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, user, website.ID, primary.ID, *req.DNSEnabled)

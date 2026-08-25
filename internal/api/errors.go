@@ -84,6 +84,10 @@ const (
 	// for a domain that has no certificate/key stored (e.g. none was ever
 	// pushed via the cert webhook, or the binding is not DANE-capable).
 	ErrKeyNoStoredCertificate core.ErrorType = "NO_STORED_CERTIFICATE"
+	// ErrKeyDNSHostingReadOnly is returned when a user attempts to disable DNS
+	// hosting on a platform subdomain, whose DNS is forced on because its
+	// records live in the operator's shared zone and must not be torn out.
+	ErrKeyDNSHostingReadOnly core.ErrorType = "DNS_HOSTING_READ_ONLY"
 )
 
 // HTTP status classes (RFC 9110 / RFC 4918) — keep these consistent:
@@ -136,6 +140,7 @@ func init() {
 		ErrKeyPlatformSubdomainRequired: {Key: ErrKeyPlatformSubdomainRequired, Message: "Domain %q is under an operator-owned platform root and must be claimed via the platform subdomain flow; retry with platform_domain plus label or generate."},
 		ErrKeyInvalidPathID:             {Key: ErrKeyInvalidPathID, Message: "Invalid path parameter: %s"},
 		ErrKeyNoStoredCertificate:       {Key: ErrKeyNoStoredCertificate, Message: "No stored certificate for domain; nothing to republish"},
+		ErrKeyDNSHostingReadOnly:        {Key: ErrKeyDNSHostingReadOnly, Message: "DNS hosting is read-only for platform subdomains"},
 		ErrKeyDeleteFailed:              {Key: ErrKeyDeleteFailed, Message: "Failed to delete zone"},
 		ErrKeyUpdateFailed:              {Key: ErrKeyUpdateFailed, Message: "Failed to update zone"},
 	})
@@ -173,6 +178,7 @@ func init() {
 		ErrKeyPlatformSubdomainRequired: http.StatusUnprocessableEntity,
 		ErrKeyInvalidPathID:             http.StatusBadRequest,
 		ErrKeyNoStoredCertificate:       http.StatusConflict,
+		ErrKeyDNSHostingReadOnly:        http.StatusBadRequest,
 		ErrKeyDeleteFailed:              http.StatusInternalServerError,
 		ErrKeyUpdateFailed:              http.StatusInternalServerError,
 	})

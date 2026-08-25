@@ -183,7 +183,7 @@ func (a *API) updateDomain(c echo.Context) error {
 		// Platform subdomains have DNS hosting forced on; reject attempts to
 		// disable it so records in the operator's shared zone are not torn out.
 		if existing.PlatformDomainID != nil && !*req.DNSHostingEnabled {
-			apiErr := NewError(ErrKeyValidationFailed, errors.New("DNS hosting is read-only for platform subdomains"))
+			apiErr := NewError(ErrKeyDNSHostingReadOnly, errors.New("DNS hosting is read-only for platform subdomains"))
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
 		d, derr := a.websiteService.SetDomainDNSEnabled(reqCtx, userID, uint(websiteID), uint(domainID), *req.DNSHostingEnabled)
