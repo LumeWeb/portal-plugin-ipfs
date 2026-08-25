@@ -91,6 +91,27 @@ func (s *DelegatedDomainService) GetEnabledPlatformDomainByDomain(ctx context.Co
 	return s.GetEnabledPlatformDomain(ctx, domain, "")
 }
 
+// IsPlatformRootDomain reports whether the given domain (case/format
+// normalized) is an enabled platform root apex. The apex of a platform root is
+// operator-owned: it may only be bound to the operator's own site via the
+// admin apex-binding flow, never claimed by an end user through the normal
+// create/bind endpoints. Returns (false, nil) when the domain is not an
+// enabled platform root, or when the delegated-domain service has no DB wired.
+func (s *DelegatedDomainService) IsPlatformRootDomain(ctx context.Context, domain string) (bool, error) {
+	if s.DB() == nil {
+		return false, nil
+	}
+	var count int64
+	err := s.DB().WithContext(ctx).
+		Model(&pluginDb.PlatformDomain{}).
+		Where("domain = ? AND enabled = ?", NormalizeDomain(domain), true).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // labelFor returns the fully-qualified subdomain for a label on a platform root.
 // It deliberately does NOT call NormalizeDomain, which strips a leading "www."
 // prefix — that would map the label "www" to the bare root apex, bypassing

@@ -169,6 +169,34 @@ func TestAPI_CreateWebsite(t *testing.T) {
 		}, TestOptions)
 	})
 
+	t.Run("error_platform_root_domain_rejected", func(t *testing.T) {
+		// Regression: a user must never be able to claim a platform root apex
+		// (e.g. "pinner.site") as a custom domain for their website — the apex is
+		// operator-owned. This is the exact leak that let the wizard create a
+		// website with domain = the platform root and no subdomain name.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, _ := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			// Register an enabled platform root (as the admin flow would).
+			pd := &pluginDb.PlatformDomain{
+				Domain:    "platform.test",
+				Namespace: pluginDb.DomainNamespaceICANN,
+				ZoneID:    1,
+				Enabled:   true,
+			}
+			require.NoError(tb, ctx.DB().Create(pd).Error)
+
+			// Creating a website that names the platform root as its primary
+			// domain must be rejected up front (422), before any Website is
+			// persisted.
+			reqBody := fmt.Sprintf(`{"domain":"platform.test","target_type":"ipfs","target_hash":"%s"}`, TestCID)
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		}, TestOptions)
+	})
+
 	t.Run("error_invalid_target_type", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)
@@ -941,6 +969,34 @@ func TestAPI_UpdateWebsite(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, uint(1), response.ID)
 			assert.Equal(t, "updated-example.com", response.Domain)
+		}, TestOptions)
+	})
+
+	t.Run("error_platform_root_domain_rejected_on_update", func(t *testing.T) {
+		// Regression: the update path (PUT /websites/:id with domain=...) must
+		// reject a platform root apex just like createWebsite/createDomain.
+		// Otherwise an end user could create a website, then re-point its
+		// primary domain onto the operator-owned apex to bypass the guard.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			// Persist a real website row so the update handler reaches the
+			// domain-change branch before the guard rejects it.
+			require.NoError(tb, ctx.DB().Create(createTestIPFSGatewayWebsite(1, userID, "example.com", cid.MustParse(TestCID), pluginDb.WebsiteStatusActive)).Error)
+
+			// Register an enabled platform root (as the admin flow would).
+			require.NoError(tb, ctx.DB().Create(&pluginDb.PlatformDomain{
+				Domain:    "platform.test",
+				Namespace: pluginDb.DomainNamespaceICANN,
+				ZoneID:    1,
+				Enabled:   true,
+			}).Error)
+
+			reqBody := fmt.Sprintf(`{"domain":"platform.test","target_type":"ipfs","target_hash":"%s"}`, TestCID)
+			rec := helper.makeAuthenticatedRequest(http.MethodPut, "/api/websites/1", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 		}, TestOptions)
 	})
 

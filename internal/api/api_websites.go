@@ -150,6 +150,24 @@ func (a *API) createWebsite(c echo.Context) error {
 	if req.Namespace != nil {
 		namespace = string(*req.Namespace)
 	}
+	// Platform root apex guard: the apex of a platform root (e.g. "pinner.site")
+	// is operator-owned and must never be claimed by an end user as a custom
+	// domain. A request that names a platform root as its primary domain must go
+	// through the platform-subdomain claim flow (or omit the domain so a
+	// subdomain is minted); otherwise the site would silently sit on the
+	// operator's apex.
+	if a.delegatedDomainSvc != nil {
+		isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, req.Domain)
+		if rerr != nil {
+			apiErr := NewError(ErrKeyInvalidRequest, rerr)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		if isRoot {
+			apiErr := NewError(ErrKeyInvalidRequest,
+				fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", req.Domain))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+	}
 	// Guard on the delegated domain service's DB availability: the lookup
 	// runs against GetWebsiteDomainByDomainAndNamespace, which (unlike
 	// CreateDomain) dereferences s.DB() without an internal nil guard. Gate on
@@ -546,6 +564,21 @@ func (a *API) updateWebsite(c echo.Context) error {
 			if !errors.Is(eerr, gorm.ErrRecordNotFound) {
 				a.Logger().Error("Failed to look up existing domain binding", zap.String("domain", *req.Domain), zap.Error(eerr))
 				apiErr := NewError(ErrKeyFileProcessingFailed, eerr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			// Platform root apex guard: an end user must never bind a platform
+			// root apex (e.g. "pinner.site") as a NEW primary domain via update.
+			// It only runs when no live binding already owns the domain — a
+			// legitimate re-deploy of an apex the website already owns (handled
+			// by the reuse branch above) is preserved.
+			isRoot, rerr := a.delegatedDomainSvc.IsPlatformRootDomain(reqCtx, *req.Domain)
+			if rerr != nil {
+				apiErr := NewError(ErrKeyInvalidRequest, rerr)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			if isRoot {
+				apiErr := NewError(ErrKeyInvalidRequest,
+					fmt.Errorf("domain %q is a platform root and cannot be claimed directly; request a subdomain under it instead", *req.Domain))
 				return ctx.Error(apiErr, apiErr.HttpStatus())
 			}
 			wd, derr := a.delegatedDomainSvc.CreateDomain(reqCtx, namespace, *req.Domain, website.ID, user, newDomainDNS, false, cfgRaw, nil)
