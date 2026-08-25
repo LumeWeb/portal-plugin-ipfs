@@ -222,7 +222,12 @@ func (a *API) createWebsite(c echo.Context) error {
 			// requested label (or a generated one). Platform subdomains are DNS-
 			// hosted by construction, so an explicit dns_hosting_enabled=false is
 			// contradictory and rejected up front.
+			//
+			// The website was already persisted by CreateWebsite above, so every
+			// failure exit in this branch rolls it back (it has no domain binding
+			// yet) to avoid leaving an orphan row.
 			if !dnsEnabled {
+				a.rollbackWebsite(reqCtx, user, website.ID)
 				apiErr := NewError(ErrKeyInvalidRequest, fmt.Errorf("DNS hosting cannot be disabled for a platform subdomain"))
 				return ctx.Error(apiErr, apiErr.HttpStatus())
 			}
@@ -232,18 +237,22 @@ func (a *API) createWebsite(c echo.Context) error {
 			}
 			pd, perr := a.delegatedDomainSvc.GetEnabledPlatformDomain(reqCtx, req.PlatformDomain, platformNS)
 			if perr != nil {
+				a.rollbackWebsite(reqCtx, user, website.ID)
 				a.Logger().Error("Failed to resolve platform domain", zap.String("platform_domain", req.PlatformDomain), zap.Error(perr))
 				apiErr := NewError(ErrKeyInvalidRequest, perr)
 				return ctx.Error(apiErr, apiErr.HttpStatus())
 			}
 			if pd == nil {
+				a.rollbackWebsite(reqCtx, user, website.ID)
 				apiErr := NewError(ErrKeyInvalidRequest, fmt.Errorf("platform domain %q not found or disabled", req.PlatformDomain))
 				return ctx.Error(apiErr, apiErr.HttpStatus())
 			}
 			if _, cerr := a.delegatedDomainSvc.CreatePlatformSubdomain(reqCtx, website.ID, user, pd.ID, req.Label, req.Generate); cerr != nil {
 				// Platform-subdomain claim failures are user-correctable (label
-				// taken, reserved, disabled). The website is not persisted until
-				// after this block, so there is nothing to roll back here.
+				// taken, reserved, disabled). The website row was already
+				// persisted by CreateWebsite with no domain binding, so remove it
+				// before surfacing the error.
+				a.rollbackWebsite(reqCtx, user, website.ID)
 				if isDuplicateKeyError(cerr) || strings.Contains(cerr.Error(), "already taken") {
 					a.Logger().Warn("Platform subdomain already claimed",
 						zap.String("platform_domain", req.PlatformDomain), zap.String("label", req.Label), zap.Error(cerr))
