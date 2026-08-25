@@ -571,13 +571,13 @@ func TestDelegatedDomainService_VerifyDomain_PlatformNamespaceMismatch_Rejects(t
 		db := ctx.DB()
 
 		// Registered HNS platform root...
-		pd := createPlatformRoot(tb, ctx, "pinned.site", pluginDb.DomainNamespaceHNS, 7, true)
+		pd := createPlatformRoot(tb, ctx, "altroot", pluginDb.DomainNamespaceHNS, 7, true)
 
 		// ...but the binding was (incorrectly) recorded as ICANN.
 		wd := &pluginDb.WebsiteDomain{
 			WebsiteID:        1,
 			UserID:           1,
-			Domain:           "starter.pinned.site",
+			Domain:           "starter.altroot",
 			Namespace:        pluginDb.DomainNamespaceICANN,
 			ZoneID:           7,
 			Status:           pluginDb.DomainStatusRecordsGenerated,
@@ -605,11 +605,11 @@ func TestDelegatedDomainService_VerifyDomain_PlatformMatching_Activates(t *testi
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 
-		pd := createPlatformRoot(tb, ctx, "pinned.site", pluginDb.DomainNamespaceHNS, 7, true)
+		pd := createPlatformRoot(tb, ctx, "altroot", pluginDb.DomainNamespaceHNS, 7, true)
 		wd := &pluginDb.WebsiteDomain{
 			WebsiteID:        1,
 			UserID:           1,
-			Domain:           "starter.pinned.site",
+			Domain:           "starter.altroot",
 			Namespace:        pluginDb.DomainNamespaceHNS,
 			ZoneID:           7,
 			Status:           pluginDb.DomainStatusRecordsGenerated,
