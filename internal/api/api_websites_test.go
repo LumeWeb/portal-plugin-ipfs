@@ -761,7 +761,7 @@ func TestAPI_ListWebsites(t *testing.T) {
 			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(1)).Return(nil, nil)
 			mockWebsiteService.EXPECT().GetApexDomainBinding(mock.Anything, uint(2)).Return(nil, nil)
 
-			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites?page=1&limit=2", token, nil)
+			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites?_start=0&_end=2", token, nil)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
 
@@ -769,6 +769,7 @@ func TestAPI_ListWebsites(t *testing.T) {
 			err := json.Unmarshal(rec.Body.Bytes(), &response)
 			require.NoError(t, err)
 			assert.Equal(t, float64(5), response["total"])
+			assert.Equal(t, "5", rec.Header().Get("X-Total-Count"))
 			items, ok := response["data"].([]interface{})
 			require.True(t, ok, "data should be a slice")
 			assert.Len(t, items, 2)

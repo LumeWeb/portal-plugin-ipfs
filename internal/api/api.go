@@ -655,6 +655,9 @@ Prerequisites: User must own the specified IPNS key.`),
 		return fmt.Errorf("failed to register ipns operation routes: %w", err)
 	}
 
+	websiteFilterSchema := queryutil.NewSchemaProvider().ForType(dto.WebsiteFilter{})
+	websiteListSchema := queryutil.NewSchemaProvider().ForType(dto.WebsiteItem{})
+
 	websiteRoutes := router.DefineRoutes(
 		router.NewRoute(http.MethodPost, "/websites", a.createWebsite,
 			router.WithAccess(core.ACCESS_USER_ROLE),
@@ -688,13 +691,18 @@ Returns paginated list of website configurations with status, domain, and target
 
 See also:.*`),
 				router.WithTags("Websites"),
-					router.WithSuccessResponse(http.StatusOK, "List of websites", router.WithJSONContent(dto.WebsiteItemResponse{})),
-					router.WithErrorResponses(router.DefineSwaggerErrorResponses(
-						DefineErrorResponse(http.StatusUnauthorized, "Authentication required"),
-						DefineErrorResponse(http.StatusInternalServerError, "Internal server error occurred"),
-					)),
-					),
+				router.WithPaginationParams(),
+				router.WithSortParams(websiteListSchema.SortableFields()),
+				router.WithFilterParamsFromSchema(websiteFilterSchema),
+				router.WithSuccessResponse(http.StatusOK, "List of websites",
+					router.WithJSONContent(dto.WebsiteItemResponse{}),
+					router.WithTotalCountHeader()),
+				router.WithErrorResponses(router.DefineSwaggerErrorResponses(
+					DefineErrorResponse(http.StatusUnauthorized, "Authentication required"),
+					DefineErrorResponse(http.StatusInternalServerError, "Internal server error occurred"),
+				)),
 				),
+			),
 				router.NewRoute(http.MethodGet, "/websites/:id", a.getWebsite,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
