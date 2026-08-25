@@ -16,6 +16,7 @@ import (
 	"go.lumeweb.com/ipfs-sdk/dnsname"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/tlds"
 
 	"github.com/miekg/dns"
 )
@@ -177,6 +178,13 @@ func (p *HNSProvider) Validate(domain string) error {
 		if !hnsDomainRe.MatchString(label) {
 			return fmt.Errorf("HNS domain contains invalid characters")
 		}
+	}
+	// A name whose final label is an IANA ICANN TLD belongs to the ICANN
+	// namespace, never HNS. The IANA list is the authoritative decision
+	// procedure, so HNS excludes ICANN-suffixed names (e.g. "example.com")
+	// even though its labels are otherwise DNS-compliant.
+	if tlds.IsICANN(domain) {
+		return fmt.Errorf("%q ends in an ICANN TLD; use the ICANN namespace", domain)
 	}
 	return nil
 }

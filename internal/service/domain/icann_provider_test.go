@@ -20,6 +20,10 @@ func TestICANNProvider_Validate(t *testing.T) {
 	assert.NoError(t, p.Validate("www.example.com"))
 	assert.Error(t, p.Validate(""))
 	assert.Error(t, p.Validate("nodot"))
+	// A dotted name is NOT ICANN merely because it is dotted; its final label
+	// must be an IANA-registered ICANN TLD.
+	assert.Error(t, p.Validate("blog.altroot"))
+	assert.Error(t, p.Validate("foo.test-tld-not-real"))
 }
 
 func TestICANNProvider_BuildDelegation(t *testing.T) {

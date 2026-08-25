@@ -112,6 +112,26 @@ func (s *DelegatedDomainService) IsPlatformRootDomain(ctx context.Context, domai
 	return count > 0, nil
 }
 
+// enabledPlatformRootForDomain walks up the ancestor domains of the given name
+// and returns the deepest enabled PlatformDomain root it is nested under, or
+// nil if none. Used by resolveManagedZone's normal (non-claim) bind path to
+// reject subdomains that sit under an operator-owned platform root — such a
+// binding must go through the platform claim flow instead.
+func (s *DelegatedDomainService) enabledPlatformRootForDomain(ctx context.Context, domain string) (*pluginDb.PlatformDomain, error) {
+	ancestor := domain
+	for len(ancestor) > 0 {
+		pd, err := s.GetEnabledPlatformDomainByDomain(ctx, ancestor)
+		if err != nil {
+			return nil, fmt.Errorf("resolve platform root for %q: %w", ancestor, err)
+		}
+		if pd != nil {
+			return pd, nil
+		}
+		ancestor = parentDomain(ancestor)
+	}
+	return nil, nil
+}
+
 // labelFor returns the fully-qualified subdomain for a label on a platform root.
 // It deliberately does NOT call NormalizeDomain, which strips a leading "www."
 // prefix — that would map the label "www" to the bare root apex, bypassing

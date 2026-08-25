@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"encoding/json"
+	"sort"
 
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
@@ -73,15 +74,29 @@ func (r *Registry) Get(namespace string) DomainProvider {
 }
 
 func (r *Registry) Names() []string {
-	return lo.Keys(r.providers)
+	keys := lo.Keys(r.providers)
+	sort.Strings(keys)
+	return keys
 }
 
 // providerForDomain returns the provider whose namespace accepts `domain`,
 // or nil when no registered provider validates it.
+//
+// Iteration is deterministic (Names returns sorted keys). When more than one
+// provider accepts a dotted name (both ICANN's "must contain a dot" and HNS's
+// "DNS-compliant labels" accept, e.g., "example.com"), ICANN wins for dotted
+// names: an HNS name is typically single-label or a subdomain of a registered
+// alt-root, and any dotted name is at least plausibly ICANN. The service layer
+// (getNamespaceForDomain) further overrides this default by preferring a
+// registered platform root's namespace when the domain descends from one.
 func (r *Registry) providerForDomain(domain string) DomainProvider {
 	if r == nil {
 		return nil
 	}
+	// Provider.Validate calls are mutually exclusive by construction: a domain
+	// ends in an IANA ICANN TLD (ICANN) or it does not (HNS). Iterating the
+	// deterministically-sorted namespaces therefore yields a single match, so
+	// no tie-breaking is required.
 	for _, ns := range r.Names() {
 		prov := r.Get(ns)
 		if prov != nil && prov.Validate(domain) == nil {

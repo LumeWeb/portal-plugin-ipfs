@@ -81,6 +81,12 @@ func TestRegistry_NameserversFor(t *testing.T) {
 	ns, ok = r.NameserversFor("lumeweb")
 	assert.True(t, ok)
 	assert.Equal(t, []string{"ns1.hns.example"}, ns)
+
+	// Mutual exclusion: a dotted name under a non-ICANN TLD routes to HNS,
+	// and an ICANN-TLD-suffixed name routes to ICANN.
+	ns, ok = r.NameserversFor("blog.altroot")
+	assert.True(t, ok)
+	assert.Equal(t, []string{"ns1.hns.example"}, ns)
 }
 
 func TestRegistry_LiveNameservers_RoutesByNamespace(t *testing.T) {
