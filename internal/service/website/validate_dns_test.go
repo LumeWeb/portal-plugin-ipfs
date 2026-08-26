@@ -86,6 +86,7 @@ func TestValidateDNS_PendingValidation_ValidDNSLinkAndToken_ReturnsValidated(t *
 
 		testCID := util.GenerateTestCID(t, "validate-test")
 		website := createTestIPFSWebsite(testUserID1, "validate-pending.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		require.NotNil(tb, created)
@@ -121,6 +122,7 @@ func TestValidateDNS_PendingValidation_MissingDNSLink_ReturnsDNSMismatch(t *test
 
 		testCID := util.GenerateTestCID(t, "missing-dnslink")
 		website := createTestIPFSWebsite(testUserID1, "missing-dnslink.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		_ = bindPrimaryDomain(tb, ctx, created.ID, "missing-dnslink.com", false)
@@ -146,6 +148,7 @@ func TestValidateDNS_PendingValidation_MissingToken_ReturnsTokenMissing(t *testi
 
 		testCID := util.GenerateTestCID(t, "missing-token")
 		website := createTestIPFSWebsite(testUserID1, "missing-token.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		_ = bindPrimaryDomain(tb, ctx, created.ID, "missing-token.com", false)
@@ -174,6 +177,7 @@ func TestValidateDNS_ActiveSite_ExpiredToken_SkipsTokenCheckAndValidates(t *test
 
 		testCID := util.GenerateTestCID(t, "active-expired-token")
 		website := createTestIPFSWebsite(testUserID1, "active-expired.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
@@ -221,6 +225,7 @@ func TestValidateDNS_BrokenSite_ExpiredToken_SkipsTokenCheckAndValidates(t *test
 
 		testCID := util.GenerateTestCID(t, "broken-expired-token")
 		website := createTestIPFSWebsite(testUserID1, "broken-expired.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
@@ -267,6 +272,7 @@ func TestValidateDNS_PendingValidation_ExpiredToken_ReturnsTokenExpiredWithRegen
 
 		testCID := util.GenerateTestCID(t, "regen-token")
 		website := createTestIPFSWebsite(testUserID1, "regen-token.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
@@ -299,6 +305,7 @@ func TestValidateDNS_NXDOMAIN_ReturnsDNSMissing(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "nxdomain")
 		website := createTestIPFSWebsite(testUserID1, "nxdomain-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		_ = bindPrimaryDomain(tb, ctx, created.ID, "nxdomain-test.com", false)
@@ -327,6 +334,7 @@ func TestValidateDNS_DNSLinkLookupFailure_ReturnsError(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "dns-fail")
 		website := createTestIPFSWebsite(testUserID1, "dns-fail-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		_ = bindPrimaryDomain(tb, ctx, created.ID, "dns-fail-test.com", false)
@@ -349,6 +357,7 @@ func TestValidateDNS_TxTTLookupFailure_ReturnsError(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "txt-lookup-fail")
 		website := createTestIPFSWebsite(testUserID1, "txt-fail-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		_ = bindPrimaryDomain(tb, ctx, created.ID, "txt-fail-test.com", false)
@@ -376,6 +385,7 @@ func TestValidateDNS_WrongDNSLink_ReturnsDNSMismatch(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "wrong-dnslink")
 		website := createTestIPFSWebsite(testUserID1, "wrong-dnslink.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		_ = bindPrimaryDomain(tb, ctx, created.ID, "wrong-dnslink.com", false)
@@ -439,6 +449,7 @@ func TestValidateDNS_PendingValidation_ExpiredToken_ManagedDNS_RegeneratesToken(
 		zoneID := uint(5001)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 5001
 		prebindPrimaryDomain(tb, ctx, website, domain, true)
 
@@ -522,6 +533,7 @@ func TestValidateDNS_SelfHostedPrimary_DoesNotRequireDelegation(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "self-hosted-primary")
 		website := createTestIPFSWebsite(testUserID1, "selfhosted.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		// bindPrimaryDomain with DNSHostingEnabled=false yields a zone-less
@@ -566,6 +578,7 @@ func TestValidateDNS_PendingDelegated_SkipsTokenCheck(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "delegated-skip-token")
 		website := createTestIPFSWebsite(testUserID1, "delegated-skip.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		_ = bindPrimaryDomain(tb, ctx, created.ID, "delegated-skip.com", false)
@@ -599,6 +612,7 @@ func TestValidateDNS_PlatformSubdomain_SkipsTokenCheck(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "platform-skip-token")
 		website := createTestIPFSWebsite(testUserID1, "platform-skip.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		wd := bindPrimaryDomain(tb, ctx, created.ID, "platform-skip.com", true)
@@ -644,6 +658,7 @@ func TestValidateDNS_DelegatedAttached_Success(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "delegated-attached-ok")
 		website := createTestIPFSWebsite(testUserID1, "attached-ok.hns", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		_ = bindPrimaryDomain(tb, ctx, created.ID, "attached-ok.hns", false)
@@ -694,6 +709,7 @@ func TestValidateDNS_SecondaryPending_DoesNotBlockPrimary(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "secondary-pending")
 		website := createTestIPFSWebsite(testUserID1, "primary.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		_ = bindPrimaryDomain(tb, ctx, created.ID, "primary.com", false)
@@ -746,6 +762,7 @@ func TestValidateDNS_DelegatedAttached_FailsVerification(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "delegated-attached-fail")
 		website := createTestIPFSWebsite(testUserID1, "attached-fail.hns", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		_ = bindPrimaryDomain(tb, ctx, created.ID, "attached-fail.hns", false)
@@ -805,6 +822,7 @@ func TestValidateDNS_SelfHostedHNSPrimary_DoesNotDeadEnd(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "self-hosted-hns-primary")
 		website := createTestIPFSWebsite(testUserID1, "selfhosted.hns", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		// bindPrimaryDomain(false) yields a zone-less (ZoneID==0) primary; the
@@ -855,6 +873,7 @@ func TestValidateDNS_DelegatedAttached_VerifyError_Fails(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "delegated-verify-err")
 		website := createTestIPFSWebsite(testUserID1, "verify-err.hns", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		_ = bindPrimaryDomain(tb, ctx, created.ID, "verify-err.hns", false)

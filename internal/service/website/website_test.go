@@ -132,6 +132,19 @@ func createTestIPFSWebsite(userID uint, domain string, cidStr string) *pluginDb.
 	}
 }
 
+// stubPinnedCID configures the pin service mock so GetPinByCIDAndUser reports
+// the given CID as pinned for the user. CreateWebsite now refuses IPFS targets
+// (and the IPNS auto-convert path) unless the CID is pinned, so tests that
+// create such websites must stub the pin first.
+func stubPinnedCID(t *testing.T, ctx coreTesting.TestContext, userID uint, cidStr string) {
+	mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+	c := cid.MustParse(cidStr)
+	mockPinSvc.EXPECT().
+		GetPinByCIDAndUser(mock.Anything, c, userID).
+		Return(&pluginDb.IPFSPin{UserID: userID, CID: c.Bytes(), Status: pluginDb.PinningStatusPinned}, nil).
+		Maybe()
+}
+
 // createTestIPNSWebsite creates a test website with an IPNS target.
 // It returns a Website struct ready for use in tests, with the specified user ID,
 // domain, and IPNS string parsed into the appropriate fields.
@@ -242,6 +255,7 @@ func TestWebsiteService_CreateWebsite_IPFSTarget(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		testsite := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), testsite)
 
 		// Assert
@@ -268,6 +282,32 @@ func TestWebsiteService_CreateWebsite_IPFSTarget(t *testing.T) {
 		retrievedWebsite, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
 		assert.Equal(tb, createdWebsite.ID, retrievedWebsite.ID)
+	}, TestOptions)
+}
+
+func TestWebsiteService_CreateWebsite_IPFSTargetNotPinned(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		require.NotNil(tb, websiteService)
+		require.NotNil(tb, mockPinSvc)
+
+		testCID := util.GenerateTestCID(t, "unpinned data")
+
+		// Simulate an unpinned CID: the pin lookup returns no pin record.
+		mockPinSvc.EXPECT().
+			GetPinByCIDAndUser(mock.Anything, testCID, testUserID1).
+			Return(nil, nil).Once()
+
+		testsite := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), testsite)
+
+		// Assert
+		require.Error(tb, err)
+		assert.True(tb, errors.Is(err, ErrCIDNotPinned))
+		assert.Nil(tb, createdWebsite)
 	}, TestOptions)
 }
 
@@ -317,6 +357,7 @@ func TestWebsiteService_CreateWebsite_NoDomainServiceFiresNotification(t *testin
 
 		testCID := util.GenerateTestCID(t, "test data")
 		website := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		created, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -332,6 +373,7 @@ func TestWebsiteService_SSLStatusDoesNotAffectWebsiteStatus(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "test data")
 		website := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		// Create website
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -367,6 +409,7 @@ func TestWebsiteService_SSLStatusTransitionsIndependently(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "test data")
 		website := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		// Create website
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -414,6 +457,7 @@ func TestWebsiteService_WebsiteCanBeBrokenRegardlessOfSSLStatus(t *testing.T) {
 
 		testCID := util.GenerateTestCID(t, "test data")
 		website := createTestIPFSWebsite(testUserID1, "example.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		// Create website
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -507,6 +551,9 @@ func TestWebsiteService_CreateWebsite_IPNSTargetWithPlainCID_AutoConvert(t *test
 		// Set up IPNS key mocks for auto-conversion
 		setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
 
+		// The plain CID must be pinned before the auto-convert path will publish it.
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
+
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		websiteService.WaitForPublishes()
@@ -553,6 +600,7 @@ func TestWebsiteService_GetWebsite(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "get-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -602,6 +650,7 @@ func TestWebsiteService_GetWebsiteByDomain(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "domain-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -654,7 +703,9 @@ func TestWebsiteService_ListWebsites(t *testing.T) {
 
 		// Create websites for user 1
 		website1 := createTestIPFSWebsite(testUserID1, "list1.com", util.GenerateTestCID(t, "data1").String())
+		stubPinnedCID(t, ctx, testUserID1, util.GenerateTestCID(t, "data1").String())
 		website2 := createTestIPFSWebsite(testUserID1, "list2.com", util.GenerateTestCID(t, "data2").String())
+		stubPinnedCID(t, ctx, testUserID1, util.GenerateTestCID(t, "data2").String())
 
 		created1, err := websiteService.CreateWebsite(context.Background(), website1)
 		require.NoError(tb, err)
@@ -663,6 +714,7 @@ func TestWebsiteService_ListWebsites(t *testing.T) {
 
 		// Create a website for user 2
 		website3 := createTestIPFSWebsite(testUserID2, "list3.com", util.GenerateTestCID(t, "data3").String())
+		stubPinnedCID(t, ctx, testUserID2, util.GenerateTestCID(t, "data3").String())
 		_, err = websiteService.CreateWebsite(context.Background(), website3)
 		require.NoError(tb, err)
 
@@ -698,6 +750,7 @@ func TestWebsiteService_UpdateWebsite(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "update-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -759,6 +812,7 @@ func TestWebsiteService_DeleteWebsite(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "delete-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -806,6 +860,7 @@ func TestWebsiteService_ValidationTokenExpiration(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "expire-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -833,6 +888,7 @@ func TestWebsiteService_StatusTransitions(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "status-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		// Create website (should be pending_validation)
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -864,6 +920,7 @@ func TestWebsiteService_ShouldCheck(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "check-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -892,6 +949,7 @@ func TestWebsiteService_IsExpired(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "expire-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -922,6 +980,7 @@ func TestWebsiteService_BlockWebsite(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "block-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -950,6 +1009,7 @@ func TestWebsiteService_UnblockWebsite(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "unblock-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -987,6 +1047,7 @@ func TestWebsiteService_DeleteWebsite_Blocked(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "blocked-delete-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -1024,6 +1085,7 @@ func TestWebsiteService_DeleteWebsite_Active(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "active-delete-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
@@ -1057,6 +1119,7 @@ func TestWebsiteService_UpdateSSLStatus_SuccessfulUpdate(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "ssl-update-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
@@ -1101,6 +1164,7 @@ func TestWebsiteService_UpdateSSLStatus_IssuedAtSetOnlyOnReadyTransition(t *test
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "ssl-issuedat-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, "ssl-issuedat-test.com")).Error)
@@ -1142,6 +1206,7 @@ func TestWebsiteService_UpdateSSLStatus_ErrorSetOnFailed(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "ssl-error-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, "ssl-error-test.com")).Error)
@@ -1168,6 +1233,7 @@ func TestWebsiteService_UpdateSSLStatus_ErrorClearedOnStatusChange(t *testing.T)
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "ssl-clear-error-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, "ssl-clear-error-test.com")).Error)
@@ -1207,6 +1273,7 @@ func TestWebsiteService_UpdateSSLStatus_AtomicUpdates(t *testing.T) {
 		testCID := util.GenerateTestCID(t, "test data")
 
 		website := createTestIPFSWebsite(testUserID1, "ssl-atomic-test.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		require.NoError(tb, ctx.DB().Create(createTestWebsiteDomain(createdWebsite.ID, "ssl-atomic-test.com")).Error)
@@ -1272,6 +1339,7 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreatedWhenEnabled(t *testing.T) {
 		domain := "dns-enabled-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8000
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -1321,6 +1389,7 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreated(t *testing.T) {
 		domain := "dns-records-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8001
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -1377,6 +1446,7 @@ func TestWebsiteService_UpdateWebsite_DNSRecordsUpdatedWhenTargetChanges(t *test
 		domain := "dns-update-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
@@ -1413,6 +1483,7 @@ func TestWebsiteService_DeleteWebsite_DNSRecordsCleanedUp(t *testing.T) {
 		domain := "dns-cleanup-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8002
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -1461,6 +1532,7 @@ func TestWebsiteService_DeleteWebsite_DNSCleanupFailureDoesNotPreventDeletion(t 
 		domain := "dns-cleanup-fail-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8003
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -1510,6 +1582,7 @@ func TestWebsiteService_DeleteWebsite_NoDNSZoneNoCleanup(t *testing.T) {
 		domain := "no-dns-zone-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 
 		// Act - Create website with DNS disabled (no zone created)
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -1541,6 +1614,7 @@ func TestWebsiteService_CreateWebsite_DNSHostingDisabledWhenEnabledFalse(t *test
 		domain := "dns-disabled-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8003
 		// Bind a primary domain with DNS hosting disabled: the website owns a
 		// domain but no DNS-managed zone, so no DNS side-effects run on create.
@@ -1581,6 +1655,7 @@ func TestWebsiteService_CreateWebsite_DNSHostingEnabled_CreatesZoneAndRecords(t 
 		targetHash := testCID.String()
 
 		website := createTestIPFSWebsite(testUserID1, domain, targetHash)
+		stubPinnedCID(t, ctx, testUserID1, targetHash)
 		website.ID = 8004
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -1629,6 +1704,7 @@ func TestWebsiteService_UpdateWebsite_DNSHostingEnabled_NoDNSUpdateWhenTargetUnc
 		domain := "no-dns-update-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8005
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -1677,6 +1753,7 @@ func TestWebsiteService_DeleteWebsite_DNSHostingEnabled_ZoneRemainsAfterDeletion
 		domain := "zone-persists-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8006
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -1749,6 +1826,7 @@ func TestWebsiteService_DeleteWebsite_PlatformSubdomain_OperatorApexAndZoneIntac
 		// Alice's website owns a platform subdomain under the operator root, and
 		// it is her primary binding (the binding the delete flow cleans).
 		website := createTestIPFSWebsite(testUserID1, "alice.pinned.site", util.GenerateTestCID(t, "alice data").String())
+		stubPinnedCID(t, ctx, testUserID1, util.GenerateTestCID(t, "alice data").String())
 		website.Status = string(pluginDb.WebsiteStatusActive)
 		require.NoError(tb, db.Create(website).Error)
 		wd := createTestWebsiteDomain(website.ID, "alice.pinned.site")
@@ -1792,6 +1870,7 @@ func TestWebsiteService_CreateWebsite_DNSHostingDisabled_NoDNSOperations(t *test
 		domain := "no-dns-ops-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 1671
 		prebindPrimaryDomain(tb, ctx, website, domain, false) // DNS hosting disabled
 
@@ -1832,6 +1911,7 @@ func TestWebsiteService_UpdateWebsite_DNSHostingDisabled_NoDNSOperations(t *test
 		domain := "update-no-dns-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 1700
 		prebindPrimaryDomain(tb, ctx, website, domain, false) // DNS hosting disabled
 
@@ -1871,6 +1951,7 @@ func TestWebsiteService_DeleteWebsite_DNSHostingDisabled_NoDNSOperations(t *test
 		domain := "delete-no-dns-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 1738
 		prebindPrimaryDomain(tb, ctx, website, domain, false) // DNS hosting disabled
 
@@ -1904,6 +1985,7 @@ func TestWebsiteService_CreateWebsite_DNSZoneCreationFailure_ContinuesWithoutDNS
 		domain := "zone-fail-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8007
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -1945,6 +2027,7 @@ func TestWebsiteService_CreateWebsite_DNSRecordsCreationFailure_ContinuesWithout
 		domain := "records-fail-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8008
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -1993,6 +2076,7 @@ func TestWebsiteService_EnableDNSHosting_RecordFailurePreservesDelegationZone(t 
 		testZoneID := uint(9002)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 9013
 		// The enable transition loads the owning Website row for target/token
 		// state, so it must exist in the DB (this test bypasses CreateWebsite in
@@ -2074,6 +2158,7 @@ func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing
 
 		// Act - Create first website with DNS hosting enabled
 		website1 := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website1.ID = 8009
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -2117,6 +2202,7 @@ func TestWebsiteService_CreateWebsite_IPNSKeyAutoCreation_NoDuplicate(t *testing
 
 		// Act - Create second website with same domain
 		website2 := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website2.ID = 8010
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -2145,6 +2231,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS(t *testing.T) {
 		domain := "convert-test.com"
 
 		ipfsWebsite := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), ipfsWebsite)
 		require.NoError(tb, err)
 		require.NotNil(tb, createdWebsite)
@@ -2185,6 +2272,7 @@ func TestWebsiteService_UpdateWebsite_EnableDNSHostingTransition(t *testing.T) {
 		zoneID := uint(9999)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8009
 		// Bind a primary domain with DNS hosting disabled: enabling DNS later
 		// toggles this binding's DNSHostingEnabled from false to true.
@@ -2232,6 +2320,7 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingTransition(t *testing.T) 
 		testZoneID := uint(9998)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8011
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -2288,6 +2377,7 @@ func TestWebsiteService_UpdateWebsite_DNSEnabledInvalidType(t *testing.T) {
 		domain := "invalid-dns-type-test.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 
@@ -2316,6 +2406,7 @@ func TestWebsiteService_UpdateWebsite_DNSHostingTransitionWithExistingZone(t *te
 		testZoneID := uint(9997)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8010
 		// Bind a primary domain with DNS hosting disabled but an already-existing
 		// zone, so that enabling DNS reuses the zone (no CreateZone) and only
@@ -2367,6 +2458,7 @@ func TestWebsiteService_UpdateWebsite_DNSEnableToggleOffOn(t *testing.T) {
 		testZoneID := uint(8001)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8012
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -2429,6 +2521,7 @@ func TestWebsiteService_UpdateWebsite_DisableDNSHostingDeleteZoneFails(t *testin
 		testZoneID := uint(8003)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8013
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -2481,6 +2574,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPNSToIPFS_UpdatesDNSRecords(t *tes
 
 		// Create website with DNS hosting enabled (auto-creates IPNS key)
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8014
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -2560,6 +2654,7 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPNS_NoDNSUpdate(t *testing.T) {
 		testZoneID := uint(9002)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8015
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -2624,6 +2719,7 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 
 		// Create website with DNS hosting enabled (auto-creates IPNS key, starts as IPNS)
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8016
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -2721,6 +2817,7 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone(t *testing.T) {
 		domain := "type-only-convert.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 2544
 		prebindPrimaryDomain(tb, ctx, website, domain, false) // DNS hosting disabled
 
@@ -2734,7 +2831,7 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone(t *testing.T) {
 		// Mock: existing CID must be pinned for validation to pass
 		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
 		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, testCID, testUserID1).
-			Return(&pluginDb.IPFSPin{UserID: testUserID1, CID: testCID.Bytes(), Status: pluginDb.PinningStatusPinned}, nil).Once()
+			Return(&pluginDb.IPFSPin{UserID: testUserID1, CID: testCID.Bytes(), Status: pluginDb.PinningStatusPinned}, nil).Maybe()
 
 		updates := map[string]interface{}{
 			"target_type": string(pluginDb.WebsiteTargetTypeIPNS),
@@ -2762,6 +2859,7 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone_DNSRecordsUpdated(t *t
 		testZoneID := uint(8001)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 2585
 		prebindPrimaryDomain(tb, ctx, website, domain, false) // DNS hosting disabled initially
 
@@ -2775,7 +2873,7 @@ func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone_DNSRecordsUpdated(t *t
 		// Mock: existing CID must be pinned for validation to pass
 		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
 		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, testCID, testUserID1).
-			Return(&pluginDb.IPFSPin{UserID: testUserID1, CID: testCID.Bytes(), Status: pluginDb.PinningStatusPinned}, nil).Once()
+			Return(&pluginDb.IPFSPin{UserID: testUserID1, CID: testCID.Bytes(), Status: pluginDb.PinningStatusPinned}, nil).Maybe()
 
 		updates := map[string]interface{}{
 			"target_type": string(pluginDb.WebsiteTargetTypeIPNS),
@@ -2818,6 +2916,7 @@ func TestWebsiteService_UpdateWebsite_IPNSTargetTypeWithCID(t *testing.T) {
 		domain := "ipns-with-cid.com"
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 2641
 		prebindPrimaryDomain(tb, ctx, website, domain, false) // DNS hosting disabled
 
@@ -2860,6 +2959,7 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPFSWithoutCID(t *testing.T) {
 		testZoneID := uint(8002)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 8017
 		// Bind the primary domain with DNS hosting enabled so CreateWebsite's
 		// managed-DNS side-effects (IPNS auto-convert, zone + record creation) run.
@@ -2905,6 +3005,7 @@ func TestWebsiteService_DisableDNSHosting_PreservesDelegationOwnedZone(t *testin
 		testZoneID := uint(9001)
 
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
 		website.ID = 9012
 
 		// The disable transition loads and rewrites the owning Website row, so
