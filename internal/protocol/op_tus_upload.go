@@ -226,12 +226,20 @@ func processUploadAndCreateReservations(ctx context.Context, helper core.Operati
 // getTUSPinName extracts an optional custom pin name from the TUS upload
 // metadata. Clients supply it as the "name" field of the Upload-Metadata
 // header. It returns "" when the upload did not specify one.
+//
+// The value is capped at 255 characters to match the POST /upload path's
+// limit (varchar(255) on IPFSPin.Name); without this bound an over-long name
+// would fail or silently truncate when the pin record is inserted.
 func getTUSPinName(ctx context.Context, tusHandler core.TusHandler, proto core.StorageProtocol, tusUploadID string) string {
 	metadata, err := tusHandler.GetUploadMetadata(ctx, proto, tusUploadID)
 	if err != nil {
 		return ""
 	}
-	return metadata["name"]
+	name := metadata["name"]
+	if l := len(name); l > 255 {
+		name = name[:255]
+	}
+	return name
 }
 
 // processUploadWithServices processes the upload using upload and pin services
