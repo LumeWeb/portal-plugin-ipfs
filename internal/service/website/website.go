@@ -1449,14 +1449,25 @@ func (s *WebsiteServiceDefault) loadWebsite(ctx context.Context, userID, website
 	return website, nil
 }
 
-// ValidateDNS validates the DNS TXT record for a website's primary domain
-func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Website, primaryDomain string) bool {
+// shouldPerformTokenCheck reports whether the user-side TXT verification token
+// must be checked for a website awaiting DNS validation. It is skipped for
+// platform subdomains (minted under an operator-owned root, where the platform
+// controls both ends of the DNS check and no verification record exists) and
+// for namespaces that prove ownership via delegation (e.g. HNS).
+func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Website, primaryWD *pluginDb.WebsiteDomain) bool {
 	needs := website.Status == string(pluginDb.WebsiteStatusPendingValidation)
-	if needs && s.delegatedDomainSvc != nil && s.delegatedDomainSvc.UsesDelegationForOwnership(primaryDomain) {
-		s.Logger().Debug("skipping TXT token (ownership proven via delegation verification)", zap.String("domain", primaryDomain))
+	if !needs {
 		return false
 	}
-	return needs
+	if primaryWD.PlatformDomainID != nil {
+		s.Logger().Debug("skipping TXT token (platform subdomain, operator-controlled DNS)", zap.String("domain", primaryWD.Domain))
+		return false
+	}
+	if s.delegatedDomainSvc != nil && s.delegatedDomainSvc.UsesDelegationForOwnership(primaryWD.Domain) {
+		s.Logger().Debug("skipping TXT token (ownership proven via delegation verification)", zap.String("domain", primaryWD.Domain))
+		return false
+	}
+	return true
 }
 
 func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, websiteID uint) (pluginCore.ValidateDNSResult, error) {
@@ -1480,7 +1491,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 			}
 			primaryDomain := primaryWD.Domain
 
-			needsTokenCheck := s.shouldPerformTokenCheck(&website, primaryDomain)
+			needsTokenCheck := s.shouldPerformTokenCheck(&website, primaryWD)
 
 			if needsTokenCheck && website.IsExpired() {
 				if err := s.regenerateExpiredToken(ctx, &website, primaryWD); err != nil {
