@@ -22,6 +22,11 @@ const (
 	PinningStatusFailed  PinningStatus = "failed"
 )
 
+// MaxPinNameLength is the maximum allowed length of IPFSPin.Name, matching the
+// varchar(255) size of the underlying column. Pin names must be capped to this
+// length before being persisted.
+const MaxPinNameLength = 255
+
 // validStatuses is a map of valid pinning statuses for quick lookup
 var validStatuses = map[PinningStatus]struct{}{
 	PinningStatusQueued:  {},

@@ -3,6 +3,7 @@ package dto
 import (
 	"github.com/Oudwins/zog"
 	"go.lumeweb.com/httputil"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 )
 
@@ -27,7 +28,7 @@ func (u *UploadRequest) ToModel() (*UploadRequest, error) {
 func (u *UploadRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
 		"ArchiveMode": zog.String().OneOf([]string{upload.ArchiveConvert.String(), upload.ArchivePreserve.String()}).Optional(),
-		"Name":        zog.String().Max(255).Optional(),
+		"Name":        zog.String().Max(pluginDb.MaxPinNameLength).Optional(),
 	})
 }
 

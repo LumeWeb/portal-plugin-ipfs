@@ -227,17 +227,17 @@ func processUploadAndCreateReservations(ctx context.Context, helper core.Operati
 // metadata. Clients supply it as the "name" field of the Upload-Metadata
 // header. It returns "" when the upload did not specify one.
 //
-// The value is capped at 255 characters to match the POST /upload path's
-// limit (varchar(255) on IPFSPin.Name); without this bound an over-long name
-// would fail or silently truncate when the pin record is inserted.
+// The value is capped at pluginDb.MaxPinNameLength to match the POST /upload
+// path's limit (varchar(255) on IPFSPin.Name); without this bound an over-long
+// name would fail or silently truncate when the pin record is inserted.
 func getTUSPinName(ctx context.Context, tusHandler core.TusHandler, proto core.StorageProtocol, tusUploadID string) string {
 	metadata, err := tusHandler.GetUploadMetadata(ctx, proto, tusUploadID)
 	if err != nil {
 		return ""
 	}
 	name := metadata["name"]
-	if l := len(name); l > 255 {
-		name = name[:255]
+	if l := len(name); l > pluginDb.MaxPinNameLength {
+		name = name[:pluginDb.MaxPinNameLength]
 	}
 	return name
 }
