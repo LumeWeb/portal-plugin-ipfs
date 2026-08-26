@@ -127,6 +127,139 @@ func TestWebsiteJanitorJob_validateWebsite_SkipsPendingValidation(t *testing.T) 
 	}, JanitorTestOptions)
 }
 
+func TestWebsiteJanitorJob_validateWebsite_GracePeriodDefersBroken(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		job := NewWebsiteJanitorJob()
+
+		websiteConfig := &pluginConfig.WebsiteConfig{
+			JanitorEnabled:     true,
+			CheckInterval:      30 * time.Minute,
+			JanitorWorkerCount: 2,
+			JanitorBatchSize:   10,
+			JanitorGracePeriod: 1 * time.Hour,
+		}
+
+		janitorJob := job.(*WebsiteJanitorJob)
+		janitorJob.config = websiteConfig
+		janitorJob.db = ctx.DB()
+		janitorJob.logger = nil
+
+		// An active website whose CID is NOT pinned, created just now (within
+		// the grace period).
+		mhBytes, err := mh.Sum([]byte("unpinned-within-grace"), mh.SHA2_256, -1)
+		require.NoError(tb, err)
+		cidVersion := uint8(1)
+		cidType := uint8(cid.Raw)
+
+		website := &pluginDb.Website{
+			TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+			TargetMultihash: mhBytes,
+			CIDVersion:      &cidVersion,
+			CIDType:         &cidType,
+			Status:          string(pluginDb.WebsiteStatusActive),
+			ValidationToken: "test-token",
+		}
+		require.NoError(tb, ctx.DB().Create(website).Error)
+		require.Equal(tb, string(pluginDb.WebsiteStatusActive), website.Status)
+
+		// Act
+		require.NoError(tb, janitorJob.validateWebsite(context.Background(), website))
+
+		// Assert: not broken during the grace period, last_checked_at refreshed.
+		var persisted pluginDb.Website
+		require.NoError(tb, ctx.DB().First(&persisted, website.ID).Error)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), persisted.Status)
+		assert.NotNil(tb, persisted.LastCheckedAt)
+	}, JanitorTestOptions)
+}
+
+func TestWebsiteJanitorJob_validateWebsite_GracePeriodDisabledMarksBroken(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		job := NewWebsiteJanitorJob()
+
+		// Grace period explicitly disabled (0) preserves legacy behavior.
+		websiteConfig := &pluginConfig.WebsiteConfig{
+			JanitorEnabled:     true,
+			CheckInterval:      30 * time.Minute,
+			JanitorWorkerCount: 2,
+			JanitorBatchSize:   10,
+			JanitorGracePeriod: 0,
+		}
+
+		janitorJob := job.(*WebsiteJanitorJob)
+		janitorJob.config = websiteConfig
+		janitorJob.db = ctx.DB()
+		janitorJob.logger = nil
+
+		mhBytes, err := mh.Sum([]byte("unpinned-no-grace"), mh.SHA2_256, -1)
+		require.NoError(tb, err)
+		cidVersion := uint8(1)
+		cidType := uint8(cid.Raw)
+
+		website := &pluginDb.Website{
+			TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+			TargetMultihash: mhBytes,
+			CIDVersion:      &cidVersion,
+			CIDType:         &cidType,
+			Status:          string(pluginDb.WebsiteStatusActive),
+			ValidationToken: "test-token",
+		}
+		require.NoError(tb, ctx.DB().Create(website).Error)
+
+		// Act
+		require.NoError(tb, janitorJob.validateWebsite(context.Background(), website))
+
+		// Assert: marked broken when the grace period is disabled.
+		var persisted pluginDb.Website
+		require.NoError(tb, ctx.DB().First(&persisted, website.ID).Error)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusBroken), persisted.Status)
+	}, JanitorTestOptions)
+}
+
+func TestWebsiteJanitorJob_validateWebsite_GracePeriodElapsedMarksBroken(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		job := NewWebsiteJanitorJob()
+
+		websiteConfig := &pluginConfig.WebsiteConfig{
+			JanitorEnabled:     true,
+			CheckInterval:      30 * time.Minute,
+			JanitorWorkerCount: 2,
+			JanitorBatchSize:   10,
+			JanitorGracePeriod: 1 * time.Hour,
+		}
+
+		janitorJob := job.(*WebsiteJanitorJob)
+		janitorJob.config = websiteConfig
+		janitorJob.db = ctx.DB()
+		janitorJob.logger = nil
+
+		mhBytes, err := mh.Sum([]byte("unpinned-grace-elapsed"), mh.SHA2_256, -1)
+		require.NoError(tb, err)
+		cidVersion := uint8(1)
+		cidType := uint8(cid.Raw)
+
+		// Website created well before the grace period.
+		website := &pluginDb.Website{
+			TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+			TargetMultihash: mhBytes,
+			CIDVersion:      &cidVersion,
+			CIDType:         &cidType,
+			Status:          string(pluginDb.WebsiteStatusActive),
+			ValidationToken: "test-token",
+			CreatedAt:       time.Now().Add(-2 * time.Hour),
+		}
+		require.NoError(tb, ctx.DB().Create(website).Error)
+
+		// Act
+		require.NoError(tb, janitorJob.validateWebsite(context.Background(), website))
+
+		// Assert: marked broken once the grace period has elapsed.
+		var persisted pluginDb.Website
+		require.NoError(tb, ctx.DB().First(&persisted, website.ID).Error)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusBroken), persisted.Status)
+	}, JanitorTestOptions)
+}
+
 func TestWebsiteJanitorJob_ID(t *testing.T) {
 	job := NewWebsiteJanitorJob()
 	jobID := job.ID()
