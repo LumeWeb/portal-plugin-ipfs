@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"unicode/utf8"
 
 	"github.com/ipfs/go-cid"
 	"github.com/samber/lo"
@@ -237,7 +238,14 @@ func getTUSPinName(ctx context.Context, tusHandler core.TusHandler, proto core.S
 	}
 	name := metadata["name"]
 	if l := len(name); l > pluginDb.MaxPinNameLength {
-		name = name[:pluginDb.MaxPinNameLength]
+		truncated := name[:pluginDb.MaxPinNameLength]
+		// Back off to the last UTF-8 rune boundary so a multi-byte
+		// codepoint is not split mid-sequence.
+		for !utf8.ValidString(truncated) {
+			_, size := utf8.DecodeLastRuneInString(truncated)
+			truncated = truncated[:len(truncated)-size]
+		}
+		name = truncated
 	}
 	return name
 }
