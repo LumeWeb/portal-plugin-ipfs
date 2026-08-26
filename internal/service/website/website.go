@@ -211,6 +211,13 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 				return nil, fmt.Errorf("invalid target: %w", err)
 			}
 
+			// A new website may only target content the owner has already pinned.
+			// IPNS targets that are already peer IDs are governed by key ownership
+			// rather than pinning, and are skipped here.
+			if err := s.validateCreatePin(ctx, website); err != nil {
+				return nil, fmt.Errorf("invalid target: %w", err)
+			}
+
 			// Generate validation token
 			token, err := s.generateValidationToken()
 			if err != nil {
@@ -1932,6 +1939,34 @@ func (s *WebsiteServiceDefault) validateTarget(targetType string, targetHash str
 		return fmt.Errorf("%w: invalid type %s", ErrInvalidTarget, targetType)
 	}
 	return nil
+}
+
+// validateCreatePin requires that a new website's CID target is already pinned
+// by its owner before the site can be created. It resolves the CID from the
+// website's target: a direct IPFS target carries it in TargetHash(); an IPNS
+// target with a plain CID (CIDVersion set) is the auto-convert input and is
+// reconstructed from the stored multihash/version/type because TargetHash()
+// already reports the peer ID for IPNS targets. IPNS peer-ID targets have no
+// pin to check and return nil.
+func (s *WebsiteServiceDefault) validateCreatePin(ctx context.Context, website *pluginDb.Website) error {
+	var targetHash string
+	switch {
+	case website.TargetType == string(pluginDb.WebsiteTargetTypeIPFS):
+		targetHash = website.TargetHash()
+	case website.TargetType == string(pluginDb.WebsiteTargetTypeIPNS) && website.CIDVersion != nil:
+		if *website.CIDVersion == 0 {
+			targetHash = cid.NewCidV0(website.TargetMultihash).String()
+		} else {
+			codec := uint64(0)
+			if website.CIDType != nil {
+				codec = uint64(*website.CIDType)
+			}
+			targetHash = cid.NewCidV1(codec, website.TargetMultihash).String()
+		}
+	default:
+		return nil
+	}
+	return s.validateIPFSTarget(ctx, website.UserID, targetHash)
 }
 
 // validateIPFSTarget checks if an IPFS CID is pinned and returns an error if not.
