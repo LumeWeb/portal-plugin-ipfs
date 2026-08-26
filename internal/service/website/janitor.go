@@ -226,6 +226,18 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 		targetStatus = pluginDb.WebsiteStatusBroken
 	}
 
+	// Grace period: a freshly created website may still be deploying (pinning
+	// the CID / publishing the IPNS record). Don't declare it broken during the
+	// grace period — just refresh last_checked_at so it is reconsidered on the
+	// next run instead of being left in a wrong state.
+	if targetStatus == pluginDb.WebsiteStatusBroken && j.withinGracePeriod(ctx, website) {
+		j.logger.Debug("Website within creation grace period; deferring broken status",
+			zap.Uint("website_id", website.ID),
+			zap.Time("created_at", website.CreatedAt))
+		website.LastCheckedAt = new(time.Now())
+		return j.db.WithContext(ctx).Save(website).Error
+	}
+
 	// Fire the health-driven transition via the FSM (a no-op when the website
 	// is already in the desired state):
 	//   valid   → revalidate_ok (broken → active; already-active is a no-op
@@ -388,10 +400,29 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	return nil
 }
 
+// withinGracePeriod reports whether the website is still inside the configured
+// creation grace period. It returns false when the grace period is disabled
+// (<= 0) so that behavior is unchanged unless explicitly configured.
+func (j *WebsiteJanitorJob) withinGracePeriod(_ context.Context, website *pluginDb.Website) bool {
+	if j.config == nil || j.config.JanitorGracePeriod <= 0 || website == nil {
+		return false
+	}
+	return time.Since(website.CreatedAt) < j.config.JanitorGracePeriod
+}
+
 // markBroken transitions the website to broken via the state machine when that
 // transition is legal, and refreshes its last_checked_at. It is a no-op for a
-// website already in broken state.
+// website already in broken state. If the website is still inside the creation
+// grace period, the transition is skipped (only last_checked_at is refreshed)
+// so freshly deployed sites aren't flagged as bad prematurely.
 func (j *WebsiteJanitorJob) markBroken(ctx context.Context, sm *WebsiteStateMachine, website *pluginDb.Website) {
+	if j.withinGracePeriod(ctx, website) {
+		j.logger.Debug("Website within creation grace period; deferring broken status",
+			zap.Uint("website_id", website.ID),
+			zap.Time("created_at", website.CreatedAt))
+		website.LastCheckedAt = new(time.Now())
+		return
+	}
 	if sm.Can(EventWebsiteCIDUnpinned) {
 		if err := sm.Fire(ctx, EventWebsiteCIDUnpinned); err != nil {
 			j.logger.Warn("failed to mark website broken",

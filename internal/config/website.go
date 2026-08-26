@@ -32,10 +32,15 @@ var _ config.Defaults = (*WebsiteConfig)(nil)
 // WebsiteConfig contains the configuration for the website hosting feature
 type WebsiteConfig struct {
 	// Janitor configuration
-	JanitorEnabled      bool          `config:"janitor_enabled"`
-	CheckInterval       time.Duration `config:"check_interval"` // How often to re-validate individual websites
-	JanitorWorkerCount  int           `config:"janitor_worker_count"`
-	JanitorBatchSize    int           `config:"janitor_batch_size"`
+	JanitorEnabled     bool          `config:"janitor_enabled"`
+	CheckInterval      time.Duration `config:"check_interval"` // How often to re-validate individual websites
+	JanitorWorkerCount int           `config:"janitor_worker_count"`
+	JanitorBatchSize   int           `config:"janitor_batch_size"`
+	// JanitorGracePeriod is how long after a website is created the janitor
+	// waits before it may mark the site broken. It gives deployments time to
+	// finish pinning / publishing the target so we don't flag freshly created
+	// sites as bad. A value <= 0 disables the grace period.
+	JanitorGracePeriod time.Duration `config:"janitor_grace_period"`
 
 	// Validation configuration
 	ValidationTokenTTL time.Duration `config:"validation_token_ttl"`
@@ -47,10 +52,11 @@ type WebsiteConfig struct {
 
 func (c WebsiteConfig) Defaults() map[string]any {
 	return map[string]any{
-		"JanitorEnabled":  true,
-		"CheckInterval":   30 * time.Minute,
-		"JanitorWorkerCount": 10,
-		"JanitorBatchSize":   500,
+		"JanitorEnabled":       true,
+		"CheckInterval":        30 * time.Minute,
+		"JanitorWorkerCount":   10,
+		"JanitorBatchSize":     500,
+		"JanitorGracePeriod":   1 * time.Hour,
 		"ValidationTokenTTL":   24 * time.Hour,
 		"NotificationsEnabled": true,
 		"AdminEmail":           "",
