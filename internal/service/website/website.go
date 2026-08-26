@@ -1957,11 +1957,10 @@ func (s *WebsiteServiceDefault) validateCreatePin(ctx context.Context, website *
 		if *website.CIDVersion == 0 {
 			targetHash = cid.NewCidV0(website.TargetMultihash).String()
 		} else {
-			codec := uint64(0)
-			if website.CIDType != nil {
-				codec = uint64(*website.CIDType)
+			if website.CIDType == nil {
+				return fmt.Errorf("%w: IPNS auto-convert CID missing codec", ErrInvalidCID)
 			}
-			targetHash = cid.NewCidV1(codec, website.TargetMultihash).String()
+			targetHash = cid.NewCidV1(uint64(*website.CIDType), website.TargetMultihash).String()
 		}
 	default:
 		return nil
