@@ -201,9 +201,11 @@ type WebsiteRequest struct {
 }
 
 // IsPlatformClaim reports whether this request claims a platform subdomain
-// rather than a user-owned domain.
+// rather than a user-owned domain. A claim is expressed by naming a platform
+// root (PlatformDomain), requesting an auto-generated subdomain (Generate), or
+// supplying an explicit label (Label) — any of which selects the platform path.
 func (r WebsiteRequest) IsPlatformClaim() bool {
-	return r.PlatformDomain != ""
+	return r.PlatformDomain != "" || r.Generate || r.Label != ""
 }
 
 func (r WebsiteRequest) Schema() *zog.StructSchema {

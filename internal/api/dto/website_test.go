@@ -395,6 +395,26 @@ func TestWebsiteResponse_FromModel_DoesNotSetSSL(t *testing.T) {
 	})
 }
 
+func TestWebsiteRequest_IsPlatformClaim(t *testing.T) {
+	tests := []struct {
+		name string
+		req  WebsiteRequest
+		want bool
+	}{
+		{name: "platform domain set", req: WebsiteRequest{PlatformDomain: "pinned.site"}, want: true},
+		{name: "generate set", req: WebsiteRequest{Generate: true}, want: true},
+		{name: "label set", req: WebsiteRequest{Label: "myapp"}, want: true},
+		{name: "custom domain only", req: WebsiteRequest{Domain: "example.com"}, want: false},
+		{name: "empty request", req: WebsiteRequest{}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, tt.req.IsPlatformClaim())
+		})
+	}
+}
+
 func TestWebsiteRequest_ToModel_IPNS_WithValidPeerID(t *testing.T) {
 	targetType := db.WebsiteTargetTypeIPNS
 	req := WebsiteRequest{

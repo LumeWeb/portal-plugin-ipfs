@@ -592,6 +592,51 @@ func TestValidateDNS_PendingDelegated_SkipsTokenCheck(t *testing.T) {
 	}, TestOptions)
 }
 
+func TestValidateDNS_PlatformSubdomain_SkipsTokenCheck(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "platform-skip-token")
+		website := createTestIPFSWebsite(testUserID1, "platform-skip.com", testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		wd := bindPrimaryDomain(tb, ctx, created.ID, "platform-skip.com", true)
+
+		// Mark the binding as a platform subdomain (ICANN namespace): the
+		// platform controls both ends of the DNS check, so no user TXT token
+		// exists and the token check must be skipped purely on this pointer.
+		pdID := uint(7)
+		wd.PlatformDomainID = &pdID
+		require.NoError(tb, ctx.DB().Model(wd).Update("platform_domain_id", pdID).Error)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		// Only DNSLink expected: the token check (TXT lookup) must NOT run.
+		mockResolver.EXPECT().ResolveDNSLink("platform-skip.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		// UsesDelegationForOwnership returns false (ICANN), proving the skip is
+		// triggered by the platform-subdomain path, not the delegation path.
+		mockDelegated := &testDelegatedDomainService{
+			uses: func(d string) bool { return false },
+		}
+		setMockDelegatedDomainSvc(ws, mockDelegated)
+
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
+
+		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
+	}, TestOptions)
+}
+
 func TestValidateDNS_DelegatedAttached_Success(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
