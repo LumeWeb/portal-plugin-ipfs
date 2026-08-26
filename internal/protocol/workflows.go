@@ -18,6 +18,9 @@ type PinWorkflowData struct {
 
 type PostUploadWorkflowData struct {
 	UploadID string `json:"upload_id"`
+	// Name is an optional custom pin name provided by the upload operation.
+	// It is empty when the upload did not specify one.
+	Name string `json:"name,omitempty"`
 }
 
 type FilePathWorkflowInputData struct {

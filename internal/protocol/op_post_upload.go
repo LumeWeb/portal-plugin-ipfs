@@ -176,7 +176,7 @@ func (h *PostUploadOperationHandler) Execute(ctx context.Context, req *models.Re
 		h.Logger().Warn("Failed to update progress", zap.Error(err))
 	}
 
-	ipfsPin, err := h.createRootPin(ctx, rootCids[0], userID)
+	ipfsPin, err := h.createRootPin(ctx, rootCids[0], userID, workflow.Name)
 	if err != nil {
 		// Release all per-block reservations on error
 		quota.ReleaseBlockReservationsMap(reservations)
@@ -360,12 +360,12 @@ func (h *PostUploadOperationHandler) processCIDs(ctx context.Context, allCids []
 }
 
 // createRootPin creates a root pin for the upload
-func (h *PostUploadOperationHandler) createRootPin(ctx context.Context, rootCid cid.Cid, userID uint) (*db.IPFSPin, error) {
+func (h *PostUploadOperationHandler) createRootPin(ctx context.Context, rootCid cid.Cid, userID uint, name string) (*db.IPFSPin, error) {
 	ctx, span := core.TraceMethod(ctx, "PostUploadOperationHandler.createRootPin")
 	defer span.End()
 
 	uploadSvc := core.GetService[pluginCore.UploadService](h.Context(), pluginCore.UPLOAD_SERVICE)
-	ipfsPin, err := uploadSvc.CreateRootPin(ctx, rootCid, userID)
+	ipfsPin, err := uploadSvc.CreateRootPin(ctx, rootCid, userID, name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create root pin: %w", err)
 	}

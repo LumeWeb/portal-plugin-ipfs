@@ -80,6 +80,7 @@ func (a *API) handleUpload(c echo.Context) error {
 
 	_, err = a.workflowService.StartWorkflow(ctx.Request().Context(), protocol.UPLOAD_WORKFLOW, core.WithWorkflowStructData(protocol.PostUploadWorkflowData{
 		UploadID: uploadId,
+		Name:     uploadReq.Name,
 	}, "json"),
 		core.WithWorkflowSourceIP(c.RealIP()),
 		core.WithWorkflowUserID(user),

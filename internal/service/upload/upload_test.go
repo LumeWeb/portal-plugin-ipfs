@@ -168,7 +168,7 @@ func TestUploadService_CreateRootPin_Idempotent(t *testing.T) {
 		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, testCID, userID).Return(nil, nil).Once()
 		mockPinSvc.EXPECT().AddPin(mock.Anything, mock.Anything).Return(existingPin, nil).Once()
 
-		pin1, err := uploadSvc.CreateRootPin(ctx, testCID, userID)
+		pin1, err := uploadSvc.CreateRootPin(ctx, testCID, userID, "test-pin")
 		require.NoError(tb, err)
 		require.NotNil(tb, pin1)
 		require.Equal(tb, existingPin.RequestID, pin1.RequestID)
@@ -176,7 +176,7 @@ func TestUploadService_CreateRootPin_Idempotent(t *testing.T) {
 		// Second call: existing pin found, AddPin should NOT be called
 		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, testCID, userID).Return(existingPin, nil).Once()
 
-		pin2, err := uploadSvc.CreateRootPin(ctx, testCID, userID)
+		pin2, err := uploadSvc.CreateRootPin(ctx, testCID, userID, "test-pin")
 		require.NoError(tb, err)
 		require.NotNil(tb, pin2)
 		require.Equal(tb, pin1.RequestID, pin2.RequestID, "second call should return same pin")

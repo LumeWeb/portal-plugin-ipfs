@@ -210,7 +210,7 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 	)
 }
 
-func (s *UploadServiceDefault) CreateRootPin(ctx context.Context, c cid.Cid, userId uint) (*pluginDb.IPFSPin, error) {
+func (s *UploadServiceDefault) CreateRootPin(ctx context.Context, c cid.Cid, userId uint, name string) (*pluginDb.IPFSPin, error) {
 	ctx, span := core.TraceMethod(ctx, "UploadServiceDefault.CreateRootPin")
 	defer span.End()
 
@@ -229,7 +229,7 @@ func (s *UploadServiceDefault) CreateRootPin(ctx context.Context, c cid.Cid, use
 			ipfsPin, err := s.pin.AddPin(ctx, &pluginDb.IPFSPin{
 				UserID:    userId,
 				CID:       c.Bytes(),
-				Name:      "",
+				Name:      name,
 				Origins:   nil,
 				Meta:      nil,
 				Delegates: nil,

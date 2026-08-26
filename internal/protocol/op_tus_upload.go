@@ -85,7 +85,8 @@ func handleTUSUpload(p core.Protocol) func(ctx context.Context, helper core.Oper
 
 		// Process with services
 		metaStore := protoNode.GetMetadataStore()
-		ipfsPin, err := processUploadWithServices(ctx, helper, p, allCids, rootCids, *request.UserID, reservations, request, metaStore)
+		pinName := getTUSPinName(ctx, tusHandler, proto, tsReq.TUSUploadID)
+		ipfsPin, err := processUploadWithServices(ctx, helper, p, allCids, rootCids, *request.UserID, reservations, request, metaStore, pinName)
 		if err != nil {
 			// processUploadWithServices releases reservations on all internal error paths.
 			// Calling ReleaseBlockReservationsMap here would double-release.
@@ -222,8 +223,19 @@ func processUploadAndCreateReservations(ctx context.Context, helper core.Operati
 	return allCids, rootCids, reservations, nil
 }
 
+// getTUSPinName extracts an optional custom pin name from the TUS upload
+// metadata. Clients supply it as the "name" field of the Upload-Metadata
+// header. It returns "" when the upload did not specify one.
+func getTUSPinName(ctx context.Context, tusHandler core.TusHandler, proto core.StorageProtocol, tusUploadID string) string {
+	metadata, err := tusHandler.GetUploadMetadata(ctx, proto, tusUploadID)
+	if err != nil {
+		return ""
+	}
+	return metadata["name"]
+}
+
 // processUploadWithServices processes the upload using upload and pin services
-func processUploadWithServices(ctx context.Context, helper core.OperationHelper, p core.Protocol, allCids []cid.Cid, rootCids []cid.Cid, userID uint, reservations map[cid.Cid]*quota.BlockReservations, request *models.Request, metaStore pluginCore.MetadataStore) (*pluginDb.IPFSPin, error) {
+func processUploadWithServices(ctx context.Context, helper core.OperationHelper, p core.Protocol, allCids []cid.Cid, rootCids []cid.Cid, userID uint, reservations map[cid.Cid]*quota.BlockReservations, request *models.Request, metaStore pluginCore.MetadataStore, name string) (*pluginDb.IPFSPin, error) {
 	uploadSvc := core.GetService[pluginCore.UploadService](helper.Context(), pluginCore.UPLOAD_SERVICE)
 	if uploadSvc == nil {
 		helper.Logger().Error("Upload service not available")
@@ -241,12 +253,11 @@ func processUploadWithServices(ctx context.Context, helper core.OperationHelper,
 	}
 
 	// Create IPFS pin record for the root CID
-	ipfsPin, err := uploadSvc.CreateRootPin(ctx, rootCids[0], userID)
+	ipfsPin, err := uploadSvc.CreateRootPin(ctx, rootCids[0], userID, name)
 	if err != nil {
 		quota.ReleaseBlockReservationsMap(reservations)
 		return nil, fmt.Errorf("failed to create root pin: %w", err)
 	}
-
 
 	// Update pin status to pinned
 	pinSvc := core.GetService[pluginCore.IPFSPinService](helper.Context(), pluginCore.PIN_SERVICE)

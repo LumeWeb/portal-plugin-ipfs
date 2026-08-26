@@ -33,8 +33,10 @@ type UploadService interface {
 
 	// CreateRootPin creates an IPFS pin record for a single root CID.
 	// This method should only be called for actual root CIDs, not child blocks.
+	// name is an optional custom pin name (e.g. provided by the upload operation);
+	// it is empty when the upload did not specify one.
 	// Returns the created IPFS pin record which contains the request ID for tracking.
-	CreateRootPin(ctx context.Context, cid cid.Cid, userId uint) (*db.IPFSPin, error)
+	CreateRootPin(ctx context.Context, cid cid.Cid, userId uint, name string) (*db.IPFSPin, error)
 
 	core.Service
 }
