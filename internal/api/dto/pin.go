@@ -28,7 +28,7 @@ type PinRequest struct {
 func (p PinRequest) Schema() *zog.StructSchema {
 	return zog.Struct(zog.Shape{
 		"CID":     zog.String().Required(),
-		"Name":    zog.String().Max(255),
+		"Name":    zog.String().Max(db.MaxPinNameLength),
 		"Origins": zog.Slice(zog.String()),
 		"Meta":    zog.Struct(zog.Shape{}),
 	})

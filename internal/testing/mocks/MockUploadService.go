@@ -138,8 +138,8 @@ func (_c *MockUploadService_Context_Call) RunAndReturn(run func() core.Context) 
 }
 
 // CreateRootPin provides a mock function for the type MockUploadService
-func (_mock *MockUploadService) CreateRootPin(ctx context.Context, cid1 cid.Cid, userId uint) (*db.IPFSPin, error) {
-	ret := _mock.Called(ctx, cid1, userId)
+func (_mock *MockUploadService) CreateRootPin(ctx context.Context, cid1 cid.Cid, userId uint, name string) (*db.IPFSPin, error) {
+	ret := _mock.Called(ctx, cid1, userId, name)
 
 	if len(ret) == 0 {
 		panic("no return value specified for CreateRootPin")
@@ -147,18 +147,18 @@ func (_mock *MockUploadService) CreateRootPin(ctx context.Context, cid1 cid.Cid,
 
 	var r0 *db.IPFSPin
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, cid.Cid, uint) (*db.IPFSPin, error)); ok {
-		return returnFunc(ctx, cid1, userId)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, cid.Cid, uint, string) (*db.IPFSPin, error)); ok {
+		return returnFunc(ctx, cid1, userId, name)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, cid.Cid, uint) *db.IPFSPin); ok {
-		r0 = returnFunc(ctx, cid1, userId)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, cid.Cid, uint, string) *db.IPFSPin); ok {
+		r0 = returnFunc(ctx, cid1, userId, name)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*db.IPFSPin)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, cid.Cid, uint) error); ok {
-		r1 = returnFunc(ctx, cid1, userId)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, cid.Cid, uint, string) error); ok {
+		r1 = returnFunc(ctx, cid1, userId, name)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -174,11 +174,12 @@ type MockUploadService_CreateRootPin_Call struct {
 //   - ctx context.Context
 //   - cid1 cid.Cid
 //   - userId uint
-func (_e *MockUploadService_Expecter) CreateRootPin(ctx any, cid1 any, userId any) *MockUploadService_CreateRootPin_Call {
-	return &MockUploadService_CreateRootPin_Call{Call: _e.mock.On("CreateRootPin", ctx, cid1, userId)}
+//   - name string
+func (_e *MockUploadService_Expecter) CreateRootPin(ctx any, cid1 any, userId any, name any) *MockUploadService_CreateRootPin_Call {
+	return &MockUploadService_CreateRootPin_Call{Call: _e.mock.On("CreateRootPin", ctx, cid1, userId, name)}
 }
 
-func (_c *MockUploadService_CreateRootPin_Call) Run(run func(ctx context.Context, cid1 cid.Cid, userId uint)) *MockUploadService_CreateRootPin_Call {
+func (_c *MockUploadService_CreateRootPin_Call) Run(run func(ctx context.Context, cid1 cid.Cid, userId uint, name string)) *MockUploadService_CreateRootPin_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -192,10 +193,15 @@ func (_c *MockUploadService_CreateRootPin_Call) Run(run func(ctx context.Context
 		if args[2] != nil {
 			arg2 = args[2].(uint)
 		}
+		var arg3 string
+		if args[3] != nil {
+			arg3 = args[3].(string)
+		}
 		run(
 			arg0,
 			arg1,
 			arg2,
+			arg3,
 		)
 	})
 	return _c
@@ -206,7 +212,7 @@ func (_c *MockUploadService_CreateRootPin_Call) Return(iPFSPin *db.IPFSPin, err 
 	return _c
 }
 
-func (_c *MockUploadService_CreateRootPin_Call) RunAndReturn(run func(ctx context.Context, cid1 cid.Cid, userId uint) (*db.IPFSPin, error)) *MockUploadService_CreateRootPin_Call {
+func (_c *MockUploadService_CreateRootPin_Call) RunAndReturn(run func(ctx context.Context, cid1 cid.Cid, userId uint, name string) (*db.IPFSPin, error)) *MockUploadService_CreateRootPin_Call {
 	_c.Call.Return(run)
 	return _c
 }
