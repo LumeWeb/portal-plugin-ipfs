@@ -220,6 +220,50 @@ func TestAPI_CreateWebsite(t *testing.T) {
 		}, TestOptions)
 	})
 
+	t.Run("error_mint_without_configured_platform_domain", func(t *testing.T) {
+		// Regression: a `generate: true` mint (no platform_domain, no domain)
+		// must be treated as a platform-subdomain claim and reach the claim
+		// path — not be rejected with the misleading "domain is required". With
+		// no enabled platform root configured, the claim resolves no root and
+		// rolls back the website, so CreateWebsite runs and DeleteWebsite is
+		// called exactly once.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+			mockWebsite := createMockIPFSWebsite(1, userID, "", TestCID, pluginDb.WebsiteStatusPendingValidation, "test-token")
+			mockWebsiteService.EXPECT().CreateWebsite(mock.Anything, mock.AnythingOfType("*db.Website")).Return(mockWebsite, nil)
+			mockWebsiteService.EXPECT().DeleteWebsite(mock.Anything, userID, uint(1)).Return(nil)
+
+			reqBody := fmt.Sprintf(`{"generate":true,"target_type":"ipfs","target_hash":"%s"}`, TestCID)
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+			mockWebsiteService.AssertNumberOfCalls(tb, "CreateWebsite", 1)
+			mockWebsiteService.AssertNumberOfCalls(tb, "DeleteWebsite", 1)
+		}, TestOptions)
+	})
+
+	t.Run("error_domain_and_platform_claim_conflict", func(t *testing.T) {
+		// A custom domain and a platform-subdomain claim are mutually exclusive
+		// destinations. Supplying both is ambiguous and must be rejected up
+		// front (422) without persisting a website.
+		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, _ := helper.SetupAuthenticatedTestWithCID(cid.MustParse(TestCID))
+
+			mockWebsiteService := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+			mockWebsiteService.AssertNotCalled(tb, "CreateWebsite", mock.Anything, mock.Anything)
+
+			reqBody := fmt.Sprintf(`{"domain":"example.com","generate":true,"target_type":"ipfs","target_hash":"%s"}`, TestCID)
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites", token, []byte(reqBody))
+
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+		}, TestOptions)
+	})
+
 	t.Run("error_invalid_target_type", func(t *testing.T) {
 		coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 			helper := newMockHelper(t, ctx)

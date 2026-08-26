@@ -185,6 +185,13 @@ func (a *API) createWebsite(c echo.Context) error {
 		namespace = string(*req.Namespace)
 	}
 
+	// A user-owned domain and a platform-subdomain claim are mutually exclusive
+	// destinations. Supplying both is ambiguous, so reject it rather than
+	// silently ignoring one and persisting a website bound to the wrong target.
+	if req.Domain != "" && req.IsPlatformClaim() {
+		apiErr := NewError(ErrKeyInvalidRequest, fmt.Errorf("supply a custom domain OR claim a platform subdomain, not both"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
 	// A website needs a destination: either a user-owned domain (non-empty
 	// Domain) or an explicit platform-subdomain claim. An empty domain with no
 	// platform claim would otherwise persist an orphan website with no binding,
@@ -299,13 +306,13 @@ func (a *API) claimPlatformSubdomain(ctx httputil.RequestContext, reqCtx context
 	if req.PlatformNamespace != "" {
 		platformNS = pluginDb.DomainNamespace(req.PlatformNamespace)
 	}
-	pd, perr := a.delegatedDomainSvc.GetEnabledPlatformDomain(reqCtx, req.PlatformDomain, platformNS)
+	pd, perr := a.resolvePlatformDomainForClaim(reqCtx, req, platformNS)
 	if perr != nil {
 		a.Logger().Error("Failed to resolve platform domain", zap.String("platform_domain", req.PlatformDomain), zap.Error(perr))
 		return a.rollbackAndFail(ctx, reqCtx, user, websiteID, ErrKeyInvalidRequest, perr)
 	}
 	if pd == nil {
-		return a.rollbackAndFail(ctx, reqCtx, user, websiteID, ErrKeyInvalidRequest, fmt.Errorf("platform domain %q not found or disabled", req.PlatformDomain))
+		return a.rollbackAndFail(ctx, reqCtx, user, websiteID, ErrKeyInvalidRequest, fmt.Errorf("no enabled platform domain configured; specify platform_domain or label"))
 	}
 	if _, cerr := a.delegatedDomainSvc.CreatePlatformSubdomain(reqCtx, websiteID, user, pd.ID, req.Label, req.Generate); cerr != nil {
 		if isDuplicateKeyError(cerr) || strings.Contains(cerr.Error(), "already taken") {
@@ -318,6 +325,37 @@ func (a *API) claimPlatformSubdomain(ctx httputil.RequestContext, reqCtx context
 		return a.rollbackAndFail(ctx, reqCtx, user, websiteID, ErrKeyPlatformSubdomainRequired, cerr)
 	}
 	return nil
+}
+
+// resolvePlatformDomainForClaim returns the platform root under which a
+// subdomain is claimed. An explicit PlatformDomain is honored via the standard
+// lookup; when omitted (the auto-mint path — generate/label with no root), it
+// falls back to the single enabled platform root matching the namespace so a
+// bare `generate: true` request can mint a free subdomain. It returns
+// (nil, nil) when no enabled root applies, so callers surface a clear message.
+func (a *API) resolvePlatformDomainForClaim(ctx context.Context, req dto.WebsiteRequest, platformNS pluginDb.DomainNamespace) (*pluginDb.PlatformDomain, error) {
+	if req.PlatformDomain != "" {
+		return a.delegatedDomainSvc.GetEnabledPlatformDomain(ctx, req.PlatformDomain, platformNS)
+	}
+	domains, _, err := a.delegatedDomainSvc.ListEnabledPlatformDomains(ctx, queryutil.LargePagination)
+	if err != nil {
+		return nil, err
+	}
+	var candidates []*pluginDb.PlatformDomain
+	for _, pd := range domains {
+		if platformNS != "" && pd.Namespace != platformNS {
+			continue
+		}
+		candidates = append(candidates, pd)
+	}
+	switch {
+	case len(candidates) == 0:
+		return nil, nil
+	case len(candidates) > 1:
+		return nil, fmt.Errorf("multiple enabled platform domains; specify platform_domain")
+	default:
+		return candidates[0], nil
+	}
 }
 
 // bindCustomDomain attaches a user-owned custom domain as the primary binding
