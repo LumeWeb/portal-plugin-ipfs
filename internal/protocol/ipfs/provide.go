@@ -52,6 +52,8 @@ func (f *fullrtProvider) Ready() bool {
 }
 
 func (f *fullrtProvider) ProvideMany(ctx context.Context, keys []multihash.Multihash) error {
+	f.lg.resetAbandoned()
+
 	var (
 		mu     sync.Mutex
 		failed []multihash.Multihash
@@ -141,6 +143,8 @@ func (b *basicDHTProvider) Ready() bool {
 }
 
 func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Multihash) error {
+	b.lg.resetAbandoned()
+
 	var (
 		mu     sync.Mutex
 		failed []multihash.Multihash
@@ -274,14 +278,14 @@ var (
 
 type provideFunc func(context.Context, cid.Cid, bool) error
 
-// leakGuard bounds the number of Provide goroutines that have been abandoned
-// (caller gave up on ctx.Done) but may still be running. The semaphore bounds
-// concurrent in-flight provides. The abandoned counter is incremented when the
-// caller abandons and decremented when the goroutine finally returns. New
-// provides are throttled when the abandoned count reaches capacity, preventing
-// unbounded goroutine accumulation across reprovide cycles.
+// leakGuard bounds the number of Provide goroutines abandoned within a single
+// ProvideMany batch. The semaphore bounds concurrent in-flight provides. The
+// abandoned counter is incremented when the caller gives up on ctx.Done and
+// decremented when the goroutine finally returns. It is reset per batch via
+// resetAbandoned so that forever-stuck goroutines from one cycle do not
+// permanently throttle the next.
 type leakGuard struct {
-	sem      chan struct{}
+	sem       chan struct{}
 	abandoned atomic.Int64
 	cap       int64
 }
@@ -294,6 +298,10 @@ func newLeakGuard(capacity int) *leakGuard {
 		sem: make(chan struct{}, capacity),
 		cap: int64(capacity),
 	}
+}
+
+func (lg *leakGuard) resetAbandoned() {
+	lg.abandoned.Store(0)
 }
 
 func boundedProvide(ctx context.Context, provide provideFunc, key multihash.Multihash, lg *leakGuard) error {
@@ -327,17 +335,13 @@ func boundedProvide(ctx context.Context, provide provideFunc, key multihash.Mult
 		<-lg.sem
 		return err
 	case <-ctx.Done():
-		// Release the semaphore so new provides can start, but track this
-		// goroutine in the abandoned counter until it finally returns.
+		// Release the semaphore immediately so new provides can start.
+		// Track this goroutine in the per-batch abandoned counter so we
+		// stop creating new ones if too many are stuck. The counter is
+		// reset at the start of each ProvideMany, so a bad batch does not
+		// permanently disable the reprovider.
 		lg.abandoned.Add(1)
 		<-lg.sem
-
-		// Spawn a reaper that decrements the counter when the goroutine
-		// finally completes, reclaiming the leak budget.
-		go func() {
-			<-done
-			lg.abandoned.Add(-1)
-		}()
 
 		if ctx.Err() == context.DeadlineExceeded {
 			ReprovideCIDLeaks.Inc()
