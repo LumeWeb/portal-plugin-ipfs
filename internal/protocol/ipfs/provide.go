@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -40,6 +41,7 @@ type fullrtProvider struct {
 	ready          func() bool
 	perCIDTimeout  time.Duration
 	provideWorkers int
+	lg             *leakGuard
 }
 
 func (f *fullrtProvider) Ready() bool {
@@ -50,6 +52,8 @@ func (f *fullrtProvider) Ready() bool {
 }
 
 func (f *fullrtProvider) ProvideMany(ctx context.Context, keys []multihash.Multihash) error {
+	f.lg.resetAbandoned()
+
 	var (
 		mu     sync.Mutex
 		failed []multihash.Multihash
@@ -80,7 +84,7 @@ func (f *fullrtProvider) ProvideMany(ctx context.Context, keys []multihash.Multi
 			}
 
 			cidStart := time.Now()
-			err := f.dht.Provide(provideCtx, cid.NewCidV1(cid.Raw, k), true)
+			err := boundedProvide(provideCtx, f.dht.Provide, k, f.lg)
 			cidElapsed := time.Since(cidStart).Seconds()
 			if cancel != nil {
 				cancel()
@@ -117,7 +121,7 @@ func (f *fullrtProvider) ProvideMany(ctx context.Context, keys []multihash.Multi
 }
 
 func newFullrtProvider(dht provideProvider, ready func() bool, perCIDTimeout time.Duration, provideWorkers int) pluginCore.Provider {
-	return &fullrtProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout, provideWorkers: provideWorkers}
+	return &fullrtProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout, provideWorkers: provideWorkers, lg: newLeakGuard(provideWorkers * 2)}
 }
 
 // basicDHTProvider wraps a basic DHT that doesn't implement ProvideMany
@@ -128,6 +132,7 @@ type basicDHTProvider struct {
 	ready          func() bool
 	perCIDTimeout  time.Duration
 	provideWorkers int
+	lg             *leakGuard
 }
 
 func (b *basicDHTProvider) Ready() bool {
@@ -138,6 +143,8 @@ func (b *basicDHTProvider) Ready() bool {
 }
 
 func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Multihash) error {
+	b.lg.resetAbandoned()
+
 	var (
 		mu     sync.Mutex
 		failed []multihash.Multihash
@@ -168,7 +175,7 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 			}
 
 			cidStart := time.Now()
-			err := b.dht.Provide(provideCtx, cid.NewCidV1(cid.Raw, k), true)
+			err := boundedProvide(provideCtx, b.dht.Provide, k, b.lg)
 			cidElapsed := time.Since(cidStart).Seconds()
 			if cancel != nil {
 				cancel()
@@ -204,7 +211,7 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 }
 
 func newBasicDHTProvider(dht routing.ContentRouting, ready func() bool, perCIDTimeout time.Duration, provideWorkers int) pluginCore.Provider {
-	return &basicDHTProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout, provideWorkers: provideWorkers}
+	return &basicDHTProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout, provideWorkers: provideWorkers, lg: newLeakGuard(provideWorkers * 2)}
 }
 
 // NewDHTProvider is the facade factory for DHT providers. It abstracts the
@@ -248,6 +255,9 @@ func (e *provideManyError) FailedKeys() []multihash.Multihash {
 }
 
 func classifyProvideError(err error) string {
+	if errors.Is(err, errProvideLeaked) {
+		return "leaked"
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "timeout"
 	}
@@ -259,6 +269,85 @@ func classifyProvideError(err error) string {
 		return "routing"
 	}
 	return "other"
+}
+
+var (
+	errProvideLeaked = errors.New("provide abandoned: context expired before Provide returned")
+	errTooManyLeaked = errors.New("too many outstanding leaked provides")
+)
+
+type provideFunc func(context.Context, cid.Cid, bool) error
+
+// leakGuard bounds the number of Provide goroutines abandoned within a single
+// ProvideMany batch. The semaphore bounds concurrent in-flight provides. The
+// abandoned counter is incremented when the caller gives up on ctx.Done and
+// decremented when the goroutine finally returns. It is reset per batch via
+// resetAbandoned so that forever-stuck goroutines from one cycle do not
+// permanently throttle the next.
+type leakGuard struct {
+	sem       chan struct{}
+	abandoned atomic.Int64
+	cap       int64
+}
+
+func newLeakGuard(capacity int) *leakGuard {
+	if capacity < 2 {
+		capacity = 2
+	}
+	return &leakGuard{
+		sem: make(chan struct{}, capacity),
+		cap: int64(capacity),
+	}
+}
+
+func (lg *leakGuard) resetAbandoned() {
+	lg.abandoned.Store(0)
+}
+
+func boundedProvide(ctx context.Context, provide provideFunc, key multihash.Multihash, lg *leakGuard) error {
+	if lg.abandoned.Load() >= lg.cap {
+		ReprovideThrottled.Inc()
+		return errTooManyLeaked
+	}
+
+	select {
+	case lg.sem <- struct{}{}:
+	default:
+		ReprovideThrottled.Inc()
+		return errTooManyLeaked
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- provide(ctx, cid.NewCidV1(cid.Raw, key), true)
+	}()
+
+	// Non-blocking drain to avoid racing ctx.Done() against a completed result.
+	select {
+	case err := <-done:
+		<-lg.sem
+		return err
+	default:
+	}
+
+	select {
+	case err := <-done:
+		<-lg.sem
+		return err
+	case <-ctx.Done():
+		// Release the semaphore immediately so new provides can start.
+		// Track this goroutine in the per-batch abandoned counter so we
+		// stop creating new ones if too many are stuck. The counter is
+		// reset at the start of each ProvideMany, so a bad batch does not
+		// permanently disable the reprovider.
+		lg.abandoned.Add(1)
+		<-lg.sem
+
+		if ctx.Err() == context.DeadlineExceeded {
+			ReprovideCIDLeaks.Inc()
+		}
+		return fmt.Errorf("%w: %v", errProvideLeaked, ctx.Err())
+	}
 }
 
 // A Reprovider periodically announces CIDs to the IPFS network.
