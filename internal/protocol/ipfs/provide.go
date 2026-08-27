@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -289,9 +290,16 @@ func boundedProvide(ctx context.Context, provide provideFunc, key multihash.Mult
 		return errTooManyLeaked
 	}
 
+	var released atomic.Bool
+	release := func() {
+		if released.CompareAndSwap(false, true) {
+			<-sem
+		}
+	}
+
 	done := make(chan error, 1)
 	go func() {
-		defer func() { <-sem }()
+		defer release()
 		done <- provide(ctx, cid.NewCidV1(cid.Raw, key), true)
 	}()
 
@@ -306,6 +314,11 @@ func boundedProvide(ctx context.Context, provide provideFunc, key multihash.Mult
 	case err := <-done:
 		return err
 	case <-ctx.Done():
+		// Release the slot immediately so the pool is not exhausted by
+		// goroutines that may never finish. The goroutine's deferred release
+		// is a no-op if we already released here.
+		release()
+
 		// Only count as a genuine leak when the per-CID deadline expired,
 		// not when the parent cycle was cancelled or shut down.
 		if ctx.Err() == context.DeadlineExceeded {
