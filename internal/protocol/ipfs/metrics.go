@@ -15,6 +15,7 @@ const (
 	MetricReprovideCIDDuration   = "reprovide_cid_duration_seconds"
 	MetricReprovideBatchSize     = "reprovide_batch_size"
 	MetricReprovideProviderReady = "reprovide_provider_ready"
+	MetricReprovideCIDLeaks      = "reprovide_cid_leaks_total"
 
 	// Global pinned-state gauges
 	MetricReprovidePinnedTotal    = "reprovide_pinned_total"
@@ -71,7 +72,10 @@ var (
 	// Reprovider histograms
 	ReprovideDuration    *prometheus.HistogramVec
 	ReprovideCIDDuration *prometheus.HistogramVec
-	ReprovideBatchSize   *prometheus.HistogramVec
+	ReprovideBatchSize *prometheus.HistogramVec
+
+	// Reprovider leak counter
+	ReprovideCIDLeaks prometheus.Counter
 
 	// Reprovider gauges
 	ReprovideProviderReady prometheus.Gauge
@@ -175,6 +179,14 @@ func init() {
 			Buckets:   batchSizeBuckets,
 		},
 		[]string{},
+	)
+
+	ReprovideCIDLeaks = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideCIDLeaks,
+			Help:      "CIDs where Provide() was abandoned due to context expiry (goroutine may still be running)",
+		},
 	)
 
 	ReprovideProviderReady = prometheus.NewGauge(
@@ -305,6 +317,7 @@ func GetMetricsCollectors() []prometheus.Collector {
 		ReprovideDuration,
 		ReprovideCIDDuration,
 		ReprovideBatchSize,
+		ReprovideCIDLeaks,
 		ReprovideProviderReady,
 		ReprovidePinnedTotal,
 		ReprovideAnnouncedTotal,

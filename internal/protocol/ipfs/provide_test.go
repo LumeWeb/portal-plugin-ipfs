@@ -782,3 +782,58 @@ func mustMultihash(t *testing.T, data string) multihash.Multihash {
 	require.NoError(t, err)
 	return h
 }
+
+func TestBoundedProvide_AbortsOnContextExpiry(t *testing.T) {
+	key := mustMultihash(t, "hang-key")
+
+	var (
+		started = make(chan struct{})
+		release = make(chan struct{})
+	)
+
+	stub := &stubProvide{
+		provideFn: func(ctx context.Context, _ cid.Cid) error {
+			close(started)
+			<-release
+			return nil
+		},
+	}
+
+	provider := newFullrtProvider(stub, nil, 50*time.Millisecond, 0)
+
+	keys := []multihash.Multihash{key}
+
+	done := make(chan error, 1)
+	go func() { done <- provider.ProvideMany(context.Background(), keys) }()
+
+	<-started
+
+	select {
+	case <-done:
+		t.Fatal("ProvideMany returned before per-CID timeout fired")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		var pme *provideManyError
+		require.ErrorAs(t, err, &pme)
+		assert.Equal(t, 1, pme.failed)
+	case <-time.After(2 * time.Second):
+		t.Fatal("ProvideMany did not return after context expiry")
+	}
+
+	close(release)
+}
+
+func TestBoundedProvide_ReturnsOnSuccess(t *testing.T) {
+	key := mustMultihash(t, "fast-key")
+
+	stub := &stubProvide{}
+	provider := newFullrtProvider(stub, nil, 0, 0)
+
+	keys := []multihash.Multihash{key}
+	err := provider.ProvideMany(context.Background(), keys)
+	assert.NoError(t, err)
+}

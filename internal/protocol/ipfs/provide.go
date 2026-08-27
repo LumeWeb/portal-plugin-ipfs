@@ -80,7 +80,7 @@ func (f *fullrtProvider) ProvideMany(ctx context.Context, keys []multihash.Multi
 			}
 
 			cidStart := time.Now()
-			err := f.dht.Provide(provideCtx, cid.NewCidV1(cid.Raw, k), true)
+			err := boundedProvide(provideCtx, f.dht.Provide, k)
 			cidElapsed := time.Since(cidStart).Seconds()
 			if cancel != nil {
 				cancel()
@@ -168,7 +168,7 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 			}
 
 			cidStart := time.Now()
-			err := b.dht.Provide(provideCtx, cid.NewCidV1(cid.Raw, k), true)
+			err := boundedProvide(provideCtx, b.dht.Provide, k)
 			cidElapsed := time.Since(cidStart).Seconds()
 			if cancel != nil {
 				cancel()
@@ -248,6 +248,9 @@ func (e *provideManyError) FailedKeys() []multihash.Multihash {
 }
 
 func classifyProvideError(err error) string {
+	if errors.Is(err, errProvideLeaked) {
+		return "leaked"
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "timeout"
 	}
@@ -259,6 +262,25 @@ func classifyProvideError(err error) string {
 		return "routing"
 	}
 	return "other"
+}
+
+var errProvideLeaked = errors.New("provide abandoned: context expired before Provide returned")
+
+type provideFunc func(context.Context, cid.Cid, bool) error
+
+func boundedProvide(ctx context.Context, provide provideFunc, key multihash.Multihash) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- provide(ctx, cid.NewCidV1(cid.Raw, key), true)
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		ReprovideCIDLeaks.Inc()
+		return fmt.Errorf("%w: %v", errProvideLeaked, ctx.Err())
+	}
 }
 
 // A Reprovider periodically announces CIDs to the IPFS network.
