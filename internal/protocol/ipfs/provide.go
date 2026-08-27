@@ -40,6 +40,7 @@ type fullrtProvider struct {
 	ready          func() bool
 	perCIDTimeout  time.Duration
 	provideWorkers int
+	leakSem        chan struct{}
 }
 
 func (f *fullrtProvider) Ready() bool {
@@ -80,7 +81,7 @@ func (f *fullrtProvider) ProvideMany(ctx context.Context, keys []multihash.Multi
 			}
 
 			cidStart := time.Now()
-			err := boundedProvide(provideCtx, f.dht.Provide, k)
+			err := boundedProvide(provideCtx, f.dht.Provide, k, f.leakSem)
 			cidElapsed := time.Since(cidStart).Seconds()
 			if cancel != nil {
 				cancel()
@@ -117,7 +118,11 @@ func (f *fullrtProvider) ProvideMany(ctx context.Context, keys []multihash.Multi
 }
 
 func newFullrtProvider(dht provideProvider, ready func() bool, perCIDTimeout time.Duration, provideWorkers int) pluginCore.Provider {
-	return &fullrtProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout, provideWorkers: provideWorkers}
+	cap := provideWorkers * 2
+	if cap < 2 {
+		cap = 2
+	}
+	return &fullrtProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout, provideWorkers: provideWorkers, leakSem: make(chan struct{}, cap)}
 }
 
 // basicDHTProvider wraps a basic DHT that doesn't implement ProvideMany
@@ -128,6 +133,7 @@ type basicDHTProvider struct {
 	ready          func() bool
 	perCIDTimeout  time.Duration
 	provideWorkers int
+	leakSem        chan struct{}
 }
 
 func (b *basicDHTProvider) Ready() bool {
@@ -168,7 +174,7 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 			}
 
 			cidStart := time.Now()
-			err := boundedProvide(provideCtx, b.dht.Provide, k)
+			err := boundedProvide(provideCtx, b.dht.Provide, k, b.leakSem)
 			cidElapsed := time.Since(cidStart).Seconds()
 			if cancel != nil {
 				cancel()
@@ -204,7 +210,11 @@ func (b *basicDHTProvider) ProvideMany(ctx context.Context, keys []multihash.Mul
 }
 
 func newBasicDHTProvider(dht routing.ContentRouting, ready func() bool, perCIDTimeout time.Duration, provideWorkers int) pluginCore.Provider {
-	return &basicDHTProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout, provideWorkers: provideWorkers}
+	cap := provideWorkers * 2
+	if cap < 2 {
+		cap = 2
+	}
+	return &basicDHTProvider{dht: dht, ready: ready, perCIDTimeout: perCIDTimeout, provideWorkers: provideWorkers, leakSem: make(chan struct{}, cap)}
 }
 
 // NewDHTProvider is the facade factory for DHT providers. It abstracts the
@@ -264,21 +274,43 @@ func classifyProvideError(err error) string {
 	return "other"
 }
 
-var errProvideLeaked = errors.New("provide abandoned: context expired before Provide returned")
+var (
+	errProvideLeaked    = errors.New("provide abandoned: context expired before Provide returned")
+	errTooManyLeaked    = errors.New("too many outstanding leaked provides")
+)
 
 type provideFunc func(context.Context, cid.Cid, bool) error
 
-func boundedProvide(ctx context.Context, provide provideFunc, key multihash.Multihash) error {
+func boundedProvide(ctx context.Context, provide provideFunc, key multihash.Multihash, sem chan struct{}) error {
+	select {
+	case sem <- struct{}{}:
+	default:
+		ReprovideThrottled.Inc()
+		return errTooManyLeaked
+	}
+
 	done := make(chan error, 1)
 	go func() {
+		defer func() { <-sem }()
 		done <- provide(ctx, cid.NewCidV1(cid.Raw, key), true)
 	}()
+
+	// Non-blocking drain to avoid racing ctx.Done() against a completed result.
+	select {
+	case err := <-done:
+		return err
+	default:
+	}
 
 	select {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
-		ReprovideCIDLeaks.Inc()
+		// Only count as a genuine leak when the per-CID deadline expired,
+		// not when the parent cycle was cancelled or shut down.
+		if ctx.Err() == context.DeadlineExceeded {
+			ReprovideCIDLeaks.Inc()
+		}
 		return fmt.Errorf("%w: %v", errProvideLeaked, ctx.Err())
 	}
 }

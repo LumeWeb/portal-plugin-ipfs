@@ -16,6 +16,7 @@ const (
 	MetricReprovideBatchSize     = "reprovide_batch_size"
 	MetricReprovideProviderReady = "reprovide_provider_ready"
 	MetricReprovideCIDLeaks      = "reprovide_cid_leaks_total"
+	MetricReprovideThrottled     = "reprovide_provide_throttled_total"
 
 	// Global pinned-state gauges
 	MetricReprovidePinnedTotal    = "reprovide_pinned_total"
@@ -76,6 +77,9 @@ var (
 
 	// Reprovider leak counter
 	ReprovideCIDLeaks prometheus.Counter
+
+	// Reprovider throttle counter — incremented when too many leaked goroutines prevent starting a new provide
+	ReprovideThrottled prometheus.Counter
 
 	// Reprovider gauges
 	ReprovideProviderReady prometheus.Gauge
@@ -186,6 +190,14 @@ func init() {
 			Subsystem: subSystemReprovider,
 			Name:      MetricReprovideCIDLeaks,
 			Help:      "CIDs where Provide() was abandoned due to context expiry (goroutine may still be running)",
+		},
+	)
+
+	ReprovideThrottled = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Subsystem: subSystemReprovider,
+			Name:      MetricReprovideThrottled,
+			Help:      "Provides refused because the leaked-goroutine semaphore is full",
 		},
 	)
 
@@ -318,6 +330,7 @@ func GetMetricsCollectors() []prometheus.Collector {
 		ReprovideCIDDuration,
 		ReprovideBatchSize,
 		ReprovideCIDLeaks,
+		ReprovideThrottled,
 		ReprovideProviderReady,
 		ReprovidePinnedTotal,
 		ReprovideAnnouncedTotal,
