@@ -239,7 +239,7 @@ require (
 	github.com/libp2p/go-netroute v0.4.0 // indirect
 	github.com/libp2p/go-reuseport v0.4.0 // indirect
 	github.com/libp2p/go-yamux/v5 v5.1.0 // indirect
-	github.com/looplab/fsm v1.0.3
+	github.com/looplab/fsm v1.0.4
 	github.com/mailru/easyjson v0.9.1 // indirect
 	github.com/markbates/going v1.0.3 // indirect
 	github.com/markbates/goth v1.82.0 // indirect
