@@ -394,6 +394,6 @@ require (
 	modernc.org/sqlite v1.54.0 // indirect
 )
 
-replace github.com/quic-go/quic-go => github.com/quic-go/quic-go v0.60.0
+replace github.com/quic-go/quic-go => github.com/quic-go/quic-go v0.62.0
 
 replace github.com/quic-go/webtransport-go => github.com/quic-go/webtransport-go v0.13.0
