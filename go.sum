@@ -520,6 +520,8 @@ github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707/go.mod h1:qssHWj6
 github.com/dsnet/golib v0.0.0-20171103203638-1ea166775780/go.mod h1:Lj+Z9rebOhdfkVLjJ8T6VcRQv3SXugXy999NBtR9aFY=
 github.com/dunglas/httpsfv v1.1.0 h1:Jw76nAyKWKZKFrpMMcL76y35tOpYHqQPzHQiwDvpe54=
 github.com/dunglas/httpsfv v1.1.0/go.mod h1:zID2mqw9mFsnt7YC3vYQ9/cjq30q41W+1AnDwH8TiMg=
+github.com/dunglas/httpsfv v1.1.1 h1:HoSs101zIE9I23DlqlmljJ/OIi7ILwrH347pXhRZdxI=
+github.com/dunglas/httpsfv v1.1.1/go.mod h1:zID2mqw9mFsnt7YC3vYQ9/cjq30q41W+1AnDwH8TiMg=
 github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
@@ -1206,6 +1208,8 @@ github.com/quic-go/webtransport-go v0.11.1 h1:rrFQMO+7/52ZDJ04fsrjIaWqn6q1z1MYo9
 github.com/quic-go/webtransport-go v0.11.1/go.mod h1:SHgEzUFVyj+9WUSuGB1P6Zd351Pww2leWV3SwlTovkA=
 github.com/quic-go/webtransport-go v0.12.0 h1:CpnKNwZvdV0LD73xoHO8QaR0NI3llqpWRwnazdZS0sE=
 github.com/quic-go/webtransport-go v0.12.0/go.mod h1:GHne8aRFJ24h73pAMrcywXtuaz/ShBXCLXLvG/NPFdU=
+github.com/quic-go/webtransport-go v0.13.0 h1:RJLrTUHlTj8jJaQlQJUy0z0Mf7u1fVM0I6L1b9pe2M0=
+github.com/quic-go/webtransport-go v0.13.0/go.mod h1:K83X9YHbAqgSLO6ikS6BXCMdWOvqh9JTHALulvb2JVk=
 github.com/redis/go-redis/v9 v9.21.0 h1:FPBE4hhbAke+TLmcY3WkpbDffJEomdqPn3HYiqAtL9E=
 github.com/redis/go-redis/v9 v9.21.0/go.mod h1:v/M13XI1PVCDcm01VtPFOADfZtHf8YW3baQf57KlIkA=
 github.com/redis/go-redis/v9 v9.22.0 h1:laDvpYXTJtZLloinw1fA5Kqd6HAEH2XKxOkG/PDq2F0=

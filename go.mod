@@ -153,7 +153,7 @@ require (
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
-	github.com/dunglas/httpsfv v1.1.0 // indirect
+	github.com/dunglas/httpsfv v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/structs v1.1.0 // indirect
 	github.com/filecoin-project/go-clock v0.1.0 // indirect
@@ -302,7 +302,7 @@ require (
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.61.0 // indirect
+	github.com/quic-go/quic-go v0.62.0 // indirect
 	github.com/quic-go/webtransport-go v0.12.0 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -396,4 +396,4 @@ require (
 
 replace github.com/quic-go/quic-go => github.com/quic-go/quic-go v0.60.0
 
-replace github.com/quic-go/webtransport-go => github.com/quic-go/webtransport-go v0.11.1
+replace github.com/quic-go/webtransport-go => github.com/quic-go/webtransport-go v0.13.0
