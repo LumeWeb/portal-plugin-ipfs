@@ -2083,6 +2083,62 @@ func (s *WebsiteServiceDefault) NotifyAdminWebsiteCreated(ctx context.Context, w
 	return s.notifyAdminWebsiteCreated(ctx, &website)
 }
 
+// ActivatePlatformSubdomainWebsite activates a website whose primary domain
+// binding is a platform subdomain that has just been created. The platform
+// controls both ends of the DNS check for platform subdomains (no user
+// verification token exists), so a site awaiting DNS validation can move
+// straight to active once the binding is live — no external websites_validate
+// call is required.
+//
+// Activation is gated to the pending_validation state only. A broken website
+// must not be auto-activated by a binding change: its target may be unpinned or
+// otherwise invalid, and activating it would serve content without verification
+// (EventWebsiteValidate is also legal from broken). A blocked website is left
+// unchanged by the FSM.
+func (s *WebsiteServiceDefault) ActivatePlatformSubdomainWebsite(ctx context.Context, websiteID uint) error {
+	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.ActivatePlatformSubdomainWebsite")
+	defer span.End()
+
+	var website pluginDb.Website
+	if err := s.DB().WithContext(ctx).First(&website, websiteID).Error; err != nil {
+		return fmt.Errorf("failed to load website %d: %w", websiteID, err)
+	}
+
+	primaryWD, err := s.primaryWebsiteDomain(ctx, &website)
+	if err != nil {
+		return fmt.Errorf("failed to resolve primary domain for website %d: %w", websiteID, err)
+	}
+	if primaryWD == nil || primaryWD.PlatformDomainID == nil {
+		domain := ""
+		if primaryWD != nil {
+			domain = primaryWD.Domain
+		}
+		return fmt.Errorf("website %d primary domain %q is not a platform subdomain", websiteID, domain)
+	}
+
+	// Only a site awaiting DNS validation (pending_validation) is a fresh
+	// platform-subdomain deploy. Leave broken/blocked/already-active sites
+	// untouched.
+	if website.Status != string(pluginDb.WebsiteStatusPendingValidation) {
+		return nil
+	}
+
+	// Verify the target is genuinely valid before auto-activating. A fresh
+	// deploy's target is pinned at create, but a platform subdomain may also be
+	// bound to an existing site whose target is no longer valid — reusing
+	// CheckStatus (which validates both IPFS and IPNS targets) avoids serving
+	// unpinned/invalid content. When the target is not valid, leave the site
+	// pending for the normal validation/janitor handling.
+	if status, err := s.CheckStatus(ctx, &website); err != nil || status != pluginDb.WebsiteStatusActive {
+		return nil
+	}
+
+	if err := s.activateValidatedWebsite(ctx, &website); err != nil {
+		return fmt.Errorf("failed to activate platform subdomain website %d: %w", websiteID, err)
+	}
+	return nil
+}
+
 // notifyAdminWebsiteUpdated sends an email notification to admin when a website is updated
 func (s *WebsiteServiceDefault) notifyAdminWebsiteUpdated(ctx context.Context, website *pluginDb.Website, changes map[string]interface{}) error {
 	if !s.config.NotificationsEnabled || s.mailerSvc == nil {

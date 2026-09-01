@@ -1858,6 +1858,104 @@ func TestWebsiteService_DeleteWebsite_PlatformSubdomain_OperatorApexAndZoneIntac
 	}, TestOptions)
 }
 
+// TestWebsiteService_ActivatePlatformSubdomainWebsite_FlipsToActive proves
+// that a website whose primary binding is a just-created platform subdomain is
+// activated without any external websites_validate call. The platform controls
+// both ends of the DNS check, so a pending site is safe to activate as soon as
+// the binding is live.
+func TestWebsiteService_ActivatePlatformSubdomainWebsite_FlipsToActive(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+		// A freshly deployed website awaiting DNS validation. Its target is
+		// pinned (as CreateWebsite enforces), so the target check passes.
+		cid := util.GenerateTestCID(t, "site data")
+		stubPinnedCID(t, ctx, testUserID1, cid.String())
+		website := createTestIPFSWebsite(testUserID1, "platform-active.example.com", cid.String())
+		website.Status = string(pluginDb.WebsiteStatusPendingValidation)
+		require.NoError(tb, db.Create(website).Error)
+
+		pdID := uint(7)
+		wd := createTestWebsiteDomain(website.ID, "platform-active.example.com")
+		wd.Status = pluginDb.DomainStatusActive
+		wd.DNSHostingEnabled = true
+		wd.PlatformDomainID = &pdID
+		require.NoError(tb, db.Create(wd).Error)
+		require.NoError(tb, db.Model(&pluginDb.Website{ID: website.ID}).UpdateColumn("primary_domain_id", wd.ID).Error)
+
+		require.NoError(tb, websiteService.ActivatePlatformSubdomainWebsite(context.Background(), website.ID))
+
+		var activated pluginDb.Website
+		require.NoError(tb, db.First(&activated, website.ID).Error)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), activated.Status)
+	}, TestOptions)
+}
+
+// TestWebsiteService_ActivatePlatformSubdomainWebsite_LeavesBrokenUntouched
+// proves a broken website is NOT auto-activated by a platform binding: a
+// binding change must not flip a site whose target is unpinned/invalid to
+// active without content verification.
+func TestWebsiteService_ActivatePlatformSubdomainWebsite_LeavesBrokenUntouched(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+		website := createTestIPFSWebsite(testUserID1, "platform-broken.example.com", util.GenerateTestCID(t, "bad data").String())
+		website.Status = string(pluginDb.WebsiteStatusBroken)
+		require.NoError(tb, db.Create(website).Error)
+
+		pdID := uint(7)
+		wd := createTestWebsiteDomain(website.ID, "platform-broken.example.com")
+		wd.Status = pluginDb.DomainStatusActive
+		wd.DNSHostingEnabled = true
+		wd.PlatformDomainID = &pdID
+		require.NoError(tb, db.Create(wd).Error)
+		require.NoError(tb, db.Model(&pluginDb.Website{ID: website.ID}).UpdateColumn("primary_domain_id", wd.ID).Error)
+
+		require.NoError(tb, websiteService.ActivatePlatformSubdomainWebsite(context.Background(), website.ID))
+
+		var persisted pluginDb.Website
+		require.NoError(tb, db.First(&persisted, website.ID).Error)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusBroken), persisted.Status)
+	}, TestOptions)
+}
+
+// TestWebsiteService_ActivatePlatformSubdomainWebsite_UnpinnedStaysPending
+// proves an unpinned target is not auto-activated: activation must not serve
+// content the portal does not have pinned, so the site stays pending_validation.
+func TestWebsiteService_ActivatePlatformSubdomainWebsite_UnpinnedStaysPending(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+		cidV := util.GenerateTestCID(t, "unpinned data")
+		// The target is not pinned: the pin lookup yields no pin.
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		mockPinSvc.EXPECT().
+			GetPinByCIDAndUser(mock.Anything, cid.MustParse(cidV.String()), testUserID1).
+			Return(nil, nil).Maybe()
+
+		website := createTestIPFSWebsite(testUserID1, "platform-unpinned.example.com", cidV.String())
+		website.Status = string(pluginDb.WebsiteStatusPendingValidation)
+		require.NoError(tb, db.Create(website).Error)
+
+		pdID := uint(7)
+		wd := createTestWebsiteDomain(website.ID, "platform-unpinned.example.com")
+		wd.Status = pluginDb.DomainStatusActive
+		wd.DNSHostingEnabled = true
+		wd.PlatformDomainID = &pdID
+		require.NoError(tb, db.Create(wd).Error)
+		require.NoError(tb, db.Model(&pluginDb.Website{ID: website.ID}).UpdateColumn("primary_domain_id", wd.ID).Error)
+
+		require.NoError(tb, websiteService.ActivatePlatformSubdomainWebsite(context.Background(), website.ID))
+
+		var persisted pluginDb.Website
+		require.NoError(tb, db.First(&persisted, website.ID).Error)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), persisted.Status)
+	}, TestOptions)
+}
+
 func TestWebsiteService_CreateWebsite_DNSHostingDisabled_NoDNSOperations(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange

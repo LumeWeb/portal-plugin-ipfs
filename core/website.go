@@ -94,6 +94,14 @@ type WebsiteService interface {
 	// recipient user's email internally. No-op when notifications are disabled.
 	NotifyAdminWebsiteCreated(ctx context.Context, websiteID uint) error
 
+	// ActivatePlatformSubdomainWebsite activates a website whose primary domain
+	// binding is a just-created platform subdomain. The platform controls both
+	// ends of the DNS check for these, so the site requires no external
+	// validation call: it transitions from pending_validation to active as soon
+	// as the binding is live. It returns an error if the website cannot be
+	// loaded or its primary binding is not a platform subdomain.
+	ActivatePlatformSubdomainWebsite(ctx context.Context, websiteID uint) error
+
 	// WaitForPublishes blocks until all in-flight async publish operations complete
 	WaitForPublishes()
 }
