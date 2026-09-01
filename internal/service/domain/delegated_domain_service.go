@@ -96,6 +96,32 @@ type DSRecord struct {
 	Digest     string `json:"digest"`
 }
 
+// DelegationVerificationState distinguishes the delegation outcomes a caller
+// must be able to act on without re-deriving hosting rules.
+type DelegationVerificationState uint8
+
+const (
+	// DelegationNotApplicable means the binding's hosting class does not use
+	// portal delegation verification (self-hosted, on-chain managed, or
+	// unresolved). This is neither success nor failure of delegation — it
+	// simply does not apply, and it is not ownership proof by itself.
+	DelegationNotApplicable DelegationVerificationState = iota
+	// DelegationPending means the portal-managed delegation is not yet live
+	// (NS/DS not yet visible at the parent).
+	DelegationPending
+	// DelegationVerified means the portal-managed delegation is live, or the
+	// binding is an operator-trusted platform binding.
+	DelegationVerified
+)
+
+// DelegationVerificationResult is the typed outcome of VerifyDomain. Callers
+// must switch on State rather than interpreting a bare boolean, which cannot
+// distinguish "not applicable" from "pending" and would deadlock valid
+// on-chain/self-hosted bindings.
+type DelegationVerificationResult struct {
+	State DelegationVerificationState
+}
+
 // NewDelegatedDomainService creates a DelegatedDomainService with the given
 // registry and DNS service. BaseComponent is injected by the framework.
 func NewDelegatedDomainService(reg *Registry, dns DNSZoneService) *DelegatedDomainService {
@@ -104,6 +130,18 @@ func NewDelegatedDomainService(reg *Registry, dns DNSZoneService) *DelegatedDoma
 		dnsSvc:   dns,
 		slugGen:  pluginConfig.GenerateDNSSlug,
 	}
+}
+
+// RegisterProvider registers a namespace provider with the service's registry,
+// delegating to Registry.Register (including its policy validation and
+// duplicate-protocol panic). The service factory registers the built-in ICANN
+// and HNS providers at startup; this is the entry point for operators wiring
+// additional namespaces (and for tests injecting synthetic providers).
+func (s *DelegatedDomainService) RegisterProvider(p DomainProvider) {
+	if s.registry == nil {
+		s.registry = NewRegistry()
+	}
+	s.registry.Register(p)
 }
 
 // gatewayHost returns the configured gateway domain for ALIAS records,
@@ -187,8 +225,11 @@ func (s *DelegatedDomainService) resolveManagedZone(ctx context.Context, domain 
 		// zone. The subdomain path is also guarded upstream (CreatePlatformSubdomain
 		// rejects compositions that collapse to the apex), so this is the
 		// enforcement point of record for the one-zone platform relaxation.
-		if domain != pd.Domain && !strings.HasSuffix(domain, "."+pd.Domain) {
-			return nil, false, fmt.Errorf("domain %q is not a subdomain of platform root %q", domain, pd.Domain)
+		// Apex match (domain == pd.Domain) for a root-apex binding
+		// (BindPlatformRootApex), or a name that label-boundary-descends from
+		// the granted root for a subdomain claim.
+		if !isPlatformRootApexOrDescendant(domain, pd.Domain) {
+			return nil, false, fmt.Errorf("domain %q is not the apex or a subdomain of platform root %q", domain, pd.Domain)
 		}
 		z, err := s.dnsSvc.GetZoneByDomain(ctx, pd.Domain)
 		if err != nil {
@@ -484,8 +525,10 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 			wd.GatewayHost = apexContent
 		}
 
-		// Build delegation after zone is created (needs zone ID).
-		delegationAny, err := provider.BuildDelegation(ctx, zone.ID, domain, &website, config)
+		// Build delegation after zone is created (needs zone ID). The provider
+		// returns its typed delegation already serialized as json.RawMessage, so
+		// no untyped any crosses the provider boundary here.
+		delegationBytes, err := provider.BuildDelegation(ctx, zone.ID, domain, &website, config)
 		if err != nil {
 			s.DB().WithContext(ctx).Unscoped().Delete(wd)
 			// Only tear down a zone this call created. For a platform claim the
@@ -496,14 +539,6 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 				_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
 			}
 			return fmt.Errorf("delegation build failed: %w", err)
-		}
-		delegationBytes, err := json.Marshal(delegationAny)
-		if err != nil {
-			s.DB().WithContext(ctx).Unscoped().Delete(wd)
-			if zoneCreated {
-				_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
-			}
-			return fmt.Errorf("marshal delegation data: %w", err)
 		}
 
 		// Update the row with zone info, delegation data, and final status.
@@ -567,57 +602,61 @@ func (s *DelegatedDomainService) notifyAdminWebsiteCreated(ctx context.Context, 
 	}
 }
 
-// VerifyDomain checks delegation and persists the result.
+// VerifyDomain checks delegation and persists the result. It returns a typed
+// DelegationVerificationResult so callers can distinguish "not applicable"
+// (self-hosted / on-chain / unresolved bindings) from "pending" (portal
+// delegation not yet live) from "verified" without re-deriving hosting rules.
 func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
-	wd *pluginDb.WebsiteDomain) (bool, error) {
+	wd *pluginDb.WebsiteDomain) (DelegationVerificationResult, error) {
 
 	provider := s.registry.Get(string(wd.Namespace))
 	if provider == nil {
-		return false, fmt.Errorf("unsupported namespace: %s", wd.Namespace)
+		return DelegationVerificationResult{}, fmt.Errorf("unsupported namespace: %s", wd.Namespace)
 	}
 
 	// A platform subdomain is minted under an operator-owned root: the platform
 	// controls both sides of the DNS check, so there is no user-side TXT
 	// verification to perform and no external delegation to wait on. It is
-	// considered active as soon as it exists. This is the single content
-	// special-case for platform subdomains and is deliberately a guard clause.
-	//
-	// The auto-activation is only sound when the binding's namespace actually
-	// matches the platform root's namespace — the platform-root zone where the
-	// records were created is namespace-specific. If a PlatformDomainID is set
-	// but the namespace does not match (data-integrity corruption or a stale
-	// pointer), falling through to the normal path lets the real DNS state
-	// decide rather than blindly marking an unknown-authoritative binding
-	// Active.
+	// considered active as soon as it exists. The auto-activation is only sound
+	// when the full operator-trust relationship holds (shared validator): the
+	// root resolves live, the namespaces match, the domain is the apex or a
+	// label-boundary descendant, and the binding's zone equals the root's zone.
+	// A mismatch is data-integrity corruption and must NOT auto-activate the
+	// binding or mutate any status.
 	if wd.PlatformDomainID != nil {
-		var pd pluginDb.PlatformDomain
-		if err := s.DB().WithContext(ctx).First(&pd, *wd.PlatformDomainID).Error; err != nil {
-			return false, fmt.Errorf("load platform root %d for auto-activation: %w", *wd.PlatformDomainID, err)
-		}
-		if pd.Namespace != wd.Namespace {
-			return false, fmt.Errorf("platform root %d namespace mismatch: binding is %q, root is %q", *wd.PlatformDomainID, wd.Namespace, pd.Namespace)
+		if err := s.ValidatePlatformBinding(ctx, wd); err != nil {
+			return DelegationVerificationResult{}, err
 		}
 		wd.Status = pluginDb.DomainStatusActive
 		if s.DB() != nil {
 			if err := s.DB().WithContext(ctx).Model(wd).Update("status", wd.Status).Error; err != nil {
-				return false, fmt.Errorf("failed to persist domain status: %w", err)
+				return DelegationVerificationResult{}, fmt.Errorf("failed to persist domain status: %w", err)
 			}
 		}
-		return true, nil
+		return DelegationVerificationResult{State: DelegationVerified}, nil
 	}
 
-	// A self-hosted DNS binding owns no portal-managed zone to verify: the user
-	// runs the authoritative server and DNSSEC/DANE delegation is theirs. The
-	// binding is not part of the portal's lifecycle (no DS to reconcile, no
-	// SOA/DNSSEC to self-heal), so verification is a no-op that leaves the
-	// binding's existing status rather than querying PowerDNS for a zone that
-	// does not exist. The binding's class expresses the same authority: only
-	// portal-managed bindings (ZoneID != 0, regardless of dns_hosting_enabled,
-	// which may be false on legacy bindings that still hold a zone) have
-	// delegation to verify; self-hosted, on-chain managed (HIP-5), and draft
-	// bindings exit here.
-	if wd.Class() != pluginDb.ClassPortalManaged {
-		return false, nil
+	// Only portal-managed bindings have portal delegation to verify
+	// (NeedsDelegationVerification, the authoritative derived hosting locus):
+	//   - self-hosted: the user runs the authoritative server; DNSSEC/DANE
+	//     delegation is theirs.
+	//   - on-chain managed (HIP-5): ownership is proven via the namespace-aware
+	//     TXT token flow, never via delegation.
+	//   - unresolved (draft/error/empty): not classifiable until provisioning
+	//     resolves it.
+	// All return NotApplicable without touching PowerDNS. In particular an
+	// on-chain binding carrying a stray zone ID is data incoherence and must
+	// not authorize any portal DNS work: log the inconsistency and still return
+	// NotApplicable.
+	if !wd.NeedsDelegationVerification() {
+		if wd.Status == pluginDb.DomainStatusOnchainManaged && wd.ZoneID != 0 {
+			s.Logger().Warn("on-chain managed binding carries a stray zone; refusing portal DNS operations",
+				zap.Uint("id", wd.ID),
+				zap.String("domain", wd.Domain),
+				zap.String("status", string(wd.Status)),
+				zap.Uint("zone_id", wd.ZoneID))
+		}
+		return DelegationVerificationResult{State: DelegationNotApplicable}, nil
 	}
 
 	// Expected DS is computed live from PowerDNS's current active signing key
@@ -641,7 +680,7 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		var dsErr error
 		expectedDS, dsErr = s.dnsSvc.GetActiveDNSSECDS(ctx, wd.ZoneID)
 		if dsErr != nil {
-			return false, fmt.Errorf("resolve live DS for zone %d: %w", wd.ZoneID, dsErr)
+			return DelegationVerificationResult{}, fmt.Errorf("resolve live DS for zone %d: %w", wd.ZoneID, dsErr)
 		}
 	} else {
 		// Best-effort for non-DNSSEC providers: surface DB/PowerDNS errors so
@@ -663,7 +702,7 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 	// covers any portal-managed PowerDNS zone, ICANN included.
 	expectedDS, err := s.selfHealZone(ctx, provider, wd, expectedDS)
 	if err != nil {
-		return false, err
+		return DelegationVerificationResult{}, err
 	}
 
 	verified, err := provider.VerifyDelegation(ctx, wd.Domain, expectedDS)
@@ -672,22 +711,24 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		if s.DB() != nil {
 			_ = s.DB().WithContext(ctx).Model(wd).Update("status", wd.Status)
 		}
-		return false, err
+		return DelegationVerificationResult{}, err
 	}
 
+	state := DelegationPending
 	if verified {
 		wd.Status = pluginDb.DomainStatusActive
+		state = DelegationVerified
 	} else {
 		wd.Status = pluginDb.DomainStatusWaitingDelegation
 	}
 
 	if s.DB() != nil {
 		if err := s.DB().WithContext(ctx).Model(wd).Update("status", wd.Status).Error; err != nil {
-			return false, fmt.Errorf("failed to persist domain status: %w", err)
+			return DelegationVerificationResult{}, fmt.Errorf("failed to persist domain status: %w", err)
 		}
 	}
 
-	return verified, nil
+	return DelegationVerificationResult{State: state}, nil
 }
 
 // selfHealZone re-ensures the portal-managed-zone invariants that are
@@ -715,10 +756,18 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 //     by the NS record), so a failed correction is logged, not raised.
 //
 // It returns the (possibly healed) expected DS and a fatal error, or nil.
+//
+// Fail-closed contract for the DNSSEC gate: if EnableDNSSEC successfully
+// returns but the post-heal live DS read is non-empty we proceed; if the read
+// succeeds but is empty we return a wrapped error (the invariant could not be
+// established) so VerifyDomain does not fall through to VerifyDelegation and
+// must not mark the binding Active. An erroring read is indeterminate and also
+// returns an error. Only a non-DNSSEC policy treats a missing/erroring DS as
+// non-fatal (handled by VerifyDomain before selfHealZone is consulted).
 func (s *DelegatedDomainService) selfHealZone(ctx context.Context, provider DomainProvider, wd *pluginDb.WebsiteDomain, expectedDS string) (string, error) {
-	// DNSSEC self-heal: only managed-DNSSEC namespaces (RequiresDNSSEC, the
-	// same gate VerifyDomain uses for expectedDS; a DNSSEC-required namespace
-	// that does not publish DANE must still heal its signing key).
+	// DNSSEC self-heal: only managed-DNSSEC namespaces (policy DNSSEC required,
+	// the same gate VerifyDomain uses for expectedDS; a DNSSEC-required
+	// namespace that does not publish DANE must still heal its signing key).
 	if provider.RequiresDNSSEC() && expectedDS == "" {
 		if _, err := s.dnsSvc.EnableDNSSEC(ctx, wd.ZoneID); err != nil {
 			return "", fmt.Errorf("enable dnssec for zone %d: %w", wd.ZoneID, err)
@@ -727,6 +776,9 @@ func (s *DelegatedDomainService) selfHealZone(ctx context.Context, provider Doma
 		healedDS, dsErr := s.dnsSvc.GetActiveDNSSECDS(ctx, wd.ZoneID)
 		if dsErr != nil {
 			return "", fmt.Errorf("resolve live DS for zone %d after enable: %w", wd.ZoneID, dsErr)
+		}
+		if healedDS == "" {
+			return "", fmt.Errorf("dnssec self-heal failed for zone %d (domain %s): no active signing key after EnableDNSSEC; cannot verify delegation", wd.ZoneID, wd.Domain)
 		}
 		expectedDS = healedDS
 	}
@@ -838,9 +890,14 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 	tlsa = TLSAHashPrefix() + hash
 	ownerName = dane.TLSAOwnerName(domain, DaneTLSAPort, DaneTLSATransport)
 
-	// Notify the provider that a cert is available
-	if err := provider.OnCertAvailable(ctx, domain, certPEM); err != nil {
-		return "", "", fmt.Errorf("provider OnCertAvailable: %w", err)
+	// Notify DANE-capable providers that a cert is available. Certificate/DANE
+	// handling is an optional sub-interface: a provider without DANE (e.g.
+	// ICANN) simply does not implement CertificateProvider, so there is no
+	// mandatory no-op to call.
+	if certProvider, ok := provider.(CertificateProvider); ok {
+		if err := certProvider.OnCertAvailable(ctx, domain, certPEM); err != nil {
+			return "", "", fmt.Errorf("provider OnCertAvailable: %w", err)
+		}
 	}
 
 	if s.DB() == nil {
@@ -858,6 +915,7 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 	// owner name, by contrast, are refreshed on every push (a cert may be freely
 	// re-issued from the same key with an identical SPKI).
 	var zoneID uint
+	portalManaged := false
 	txErr := s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Lock the target row so concurrent cert pushes serialize per-domain.
 		locked := tx.Clauses(clause.Locking{Strength: "UPDATE"})
@@ -866,6 +924,7 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 			return err // includes gorm.ErrRecordNotFound
 		}
 		zoneID = wd.ZoneID
+		portalManaged = wd.Class() == pluginDb.ClassPortalManaged
 		if wd.ProtocolData == nil {
 			wd.ProtocolData = make(datatypes.JSONMap)
 		}
@@ -944,7 +1003,11 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 	// named after the binding's domain (not the zone apex) so a subdomain
 	// reusing a parent zone publishes _443._tcp.<subdomain> rather than
 	// overwriting the parent's TLSA.
-	if s.dnsSvc != nil && zoneID != 0 && provider.UsesManagedZoneTLSA() {
+	// Only portal-managed bindings authorize a managed-zone TLSA write. An
+	// on-chain (HIP-5) or self-hosted/unresolved binding carrying a stray
+	// zone reference must never publish TLSA into it — the zone may be shared
+	// and is not this binding's portal authority.
+	if s.dnsSvc != nil && portalManaged && zoneID != 0 && provider.UsesManagedZoneTLSA() {
 		if err := s.dnsSvc.SetTLSARecord(ctx, zoneID, domain, tlsa); err != nil {
 			// DNS publish failure is surfaced but the persisted cert/TLSA state
 			// is retained so a later cert push retries the publish.
@@ -970,6 +1033,20 @@ func (s *DelegatedDomainService) NamespaceUsesManagedZoneTLSA(namespace string) 
 	}
 	prov := s.registry.Get(namespace)
 	return prov != nil && prov.UsesManagedZoneTLSA()
+}
+
+// NamespaceRequiresDNSSEC reports whether the given namespace's provider
+// confirms delegation against a live DS served by the parent zone
+// (managed-DNSSEC policy). DNS-requirements exposes live DS state based on
+// this: a provider that requires DNSSEC but does not publish DANE still needs
+// the live DS in the response, so the DNSSEC policy — never the TLSA policy —
+// gates DS exposure.
+func (s *DelegatedDomainService) NamespaceRequiresDNSSEC(namespace string) bool {
+	if s.registry == nil {
+		return false
+	}
+	prov := s.registry.Get(namespace)
+	return prov != nil && prov.Policy().DNSSEC == pluginCore.DNSSECRequired
 }
 
 // GetNamespaceForDomain returns the namespace for the given domain if it

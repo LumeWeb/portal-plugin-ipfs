@@ -541,13 +541,18 @@ func (j *WebsiteJanitorJob) verifyPendingDelegations(ctx context.Context) error 
 			for i := range wds {
 				wd := &wds[i]
 				verifyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				_, err := j.delegatedDomainSvc.VerifyDomain(verifyCtx, wd)
+				res, err := j.delegatedDomainSvc.VerifyDomain(verifyCtx, wd)
 				cancel()
 				if err != nil {
 					j.logger.Warn("delegation verification failed",
 						zap.String("domain", wd.Domain),
 						zap.String("namespace", string(wd.Namespace)),
 						zap.Error(err))
+					continue
+				}
+				if res.State != domsvc.DelegationVerified {
+					// Still pending (or not applicable): leave it for a later
+					// run — the status was left as-is by VerifyDomain.
 					continue
 				}
 

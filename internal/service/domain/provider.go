@@ -3,12 +3,29 @@ package domain
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 
 	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
+
+// DNSSECPolicy, TLSAPolicy, and ProviderPolicy live in the plugin core package
+// (pluginCore) so they can be referenced without import cycles by consumers
+// such as generated mocks; see core/provider_policy.go.
+
+// CertificateProvider is the optional capability for providers whose namespaces
+// translate TLS certificates into DANE/TLSA state (managed-zone DANE).
+// Providers without DANE (e.g. ICANN) do not implement it, so certificate/DANE
+// behavior is an explicit optional sub-interface rather than a mandatory no-op
+// on every provider.
+type CertificateProvider interface {
+	// OnCertAvailable is called when a cert is pushed via /internal/dns/cert.
+	// Providers can use it to update TLSA in delegation data or trigger
+	// namespace-specific protocol updates. Returning nil is safe.
+	OnCertAvailable(ctx context.Context, domain string, certPEM string) error
+}
 
 type DomainProvider interface {
 	Protocol() string
@@ -23,26 +40,15 @@ type DomainProvider interface {
 	// answer (name not yet registered, resolver unreachable), defaulting to
 	// native so binding can proceed.
 	Inspect(ctx context.Context, domain string) (onchainManaged bool, err error)
-	BuildDelegation(ctx context.Context, zoneID uint, domain string, website *pluginDb.Website, config json.RawMessage) (any, error)
+	// BuildDelegation returns the provider's typed delegation payload as a
+	// json.RawMessage, so delegation never crosses the provider boundary as an
+	// unconstrained any. Each provider marshals its own typed delegation
+	// structure (e.g. HNS DelegationBundle, ICANN ICANNDelegation); the
+	// persisted JSON shape is unchanged.
+	BuildDelegation(ctx context.Context, zoneID uint, domain string, website *pluginDb.Website, config json.RawMessage) (json.RawMessage, error)
 	VerifyDelegation(ctx context.Context, domain string, expectedDS string) (bool, error)
-	// OnCertAvailable is called when a cert is pushed via /internal/dns/cert.
-	// Providers can use it to update TLSA in delegation data or trigger
-	// namespace-specific protocol updates. Can be nil-safe by returning nil.
-	OnCertAvailable(ctx context.Context, domain string, certPEM string) error
-	// UsesManagedZoneTLSA reports whether this provider's TLS certs translate
-	// into a DANE TLSA record that the portal must publish into its
-	// portal-managed authoritative PowerDNS zone (e.g. an alt-root namespace
-	// whose zone the portal DNSSEC-signs). Providers that do not use DANE
-	// (e.g. ICANN) return false so no spurious _443._tcp TLSA is published.
-	UsesManagedZoneTLSA() bool
-	// RequiresDNSSEC reports whether this provider's delegation is confirmed
-	// against a live DS record served by the parent zone (managed-DNSSEC
-	// namespaces, e.g. HNS). Providers that verify on NS visibility alone
-	// (e.g. ICANN) and ignore DS return false, so a DS-resolution failure never
-	// blocks their verification. Distinct from UsesManagedZoneTLSA: a provider
-	// could DNSSEC-sign without DANE (and vice versa), so DNSSEC-requirement is
-	// its own capability.
-	RequiresDNSSEC() bool
+	// Policy returns the provider's immutable hosting-capability policy.
+	Policy() pluginCore.ProviderPolicy
 	// Nameservers returns the nameservers this provider publishes and
 	// validates delegation against for its namespace. Alt-root providers
 	// (e.g. HNS) return their own namespace-specific nameservers, which
@@ -55,11 +61,21 @@ type DomainProvider interface {
 	// system default resolver). Used to validate that a zone's namespace
 	// delegation is live.
 	LiveNameservers(ctx context.Context, domain string) ([]string, error)
+	// Deprecated compatibility adapters — their values MUST derive from
+	// Policy() and are never independent sources of truth:
+
+	// UsesManagedZoneTLSA reports whether this provider's TLS certs translate
+	// into a DANE TLSA record that the portal must publish into its
+	// portal-managed authoritative PowerDNS zone. Derived from Policy().TLSA.
+	UsesManagedZoneTLSA() bool
+	// RequiresDNSSEC reports whether this provider's delegation is confirmed
+	// against a live DS record served by the parent zone (managed-DNSSEC
+	// namespaces, e.g. HNS). Derived from Policy().DNSSEC. A provider could
+	// DNSSEC-sign without DANE (and vice versa), so providers must never use
+	// the TLSA capability as a proxy for DNSSEC.
+	RequiresDNSSEC() bool
 	// ApexRecordType returns the DNS record type used for the zone apex.
-	// DNSSEC-signed alt-root providers (e.g. HNS) must return RecordTypeA so
-	// the apex is a real, signable RRset, which PowerDNS cannot provide for a
-	// synthetic ALIAS/CNAME record at the apex. Providers whose apex is not
-	// separately signed return RecordTypeALIAS.
+	// Derived from Policy().ApexRecordType.
 	ApexRecordType() pluginCore.RecordType
 }
 
@@ -71,11 +87,33 @@ func NewRegistry() *Registry {
 	return &Registry{providers: make(map[string]DomainProvider)}
 }
 
+// validatePolicy rejects unknown enum values and invalid record types at
+// registration time (mirroring the duplicate-registration panic), so a broken
+// capability can never silently reach a hosting-sensitive decision.
+func validatePolicy(key string, pol pluginCore.ProviderPolicy) {
+	switch pol.DNSSEC {
+	case pluginCore.DNSSECNotRequired, pluginCore.DNSSECRequired:
+	default:
+		panic(fmt.Sprintf("domain provider %q registered with invalid DNSSEC policy value %d", key, pol.DNSSEC))
+	}
+	switch pol.TLSA {
+	case pluginCore.TLSANotManaged, pluginCore.TLSAManaged:
+	default:
+		panic(fmt.Sprintf("domain provider %q registered with invalid TLSA policy value %d", key, pol.TLSA))
+	}
+	switch pol.ApexRecordType {
+	case pluginCore.RecordTypeA, pluginCore.RecordTypeALIAS:
+	default:
+		panic(fmt.Sprintf("domain provider %q registered with invalid apex record type %q", key, pol.ApexRecordType))
+	}
+}
+
 func (r *Registry) Register(p DomainProvider) {
 	key := p.Protocol()
 	if _, exists := r.providers[key]; exists {
 		panic("domain provider already registered for protocol: " + key)
 	}
+	validatePolicy(key, p.Policy())
 	r.providers[key] = p
 }
 

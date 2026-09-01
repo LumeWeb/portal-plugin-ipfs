@@ -14,6 +14,7 @@ import (
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
+	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
@@ -287,8 +288,8 @@ type recordingDelegatedDomainSvc struct {
 }
 
 func (r *recordingDelegatedDomainSvc) UsesDelegationForOwnership(string) bool { return false }
-func (r *recordingDelegatedDomainSvc) VerifyDomain(context.Context, *pluginDb.WebsiteDomain) (bool, error) {
-	return true, nil
+func (r *recordingDelegatedDomainSvc) VerifyDomain(context.Context, *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error) {
+	return domsvc.DelegationVerificationResult{State: domsvc.DelegationVerified}, nil
 }
 func (r *recordingDelegatedDomainSvc) GetNamespaceForDomain(string) (string, bool) { return "", false }
 func (r *recordingDelegatedDomainSvc) GetWebsiteDomainByName(context.Context, string) (*pluginDb.WebsiteDomain, error) {

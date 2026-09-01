@@ -731,3 +731,73 @@ func TestAPI_ConvertDomainToOnChain(t *testing.T) {
 		_ = onchainBinding // already-on-chain guard exercised above
 	}, TestOptions)
 }
+
+// TestAPI_DNSRequirements_ExposesLiveDSForDNSSECRequiredNoTLSAProvider proves
+// dns-requirements gates the live DS on the provider's DNSSEC policy, not the
+// TLSA/DANE capability: a synthetic provider whose policy is DNSSEC-required but
+// TLSA-disabled still gets the live DS injected into parent_records.
+func TestAPI_DNSRequirements_ExposesLiveDSForDNSSECRequiredNoTLSAProvider(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, userID, testCID, _ := helper.SetupAuthenticatedTest()
+
+		// Register a synthetic provider: DNSSEC required, but no managed-zone
+		// DANE. This combination must still expose the live DS.
+		dds := core.GetService[*domain.DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, dds)
+		dds.RegisterProvider(&util.SyntheticDomainProvider{
+			ProtocolName: "synth",
+			PolicyValue: pluginCore.ProviderPolicy{
+				DNSSEC:         pluginCore.DNSSECRequired,
+				TLSA:           pluginCore.TLSANotManaged,
+				ApexRecordType: pluginCore.RecordTypeA,
+			},
+		})
+
+		website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
+		require.NoError(t, ctx.DB().Create(website).Error)
+
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID: 1, UserID: userID, Domain: "synth.example",
+			Namespace:   pluginDb.DomainNamespace("synth"),
+			Status:      pluginDb.DomainStatusRecordsGenerated,
+			ZoneID:      42,
+			ZoneName:    "synth.example.",
+			GatewayHost: "gateway.lumeweb.com",
+			DelegationData: datatypes.JSONMap{
+				"mode": "delegated",
+				"parent_records": []map[string]any{
+					{"type": "NS", "value": "ns1.synth.example"},
+				},
+				// No authoritative TLSA — this provider does not publish DANE.
+				"authoritative_records": []map[string]any{
+					{"type": "NS", "value": "ns1.synth.example"},
+				},
+			},
+		}
+		require.NoError(t, ctx.DB().Create(wd).Error)
+
+		mockDNS := helper.SetupDNSServiceMocks()
+		mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, uint(42)).Return("60776 13 2 abc", nil).Once()
+
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites/1/domains/1/dns-requirements", token, nil)
+		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+		var resp dto.DomainResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.NotNil(t, resp.Delegation)
+
+		// The live DS is exposed even though the provider has TLSA disabled:
+		// DS exposure is driven by the DNSSEC policy, never the TLSA capability.
+		assert.Equal(t, "enabled", resp.Delegation.DNSSEC)
+		found := false
+		for _, r := range resp.Delegation.ParentRecords {
+			if r.Type == "DS" {
+				found = true
+				assert.Equal(t, "60776 13 2 abc", r.Value)
+			}
+		}
+		assert.True(t, found, "live DS must be present in parent records for a DNSSEC-required provider")
+		mockDNS.AssertExpectations(t)
+	}, TestOptions)
+}

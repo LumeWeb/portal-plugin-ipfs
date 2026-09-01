@@ -458,8 +458,7 @@ func TestDelegatedDomainService_VerifyDomain_SelfHealsDNSSEC(t *testing.T) {
 			// this test guards — EnableDNSSEC MUST have been invoked, the DS
 			// re-read, and the SOA MNAME self-heal fired, before delegation
 			// verification.
-			verified, err := svc.VerifyDomain(context.Background(), wd)
-			_ = verified
+			_, err := svc.VerifyDomain(context.Background(), wd)
 			if err != nil {
 				// Allowed: resolver-not-configured after the self-heal mocks
 				// fired. The point of this test is the self-heal sequence.
@@ -501,8 +500,7 @@ func TestDelegatedDomainService_VerifyDomain_SelfHealsDNSSEC(t *testing.T) {
 				WebsiteID: 1, UserID: 1, Domain: "example.com", Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 42,
 			}
 
-			verified, err := svc.VerifyDomain(context.Background(), wd)
-			_ = verified
+			_, err := svc.VerifyDomain(context.Background(), wd)
 			if err != nil {
 				// Allowed: post-heal delegation error (system resolver).
 				tb.Logf("expected post-heal delegation error: %v", err)
@@ -546,8 +544,7 @@ func TestDelegatedDomainService_VerifyDomain_SelfHealsDNSSEC(t *testing.T) {
 				WebsiteID: 1, UserID: 1, Domain: "lumeweb.com", Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 8,
 			}
 
-			verified, err := svc.VerifyDomain(context.Background(), wd)
-			_ = verified
+			_, err := svc.VerifyDomain(context.Background(), wd)
 			if err != nil {
 				// Allowed: post-heal ICANN delegation error (system resolver).
 				// The key assertion is that the DS error itself was swallowed —
@@ -590,7 +587,8 @@ func TestDelegatedDomainService_VerifyDomain_PlatformNamespaceMismatch_Rejects(t
 		verified, err := svc.VerifyDomain(context.Background(), wd)
 		require.Error(tb, err, "namespace mismatch must not auto-activate")
 		assert.Contains(tb, err.Error(), "namespace mismatch")
-		assert.False(tb, verified)
+		assert.NotEqual(tb, DelegationVerified, verified.State,
+			"a failed platform trust check must never report delegation verified")
 
 		// Must not have been promoted to Active.
 		var reloaded pluginDb.WebsiteDomain
@@ -621,7 +619,7 @@ func TestDelegatedDomainService_VerifyDomain_PlatformMatching_Activates(t *testi
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		verified, err := svc.VerifyDomain(context.Background(), wd)
 		require.NoError(tb, err)
-		assert.True(tb, verified)
+		assert.Equal(tb, DelegationVerified, verified.State)
 
 		var reloaded pluginDb.WebsiteDomain
 		require.NoError(tb, db.First(&reloaded, wd.ID).Error)

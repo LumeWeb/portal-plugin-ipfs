@@ -85,23 +85,23 @@ func (_c *MockDomainProvider_ApexRecordType_Call) RunAndReturn(run func() core.R
 }
 
 // BuildDelegation provides a mock function for the type MockDomainProvider
-func (_mock *MockDomainProvider) BuildDelegation(ctx context.Context, zoneID uint, domain string, website *db.Website, config json.RawMessage) (any, error) {
+func (_mock *MockDomainProvider) BuildDelegation(ctx context.Context, zoneID uint, domain string, website *db.Website, config json.RawMessage) (json.RawMessage, error) {
 	ret := _mock.Called(ctx, zoneID, domain, website, config)
 
 	if len(ret) == 0 {
 		panic("no return value specified for BuildDelegation")
 	}
 
-	var r0 any
+	var r0 json.RawMessage
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, *db.Website, json.RawMessage) (any, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, *db.Website, json.RawMessage) (json.RawMessage, error)); ok {
 		return returnFunc(ctx, zoneID, domain, website, config)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, *db.Website, json.RawMessage) any); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, string, *db.Website, json.RawMessage) json.RawMessage); ok {
 		r0 = returnFunc(ctx, zoneID, domain, website, config)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(any)
+			r0 = ret.Get(0).(json.RawMessage)
 		}
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, uint, string, *db.Website, json.RawMessage) error); ok {
@@ -160,12 +160,12 @@ func (_c *MockDomainProvider_BuildDelegation_Call) Run(run func(ctx context.Cont
 	return _c
 }
 
-func (_c *MockDomainProvider_BuildDelegation_Call) Return(v any, err error) *MockDomainProvider_BuildDelegation_Call {
-	_c.Call.Return(v, err)
+func (_c *MockDomainProvider_BuildDelegation_Call) Return(delegation json.RawMessage, err error) *MockDomainProvider_BuildDelegation_Call {
+	_c.Call.Return(delegation, err)
 	return _c
 }
 
-func (_c *MockDomainProvider_BuildDelegation_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, domain string, website *db.Website, config json.RawMessage) (any, error)) *MockDomainProvider_BuildDelegation_Call {
+func (_c *MockDomainProvider_BuildDelegation_Call) RunAndReturn(run func(ctx context.Context, zoneID uint, domain string, website *db.Website, config json.RawMessage) (json.RawMessage, error)) *MockDomainProvider_BuildDelegation_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -350,65 +350,46 @@ func (_c *MockDomainProvider_Nameservers_Call) RunAndReturn(run func() []string)
 	return _c
 }
 
-// OnCertAvailable provides a mock function for the type MockDomainProvider
-func (_mock *MockDomainProvider) OnCertAvailable(ctx context.Context, domain string, certPEM string) error {
-	ret := _mock.Called(ctx, domain, certPEM)
+// Policy provides a mock function for the type MockDomainProvider
+func (_mock *MockDomainProvider) Policy() core.ProviderPolicy {
+	ret := _mock.Called()
 
 	if len(ret) == 0 {
-		panic("no return value specified for OnCertAvailable")
+		panic("no return value specified for Policy")
 	}
 
-	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) error); ok {
-		r0 = returnFunc(ctx, domain, certPEM)
+	var r0 core.ProviderPolicy
+	if returnFunc, ok := ret.Get(0).(func() core.ProviderPolicy); ok {
+		r0 = returnFunc()
 	} else {
-		r0 = ret.Error(0)
+		r0 = ret.Get(0).(core.ProviderPolicy)
 	}
 	return r0
 }
 
-// MockDomainProvider_OnCertAvailable_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'OnCertAvailable'
-type MockDomainProvider_OnCertAvailable_Call struct {
+// MockDomainProvider_Policy_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Policy'
+type MockDomainProvider_Policy_Call struct {
 	*mock.Call
 }
 
-// OnCertAvailable is a helper method to define mock.On call
-//   - ctx context.Context
-//   - domain string
-//   - certPEM string
-func (_e *MockDomainProvider_Expecter) OnCertAvailable(ctx any, domain any, certPEM any) *MockDomainProvider_OnCertAvailable_Call {
-	return &MockDomainProvider_OnCertAvailable_Call{Call: _e.mock.On("OnCertAvailable", ctx, domain, certPEM)}
+// Policy is a helper method to define mock.On call
+func (_e *MockDomainProvider_Expecter) Policy() *MockDomainProvider_Policy_Call {
+	return &MockDomainProvider_Policy_Call{Call: _e.mock.On("Policy")}
 }
 
-func (_c *MockDomainProvider_OnCertAvailable_Call) Run(run func(ctx context.Context, domain string, certPEM string)) *MockDomainProvider_OnCertAvailable_Call {
+func (_c *MockDomainProvider_Policy_Call) Run(run func()) *MockDomainProvider_Policy_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 context.Context
-		if args[0] != nil {
-			arg0 = args[0].(context.Context)
-		}
-		var arg1 string
-		if args[1] != nil {
-			arg1 = args[1].(string)
-		}
-		var arg2 string
-		if args[2] != nil {
-			arg2 = args[2].(string)
-		}
-		run(
-			arg0,
-			arg1,
-			arg2,
-		)
+		run()
 	})
 	return _c
 }
 
-func (_c *MockDomainProvider_OnCertAvailable_Call) Return(err error) *MockDomainProvider_OnCertAvailable_Call {
-	_c.Call.Return(err)
+func (_c *MockDomainProvider_Policy_Call) Return(policy core.ProviderPolicy) *MockDomainProvider_Policy_Call {
+	_c.Call.Return(policy)
 	return _c
 }
 
-func (_c *MockDomainProvider_OnCertAvailable_Call) RunAndReturn(run func(ctx context.Context, domain string, certPEM string) error) *MockDomainProvider_OnCertAvailable_Call {
+func (_c *MockDomainProvider_Policy_Call) RunAndReturn(run func() core.ProviderPolicy) *MockDomainProvider_Policy_Call {
 	_c.Call.Return(run)
 	return _c
 }

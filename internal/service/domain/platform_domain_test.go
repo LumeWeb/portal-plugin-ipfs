@@ -717,10 +717,10 @@ func TestResolveManagedZone_PlatformGuard_HNSSingleLabel(t *testing.T) {
 		assert.Equal(t, uint(7), z.ID)
 		assert.False(t, created, "a platform apex must never create a new zone")
 
-		// An unrelated name is not a subdomain of the granted root.
+		// An unrelated name is not the apex nor a subdomain of the granted root.
 		_, _, err = svc.resolveManagedZone(context.Background(), "other.xyz", 1, &pd.ID)
 		require.Error(tb, err)
-		assert.Contains(tb, err.Error(), "not a subdomain")
+		assert.Contains(tb, err.Error(), "not the apex or a subdomain")
 
 		// A proper subdomain resolves to the granted root's zone.
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "altroot").
@@ -840,4 +840,188 @@ func TestBindPlatformRootApex_MultipleRootsAsAdditionalDomains(t *testing.T) {
 
 		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, mock.Anything, mock.Anything)
 	}, platformApexTestOptions)
+}
+
+// TestValidatePlatformBinding exercises the shared platform-trust validator.
+// Before a platform binding bypasses user ownership/delegation verification, the
+// root must resolve live, the namespaces must match, the domain must be the apex
+// or a label-boundary descendant, and the binding's zone must equal the root's
+// zone. Mismatches return descriptive integrity errors and must not mutate the
+// binding's status.
+func TestValidatePlatformBinding(t *testing.T) {
+	newBinding := func(pd *pluginDb.PlatformDomain, domain string, namespace pluginDb.DomainNamespace, zoneID uint) *pluginDb.WebsiteDomain {
+		return &pluginDb.WebsiteDomain{
+			WebsiteID:        1,
+			UserID:           1,
+			Domain:           domain,
+			Namespace:        namespace,
+			ZoneID:           zoneID,
+			Status:           pluginDb.DomainStatusRecordsGenerated,
+			PlatformDomainID: &pd.ID,
+		}
+	}
+
+	t.Run("matching_root_apex_verifies", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			pd := createPlatformRoot(tb, ctx, "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+			wd := newBinding(pd, "platform.test", pluginDb.DomainNamespaceICANN, 7)
+			require.NoError(t, ctx.DB().Create(wd).Error)
+			assert.NoError(t, svc.ValidatePlatformBinding(context.Background(), wd))
+		}, TestOptions)
+	})
+
+	t.Run("matching_descendant_verifies", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			pd := createPlatformRoot(tb, ctx, "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+			wd := newBinding(pd, "starter.platform.test", pluginDb.DomainNamespaceICANN, 7)
+			require.NoError(t, ctx.DB().Create(wd).Error)
+			assert.NoError(t, svc.ValidatePlatformBinding(context.Background(), wd))
+		}, TestOptions)
+	})
+
+	t.Run("namespace_mismatch_fails_without_status_mutation", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			pd := createPlatformRoot(tb, ctx, "altroot", pluginDb.DomainNamespaceHNS, 7, true)
+			wd := newBinding(pd, "starter.altroot", pluginDb.DomainNamespaceICANN, 7)
+			require.NoError(t, ctx.DB().Create(wd).Error)
+			err := svc.ValidatePlatformBinding(context.Background(), wd)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "namespace mismatch")
+			var persisted pluginDb.WebsiteDomain
+			require.NoError(t, ctx.DB().First(&persisted, wd.ID).Error)
+			assert.Equal(t, pluginDb.DomainStatusRecordsGenerated, persisted.Status)
+		}, TestOptions)
+	})
+
+	t.Run("unrelated_domain_with_matching_namespace_fails", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			pd := createPlatformRoot(tb, ctx, "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+			wd := newBinding(pd, "other.example", pluginDb.DomainNamespaceICANN, 7)
+			require.NoError(t, ctx.DB().Create(wd).Error)
+			err := svc.ValidatePlatformBinding(context.Background(), wd)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "not the apex or a label-boundary descendant")
+		}, TestOptions)
+	})
+
+	t.Run("label_boundary_lookalike_fails", func(t *testing.T) {
+		// "evilplatform.test" must NOT be treated as a descendant of the root
+		// "platform.test": the root must begin at a label boundary.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			pd := createPlatformRoot(tb, ctx, "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+			wd := newBinding(pd, "evilplatform.test", pluginDb.DomainNamespaceICANN, 7)
+			require.NoError(t, ctx.DB().Create(wd).Error)
+			err := svc.ValidatePlatformBinding(context.Background(), wd)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "not the apex or a label-boundary descendant")
+		}, TestOptions)
+	})
+
+	t.Run("zone_mismatch_fails", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			pd := createPlatformRoot(tb, ctx, "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+			wd := newBinding(pd, "starter.platform.test", pluginDb.DomainNamespaceICANN, 99)
+			require.NoError(t, ctx.DB().Create(wd).Error)
+			err := svc.ValidatePlatformBinding(context.Background(), wd)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "zone")
+		}, TestOptions)
+	})
+
+	t.Run("zero_zone_fails", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			pd := createPlatformRoot(tb, ctx, "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+			wd := newBinding(pd, "starter.platform.test", pluginDb.DomainNamespaceICANN, 0)
+			require.NoError(t, ctx.DB().Create(wd).Error)
+			err := svc.ValidatePlatformBinding(context.Background(), wd)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "zone")
+		}, TestOptions)
+	})
+
+	t.Run("missing_platform_root_fails", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			missingID := uint(999999)
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "starter.platform.test",
+				Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 7,
+				Status:           pluginDb.DomainStatusRecordsGenerated,
+				PlatformDomainID: &missingID,
+			}
+			require.NoError(t, ctx.DB().Create(wd).Error)
+			err := svc.ValidatePlatformBinding(context.Background(), wd)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unavailable")
+		}, TestOptions)
+	})
+
+	t.Run("soft_deleted_platform_root_fails", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			pd := createPlatformRoot(tb, ctx, "platform.test", pluginDb.DomainNamespaceICANN, 7, true)
+			require.NoError(t, ctx.DB().Delete(&pluginDb.PlatformDomain{}, pd.ID).Error)
+			wd := newBinding(pd, "starter.platform.test", pluginDb.DomainNamespaceICANN, 7)
+			require.NoError(t, ctx.DB().Create(wd).Error)
+			err := svc.ValidatePlatformBinding(context.Background(), wd)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unavailable")
+		}, TestOptions)
+	})
+
+	t.Run("enabled_not_required_for_existing_binding", func(t *testing.T) {
+		// An existing, otherwise-valid platform binding stays valid even when
+		// its root is later disabled — Enabled gates new claims only.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			pd := createPlatformRoot(tb, ctx, "platform.test", pluginDb.DomainNamespaceICANN, 7, false)
+			wd := newBinding(pd, "starter.platform.test", pluginDb.DomainNamespaceICANN, 7)
+			require.NoError(t, ctx.DB().Create(wd).Error)
+			assert.NoError(t, svc.ValidatePlatformBinding(context.Background(), wd))
+		}, TestOptions)
+	})
+}
+
+// TestCreatePlatformSubdomain_ZoneMismatch_RejectedAndRolledBack proves the
+// createPlatformBinding trust guard actually executes (regression for the
+// no-op validator where PlatformDomainID had not yet been hydrated): when the
+// operator-zone lookup returns a different zone than the one recorded on the
+// platform root, the claim is rejected — not silently promoted to Active — and
+// the just-created binding is rolled back.
+func TestCreatePlatformSubdomain_ZoneMismatch_RejectedAndRolledBack(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "example.com")
+		// Platform root whose recorded operator zone is ID 7.
+		pd := createPlatformRoot(tb, ctx, "platform.com", pluginDb.DomainNamespaceICANN, 7, true)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, mockDNS)
+
+		// The operator-zone lookup returns a DIFFERENT zone (123) than the one
+		// recorded on the platform root (7) — inconsistent state. The claim must
+		// be rejected by the shared trust validator, never promoted Active.
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.com").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 123}, Domain: "platform.com", UserID: 1}, nil).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(123), mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		_, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "starter", false, false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "trust check failed")
+
+		// The mismatched binding was rolled back.
+		var count int64
+		require.NoError(t, db.Unscoped().Model(&pluginDb.WebsiteDomain{}).
+			Where("domain = ?", "starter.platform.com").Count(&count).Error)
+		assert.Zero(t, count, "a mismatched platform claim must not leave a persisted binding")
+	}, TestOptions)
 }
