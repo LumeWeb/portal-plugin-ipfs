@@ -2088,7 +2088,13 @@ func (s *WebsiteServiceDefault) NotifyAdminWebsiteCreated(ctx context.Context, w
 // controls both ends of the DNS check for platform subdomains (no user
 // verification token exists), so a site awaiting DNS validation can move
 // straight to active once the binding is live — no external websites_validate
-// call is required. A blocked website is left unchanged by the FSM.
+// call is required.
+//
+// Activation is gated to the pending_validation state only. A broken website
+// must not be auto-activated by a binding change: its target may be unpinned or
+// otherwise invalid, and activating it would serve content without verification
+// (EventWebsiteValidate is also legal from broken). A blocked website is left
+// unchanged by the FSM.
 func (s *WebsiteServiceDefault) ActivatePlatformSubdomainWebsite(ctx context.Context, websiteID uint) error {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.ActivatePlatformSubdomainWebsite")
 	defer span.End()
@@ -2108,6 +2114,13 @@ func (s *WebsiteServiceDefault) ActivatePlatformSubdomainWebsite(ctx context.Con
 			domain = primaryWD.Domain
 		}
 		return fmt.Errorf("website %d primary domain %q is not a platform subdomain", websiteID, domain)
+	}
+
+	// Only a site awaiting DNS validation (pending_validation) is a fresh
+	// platform-subdomain deploy. Leave broken/blocked/already-active sites
+	// untouched.
+	if website.Status != string(pluginDb.WebsiteStatusPendingValidation) {
+		return nil
 	}
 
 	if err := s.activateValidatedWebsite(ctx, &website); err != nil {

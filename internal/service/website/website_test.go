@@ -1889,6 +1889,35 @@ func TestWebsiteService_ActivatePlatformSubdomainWebsite_FlipsToActive(t *testin
 	}, TestOptions)
 }
 
+// TestWebsiteService_ActivatePlatformSubdomainWebsite_LeavesBrokenUntouched
+// proves a broken website is NOT auto-activated by a platform binding: a
+// binding change must not flip a site whose target is unpinned/invalid to
+// active without content verification.
+func TestWebsiteService_ActivatePlatformSubdomainWebsite_LeavesBrokenUntouched(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+		website := createTestIPFSWebsite(testUserID1, "broken-ridge-9.pinned.site", util.GenerateTestCID(t, "bad data").String())
+		website.Status = string(pluginDb.WebsiteStatusBroken)
+		require.NoError(tb, db.Create(website).Error)
+
+		pdID := uint(7)
+		wd := createTestWebsiteDomain(website.ID, "broken-ridge-9.pinned.site")
+		wd.Status = pluginDb.DomainStatusActive
+		wd.DNSHostingEnabled = true
+		wd.PlatformDomainID = &pdID
+		require.NoError(tb, db.Create(wd).Error)
+		require.NoError(tb, db.Model(&pluginDb.Website{ID: website.ID}).UpdateColumn("primary_domain_id", wd.ID).Error)
+
+		require.NoError(tb, websiteService.ActivatePlatformSubdomainWebsite(context.Background(), website.ID))
+
+		var persisted pluginDb.Website
+		require.NoError(tb, db.First(&persisted, website.ID).Error)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusBroken), persisted.Status)
+	}, TestOptions)
+}
+
 func TestWebsiteService_CreateWebsite_DNSHostingDisabled_NoDNSOperations(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
