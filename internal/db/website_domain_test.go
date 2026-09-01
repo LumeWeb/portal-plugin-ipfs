@@ -49,6 +49,58 @@ func TestWebsiteDomain_UniqueConstraint(t *testing.T) {
 	}, dbTestOptions)
 }
 
+func TestWebsiteDomain_Class(t *testing.T) {
+	tests := []struct {
+		name string
+		wd   WebsiteDomain
+		want DomainClass
+	}{
+		{
+			name: "onchain managed is on-chain managed even with a stray zone id",
+			wd: WebsiteDomain{
+				Status: DomainStatusOnchainManaged,
+				ZoneID: 7,
+			},
+			want: ClassOnChainManaged,
+		},
+		{
+			name: "zone is authoritative for portal-managed regardless of status",
+			wd: WebsiteDomain{
+				Status: DomainStatusError,
+				ZoneID: 42,
+			},
+			want: ClassPortalManaged,
+		},
+		{
+			name: "no zone means self-hosted for draft bindings",
+			wd: WebsiteDomain{
+				Status: DomainStatusDraft,
+			},
+			want: ClassSelfHosted,
+		},
+		{
+			name: "self-hosted status with no zone is self-hosted",
+			wd: WebsiteDomain{
+				Status: DomainStatusSelfHosted,
+			},
+			want: ClassSelfHosted,
+		},
+		{
+			name: "dns_hosting_enabled is deliberately not an input",
+			wd: WebsiteDomain{
+				Status:            DomainStatusDraft,
+				DNSHostingEnabled: true,
+			},
+			want: ClassSelfHosted,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.wd.Class())
+		})
+	}
+}
+
 func TestWebsiteDomain_DelegationRecordsOwned(t *testing.T) {
 	tests := []struct {
 		name string
