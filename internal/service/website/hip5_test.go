@@ -1,6 +1,7 @@
 package website
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 )
@@ -71,5 +73,48 @@ func TestShouldPerformTokenCheck(t *testing.T) {
 			assert.True(tb, svc.shouldPerformTokenCheck(pending, wd),
 				"ICANN proves ownership via TXT token")
 		})
+	}, TestOptions)
+}
+
+func TestSetDomainDNSEnabled_OnchainManagedRefusesEnable(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		testCID := util.GenerateTestCID(t, "onchain-test")
+		domain := "onchain.hns"
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Status = string(pluginDb.WebsiteStatusPendingValidation)
+		require.NoError(tb, ctx.DB().Create(website).Error)
+
+		wd := prebindPrimaryDomain(tb, ctx, website, domain, false)
+		// Mark the binding on-chain managed (HIP-5): no portal zone, hosting off.
+		wd.Namespace = pluginDb.DomainNamespaceHNS
+		wd.Status = pluginDb.DomainStatusOnchainManaged
+		require.NoError(tb, ctx.DB().Model(wd).Updates(map[string]interface{}{
+			"namespace": string(pluginDb.DomainNamespaceHNS),
+			"status":    string(pluginDb.DomainStatusOnchainManaged),
+		}).Error)
+
+		// Enabling portal DNS hosting is refused with a clear error — the
+		// external contract serves the name's DNS, so a portal zone would be
+		// unreachable.
+		_, err := websiteService.SetDomainDNSEnabled(context.Background(), testUserID1, website.ID, wd.ID, true)
+		require.Error(tb, err)
+		assert.Contains(tb, err.Error(), "on-chain managed")
+
+		// Disabling is a reconciled no-op (flag=false and zone=0 already agree);
+		// the binding comes back unchanged without DNS churn.
+		updated, err := websiteService.SetDomainDNSEnabled(context.Background(), testUserID1, website.ID, wd.ID, false)
+		require.NoError(tb, err)
+		require.NotNil(tb, updated)
+		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, updated.Status)
+		assert.False(tb, updated.DNSHostingEnabled)
+
+		// The flag was never flipped on and no zone appeared.
+		var persisted pluginDb.WebsiteDomain
+		require.NoError(tb, ctx.DB().First(&persisted, wd.ID).Error)
+		assert.False(tb, persisted.DNSHostingEnabled)
+		assert.Equal(tb, uint(0), persisted.ZoneID)
 	}, TestOptions)
 }

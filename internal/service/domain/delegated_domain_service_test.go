@@ -737,8 +737,10 @@ func testOptionsWithHNSResolver(addr string) coreTesting.TestContextBuilderOptio
 
 func TestDelegatedDomainService_CreateDomain_Hip5OnchainManaged(t *testing.T) {
 	// A Handshake name whose NS record is a HIP-5 TX record must bind as on-chain
-	// managed: no zone, no DANE, TXT-verification status, and binding with portal
-	// DNS hosting (dnsHostingEnabled=true) must be rejected.
+	// managed: no zone, no DANE, TXT-verification status. A managed-DNS request
+	// (dnsHostingEnabled=true, the UX default) is coerced to onchain_managed with
+	// dns_hosting_enabled=false — portal hosting is impossible for a
+	// contract-served name — rather than failing the bind.
 	const domain = "myname"
 
 	addr, _ := startCustomPortDNSServer(t, domain+".",
@@ -746,7 +748,10 @@ func TestDelegatedDomainService_CreateDomain_Hip5OnchainManaged(t *testing.T) {
 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
-		website := createTestWebsite(tb, db, 1, domain)
+		// The test DNS server answers NS queries with the HIP-5 record for any
+		// name, so each subtest uses a distinct bound domain to avoid colliding
+		// on the (domain, namespace) unique key.
+		domains := []string{"myname", "myname2"}
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		require.NotNil(tb, svc)
@@ -758,30 +763,40 @@ func TestDelegatedDomainService_CreateDomain_Hip5OnchainManaged(t *testing.T) {
 		require.NotNil(tb, hnsProv)
 		hnsProv.resolverAddr = addr
 
-		// Portal DNS hosting must be rejected for an on-chain managed name; no
-		// row is persisted by the failed attempt.
-		_, err := svc.CreateDomain(context.Background(), "hns", domain, website.ID, 1, true, false, nil, nil)
-		require.Error(tb, err)
-		assert.Contains(tb, err.Error(), "HIP-5")
-
-		// Self-hosted (dnsHostingEnabled=false) binds as onchain_managed with no
-		// zone, no delegation data, and fires the created notification (the
-		// binding is the new website's primary).
 		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
 
-		wd, err := svc.CreateDomain(context.Background(), "hns", domain, website.ID, 1, false, true, nil, nil)
-		require.NoError(tb, err)
-		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, wd.Status)
-		assert.Equal(tb, uint(0), wd.ZoneID)
-		assert.False(tb, wd.DNSHostingEnabled)
-		assert.Nil(tb, wd.DelegationData)
+		for i, hostingRequest := range []bool{true, false} {
+			name := "hosting request coerced"
+			if !hostingRequest {
+				name = "explicit self-hosted request"
+			}
+			t.Run(name, func(t *testing.T) {
+				d := domains[i]
+				website := createTestWebsite(tb, db, 1, d)
 
-		// The binding is recorded as the website's primary so the website
-		// service resolves the apex domain via PrimaryDomainID.
-		var reloaded pluginDb.Website
-		require.NoError(tb, db.First(&reloaded, website.ID).Error)
-		require.NotNil(tb, reloaded.PrimaryDomainID)
-		assert.Equal(tb, wd.ID, *reloaded.PrimaryDomainID)
+				mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
+
+				wd, err := svc.CreateDomain(context.Background(), "hns", d, website.ID, 1, hostingRequest, true, nil, nil)
+				require.NoError(tb, err)
+				assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, wd.Status)
+				assert.Equal(tb, uint(0), wd.ZoneID)
+				// Portal DNS hosting is coerced off for on-chain managed names,
+				// even when the caller requested managed DNS.
+				assert.False(tb, wd.DNSHostingEnabled)
+				assert.Nil(tb, wd.DelegationData)
+
+				// The binding is recorded as the website's primary so the website
+				// service resolves the apex domain via PrimaryDomainID.
+				var reloaded pluginDb.Website
+				require.NoError(tb, db.First(&reloaded, website.ID).Error)
+				require.NotNil(tb, reloaded.PrimaryDomainID)
+				assert.Equal(tb, wd.ID, *reloaded.PrimaryDomainID)
+
+				// The persisted flag agrees with the absence of a zone.
+				var persisted pluginDb.WebsiteDomain
+				require.NoError(tb, db.First(&persisted, wd.ID).Error)
+				assert.False(tb, persisted.DNSHostingEnabled)
+			})
+		}
 	}, testOptionsWithHNSResolver(addr))
 }

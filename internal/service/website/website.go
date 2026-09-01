@@ -863,6 +863,12 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				zap.Error(err),
 				zap.Uint("website_id", websiteID))
 		} else if wd != nil {
+			// A primary binding that is on-chain managed (HIP-5) cannot be put
+			// under portal DNS hosting; refuse the flip rather than persisting a
+			// flag that would disagree with the absence of a zone.
+			if enableDNS && wd.Status == pluginDb.DomainStatusOnchainManaged {
+				return nil, fmt.Errorf("DNS hosting is not available for on-chain managed domain %q (HIP-5); its DNS is served by the external contract", wd.Domain)
+			}
 			wd.DNSHostingEnabled = enableDNS
 			if uerr := s.DB().WithContext(ctx).Model(wd).Update("dns_hosting_enabled", enableDNS).Error; uerr != nil {
 				s.Logger().Warn("Failed to persist dns_hosting_enabled on primary domain",
@@ -2378,6 +2384,15 @@ func (s *WebsiteServiceDefault) SetDomainDNSEnabled(ctx context.Context, userID,
 		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
 		First(&wd).Error; err != nil {
 		return nil, fmt.Errorf("domain lookup failed: %w", err)
+	}
+
+	// An on-chain managed (HIP-5) binding serves its DNS from the external
+	// contract; the portal cannot host it. Enabling portal DNS hosting is
+	// refused with a clear error rather than silently creating a PowerDNS zone
+	// no resolver would ever query. Disabling is already a no-op (the binding
+	// is flag=false, zone=0, so it is reconciled below).
+	if enabled && wd.Status == pluginDb.DomainStatusOnchainManaged {
+		return nil, fmt.Errorf("DNS hosting is not available for on-chain managed domain %q (HIP-5); its DNS is served by the external contract", wd.Domain)
 	}
 
 	// Already in the desired state with nothing left to reconcile. The binding
