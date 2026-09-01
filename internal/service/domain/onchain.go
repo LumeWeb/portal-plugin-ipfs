@@ -69,85 +69,85 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 		return nil, fmt.Errorf("%w: %q; its NS record does not point at an external contract", ErrDomainNotOnChain, wd.Domain)
 	}
 
-	// Only the binding's sole-owner PowerDNS zone may be deleted. A zone shared
-	// with other live bindings (their parent/apex zone) must be kept — deleting
-	// it would destroy their records and DNSSEC.
+	// Serialize this conversion against CreateDomain's zone provisioning so a
+	// concurrent bind into the same zone can never have its zone (and records/
+	// DNSSEC) destroyed between our sharer check and the delete. Both paths key
+	// the same per-zone lock on the zone's canonical apex name.
 	zoneID := wd.ZoneID
-	if zoneID != 0 {
-		var sharers int64
-		if err := s.DB().WithContext(ctx).
-			Model(&pluginDb.WebsiteDomain{}).
-			Where("zone_id = ? AND id != ? AND deleted_at IS NULL", zoneID, wd.ID).
-			Count(&sharers).Error; err != nil {
-			return nil, fmt.Errorf("failed to count bindings sharing zone %d: %w", zoneID, err)
+	if err := s.withZoneLifecycleLock(zoneLifecycleKey(wd.Domain), func() error {
+		// Only the binding's sole-owner PowerDNS zone may be deleted. A zone
+		// shared with other live bindings (their parent/apex zone) must be kept
+		// — deleting it would destroy their records and DNSSEC.
+		if zoneID != 0 {
+			var sharers int64
+			if err := s.DB().WithContext(ctx).
+				Model(&pluginDb.WebsiteDomain{}).
+				Where("zone_id = ? AND id != ? AND deleted_at IS NULL", zoneID, wd.ID).
+				Count(&sharers).Error; err != nil {
+				return fmt.Errorf("failed to count bindings sharing zone %d: %w", zoneID, err)
+			}
+			if sharers > 0 {
+				return fmt.Errorf("%w: %q (%d other binding(s)); remove or convert them first", ErrDomainZoneShared, wd.Domain, sharers)
+			}
 		}
-		if sharers > 0 {
-			return nil, fmt.Errorf("%w: %q (%d other binding(s)); remove or convert them first", ErrDomainZoneShared, wd.Domain, sharers)
-		}
-	}
 
-	// Drop the PowerDNS-backed delegation state. ProtocolData (DANE key, cert,
-	// TLSA, owner) and per-domain SSL state are intentionally preserved: DANE/
-	// SSL still apply to the name — the records are simply served by the
-	// external contract now — and DNSSEC is not a concept on-chain.
-	updates := map[string]any{
-		"zone_id":             0,
-		"zone_name":           "",
-		"gateway_host":        "",
-		"delegation_data":     nil,
-		"dns_hosting_enabled": false,
-		"status":              pluginDb.DomainStatusOnchainManaged,
-	}
-	if err := s.DB().WithContext(ctx).Model(&wd).Updates(updates).Error; err != nil {
-		return nil, fmt.Errorf("failed to persist on-chain managed state: %w", err)
-	}
-	wd.ZoneID = 0
-	wd.ZoneName = ""
-	wd.GatewayHost = ""
-	wd.DelegationData = nil
-	wd.DNSHostingEnabled = false
-	wd.Status = pluginDb.DomainStatusOnchainManaged
-
-	// Delete the now-unreferenced PowerDNS zone LAST, best-effort. Order is
-	// deliberate: the DB runs first so a delete failure can never strand the
-	// binding pointing at a destroyed zone (the unrecoverable state). If a
-	// concurrent bind landed in this zone between the check above and here, the
-	// zone is re-counted and left alone so another binding's records/DNSSEC are
-	// not destroyed. A leftover/unreferenced zone is harmless (nothing serves
-	// it — the name resolves via the contract) and is logged for ops cleanup.
-	if zoneID != 0 && s.dnsSvc != nil {
-		var sharers int64
-		if err := s.DB().WithContext(ctx).
-			Model(&pluginDb.WebsiteDomain{}).
-			Where("zone_id = ? AND id != ? AND deleted_at IS NULL", zoneID, wd.ID).
-			Count(&sharers).Error; err != nil {
-			s.Logger().Warn("failed to re-count zone sharers before on-chain conversion zone delete",
-				zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain), zap.Error(err))
-		} else if sharers > 0 {
-			s.Logger().Info("on-chain conversion: zone now shared by other bindings; leaving it intact",
-				zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain))
-		} else if err := s.dnsSvc.DeleteZone(ctx, zoneID); err != nil {
-			// Non-fatal: the binding is already cleanly on-chain; the orphaned
-			// zone is unreachable garbage an operator can clear.
-			s.Logger().Warn("on-chain conversion: failed to delete orphaned managed zone (non-fatal)",
-				zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain), zap.Error(err))
+		// Re-arm the website to pending_validation BEFORE committing the
+		// conversion. A failure here is clean (nothing has been converted yet
+		// and the caller can retry), whereas failing after the on-chain commit
+		// would leave an already-converted domain reported as a 500 and make
+		// retry hit "already on-chain managed". A blocked website stays blocked
+		// (only an admin can lift an admin block); a pending one needs no
+		// change.
+		var website pluginDb.Website
+		if err := s.DB().WithContext(ctx).First(&website, wd.WebsiteID).Error; err != nil {
+			return fmt.Errorf("failed to load website %d for on-chain conversion: %w", wd.WebsiteID, err)
 		}
-	}
-
-	// DNS moved on-chain: the site must prove ownership against the contract
-	// with the TXT token, so re-arm validation. A blocked website stays blocked
-	// (only an admin can lift an admin block); a pending one needs no change.
-	// A website-load failure is surfaced rather than silently skipped so the
-	// caller knows validation was not re-armed.
-	var website pluginDb.Website
-	if err := s.DB().WithContext(ctx).First(&website, wd.WebsiteID).Error; err != nil {
-		return nil, fmt.Errorf("failed to load website %d for on-chain conversion: %w", wd.WebsiteID, err)
-	}
-	if website.Status != string(pluginDb.WebsiteStatusBlocked) &&
-		website.Status != string(pluginDb.WebsiteStatusPendingValidation) {
-		if err := s.DB().WithContext(ctx).Model(&website).Update("status", pluginDb.WebsiteStatusPendingValidation).Error; err != nil {
-			return nil, fmt.Errorf("failed to reset website to pending_validation: %w", err)
+		if website.Status != string(pluginDb.WebsiteStatusBlocked) &&
+			website.Status != string(pluginDb.WebsiteStatusPendingValidation) {
+			if err := s.DB().WithContext(ctx).Model(&website).Update("status", pluginDb.WebsiteStatusPendingValidation).Error; err != nil {
+				return fmt.Errorf("failed to reset website to pending_validation: %w", err)
+			}
 		}
+
+		// Drop the PowerDNS-backed delegation state. ProtocolData (DANE key,
+		// cert, TLSA, owner) and per-domain SSL state are intentionally
+		// preserved: DANE/SSL still apply to the name — the records are simply
+		// served by the external contract now — and DNSSEC is not a concept
+		// on-chain.
+		updates := map[string]any{
+			"zone_id":             0,
+			"zone_name":           "",
+			"gateway_host":        "",
+			"delegation_data":     nil,
+			"dns_hosting_enabled": false,
+			"status":              pluginDb.DomainStatusOnchainManaged,
+		}
+		if err := s.DB().WithContext(ctx).Model(&wd).Updates(updates).Error; err != nil {
+			return fmt.Errorf("failed to persist on-chain managed state: %w", err)
+		}
+		wd.ZoneID = 0
+		wd.ZoneName = ""
+		wd.GatewayHost = ""
+		wd.DelegationData = nil
+		wd.DNSHostingEnabled = false
+		wd.Status = pluginDb.DomainStatusOnchainManaged
+
+		// Delete the now-unreferenced PowerDNS zone LAST, best-effort. Order is
+		// deliberate: the DB runs first so a delete failure can never strand
+		// the binding pointing at a destroyed zone (the unrecoverable state). A
+		// leftover/unreferenced zone is harmless (nothing serves it — the name
+		// resolves via the contract) and is logged for ops cleanup. The zone
+		// lock guarantees no other binding is attached between the check above
+		// and here.
+		if zoneID != 0 && s.dnsSvc != nil {
+			if err := s.dnsSvc.DeleteZone(ctx, zoneID); err != nil {
+				s.Logger().Warn("on-chain conversion: failed to delete orphaned managed zone (non-fatal)",
+					zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain), zap.Error(err))
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	return &wd, nil

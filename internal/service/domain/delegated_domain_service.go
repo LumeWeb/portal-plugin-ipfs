@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	dane "go.lumeweb.com/dane"
@@ -25,6 +26,12 @@ type DelegatedDomainService struct {
 	*core.BaseComponent
 	registry *Registry
 	dnsSvc   DNSZoneService
+	// zoneLifecycleLocks serializes zone lifecycle transitions (a bind that
+	// provisions/reuses a zone in CreateDomain vs a conversion that deletes a
+	// zone in ConvertToOnChain), keyed by the zone's canonical apex name, so a
+	// concurrent bind can never have its zone destroyed by a conversion's
+	// delete. sync.Map so the service can be copied/value-constructed safely.
+	zoneLifecycleLocks sync.Map // string(zone apex) -> *sync.Mutex
 	// websiteSvc is resolved once at startup for cross-service calls (e.g.
 	// activating a website after a platform subdomain is claimed). It is always
 	// present: the portal registers all service instances before running
@@ -229,6 +236,35 @@ func (s *DelegatedDomainService) resolveManagedZone(ctx context.Context, domain 
 	return z, true, nil
 }
 
+// zoneLifecycleKey returns the canonical apex name of the PowerDNS zone a
+// bind/convert of `domain` lives in, mirroring the one-zone rule in
+// resolveManagedZone (apex owns its zone; a subdomain reuses the parent's
+// zone). Both CreateDomain and ConvertToOnChain derive the same key so their
+// per-zone lifecycle locks collide.
+func zoneLifecycleKey(domain string) string {
+	if p := parentDomain(domain); p != "" {
+		return canonicalZoneName(p)
+	}
+	return canonicalZoneName(domain)
+}
+
+// zoneLifecycleLock returns the per-zone mutex serializing zone lifecycle
+// transitions for the given zone apex.
+func (s *DelegatedDomainService) zoneLifecycleLock(zoneApex string) *sync.Mutex {
+	v, _ := s.zoneLifecycleLocks.LoadOrStore(zoneApex, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+// withZoneLifecycleLock runs fn while holding the per-zone lifecycle lock for
+// the given zone apex, serializing zone provisioning (CreateDomain) against
+// zone deletion (ConvertToOnChain) for the same zone.
+func (s *DelegatedDomainService) withZoneLifecycleLock(zoneApex string, fn func() error) error {
+	lock := s.zoneLifecycleLock(zoneApex)
+	lock.Lock()
+	defer lock.Unlock()
+	return fn()
+}
+
 // parentDomain returns the domain's parent (everything after the first label),
 // or "" when the domain is an apex (single-label HNS, or a bare TLD-less ICANN
 // name). Mirrors the website service's extractParentDomain.
@@ -396,90 +432,98 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 
 	// Managed DNS: create DNS resources only after the DB row is committed.
 	// The authoritative zone follows the one-zone rule — apex owns, subdomain
-	// reuses the parent's zone.
-	zone, zoneCreated, err := s.resolveManagedZone(ctx, domain, userID, platformRootID)
-	if err != nil {
-		s.DB().WithContext(ctx).Unscoped().Delete(wd)
-		return nil, fmt.Errorf("zone resolution failed: %w", err)
-	}
-
-	target := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
-	// Name the record after the binding's domain (not the zone apex) so a
-	// subdomain reusing a parent zone writes its own _dnslink.<subdomain>,
-	// not the parent's.
-	if err := s.dnsSvc.CreateDNSLinkRecord(ctx, zone.ID, domain, target); err != nil {
-		s.DB().WithContext(ctx).Unscoped().Delete(wd)
-		if zoneCreated {
-			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+	// reuses the parent's zone. The per-zone lifecycle lock is held across zone
+	// resolution through the row's zone-id commit so a concurrent
+	// ConvertToOnChain cannot delete the zone (and its records/DNSSEC) between
+	// the bind deciding to use it and the binding committing its reference.
+	if err := s.withZoneLifecycleLock(zoneLifecycleKey(domain), func() error {
+		zone, zoneCreated, err := s.resolveManagedZone(ctx, domain, userID, platformRootID)
+		if err != nil {
+			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			return fmt.Errorf("zone resolution failed: %w", err)
 		}
-		return nil, fmt.Errorf("dnslink creation failed: %w", err)
-	}
 
-	// Create apex record pointing to the gateway. DNSSEC-signed alt-root
-	// providers (e.g. HNS) need a real A record (gateway IP) so the apex
-	// carries an RRSIG; otherwise use an ALIAS to the gateway hostname.
-	apexType := provider.ApexRecordType()
-	var apexContent string
-	if apexType == pluginCore.RecordTypeA {
-		apexContent = s.gatewayIP()
-		if apexContent == "" {
+		target := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
+		// Name the record after the binding's domain (not the zone apex) so a
+		// subdomain reusing a parent zone writes its own _dnslink.<subdomain>,
+		// not the parent's.
+		if err := s.dnsSvc.CreateDNSLinkRecord(ctx, zone.ID, domain, target); err != nil {
 			s.DB().WithContext(ctx).Unscoped().Delete(wd)
 			if zoneCreated {
 				_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
 			}
-			return nil, fmt.Errorf("gateway_ip not configured: alt-root apex requires a real A record and cannot fall back to ALIAS (set dns.gateway_ip, e.g. to the gateway IP)")
+			return fmt.Errorf("dnslink creation failed: %w", err)
 		}
-	} else if gatewayHost := s.gatewayHost(); gatewayHost != "" {
-		apexContent = gatewayHost
-	}
 
-	if apexContent != "" {
-		if err := s.dnsSvc.CreateApexRecord(ctx, zone.ID, domain, apexType, apexContent); err != nil {
+		// Create apex record pointing to the gateway. DNSSEC-signed alt-root
+		// providers (e.g. HNS) need a real A record (gateway IP) so the apex
+		// carries an RRSIG; otherwise use an ALIAS to the gateway hostname.
+		apexType := provider.ApexRecordType()
+		var apexContent string
+		if apexType == pluginCore.RecordTypeA {
+			apexContent = s.gatewayIP()
+			if apexContent == "" {
+				s.DB().WithContext(ctx).Unscoped().Delete(wd)
+				if zoneCreated {
+					_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+				}
+				return fmt.Errorf("gateway_ip not configured: alt-root apex requires a real A record and cannot fall back to ALIAS (set dns.gateway_ip, e.g. to the gateway IP)")
+			}
+		} else if gatewayHost := s.gatewayHost(); gatewayHost != "" {
+			apexContent = gatewayHost
+		}
+
+		if apexContent != "" {
+			if err := s.dnsSvc.CreateApexRecord(ctx, zone.ID, domain, apexType, apexContent); err != nil {
+				s.DB().WithContext(ctx).Unscoped().Delete(wd)
+				if zoneCreated {
+					_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+				}
+				return fmt.Errorf("apex record creation failed: %w", err)
+			}
+			wd.GatewayHost = apexContent
+		}
+
+		// Build delegation after zone is created (needs zone ID).
+		delegationAny, err := provider.BuildDelegation(ctx, zone.ID, domain, &website, config)
+		if err != nil {
+			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			// Only tear down a zone this call created. For a platform claim the
+			// zone is the operator's shared platform-root zone (zoneCreated is
+			// false), which must never be deleted on a per-claim failure —
+			// doing so would take down every subdomain on that root.
+			if zoneCreated {
+				_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+			}
+			return fmt.Errorf("delegation build failed: %w", err)
+		}
+		delegationBytes, err := json.Marshal(delegationAny)
+		if err != nil {
 			s.DB().WithContext(ctx).Unscoped().Delete(wd)
 			if zoneCreated {
 				_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
 			}
-			return nil, fmt.Errorf("apex record creation failed: %w", err)
+			return fmt.Errorf("marshal delegation data: %w", err)
 		}
-		wd.GatewayHost = apexContent
+
+		// Update the row with zone info, delegation data, and final status.
+		wd.ZoneID = zone.ID
+		wd.Status = pluginDb.DomainStatusRecordsGenerated
+		wd.DelegationData = jsonToMap(delegationBytes)
+		if err := s.DB().WithContext(ctx).Model(wd).Updates(map[string]any{
+			"zone_id":             zone.ID,
+			"status":              pluginDb.DomainStatusRecordsGenerated,
+			"delegation_data":     wd.DelegationData,
+			"dns_hosting_enabled": wd.DNSHostingEnabled,
+		}).Error; err != nil {
+			return fmt.Errorf("failed to finalize domain record: %w", err)
+		}
+
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
-	// Build delegation after zone is created (needs zone ID).
-	delegationAny, err := provider.BuildDelegation(ctx, zone.ID, domain, &website, config)
-	if err != nil {
-		s.DB().WithContext(ctx).Unscoped().Delete(wd)
-		// Only tear down a zone this call created. For a platform claim the
-		// zone is the operator's shared platform-root zone (zoneCreated is
-		// false), which must never be deleted on a per-claim failure —
-		// doing so would take down every subdomain on that root.
-		if zoneCreated {
-			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
-		}
-		return nil, fmt.Errorf("delegation build failed: %w", err)
-	}
-	delegationBytes, err := json.Marshal(delegationAny)
-	if err != nil {
-		s.DB().WithContext(ctx).Unscoped().Delete(wd)
-		if zoneCreated {
-			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
-		}
-		return nil, fmt.Errorf("marshal delegation data: %w", err)
-	}
-
-	// Update the row with zone info, delegation data, and final status.
-	wd.ZoneID = zone.ID
-	wd.Status = pluginDb.DomainStatusRecordsGenerated
-	wd.DelegationData = jsonToMap(delegationBytes)
-	if err := s.DB().WithContext(ctx).Model(wd).Updates(map[string]any{
-		"zone_id":             zone.ID,
-		"status":              pluginDb.DomainStatusRecordsGenerated,
-		"delegation_data":     wd.DelegationData,
-		"dns_hosting_enabled": wd.DNSHostingEnabled,
-	}).Error; err != nil {
-		return nil, fmt.Errorf("failed to finalize domain record: %w", err)
-	}
-
-	// If the owning website has no primary domain yet, make this binding the
 	// Primary/notify handled by the shared helper: a fresh website gets its
 	// first binding recorded as primary, and only a genuine website creation
 	// (flag set by the create API caller) fires the admin created email —
