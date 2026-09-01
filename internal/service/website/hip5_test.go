@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
@@ -116,5 +117,56 @@ func TestSetDomainDNSEnabled_OnchainManagedRefusesEnable(t *testing.T) {
 		require.NoError(tb, ctx.DB().First(&persisted, wd.ID).Error)
 		assert.False(tb, persisted.DNSHostingEnabled)
 		assert.Equal(tb, uint(0), persisted.ZoneID)
+	}, TestOptions)
+}
+
+// TestSetDomainDNSEnabled_OnchainManagedStrayZone_RefusesEnableNoZoneDelete is
+// the stray-zone variant of the on-chain enable refusal: even when an on-chain
+// binding incoherently carries a zone reference, enabling portal DNS must be
+// refused and the website/DNS flows must never create, delete, or write to any
+// portal zone.
+func TestSetDomainDNSEnabled_OnchainManagedStrayZone_RefusesEnableNoZoneDelete(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, mockDNS)
+
+		testCID := util.GenerateTestCID(t, "onchain-stray-enable")
+		domain := "onchain-stray-enable.hns"
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		website.Status = string(pluginDb.WebsiteStatusPendingValidation)
+		require.NoError(tb, ctx.DB().Create(website).Error)
+
+		wd := prebindPrimaryDomain(tb, ctx, website, domain, false)
+		wd.Namespace = pluginDb.DomainNamespaceHNS
+		wd.Status = pluginDb.DomainStatusOnchainManaged
+		require.NoError(tb, ctx.DB().Model(wd).Updates(map[string]interface{}{
+			"namespace": string(pluginDb.DomainNamespaceHNS),
+			"status":    string(pluginDb.DomainStatusOnchainManaged),
+			"zone_id":   uint(77), // stray, incoherent zone reference
+		}).Error)
+
+		_, err := websiteService.SetDomainDNSEnabled(context.Background(), testUserID1, website.ID, wd.ID, true)
+		require.Error(tb, err)
+		assert.Contains(tb, err.Error(), "on-chain managed")
+
+		// No portal DNS operation may fire from the enable refusal.
+		mockDNS.AssertNotCalled(tb, "CreateZone")
+		mockDNS.AssertNotCalled(tb, "GetZone")
+		mockDNS.AssertNotCalled(tb, "GetZoneByDomain")
+		mockDNS.AssertNotCalled(tb, "DeleteZone")
+		mockDNS.AssertNotCalled(tb, "CreateWebsiteDNSRecords")
+		mockDNS.AssertNotCalled(tb, "CreateWebsiteValidationRecord")
+
+		// Disabling stays a no-op (flag already false); the stray zone reference
+		// is left untouched — cleanup is out of scope for website flows.
+		updated, err := websiteService.SetDomainDNSEnabled(context.Background(), testUserID1, website.ID, wd.ID, false)
+		require.NoError(tb, err)
+		require.NotNil(tb, updated)
+		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, updated.Status)
+		assert.False(tb, updated.DNSHostingEnabled)
+		mockDNS.AssertNotCalled(tb, "DeleteZone")
+		mockDNS.AssertNotCalled(tb, "DeleteWebsiteDNSRecords")
 	}, TestOptions)
 }

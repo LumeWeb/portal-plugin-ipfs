@@ -141,6 +141,57 @@ func labelFor(label, root string) string {
 	return strings.ToLower(label) + "." + root
 }
 
+// isPlatformRootApexOrDescendant reports whether name equals the platform root
+// apex or is a proper label-boundary descendant of it (e.g. "docs.platform.test"
+// for root "platform.test"). The comparison is label-boundary aware: a lookalike
+// like "evilplatform.test" is NOT a descendant of "platform.test" because the
+// root must begin at a label boundary (immediately after a dot).
+func isPlatformRootApexOrDescendant(name, root string) bool {
+	if name == root {
+		return true
+	}
+	return len(name) > len(root)+1 && strings.HasSuffix(name, "."+root)
+}
+
+// ValidatePlatformBinding verifies the operator-trust relationship a platform
+// binding depends on. Before a platform binding bypasses user ownership /
+// delegation verification (auto-activation) — or while resolving/creating the
+// binding's managed zone — all of the following must hold:
+//
+//  1. PlatformDomainID resolves to a live platform-domain row (a soft-deleted
+//     row fails lookup here under GORM's default scope).
+//  2. The binding namespace equals the platform root's namespace.
+//  3. The binding domain equals the root apex (apex-binding flow) or is a
+//     proper label-boundary descendant of the root (subdomain claims).
+//  4. The binding ZoneID is non-zero and equals the PlatformDomain.ZoneID
+//     (the operator-owned zone the records live in).
+//
+// Any mismatch returns a descriptive integrity error and must not change
+// either the domain or the website status (the caller propagates it). This is
+// the single shared validator for platform trust, used both when resolving/
+// creating platform bindings and when verifying or auto-activating them. An
+// existing binding does not require the root to remain Enabled — Enabled only
+// gates new claims; an otherwise-valid existing website stays valid.
+func (s *DelegatedDomainService) ValidatePlatformBinding(ctx context.Context, wd *pluginDb.WebsiteDomain) error {
+	if wd.PlatformDomainID == nil || s.DB() == nil {
+		return nil // not a platform binding; nothing to validate
+	}
+	var pd pluginDb.PlatformDomain
+	if err := s.DB().WithContext(ctx).First(&pd, *wd.PlatformDomainID).Error; err != nil {
+		return fmt.Errorf("platform root %d unavailable: %w", *wd.PlatformDomainID, err)
+	}
+	if pd.Namespace != wd.Namespace {
+		return fmt.Errorf("platform root %d namespace mismatch: binding is %q, root is %q", *wd.PlatformDomainID, wd.Namespace, pd.Namespace)
+	}
+	if !isPlatformRootApexOrDescendant(wd.Domain, pd.Domain) {
+		return fmt.Errorf("binding domain %q is not the apex or a label-boundary descendant of platform root %q", wd.Domain, pd.Domain)
+	}
+	if wd.ZoneID == 0 || wd.ZoneID != pd.ZoneID {
+		return fmt.Errorf("binding domain %q zone %d does not match platform root %q zone %d", wd.Domain, wd.ZoneID, pd.Domain, pd.ZoneID)
+	}
+	return nil
+}
+
 // GetPlatformDomainByName returns a PlatformDomain by (domain, namespace), or
 // nil when none match.
 func (s *DelegatedDomainService) GetPlatformDomainByName(ctx context.Context, domain string, namespace pluginDb.DomainNamespace) (*pluginDb.PlatformDomain, error) {
@@ -448,6 +499,13 @@ func (s *DelegatedDomainService) createPlatformBinding(ctx context.Context, webs
 	wd, err := s.CreateDomain(ctx, string(pd.Namespace), fqdn, websiteID, userID, true, notifyCreated, nil, &pd.ID)
 	if err != nil {
 		return nil, err
+	}
+	// Re-validate the trust relationship on the persisted binding before
+	// promoting it: the created binding must sit on the exact operator zone
+	// (zone identity), under the same namespace, as the granted root. A
+	// mismatch aborts the claim without activating it or touching the website.
+	if err := s.ValidatePlatformBinding(ctx, wd); err != nil {
+		return nil, fmt.Errorf("platform binding trust check failed: %w", err)
 	}
 	// The platform controls both sides of the DNS check (see VerifyDomain's
 	// platform guard), so the binding is active as soon as it is created.

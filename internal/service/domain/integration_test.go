@@ -63,7 +63,9 @@ func TestIntegration_CreateAndVerifyHNSDomain(t *testing.T) {
 		// UpdateTLSAFromCert requires a persisted WebsiteDomain row.
 		nsProvider := svc.registry.Get("hns")
 		require.NotNil(tb, nsProvider, "HNS provider should be registered")
-		require.NoError(tb, nsProvider.OnCertAvailable(context.Background(), "example", certPEM))
+		certProvider, ok := nsProvider.(CertificateProvider)
+		require.True(tb, ok, "HNS provider must implement CertificateProvider")
+		require.NoError(tb, certProvider.OnCertAvailable(context.Background(), "example", certPEM))
 
 		mockDNS.EXPECT().CreateZone(mock.Anything, "example", uint(1)).
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: "example"}, nil).Once()

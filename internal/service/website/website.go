@@ -88,7 +88,7 @@ var _ pluginCore.WebsiteService = (*WebsiteServiceDefault)(nil)
 // used by WebsiteServiceDefault for delegation-aware validation.
 type delegatedDomainService interface {
 	UsesDelegationForOwnership(domain string) bool
-	VerifyDomain(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error)
+	VerifyDomain(ctx context.Context, wd *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error)
 	GetNamespaceForDomain(domain string) (string, bool)
 	GetWebsiteDomainByName(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error)
 	GetPendingWebsiteDomainsPaginated(ctx context.Context, status pluginDb.DomainStatus, limit, offset int) ([]pluginDb.WebsiteDomain, error)
@@ -303,7 +303,13 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 
 			// Create website DNS records if hosting is enabled on the primary
 			// domain. Reuse an existing canonical ZoneID; only resolve/create a
-			// zone when the binding does not have one yet.
+			// zone when the binding does not have one yet. This is the
+			// provisioning half of the explicit enable path for a managed-DNS
+			// binding (pre-bound with dns_hosting_enabled=true before the
+			// website row exists). An on-chain (HIP-5) binding never reaches
+			// here: dns_hosting_enabled is coerced/refused false for it, and
+			// createWebsiteDNSRecords additionally no-ops for any class without
+			// portal authority.
 			if primaryWD != nil && primaryWD.DNSHostingEnabled && s.dnsSvc != nil {
 				var dnsZone *pluginDb.DNSZone
 				zoneCreated := false
@@ -824,7 +830,12 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				}
 
 				// Update DNS records if target changed and DNS hosting is enabled
-				// on the primary domain.
+				// on the primary domain. dns_hosting_enabled is always false for
+				// on-chain (HIP-5) bindings (coerced at bind, refused at
+				// enable), so an inconsistent on-chain binding carrying a stray
+				// zone can never reach this managed-record write; the
+				// createWebsiteDNSRecords writer also no-ops for any class
+				// without portal authority.
 				// Note: Skip DNS only when staying as IPNS (peer ID doesn't change)
 				if targetHashChanged && primaryWD != nil && primaryWD.DNSHostingEnabled && primaryWD.ZoneID != 0 && !primaryWD.DelegationRecordsOwned() && s.dnsSvc != nil {
 					newTargetType := pluginDb.WebsiteTargetType(website.TargetType)
@@ -932,6 +943,14 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, wd *pluginDb.WebsiteDomain) error {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.handleDNSEnabledTransition")
 	defer span.End()
+
+	// An on-chain managed (HIP-5) binding can never be put under portal DNS
+	// hosting — the external contract serves its DNS. Refuse the transition
+	// even if an inconsistent stray zone reference slipped onto the binding:
+	// it must never authorize portal zone/record provisioning.
+	if wd.Class() == pluginDb.ClassOnChainManaged {
+		return onchainDNSHostingUnavailableError(wd.Domain)
+	}
 
 	// Load the owning website for target and validation-token state.
 	var website pluginDb.Website
@@ -1136,6 +1155,19 @@ func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context,
 		return s.resetWebsiteValidationState(ctx, website)
 	}
 
+	// A non-portal-managed binding (on-chain even with a stray zone,
+	// self-hosted, unresolved) owns no portal DNS to tear down. Never delete
+	// records or a (possibly shared) zone for such a binding — only the
+	// website's validation state is reset.
+	if !wd.CanPublishManagedZoneRecords() {
+		s.Logger().Info("Skipping DNS zone teardown: binding is not portal-managed",
+			zap.Uint("website_id", website.ID),
+			zap.String("domain", wd.Domain),
+			zap.Uint("zone_id", wd.ZoneID),
+			zap.String("status", string(wd.Status)))
+		return s.resetWebsiteValidationState(ctx, website)
+	}
+
 	recordsDeleted := false
 
 	// Delete DNS records for this website (not the zone — other websites may share it)
@@ -1255,6 +1287,7 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 			var dnsZoneID uint
 			var websiteDomain string
 			var dnsDelegationOwned bool
+			var dnsManagedZone bool
 
 			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 				// First, check if the website exists and is not blocked
@@ -1282,6 +1315,7 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 					dnsZoneID = primaryWD.ZoneID
 					websiteDomain = primaryWD.Domain
 					dnsDelegationOwned = primaryWD.DelegationRecordsOwned()
+					dnsManagedZone = primaryWD.CanPublishManagedZoneRecords()
 				}
 
 				// Perform the soft delete
@@ -1325,7 +1359,10 @@ func (s *WebsiteServiceDefault) DeleteWebsite(ctx context.Context, userID uint, 
 				ctx, websiteDomain, userID, websiteID,
 			))
 
-			if dnsZoneID != 0 && s.dnsSvc != nil {
+			// Only portal-managed bindings authorize portal DNS teardown: an
+			// on-chain binding carrying a stray (possibly shared) zone must
+			// never have its records deleted by website deletion.
+			if dnsZoneID != 0 && dnsManagedZone && s.dnsSvc != nil {
 				var cleanupErr error
 				if dnsDelegationOwned {
 					// DNSLink/apex records are shared with delegation. Remove only
@@ -1668,45 +1705,63 @@ func (s *WebsiteServiceDefault) checkValidationToken(ctx context.Context, websit
 // DNS and validate independently, so a pending secondary must not block a
 // site whose primary hosting DNS is correct.
 //
-// A self-hosted primary (ZoneID == 0) owns no portal-managed zone, so the
-// delegation gate passes once its hosting DNS validated earlier in ValidateDNS.
-// The presence of a real PowerDNS zone (ZoneID != 0) is the authoritative
-// marker of a portal-hosted, delegatable binding. VerifyDomain structurally
-// cannot succeed for a zone-less binding (it no-ops with false), so routing one
-// through the delegation gate is an unreachable dead-end.
+// The delegation gate applies only to portal-managed bindings (the derived
+// hosting locus): a self-hosted, on-chain managed, or unresolved primary owns
+// no portal delegation to verify, so the gate passes (NotApplicable) once its
+// hosting DNS validated earlier in ValidateDNS. Routing a zone-less binding
+// through VerifyDomain would be an unreachable dead-end, and routing an
+// on-chain binding through it would risk portal DNS side effects from a stray
+// zone reference — both are short-circuited here by the classifier.
 //
 // Ownership for a self-hosted binding is proven by its hosting DNS, which
 // ValidateDNS already validated just before this gate: ICANN runs the TXT token
 // check, and for a delegated namespace (HNS) the DNSLink record resolves from
 // the owner-controlled HNS zone (only the domain owner can publish it there),
 // so a DNSLink that matches the website's exact target is itself an ownership
-// proof for that namespace.
+// proof for that namespace. NotApplicable is therefore NOT ownership proof on
+// its own; the DNSLink and TXT checks always run earlier in the flow.
 func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *pluginDb.WebsiteDomain) (bool, string, pluginCore.ValidationReason, error) {
 	if s.delegatedDomainSvc == nil {
 		return true, "", "", nil
 	}
 
-	if primaryWD.ZoneID == 0 {
+	// Only portal-managed bindings have a portal delegation to verify. This
+	// short-circuit (rather than delegating to VerifyDomain) also guarantees no
+	// PowerDNS work for on-chain/self-hosted/unresolved bindings, even when an
+	// on-chain binding incoherently carries a stray zone ID.
+	if !primaryWD.NeedsDelegationVerification() {
 		return true, "", "", nil
 	}
 
 	verifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	verified, verr := s.delegatedDomainSvc.VerifyDomain(verifyCtx, primaryWD)
-	if verr != nil || !verified {
+	res, verr := s.delegatedDomainSvc.VerifyDomain(verifyCtx, primaryWD)
+	if verr != nil {
 		s.Logger().Info("delegation not verified for primary domain",
 			zap.String("domain", primaryWD.Domain), zap.Error(verr))
 		return false, msgDelegationPending, pluginCore.ValidationReasonDelegationPending, nil
 	}
-	return true, "", "", nil
+	switch res.State {
+	case domsvc.DelegationVerified:
+		return true, "", "", nil
+	case domsvc.DelegationNotApplicable:
+		// Hosting class has no portal delegation; the gate passes (ownership
+		// was already proven by DNSLink/TXT earlier in the flow).
+		return true, "", "", nil
+	default:
+		return false, msgDelegationPending, pluginCore.ValidationReasonDelegationPending, nil
+	}
 }
 
 // createWebsiteDNSRecords writes only the DNS records that website hosting owns.
 // Delegation-owned bindings share DNSLink and apex records with the delegation
 // service, so website lifecycle operations may update only validation TXT.
+// The writer is a no-op for any non-portal-managed binding (on-chain even with
+// a stray zone, self-hosted, unresolved): those classes never authorize portal
+// DNS writes.
 func (s *WebsiteServiceDefault) createWebsiteDNSRecords(ctx context.Context, wd *pluginDb.WebsiteDomain, website *pluginDb.Website, validationToken string) error {
-	if s.dnsSvc == nil || wd.ZoneID == 0 {
+	if s.dnsSvc == nil || wd.ZoneID == 0 || !wd.CanPublishManagedZoneRecords() {
 		return nil
 	}
 

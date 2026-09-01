@@ -29,11 +29,33 @@ func (p *ICANNProvider) Protocol() string {
 	return "icann"
 }
 
-// ApexRecordType returns RecordTypeALIAS: ICANN apex is served through the
+// Policy returns the ICANN hosting-capability policy: no managed-DNSSEC, no
+// managed-zone DANE, and a synthetic ALIAS apex (not separately signed).
+func (p *ICANNProvider) Policy() pluginCore.ProviderPolicy {
+	return pluginCore.ProviderPolicy{
+		DNSSEC:         pluginCore.DNSSECNotRequired,
+		TLSA:           pluginCore.TLSANotManaged,
+		ApexRecordType: pluginCore.RecordTypeALIAS,
+	}
+}
+
+// RequiresDNSSEC derives from the policy: ICANN verifies delegation on NS
+// visibility alone and does not require a live DS from the parent zone.
+func (p *ICANNProvider) RequiresDNSSEC() bool {
+	return p.Policy().DNSSEC == pluginCore.DNSSECRequired
+}
+
+// UsesManagedZoneTLSA derives from the policy: ICANN does not use DANE, so no
+// TLSA record is published for ICANN domains.
+func (p *ICANNProvider) UsesManagedZoneTLSA() bool {
+	return p.Policy().TLSA == pluginCore.TLSAManaged
+}
+
+// ApexRecordType derives from the policy: ICANN apex is served through the
 // gateway and is not separately DNSSEC-signed at the apex in our setup, so a
 // synthetic ALIAS is acceptable.
 func (p *ICANNProvider) ApexRecordType() pluginCore.RecordType {
-	return pluginCore.RecordTypeALIAS
+	return p.Policy().ApexRecordType
 }
 
 func (p *ICANNProvider) Validate(domain string) error {
@@ -61,34 +83,23 @@ func (p *ICANNProvider) Inspect(ctx context.Context, domain string) (bool, error
 }
 
 func (p *ICANNProvider) BuildDelegation(ctx context.Context, zoneID uint,
-	domain string, website *pluginDb.Website, config json.RawMessage) (any, error) {
+	domain string, website *pluginDb.Website, config json.RawMessage) (json.RawMessage, error) {
 
-	return ICANNDelegation{
+	// Serialize at the provider boundary; the persisted JSON shape is the typed
+	// ICANNDelegation.
+	raw, err := json.Marshal(ICANNDelegation{
 		Nameservers: p.nameservers,
-	}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal icann delegation: %w", err)
+	}
+	return raw, nil
 }
 
 func (p *ICANNProvider) VerifyDelegation(ctx context.Context, domain string,
 	expectedDS string) (bool, error) {
 	// ICANN domains do not use an alt-root delegation step.
 	return true, nil
-}
-
-// OnCertAvailable is a no-op for ICANN domains (no DANE/TLSA needed).
-func (p *ICANNProvider) OnCertAvailable(ctx context.Context, domain string, certPEM string) error {
-	return nil
-}
-
-// UsesManagedZoneTLSA reports that ICANN does not use DANE, so no TLSA record
-// is published for ICANN domains.
-func (p *ICANNProvider) UsesManagedZoneTLSA() bool {
-	return false
-}
-
-// RequiresDNSSEC reports that ICANN verifies delegation on NS visibility alone
-// and does not require a live DS from the parent zone.
-func (p *ICANNProvider) RequiresDNSSEC() bool {
-	return false
 }
 
 // Nameservers returns the ICANN nameservers configured for the namespace.

@@ -452,13 +452,16 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 
 	// The DS to publish is computed live from PowerDNS's current active signing
 	// key rather than read from stored delegation data (which would go stale on
-	// key rotation). Only portal-managed, DNSSEC-signed namespaces (e.g. HNS)
+	// key rotation). Only portal-managed, DNSSEC-required namespaces (e.g. HNS)
 	// yield a DS and report DNSSEC state; ICANN domains have no parent DS and
 	// no portal DNSSEC, so this is a no-op that omits the DNSSEC fields
 	// entirely (per the DTO contract) and only defends against a stale DS.
+	// Gating on the DNSSEC policy (not the TLSA/DANE capability) ensures a
+	// provider that requires DNSSEC but does not publish DANE still receives
+	// the live DS in the response.
 	// A self-hosted binding owns no delegation bundle, so resp.Delegation is
 	// nil and this block is naturally skipped.
-	managed := a.delegatedDomainSvc != nil && a.delegatedDomainSvc.NamespaceUsesManagedZoneTLSA(string(wd.Namespace))
+	managed := a.delegatedDomainSvc != nil && a.delegatedDomainSvc.NamespaceRequiresDNSSEC(string(wd.Namespace))
 	if resp.Delegation != nil && a.dnsService != nil {
 		if managed {
 			ds, dsErr := a.dnsService.GetActiveDNSSECDS(reqCtx, wd.ZoneID)
@@ -579,6 +582,15 @@ func (a *API) republishDomainDANE(c echo.Context) error {
 	// to publish into -- short-circuit rather than return a false success.
 	if wd.ZoneID == 0 {
 		apiErr := NewError(ErrKeyNoStoredCertificate, fmt.Errorf("domain %q has no assigned managed zone; cannot republish", wd.Domain))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	// Only portal-managed bindings may be force-republished: on-chain,
+	// self-hosted, and unresolved bindings never authorize managed-zone TLSA
+	// writes, and an inconsistent on-chain binding with a stray zone must not
+	// be routed through the DANE republish path at all.
+	if !wd.CanPublishManagedZoneRecords() {
+		apiErr := NewError(ErrKeyNoStoredCertificate, fmt.Errorf("domain %q is not portal-managed; cannot republish DANE", wd.Domain))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 

@@ -61,10 +61,7 @@ func TestHNSProvider_BuildDelegation_DefaultDelegated(t *testing.T) {
 	})
 	result, err := p.BuildDelegation(context.Background(), 1, "example", &pluginDb.Website{}, nil)
 	assert.NoError(t, err)
-	bundle, ok := result.(DelegationBundle)
-	assert.True(t, ok)
-	b, _ := json.Marshal(bundle)
-	s := string(b)
+	s := string(result)
 	assert.Contains(t, s, "ns1.example.com.")
 	assert.Contains(t, s, "TLSA")
 	assert.Contains(t, s, `"mode":"`+string(HNSModeDelegated)+`"`)
@@ -76,12 +73,9 @@ func TestHNSProvider_BuildDelegation_NoTLSASource(t *testing.T) {
 	p := NewHNSProvider("", []string{"ns1.example.com."}, TLSASource{})
 	result, err := p.BuildDelegation(context.Background(), 1, "example", &pluginDb.Website{}, nil)
 	assert.NoError(t, err)
-	bundle, ok := result.(DelegationBundle)
-	assert.True(t, ok)
 
 	// Delegation should be created but without TLSA records.
-	b, _ := json.Marshal(bundle)
-	s := string(b)
+	s := string(result)
 	assert.NotContains(t, s, "TLSA")
 }
 
@@ -92,10 +86,7 @@ func TestHNSProvider_BuildDelegation_InlineMode_UsesDaneLib(t *testing.T) {
 	})
 	result, err := p.BuildDelegation(context.Background(), 1, "example", &pluginDb.Website{}, cfg)
 	assert.NoError(t, err)
-	bundle, ok := result.(DelegationBundle)
-	assert.True(t, ok)
-	b, _ := json.Marshal(bundle)
-	s := string(b)
+	s := string(result)
 
 	assert.Contains(t, s, `"mode":"`+string(HNSModeInline)+`"`)
 	assert.Contains(t, s, "SYNTH4")
@@ -125,10 +116,7 @@ func TestHNSProvider_BuildDelegation_DelegatedWithGlue_UsesDane(t *testing.T) {
 	})
 	result, err := p.BuildDelegation(context.Background(), 1, "example", &pluginDb.Website{}, cfg)
 	assert.NoError(t, err)
-	bundle, ok := result.(DelegationBundle)
-	assert.True(t, ok)
-	b, _ := json.Marshal(bundle)
-	s := string(b)
+	s := string(result)
 
 	assert.Contains(t, s, `"mode":"`+string(HNSModeDelegated)+`"`)
 	assert.Contains(t, s, "GLUE4")
@@ -142,10 +130,7 @@ func TestHNSProvider_BuildDelegation_TLSAFromCertPEM_UsesDaneLibrary(t *testing.
 	})
 	result, err := p.BuildDelegation(context.Background(), 1, "example", &pluginDb.Website{}, nil)
 	assert.NoError(t, err)
-	bundle, ok := result.(DelegationBundle)
-	assert.True(t, ok)
-	b, _ := json.Marshal(bundle)
-	s := string(b)
+	s := string(result)
 	assert.Contains(t, s, "3 1 1")
 	assert.Contains(t, s, "TLSA")
 
@@ -160,10 +145,7 @@ func TestHNSProvider_OnCertAvailable_UpdatesTLSASource(t *testing.T) {
 	// Before: no cert, BuildDelegation succeeds in bootstrap mode (no TLSA).
 	result, err := p.BuildDelegation(context.Background(), 1, "example", &pluginDb.Website{}, nil)
 	assert.NoError(t, err)
-	bundle, ok := result.(DelegationBundle)
-	assert.True(t, ok)
-	b, _ := json.Marshal(bundle)
-	assert.NotContains(t, string(b), "TLSA", "bootstrap delegation should not contain TLSA")
+	assert.NotContains(t, string(result), "TLSA", "bootstrap delegation should not contain TLSA")
 
 	// Push cert via OnCertAvailable
 	certPEM := testCertPEM(t)
@@ -173,10 +155,7 @@ func TestHNSProvider_OnCertAvailable_UpdatesTLSASource(t *testing.T) {
 	// After: TLSA should now be present
 	result, err = p.BuildDelegation(context.Background(), 1, "example", &pluginDb.Website{}, nil)
 	assert.NoError(t, err)
-	bundle, ok = result.(DelegationBundle)
-	assert.True(t, ok)
-	b, _ = json.Marshal(bundle)
-	assert.Contains(t, string(b), "TLSA")
+	assert.Contains(t, string(result), "TLSA")
 }
 
 func TestHNSProvider_SynthName_FromDaneLib(t *testing.T) {
@@ -229,8 +208,8 @@ func TestHNSProvider_BuildDelegation_NoDSRecord(t *testing.T) {
 	result, err := p.BuildDelegation(context.Background(), 1, "example", &pluginDb.Website{}, nil)
 	require.NoError(t, err)
 
-	bundle, ok := result.(DelegationBundle)
-	require.True(t, ok, "expected DelegationBundle, got %T", result)
+	var bundle DelegationBundle
+	require.NoError(t, json.Unmarshal(result, &bundle), "expected serialized DelegationBundle")
 
 	for _, rec := range bundle.ParentRecords {
 		assert.NotEqual(t, "DS", rec.Type, "delegation bundle must not persist a DS record")

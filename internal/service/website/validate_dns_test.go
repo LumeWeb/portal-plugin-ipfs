@@ -16,6 +16,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
@@ -34,7 +35,7 @@ func setMockResolver(ws pluginCore.WebsiteService, r DNSResolver) {
 
 type testDelegatedDomainService struct {
 	uses      func(string) bool
-	verify    func(context.Context, *pluginDb.WebsiteDomain) (bool, error)
+	verify    func(context.Context, *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error)
 	getNs     func(string) (string, bool)
 	getByName func(context.Context, string) (*pluginDb.WebsiteDomain, error)
 }
@@ -46,11 +47,11 @@ func (t *testDelegatedDomainService) UsesDelegationForOwnership(d string) bool {
 	return false
 }
 
-func (t *testDelegatedDomainService) VerifyDomain(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error) {
+func (t *testDelegatedDomainService) VerifyDomain(ctx context.Context, wd *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error) {
 	if t.verify != nil {
 		return t.verify(ctx, wd)
 	}
-	return true, nil
+	return domsvc.DelegationVerificationResult{State: domsvc.DelegationVerified}, nil
 }
 
 func (t *testDelegatedDomainService) GetNamespaceForDomain(d string) (string, bool) {
@@ -559,11 +560,11 @@ func TestValidateDNS_SelfHostedPrimary_DoesNotRequireDelegation(t *testing.T) {
 			uses: func(d string) bool { return false },
 			// Mirror the real VerifyDomain: a self-hosted (zone-less) binding
 			// returns (false, nil). checkDelegation must not fail on this.
-			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error) {
+			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error) {
 				if wd.ZoneID == 0 {
-					return false, nil
+					return domsvc.DelegationVerificationResult{State: domsvc.DelegationNotApplicable}, nil
 				}
-				return true, nil
+				return domsvc.DelegationVerificationResult{State: domsvc.DelegationVerified}, nil
 			},
 		}
 		setMockDelegatedDomainSvc(ws, mockDelegated)
@@ -689,8 +690,8 @@ func TestValidateDNS_DelegatedAttached_Success(t *testing.T) {
 
 		mockDelegated := &testDelegatedDomainService{
 			uses: func(d string) bool { return true },
-			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error) {
-				return true, nil
+			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error) {
+				return domsvc.DelegationVerificationResult{State: domsvc.DelegationVerified}, nil
 			},
 		}
 		setMockDelegatedDomainSvc(ws, mockDelegated)
@@ -743,11 +744,11 @@ func TestValidateDNS_SecondaryPending_DoesNotBlockPrimary(t *testing.T) {
 			// lookup is skipped and only the delegation gate is exercised.
 			uses: func(d string) bool { return true },
 			// The primary verifies; the secondary would fail if ever checked.
-			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error) {
+			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error) {
 				if wd.Domain == "secondary.hns" {
-					return false, nil
+					return domsvc.DelegationVerificationResult{State: domsvc.DelegationPending}, nil
 				}
-				return true, nil
+				return domsvc.DelegationVerificationResult{State: domsvc.DelegationVerified}, nil
 			},
 		}
 		setMockDelegatedDomainSvc(ws, mockDelegated)
@@ -798,8 +799,8 @@ func TestValidateDNS_DelegatedAttached_FailsVerification(t *testing.T) {
 
 		mockDelegated := &testDelegatedDomainService{
 			uses: func(d string) bool { return true },
-			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error) {
-				return false, nil
+			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error) {
+				return domsvc.DelegationVerificationResult{State: domsvc.DelegationPending}, nil
 			},
 		}
 		setMockDelegatedDomainSvc(ws, mockDelegated)
@@ -854,11 +855,11 @@ func TestValidateDNS_SelfHostedHNSPrimary_DoesNotDeadEnd(t *testing.T) {
 			// Mirror the real VerifyDomain on a zone-less binding: it returns
 			// (false, nil). checkDelegation must NOT route zone-less bindings
 			// through it (that is an unreachable dead-end), so it must pass.
-			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error) {
+			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error) {
 				if wd.ZoneID == 0 {
-					return false, nil
+					return domsvc.DelegationVerificationResult{State: domsvc.DelegationNotApplicable}, nil
 				}
-				return true, nil
+				return domsvc.DelegationVerificationResult{State: domsvc.DelegationVerified}, nil
 			},
 		}
 		setMockDelegatedDomainSvc(ws, mockDelegated)
@@ -909,8 +910,8 @@ func TestValidateDNS_DelegatedAttached_VerifyError_Fails(t *testing.T) {
 
 		mockDelegated := &testDelegatedDomainService{
 			uses: func(d string) bool { return true },
-			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (bool, error) {
-				return false, fmt.Errorf("delegation verify internal error")
+			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error) {
+				return domsvc.DelegationVerificationResult{}, fmt.Errorf("delegation verify internal error")
 			},
 		}
 		setMockDelegatedDomainSvc(ws, mockDelegated)
@@ -1101,6 +1102,62 @@ func TestValidateDNS_OnchainManaged_LiveResolverBridge(t *testing.T) {
 		require.NoError(tb, err)
 		assert.True(tb, result.Valid)
 		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
+
+		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
+	}, TestOptions)
+}
+
+// TestValidateDNS_OnchainStrayZone_ValidTokenValidatesNoPortalDNS guards the
+// cross-service safety rule for an on-chain managed (HIP-5) binding that
+// incoherently carries a stray zone ID: website validation treats delegation as
+// NotApplicable (passing after the DNSLink/TXT ownership checks) and performs no
+// portal DNS operations at all — no delegation verification, no zone read/write,
+// no DNSSEC, no TLSA.
+func TestValidateDNS_OnchainStrayZone_ValidTokenValidatesNoPortalDNS(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, mockDNS)
+
+		testCID := util.GenerateTestCID(t, "onchain-stray")
+		domain := "onchain-stray.hns"
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		wd := onchainPrimaryDomain(tb, ctx, created, domain)
+		// Incoherent stray zone: the HIP-5 contract serves DNS, the portal owns
+		// no zone — this reference must never authorize portal DNS work.
+		require.NoError(tb, ctx.DB().Model(wd).Update("zone_id", uint(77)).Error)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		mockResolver.EXPECT().LookupTXT(mock.Anything, "lumeweb-verify."+domain).Return([]string{
+			fmt.Sprintf("lumeweb-verify=%s", created.ValidationToken),
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, result.Valid, "on-chain + stray zone must pass the delegation gate as not applicable")
+		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
+
+		// No portal DNS read/write/delete may occur from the website flow.
+		mockDNS.AssertNotCalled(tb, "GetActiveDNSSECDS")
+		mockDNS.AssertNotCalled(tb, "EnableDNSSEC")
+		mockDNS.AssertNotCalled(tb, "EnsureSOAMNAME")
+		mockDNS.AssertNotCalled(tb, "CreateWebsiteDNSRecords")
+		mockDNS.AssertNotCalled(tb, "CreateWebsiteValidationRecord")
+		mockDNS.AssertNotCalled(tb, "UpdateWebsiteDNSRecords")
+		mockDNS.AssertNotCalled(tb, "DeleteWebsiteDNSRecords")
+		mockDNS.AssertNotCalled(tb, "DeleteZone")
 
 		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)

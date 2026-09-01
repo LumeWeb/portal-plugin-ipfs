@@ -175,11 +175,29 @@ func (p *HNSProvider) Protocol() string {
 	return "hns"
 }
 
-// ApexRecordType returns RecordTypeA: HNS zones are DNSSEC-signed at the apex,
-// so the apex must be a real A record that carries an RRSIG. PowerDNS cannot
-// sign a synthetic ALIAS at the apex.
+// Policy returns the HNS hosting-capability policy: managed-DNSSEC (delegation
+// confirmed against a live DS), managed-zone DANE (TLSA published into the
+// portal zone), and a real apex A record so the signed apex carries an RRSIG.
+func (p *HNSProvider) Policy() pluginCore.ProviderPolicy {
+	return pluginCore.ProviderPolicy{
+		DNSSEC:         pluginCore.DNSSECRequired,
+		TLSA:           pluginCore.TLSAManaged,
+		ApexRecordType: pluginCore.RecordTypeA,
+	}
+}
+
+// RequiresDNSSEC derives from the policy: HNS confirms delegation against a
+// live DS served by the alt-root parent before marking the domain Active
+// (managed-DNSSEC).
+func (p *HNSProvider) RequiresDNSSEC() bool {
+	return p.Policy().DNSSEC == pluginCore.DNSSECRequired
+}
+
+// ApexRecordType derives from the policy: HNS zones are DNSSEC-signed at the
+// apex, so the apex must be a real A record that carries an RRSIG. PowerDNS
+// cannot sign a synthetic ALIAS at the apex.
 func (p *HNSProvider) ApexRecordType() pluginCore.RecordType {
-	return pluginCore.RecordTypeA
+	return p.Policy().ApexRecordType
 }
 
 var hnsDomainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -276,7 +294,7 @@ func (p *HNSProvider) isHIP5TX(ns string) bool {
 }
 
 func (p *HNSProvider) BuildDelegation(ctx context.Context, zoneID uint,
-	domain string, website *pluginDb.Website, config json.RawMessage) (any, error) {
+	domain string, website *pluginDb.Website, config json.RawMessage) (json.RawMessage, error) {
 
 	zoneName := dnsname.EnsureFQDN(domain)
 
@@ -332,7 +350,13 @@ func (p *HNSProvider) BuildDelegation(ctx context.Context, zoneID uint,
 		bundle = p.buildDelegated(zoneName, nsRecords, tlsa, &cfg)
 	}
 
-	return bundle, nil
+	// Serialize at the provider boundary: the delegation never crosses it as an
+	// unconstrained any. The persisted JSON shape is the typed DelegationBundle.
+	raw, err := json.Marshal(bundle)
+	if err != nil {
+		return nil, fmt.Errorf("marshal hns delegation: %w", err)
+	}
+	return raw, nil
 }
 
 // enableDNSSEC ensures DNSSEC is enabled on the zone via PowerDNS. It is
@@ -670,14 +694,8 @@ func (p *HNSProvider) OnCertAvailable(ctx context.Context, domain string, certPE
 	return nil
 }
 
-// UsesManagedZoneTLSA reports that HNS uses DANE and that its TLSA must be
-// published into the portal-managed authoritative PowerDNS zone.
+// UsesManagedZoneTLSA derives from the policy: HNS uses DANE and its TLSA must
+// be published into the portal-managed authoritative PowerDNS zone.
 func (p *HNSProvider) UsesManagedZoneTLSA() bool {
-	return true
-}
-
-// RequiresDNSSEC reports that HNS confirms delegation against a live DS served
-// by the alt-root parent before marking the domain Active (managed-DNSSEC).
-func (p *HNSProvider) RequiresDNSSEC() bool {
-	return true
+	return p.Policy().TLSA == pluginCore.TLSAManaged
 }

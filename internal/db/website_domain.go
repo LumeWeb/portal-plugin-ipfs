@@ -39,35 +39,90 @@ const (
 // excluded on purpose: when the flag disagrees with the zone reference it is a
 // reconcile orphan that SetDomainDNSEnabled repairs, and classification must
 // follow the same zone reference the rest of the code keys on.
+//
+// Lifecycle and hosting locus are separate concepts and must not be conflated.
+// The lifecycle (DomainStatus) tracks draft/provisioning/waiting/active/error
+// progress; the hosting locus (this class) answers who is authoritative for the
+// name's DNS. A draft or error lifecycle status says nothing about hosting
+// until provisioning either establishes a portal zone or records the user's
+// explicit self-hosted decision, so a zone-less non-self-hosted binding is
+// unresolved rather than self-hosted.
 type DomainClass uint8
 
 const (
 	// ClassPortalManaged names served from a portal-created PowerDNS zone.
-	// ZoneID != 0 is the authoritative marker (see VerifyDomain), so a binding
-	// with a zone is portal-managed regardless of lifecycle status.
+	// ZoneID != 0 is the authoritative marker: a non-on-chain binding with a
+	// zone is portal-managed regardless of lifecycle status, including
+	// delegation-owned HNS bindings whose DNSHostingEnabled flag is false.
 	ClassPortalManaged DomainClass = iota
-	// ClassSelfHosted names whose DNS the user runs themselves (status
-	// self_hosted), and bindings with no portal zone yet (draft): no
-	// DS/TLSA/DNSSEC reconciliation applies to them.
+	// ClassSelfHosted names whose DNS the user runs themselves: status
+	// self_hosted and no portal zone. The portal provisions no zone, so no
+	// DS/TLSA/DNSSEC reconciliation applies. A stray non-zero ZoneID on a
+	// self_hosted binding is classified portal-managed — the persisted zone
+	// reference is authoritative and the status/flag disagreement is a
+	// reconcile orphan, never a reason to treat the binding as unmanaged.
 	ClassSelfHosted
 	// ClassOnChainManaged marks a name whose DNS is served on-chain (e.g. a
 	// Handshake HIP-5 name whose NS record points at an external contract).
 	// The portal owns only the ownership check (TXT token through the
 	// namespace resolver) and never provisions a zone, DNSSEC, or DANE.
+	// This class takes precedence over a stray ZoneID: an on-chain binding
+	// must never be treated as portal-managed no matter what zone reference
+	// it carries.
 	ClassOnChainManaged
+	// ClassUnresolved names whose hosting locus is not yet determinable from
+	// persisted state: draft, error, empty, or unknown lifecycle status with
+	// no portal zone. This is deliberately NOT self-hosted — provisioning has
+	// neither confirmed a portal zone nor recorded the user's explicit
+	// self-hosted decision. No portal DNS side effects may be authorized for
+	// an unresolved binding; it reconciles only through the explicit
+	// enable/disable transition path.
+	ClassUnresolved
 )
 
-// Class returns the binding's DNS-hosting locus. Derived from state, not
-// stored; see DomainClass for why dns_hosting_enabled is not an input.
+// Class returns the binding's DNS-hosting locus. Precedence is fixed:
+// on-chain managed status wins over any zone reference (a stray zone on an
+// on-chain binding is data incoherence, never a portal authorization); a
+// non-zero ZoneID marks a portal-managed binding; an explicit self_hosted
+// status with no zone is self-hosted; everything else is unresolved.
+// dns_hosting_enabled is deliberately not an input (see DomainClass).
 func (wd *WebsiteDomain) Class() DomainClass {
 	switch {
 	case wd.Status == DomainStatusOnchainManaged:
 		return ClassOnChainManaged
 	case wd.ZoneID != 0:
 		return ClassPortalManaged
-	default:
+	case wd.Status == DomainStatusSelfHosted:
 		return ClassSelfHosted
+	default:
+		return ClassUnresolved
 	}
+}
+
+// HasPortalAuthority reports whether the portal is authoritative for this
+// binding's DNS: the binding references a managed PowerDNS zone (ZoneID != 0)
+// and is not on-chain managed. All portal DNS reads/writes (managed records,
+// delegation verification, DNSSEC, managed-zone TLSA) are gated on this.
+func (wd *WebsiteDomain) HasPortalAuthority() bool {
+	return wd.Class() == ClassPortalManaged
+}
+
+// NeedsDelegationVerification reports whether the portal should verify this
+// binding's external delegation (NS/DS visibility) before treating it as
+// active. Only portal-managed bindings have delegation for the portal to
+// verify; self-hosted, on-chain, and unresolved bindings prove ownership by
+// other means (hosting DNS / namespace TXT) or are not yet classifiable.
+func (wd *WebsiteDomain) NeedsDelegationVerification() bool {
+	return wd.Class() == ClassPortalManaged
+}
+
+// CanPublishManagedZoneRecords reports whether website/managed-DNS operations
+// may create, update, or delete records in this binding's portal-managed zone.
+// On-chain, self-hosted, and unresolved bindings can never authorize portal
+// DNS writes — an inconsistent state (e.g. an on-chain binding carrying a
+// stray zone ID) must not permit them merely because a zone reference exists.
+func (wd *WebsiteDomain) CanPublishManagedZoneRecords() bool {
+	return wd.Class() == ClassPortalManaged
 }
 
 // WebsiteDomain binds a domain (by namespace) to a website.

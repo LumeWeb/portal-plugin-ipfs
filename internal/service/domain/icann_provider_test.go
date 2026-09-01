@@ -2,9 +2,11 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
 
@@ -31,8 +33,8 @@ func TestICANNProvider_BuildDelegation(t *testing.T) {
 	result, err := p.BuildDelegation(context.Background(), 1, "example.com", &pluginDb.Website{}, nil)
 	assert.NoError(t, err)
 
-	bundle, ok := result.(ICANNDelegation)
-	assert.True(t, ok)
+	var bundle ICANNDelegation
+	require.NoError(t, json.Unmarshal(result, &bundle))
 	assert.Contains(t, bundle.Nameservers, "ns1.example.com.")
 }
 
