@@ -356,17 +356,11 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		}
 		// This binding is the new website's first (primary) domain. Record it
 		// so the website service resolves the apex domain via PrimaryDomainID
-		// rather than the status=active fallback.
-		if website.PrimaryDomainID == nil {
-			primaryID := wd.ID
-			if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", primaryID).Error; err != nil {
-				s.DB().WithContext(ctx).Unscoped().Delete(wd)
-				return nil, fmt.Errorf("failed to set primary domain: %w", err)
-			}
-			website.PrimaryDomainID = &primaryID
-		}
-		if notifyCreated {
-			s.notifyAdminWebsiteCreated(ctx, website.ID)
+		// rather than the status=active fallback. A failure rolls the just-
+		// inserted row back so the bind is cleanly retryable.
+		if err := s.assignPrimaryAndNotify(ctx, &website, wd, notifyCreated); err != nil {
+			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			return nil, err
 		}
 		return wd, nil
 	}
@@ -391,19 +385,11 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		// This binding is the new website's first (primary) domain. Record it
 		// so the website service resolves the apex domain via PrimaryDomainID
 		// rather than the status=active fallback — a self-hosted binding is
-		// not active, so it would otherwise resolve to an empty domain.
-		if website.PrimaryDomainID == nil {
-			primaryID := wd.ID
-			if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", primaryID).Error; err != nil {
-				return nil, fmt.Errorf("failed to set primary domain: %w", err)
-			}
-			website.PrimaryDomainID = &primaryID
-		}
-		// Self-hosted bindings skip the managed-DNS primary assignment below,
-		// so fire the created notification here for a genuine creation. The
-		// PrimaryDomainID set above lets the service resolve the domain.
-		if notifyCreated {
-			s.notifyAdminWebsiteCreated(ctx, website.ID)
+		// not active, so it would otherwise resolve to an empty domain. The
+		// created notification fires here because self-hosted bindings skip
+		// the managed-DNS assignment path below.
+		if err := s.assignPrimaryAndNotify(ctx, &website, wd, notifyCreated); err != nil {
+			return nil, err
 		}
 		return wd, nil
 	}
@@ -494,27 +480,35 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	}
 
 	// If the owning website has no primary domain yet, make this binding the
-	// primary so Website.PrimaryDomainID never dangles after the first domain
-	// is added. This is how a website created with a transparent primary domain
-	// (and additional domains added later) keeps its FK consistent.
-	if website.PrimaryDomainID == nil {
-		if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", wd.ID).Error; err != nil {
-			return nil, fmt.Errorf("failed to set primary domain: %w", err)
-		}
-		website.PrimaryDomainID = &wd.ID
-	}
-
-	// Only a genuine website creation (flagged by the create API caller) fires
-	// the admin "website created" notification. Domain-add operations on an
-	// existing website, which also flow through CreateDomain, must not emit a
-	// spurious created email. Firing here (service layer) lets the email's
-	// Domain field resolve against the binding just persisted. Non-fatal: a
-	// template/mail failure must not fail domain creation.
-	if notifyCreated {
-		s.notifyAdminWebsiteCreated(ctx, website.ID)
+	// Primary/notify handled by the shared helper: a fresh website gets its
+	// first binding recorded as primary, and only a genuine website creation
+	// (flag set by the create API caller) fires the admin created email —
+	// domain-add operations on an existing website must not emit one.
+	if err := s.assignPrimaryAndNotify(ctx, &website, wd, notifyCreated); err != nil {
+		return nil, err
 	}
 
 	return wd, nil
+}
+
+// assignPrimaryAndNotify records wd as the website's primary when the website
+// has none yet — so the website service resolves the apex domain via
+// PrimaryDomainID rather than the status=active fallback — and, when
+// notifyCreated, fires the admin "website created" notification. Shared by the
+// managed, self-hosted, and on-chain managed bind paths. Only the primary
+// write is fatal; the notification (via notifyAdminWebsiteCreated) is
+// best-effort.
+func (s *DelegatedDomainService) assignPrimaryAndNotify(ctx context.Context, website *pluginDb.Website, wd *pluginDb.WebsiteDomain, notifyCreated bool) error {
+	if website.PrimaryDomainID == nil {
+		if err := s.DB().WithContext(ctx).Model(website).Update("primary_domain_id", wd.ID).Error; err != nil {
+			return fmt.Errorf("failed to set primary domain: %w", err)
+		}
+		website.PrimaryDomainID = &wd.ID
+	}
+	if notifyCreated {
+		s.notifyAdminWebsiteCreated(ctx, website.ID)
+	}
+	return nil
 }
 
 // notifyAdminWebsiteCreated fires the admin "website created" notification for
@@ -699,150 +693,6 @@ func (s *DelegatedDomainService) selfHealZone(ctx context.Context, provider Doma
 	}
 
 	return expectedDS, nil
-}
-
-// Sentinel errors returned by ConvertToOnChain for user-correctable state
-// conflicts, so the API can map them to 4xx while genuine infrastructure
-// failures (DB, DNS service) surface as 5xx. Match with errors.Is.
-var (
-	ErrDomainAlreadyOnChain = errors.New("domain is already on-chain managed")
-	ErrDomainNotOnChain     = errors.New("domain is not yet on-chain managed")
-	ErrDomainZoneShared     = errors.New("domain's DNS zone is shared by other bindings")
-)
-
-// ConvertToOnChain converts a bound domain into an on-chain managed (HIP-5)
-// binding — the explicit, one-way path for the HNS-DNS → on-chain-DNS
-// transition, used when the name's NS record now points at an external
-// contract (a HIP-5 TX record the owner set on-chain).
-//
-// The portal stops owning the PowerDNS-served DNS for the name: the managed
-// zone (and the DNSSEC/DS carried by it) is deleted and the binding is
-// re-marked onchain_managed with dns_hosting_enabled=false, so ownership is
-// proven with the TXT token through the resolver instead of NS/DS delegation.
-// DANE/SSL state (ProtocolData: key, cert, TLSA, owner) is deliberately KEPT —
-// DANE still applies on-chain; only the PowerDNS-published records and DNSSEC
-// (not a concept on-chain) are dropped. The owning website is reset to
-// pending_validation so the TXT-token verification flow re-runs.
-//
-// Safety (never tear down on the caller's word alone):
-//   - Refused until Inspect confirms the name genuinely serves a HIP-5 record.
-//   - The PowerDNS zone is deleted only when no other live binding shares it:
-//     a shared zone is the parent of other native bindings, and deleting it
-//     would destroy their records/DNSSEC. Conversion is refused for shared
-//     zones with a clear instruction to detach those bindings first — a HIP-5
-//     apex resolves every subdomain via the contract anyway.
-//   - Refused for a binding already onchain_managed.
-func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID, userID, domainID uint) (*pluginDb.WebsiteDomain, error) {
-	if s.DB() == nil {
-		return nil, fmt.Errorf("database not available")
-	}
-
-	var wd pluginDb.WebsiteDomain
-	if err := s.DB().WithContext(ctx).
-		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
-		First(&wd).Error; err != nil {
-		return nil, err // includes gorm.ErrRecordNotFound
-	}
-
-	if wd.Status == pluginDb.DomainStatusOnchainManaged {
-		return nil, fmt.Errorf("%w: %q", ErrDomainAlreadyOnChain, wd.Domain)
-	}
-
-	provider := s.registry.Get(string(wd.Namespace))
-	if provider == nil {
-		return nil, fmt.Errorf("unsupported namespace: %s", wd.Namespace)
-	}
-
-	onchain, err := provider.Inspect(ctx, wd.Domain)
-	if err != nil {
-		return nil, fmt.Errorf("domain inspection failed: %w", err)
-	}
-	if !onchain {
-		return nil, fmt.Errorf("%w: %q; its NS record does not point at an external contract", ErrDomainNotOnChain, wd.Domain)
-	}
-
-	// Only the binding's sole-owner PowerDNS zone may be deleted. A zone shared
-	// with other live bindings (their parent/apex zone) must be kept — deleting
-	// it would destroy their records and DNSSEC.
-	zoneID := wd.ZoneID
-	if zoneID != 0 {
-		var sharers int64
-		if err := s.DB().WithContext(ctx).
-			Model(&pluginDb.WebsiteDomain{}).
-			Where("zone_id = ? AND id != ? AND deleted_at IS NULL", zoneID, wd.ID).
-			Count(&sharers).Error; err != nil {
-			return nil, fmt.Errorf("failed to count bindings sharing zone %d: %w", zoneID, err)
-		}
-		if sharers > 0 {
-			return nil, fmt.Errorf("%w: %q (%d other binding(s)); remove or convert them first", ErrDomainZoneShared, wd.Domain, sharers)
-		}
-	}
-
-	// Drop the PowerDNS-backed delegation state. ProtocolData (DANE key, cert,
-	// TLSA, owner) and per-domain SSL state are intentionally preserved: DANE/
-	// SSL still apply to the name — the records are simply served by the
-	// external contract now — and DNSSEC is not a concept on-chain.
-	updates := map[string]any{
-		"zone_id":             0,
-		"zone_name":           "",
-		"gateway_host":        "",
-		"delegation_data":     nil,
-		"dns_hosting_enabled": false,
-		"status":              pluginDb.DomainStatusOnchainManaged,
-	}
-	if err := s.DB().WithContext(ctx).Model(&wd).Updates(updates).Error; err != nil {
-		return nil, fmt.Errorf("failed to persist on-chain managed state: %w", err)
-	}
-	wd.ZoneID = 0
-	wd.ZoneName = ""
-	wd.GatewayHost = ""
-	wd.DelegationData = nil
-	wd.DNSHostingEnabled = false
-	wd.Status = pluginDb.DomainStatusOnchainManaged
-
-	// Delete the now-unreferenced PowerDNS zone LAST, best-effort. Order is
-	// deliberate: the DB runs first so a delete failure can never strand the
-	// binding pointing at a destroyed zone (the unrecoverable state). If a
-	// concurrent bind landed in this zone between the check above and here, the
-	// zone is re-counted and left alone so another binding's records/DNSSEC are
-	// not destroyed. A leftover/unreferenced zone is harmless (nothing serves
-	// it — the name resolves via the contract) and is logged for ops cleanup.
-	if zoneID != 0 && s.dnsSvc != nil {
-		var sharers int64
-		if err := s.DB().WithContext(ctx).
-			Model(&pluginDb.WebsiteDomain{}).
-			Where("zone_id = ? AND id != ? AND deleted_at IS NULL", zoneID, wd.ID).
-			Count(&sharers).Error; err != nil {
-			s.Logger().Warn("failed to re-count zone sharers before on-chain conversion zone delete",
-				zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain), zap.Error(err))
-		} else if sharers > 0 {
-			s.Logger().Info("on-chain conversion: zone now shared by other bindings; leaving it intact",
-				zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain))
-		} else if err := s.dnsSvc.DeleteZone(ctx, zoneID); err != nil {
-			// Non-fatal: the binding is already cleanly on-chain; the orphaned
-			// zone is unreachable garbage an operator can clear.
-			s.Logger().Warn("on-chain conversion: failed to delete orphaned managed zone (non-fatal)",
-				zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain), zap.Error(err))
-		}
-	}
-
-	// DNS moved on-chain: the site must prove ownership against the contract
-	// with the TXT token, so re-arm validation. A blocked website stays blocked
-	// (only an admin can lift an admin block); a pending one needs no change.
-	// A website-load failure is surfaced rather than silently skipped so the
-	// caller knows validation was not re-armed.
-	var website pluginDb.Website
-	if err := s.DB().WithContext(ctx).First(&website, wd.WebsiteID).Error; err != nil {
-		return nil, fmt.Errorf("failed to load website %d for on-chain conversion: %w", wd.WebsiteID, err)
-	}
-	if website.Status != string(pluginDb.WebsiteStatusBlocked) &&
-		website.Status != string(pluginDb.WebsiteStatusPendingValidation) {
-		if err := s.DB().WithContext(ctx).Model(&website).Update("status", pluginDb.WebsiteStatusPendingValidation).Error; err != nil {
-			return nil, fmt.Errorf("failed to reset website to pending_validation: %w", err)
-		}
-	}
-
-	return &wd, nil
 }
 
 // DeleteDomain deletes a WebsiteDomain row scoped by id, website_id, and user_id.

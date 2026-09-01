@@ -867,7 +867,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 			// under portal DNS hosting; refuse the flip rather than persisting a
 			// flag that would disagree with the absence of a zone.
 			if enableDNS && wd.Status == pluginDb.DomainStatusOnchainManaged {
-				return nil, fmt.Errorf("DNS hosting is not available for on-chain managed domain %q (HIP-5); its DNS is served by the external contract", wd.Domain)
+				return nil, onchainDNSHostingUnavailableError(wd.Domain)
 			}
 			wd.DNSHostingEnabled = enableDNS
 			if uerr := s.DB().WithContext(ctx).Model(wd).Update("dns_hosting_enabled", enableDNS).Error; uerr != nil {
@@ -1490,6 +1490,15 @@ func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Websit
 		return false
 	}
 	return true
+}
+
+// onchainDNSHostingUnavailableError returns the error shared by every path
+// that refuses to put an on-chain managed (HIP-5) binding under portal DNS
+// hosting: the external contract serves the name's DNS, so a portal zone would
+// be unreachable and the dns_hosting_enabled flag would disagree with the
+// absence of a zone.
+func onchainDNSHostingUnavailableError(domain string) error {
+	return fmt.Errorf("DNS hosting is not available for on-chain managed domain %q (HIP-5); its DNS is served by the external contract", domain)
 }
 
 func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, websiteID uint) (pluginCore.ValidateDNSResult, error) {
@@ -2392,7 +2401,7 @@ func (s *WebsiteServiceDefault) SetDomainDNSEnabled(ctx context.Context, userID,
 	// no resolver would ever query. Disabling is already a no-op (the binding
 	// is flag=false, zone=0, so it is reconciled below).
 	if enabled && wd.Status == pluginDb.DomainStatusOnchainManaged {
-		return nil, fmt.Errorf("DNS hosting is not available for on-chain managed domain %q (HIP-5); its DNS is served by the external contract", wd.Domain)
+		return nil, onchainDNSHostingUnavailableError(wd.Domain)
 	}
 
 	// Already in the desired state with nothing left to reconcile. The binding
