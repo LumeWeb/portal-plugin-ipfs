@@ -236,3 +236,131 @@ func TestHNSProvider_BuildDelegation_NoDSRecord(t *testing.T) {
 		assert.NotEqual(t, "DS", rec.Type, "delegation bundle must not persist a DS record")
 	}
 }
+
+func TestHNSProvider_isHIP5TX(t *testing.T) {
+	p := NewHNSProvider("", nil, TLSASource{})
+
+	tests := []struct {
+		name string
+		ns   string
+		want bool
+	}{
+		{
+			name: "eth contract address with underscore tag",
+			ns:   "0x667ab1d9f98817ffb28cd61b911f921181c669b3._eth.",
+			want: true,
+		},
+		{
+			name: "sol address with underscore tag",
+			ns:   "somebase58encodedaddress._sol.",
+			want: true,
+		},
+		{
+			name: "blocked TLD without underscore (eth)",
+			ns:   "0x36fc69f0983e536d1787cc83f481581f22cca2a1.eth.",
+			want: true,
+		},
+		{
+			name: "blocked TLD (bit)",
+			ns:   "0x00deadbeef.bit.",
+			want: true,
+		},
+		{
+			name: "blocked TLD is case-insensitive",
+			ns:   "0x36fc69f0983e536d1787cc83f481581f22cca2a1.ETH.",
+			want: true,
+		},
+		{
+			name: "subdomain under address",
+			ns:   "sub.0x36fc69f0983e536d1787cc83f481581f22cca2a1._eth.",
+			want: true,
+		},
+		{
+			name: "native HNS nameserver",
+			ns:   "ns1.lumeweb.",
+			want: false,
+		},
+		{
+			name: "single label",
+			ns:   "ns1.",
+			want: false,
+		},
+		{
+			name: "relative ns without trailing dot",
+			ns:   "ns1.lumeweb",
+			want: false,
+		},
+		{
+			name: "empty",
+			ns:   "",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, p.isHIP5TX(tt.ns))
+		})
+	}
+}
+
+func TestHNSProvider_SetHIP5BlockedTLDs(t *testing.T) {
+	// Defaults treat "eth" and "bit" as HIP-5 protocol tags.
+	p := NewHNSProvider("", nil, TLSASource{})
+	assert.True(t, p.isHIP5TX("0xabc.eth."))
+
+	// Replacing the set with a custom TLD drops "eth" from detection.
+	p.SetHIP5BlockedTLDs([]string{"sol"})
+	assert.False(t, p.isHIP5TX("0xabc.eth."))
+	assert.True(t, p.isHIP5TX("0xabc.sol."))
+
+	// Clearing the list leaves only underscore-prefixed tags counted.
+	p.SetHIP5BlockedTLDs(nil)
+	assert.False(t, p.isHIP5TX("0xabc.sol."))
+	assert.True(t, p.isHIP5TX("0xabc._sol."))
+}
+
+func TestHNSProvider_Inspect_HIP5Detection(t *testing.T) {
+	const domain = "myname."
+
+	// The HNS resolver serves a HIP-5 TX record for the name.
+	addr, served := startCustomPortDNSServer(t, domain,
+		[]string{"0x36fc69f0983e536d1787cc83f481581f22cca2a1._eth."})
+
+	p := NewHNSProvider(addr, nil, TLSASource{})
+	before := served.value()
+	onchain, err := p.Inspect(context.Background(), "myname")
+	require.NoError(t, err)
+	assert.True(t, onchain, "HIP-5 TX record must be detected as on-chain managed")
+	assert.Greater(t, served.value(), before, "Inspect must query the configured resolver")
+}
+
+func TestHNSProvider_Inspect_NativeHNS(t *testing.T) {
+	const domain = "myname."
+
+	// The HNS resolver serves ordinary nameservers (native delegation).
+	addr, _ := startCustomPortDNSServer(t, domain, []string{"ns1.lumeweb.", "ns2.lumeweb."})
+
+	p := NewHNSProvider(addr, nil, TLSASource{})
+	onchain, err := p.Inspect(context.Background(), "myname")
+	require.NoError(t, err)
+	assert.False(t, onchain, "ordinary nameservers must not be treated as on-chain managed")
+}
+
+func TestHNSProvider_Inspect_NoResolverConfigured(t *testing.T) {
+	// Without a configured resolver, Inspect must default to native (false)
+	// rather than erroring, so binding can proceed.
+	p := NewHNSProvider("", nil, TLSASource{})
+	onchain, err := p.Inspect(context.Background(), "myname")
+	require.NoError(t, err)
+	assert.False(t, onchain)
+}
+
+func TestHNSProvider_Inspect_ResolverUnreachable(t *testing.T) {
+	// A resolver that cannot answer (nothing listening on the port) must be
+	// treated as native (false), not a hard error.
+	p := NewHNSProvider("127.0.0.1:1", nil, TLSASource{})
+	onchain, err := p.Inspect(context.Background(), "myname")
+	require.NoError(t, err)
+	assert.False(t, onchain)
+}

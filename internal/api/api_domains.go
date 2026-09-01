@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	mcontext "go.lumeweb.com/portal-middleware/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/queryutil"
 	queryutilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
@@ -365,42 +367,82 @@ func (a *API) verifyDomain(c echo.Context) error {
 	return httputil.EncodeResponse(ctx, &wd, &resp)
 }
 
-// domainDNSRequirements returns the DNS delegation requirements (DS/NS/GLUE/TLSA
-// parent + authoritative records) for a bound domain so a client can render
-// DNS/DNSSEC setup guidance after binding. It reuses the same typed
-// DomainResponse as create/verify so clients share one renderer.
-func (a *API) domainDNSRequirements(c echo.Context) error {
-	ctx := httputil.Context(c)
-	reqCtx := ctx.Context.Request().Context()
+// domainPathParams carries the request context and the authenticated user +
+// website/domain path IDs shared by every /websites/:id/domains/:domain_id
+// handler. When err is non-nil the handler must return it immediately: the
+// 401/400 response has already been written.
+type domainPathParams struct {
+	ctx       httputil.RequestContext
+	reqCtx    context.Context
+	userID    uint
+	websiteID uint
+	domainID  uint
+	err       error
+}
 
-	userID, err := mcontext.GetUserID(c)
-	if err != nil {
-		return ctx.Error(err, http.StatusUnauthorized)
+// parseDomainPath resolves the authenticated user and the :id/:domain_id path
+// parameters common to all per-domain handlers, writing the 401/400 response
+// on failure (returned as params.err for the handler to return).
+func (a *API) parseDomainPath(c echo.Context) domainPathParams {
+	p := domainPathParams{ctx: httputil.Context(c)}
+	p.reqCtx = p.ctx.Context.Request().Context()
+
+	p.userID, p.err = mcontext.GetUserID(c)
+	if p.err != nil {
+		p.err = p.ctx.Error(p.err, http.StatusUnauthorized)
+		return p
 	}
 
 	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
-		return ctx.Error(apiErr, apiErr.HttpStatus())
+		p.err = p.ctx.Error(apiErr, apiErr.HttpStatus())
+		return p
 	}
-
 	domainID, err := strconv.ParseUint(c.Param("domain_id"), 10, 64)
 	if err != nil {
 		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid domain ID"))
-		return ctx.Error(apiErr, apiErr.HttpStatus())
+		p.err = p.ctx.Error(apiErr, apiErr.HttpStatus())
+		return p
 	}
+	p.websiteID = uint(websiteID)
+	p.domainID = uint(domainID)
+	return p
+}
 
+// loadDomainBinding loads the WebsiteDomain row for the authenticated user at
+// the parsed path, writing the 404/500 response on failure (returned as a
+// non-nil error the handler must return).
+func (a *API) loadDomainBinding(p *domainPathParams) (pluginDb.WebsiteDomain, error) {
 	var wd pluginDb.WebsiteDomain
-	if err := a.DB().WithContext(reqCtx).
-		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
-		First(&wd).Error; err != nil {
+	err := a.DB().WithContext(p.reqCtx).
+		Where("id = ? AND website_id = ? AND user_id = ?", p.domainID, p.websiteID, p.userID).
+		First(&wd).Error
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			apiErr := NewError(ErrKeyDomainNotFound, errors.New("domain not found"))
-			return ctx.Error(apiErr, apiErr.HttpStatus())
+			return wd, p.ctx.Error(apiErr, apiErr.HttpStatus())
 		}
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
-		return ctx.Error(apiErr, apiErr.HttpStatus())
+		return wd, p.ctx.Error(apiErr, apiErr.HttpStatus())
 	}
+	return wd, nil
+}
+
+// domainDNSRequirements returns the DNS delegation requirements (DS/NS/GLUE/TLSA
+// parent + authoritative records) for a bound domain so a client can render
+// DNS/DNSSEC setup guidance after binding. It reuses the same typed
+// DomainResponse as create/verify so clients share one renderer.
+func (a *API) domainDNSRequirements(c echo.Context) error {
+	p := a.parseDomainPath(c)
+	if p.err != nil {
+		return p.err
+	}
+	wd, err := a.loadDomainBinding(&p)
+	if err != nil {
+		return err
+	}
+	ctx, reqCtx := p.ctx, p.reqCtx
 
 	resp := dto.DomainResponse{}
 	if err := resp.FromModel(&wd); err != nil {
@@ -509,37 +551,15 @@ func removeDSRecord(records []dto.DNSDelegationRecord) []dto.DNSDelegationRecord
 // RRset (PowerDNS REPLACE). This is the operator's escape hatch for a TLSA
 // that was deleted or went missing and won't be re-triggered by cert renewal.
 func (a *API) republishDomainDANE(c echo.Context) error {
-	ctx := httputil.Context(c)
-	reqCtx := ctx.Context.Request().Context()
-
-	userID, err := mcontext.GetUserID(c)
+	p := a.parseDomainPath(c)
+	if p.err != nil {
+		return p.err
+	}
+	wd, err := a.loadDomainBinding(&p)
 	if err != nil {
-		return ctx.Error(err, http.StatusUnauthorized)
+		return err
 	}
-
-	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil {
-		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
-		return ctx.Error(apiErr, apiErr.HttpStatus())
-	}
-
-	domainID, err := strconv.ParseUint(c.Param("domain_id"), 10, 64)
-	if err != nil {
-		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid domain ID"))
-		return ctx.Error(apiErr, apiErr.HttpStatus())
-	}
-
-	var wd pluginDb.WebsiteDomain
-	if err := a.DB().WithContext(reqCtx).
-		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
-		First(&wd).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			apiErr := NewError(ErrKeyDomainNotFound, errors.New("domain not found"))
-			return ctx.Error(apiErr, apiErr.HttpStatus())
-		}
-		apiErr := NewError(ErrKeyFileProcessingFailed, err)
-		return ctx.Error(apiErr, apiErr.HttpStatus())
-	}
+	ctx, reqCtx := p.ctx, p.reqCtx
 
 	if a.delegatedDomainSvc == nil {
 		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service not available"))
@@ -601,6 +621,53 @@ func (a *API) republishDomainDANE(c echo.Context) error {
 		resp.TLSARecord = fmt.Sprintf("%s. 3600 IN TLSA %s", ownerName, tlsa)
 	}
 	return httputil.EncodeResponse(ctx, &wd, &resp)
+}
+
+// convertDomainToOnChain converts a bound domain to on-chain managed (HIP-5),
+// the explicit one-way transition for an HNS name whose NS now points at an
+// external contract. It is destructive to the portal's PowerDNS state for that
+// binding (the managed zone is deleted) but deliberately keeps the domain's
+// DANE/SSL state (ProtocolData), which still applies on-chain.
+func (a *API) convertDomainToOnChain(c echo.Context) error {
+	p := a.parseDomainPath(c)
+	if p.err != nil {
+		return p.err
+	}
+	ctx, reqCtx, userID := p.ctx, p.reqCtx, p.userID
+
+	if a.delegatedDomainSvc == nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service not available"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	wd, err := a.delegatedDomainSvc.ConvertToOnChain(reqCtx, p.websiteID, userID, p.domainID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			apiErr := NewError(ErrKeyDomainNotFound, errors.New("domain not found"))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		// User-correctable state conflicts (already on-chain, not yet on-chain,
+		// shared zone) are 422. Anything else is an infrastructure failure
+		// (DB/DNS service) and must be a 500, not a validation error.
+		switch {
+		case errors.Is(err, domain.ErrDomainAlreadyOnChain),
+			errors.Is(err, domain.ErrDomainNotOnChain),
+			errors.Is(err, domain.ErrDomainZoneShared):
+			apiErr := NewError(ErrKeyInvalidRequest, err)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		default:
+			a.Logger().Error("Failed to convert domain on-chain", zap.Error(err))
+			apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to convert domain on-chain"))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+	}
+
+	resp := dto.DomainResponse{}
+	if err := resp.FromModel(wd); err != nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	return ctx.JSON(http.StatusOK, &resp)
 }
 
 // checkPlatformDomainAvailability returns, for the given label, whether it is

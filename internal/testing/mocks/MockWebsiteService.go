@@ -45,6 +45,63 @@ func (_m *MockWebsiteService) EXPECT() *MockWebsiteService_Expecter {
 	return &MockWebsiteService_Expecter{mock: &_m.Mock}
 }
 
+// ActivatePlatformSubdomainWebsite provides a mock function for the type MockWebsiteService
+func (_mock *MockWebsiteService) ActivatePlatformSubdomainWebsite(ctx context.Context, websiteID uint) error {
+	ret := _mock.Called(ctx, websiteID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ActivatePlatformSubdomainWebsite")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint) error); ok {
+		r0 = returnFunc(ctx, websiteID)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockWebsiteService_ActivatePlatformSubdomainWebsite_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ActivatePlatformSubdomainWebsite'
+type MockWebsiteService_ActivatePlatformSubdomainWebsite_Call struct {
+	*mock.Call
+}
+
+// ActivatePlatformSubdomainWebsite is a helper method to define mock.On call
+//   - ctx context.Context
+//   - websiteID uint
+func (_e *MockWebsiteService_Expecter) ActivatePlatformSubdomainWebsite(ctx any, websiteID any) *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call {
+	return &MockWebsiteService_ActivatePlatformSubdomainWebsite_Call{Call: _e.mock.On("ActivatePlatformSubdomainWebsite", ctx, websiteID)}
+}
+
+func (_c *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call) Run(run func(ctx context.Context, websiteID uint)) *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call) Return(err error) *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call) RunAndReturn(run func(ctx context.Context, websiteID uint) error) *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // BlockWebsite provides a mock function for the type MockWebsiteService
 func (_mock *MockWebsiteService) BlockWebsite(ctx context.Context, websiteID uint) error {
 	ret := _mock.Called(ctx, websiteID)
@@ -890,6 +947,63 @@ func (_c *MockWebsiteService_Logger_Call) RunAndReturn(run func() *core.Logger) 
 	return _c
 }
 
+// NotifyAdminWebsiteCreated provides a mock function for the type MockWebsiteService
+func (_mock *MockWebsiteService) NotifyAdminWebsiteCreated(ctx context.Context, websiteID uint) error {
+	ret := _mock.Called(ctx, websiteID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for NotifyAdminWebsiteCreated")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint) error); ok {
+		r0 = returnFunc(ctx, websiteID)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockWebsiteService_NotifyAdminWebsiteCreated_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'NotifyAdminWebsiteCreated'
+type MockWebsiteService_NotifyAdminWebsiteCreated_Call struct {
+	*mock.Call
+}
+
+// NotifyAdminWebsiteCreated is a helper method to define mock.On call
+//   - ctx context.Context
+//   - websiteID uint
+func (_e *MockWebsiteService_Expecter) NotifyAdminWebsiteCreated(ctx any, websiteID any) *MockWebsiteService_NotifyAdminWebsiteCreated_Call {
+	return &MockWebsiteService_NotifyAdminWebsiteCreated_Call{Call: _e.mock.On("NotifyAdminWebsiteCreated", ctx, websiteID)}
+}
+
+func (_c *MockWebsiteService_NotifyAdminWebsiteCreated_Call) Run(run func(ctx context.Context, websiteID uint)) *MockWebsiteService_NotifyAdminWebsiteCreated_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockWebsiteService_NotifyAdminWebsiteCreated_Call) Return(err error) *MockWebsiteService_NotifyAdminWebsiteCreated_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockWebsiteService_NotifyAdminWebsiteCreated_Call) RunAndReturn(run func(ctx context.Context, websiteID uint) error) *MockWebsiteService_NotifyAdminWebsiteCreated_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SetConfig provides a mock function for the type MockWebsiteService
 func (_mock *MockWebsiteService) SetConfig(cfg config.Manager) {
 	_mock.Called(cfg)
@@ -1507,120 +1621,6 @@ func (_c *MockWebsiteService_ValidateDNS_Call) Return(validateDNSResult core0.Va
 }
 
 func (_c *MockWebsiteService_ValidateDNS_Call) RunAndReturn(run func(ctx context.Context, userID uint, websiteID uint) (core0.ValidateDNSResult, error)) *MockWebsiteService_ValidateDNS_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// NotifyAdminWebsiteCreated provides a mock function for the type MockWebsiteService
-func (_mock *MockWebsiteService) NotifyAdminWebsiteCreated(ctx context.Context, websiteID uint) error {
-	ret := _mock.Called(ctx, websiteID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for NotifyAdminWebsiteCreated")
-	}
-
-	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint) error); ok {
-		r0 = returnFunc(ctx, websiteID)
-	} else {
-		r0 = ret.Error(0)
-	}
-	return r0
-}
-
-// MockWebsiteService_NotifyAdminWebsiteCreated_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'NotifyAdminWebsiteCreated'
-type MockWebsiteService_NotifyAdminWebsiteCreated_Call struct {
-	*mock.Call
-}
-
-// NotifyAdminWebsiteCreated is a helper method to define mock.On call
-//   - ctx context.Context
-//   - websiteID uint
-func (_e *MockWebsiteService_Expecter) NotifyAdminWebsiteCreated(ctx any, websiteID any) *MockWebsiteService_NotifyAdminWebsiteCreated_Call {
-	return &MockWebsiteService_NotifyAdminWebsiteCreated_Call{Call: _e.mock.On("NotifyAdminWebsiteCreated", ctx, websiteID)}
-}
-
-func (_c *MockWebsiteService_NotifyAdminWebsiteCreated_Call) Run(run func(ctx context.Context, websiteID uint)) *MockWebsiteService_NotifyAdminWebsiteCreated_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 context.Context
-		if args[0] != nil {
-			arg0 = args[0].(context.Context)
-		}
-		var arg1 uint
-		if args[1] != nil {
-			arg1 = args[1].(uint)
-		}
-		run(
-			arg0,
-			arg1,
-		)
-	})
-	return _c
-}
-
-func (_c *MockWebsiteService_NotifyAdminWebsiteCreated_Call) Return(err error) *MockWebsiteService_NotifyAdminWebsiteCreated_Call {
-	_c.Call.Return(err)
-	return _c
-}
-
-func (_c *MockWebsiteService_NotifyAdminWebsiteCreated_Call) RunAndReturn(run func(ctx context.Context, websiteID uint) error) *MockWebsiteService_NotifyAdminWebsiteCreated_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// ActivatePlatformSubdomainWebsite provides a mock function for the type MockWebsiteService
-func (_mock *MockWebsiteService) ActivatePlatformSubdomainWebsite(ctx context.Context, websiteID uint) error {
-	ret := _mock.Called(ctx, websiteID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for ActivatePlatformSubdomainWebsite")
-	}
-
-	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint) error); ok {
-		r0 = returnFunc(ctx, websiteID)
-	} else {
-		r0 = ret.Error(0)
-	}
-	return r0
-}
-
-// MockWebsiteService_ActivatePlatformSubdomainWebsite_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ActivatePlatformSubdomainWebsite'
-type MockWebsiteService_ActivatePlatformSubdomainWebsite_Call struct {
-	*mock.Call
-}
-
-// ActivatePlatformSubdomainWebsite is a helper method to define mock.On call
-//   - ctx context.Context
-//   - websiteID uint
-func (_e *MockWebsiteService_Expecter) ActivatePlatformSubdomainWebsite(ctx any, websiteID any) *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call {
-	return &MockWebsiteService_ActivatePlatformSubdomainWebsite_Call{Call: _e.mock.On("ActivatePlatformSubdomainWebsite", ctx, websiteID)}
-}
-
-func (_c *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call) Run(run func(ctx context.Context, websiteID uint)) *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 context.Context
-		if args[0] != nil {
-			arg0 = args[0].(context.Context)
-		}
-		var arg1 uint
-		if args[1] != nil {
-			arg1 = args[1].(uint)
-		}
-		run(
-			arg0,
-			arg1,
-		)
-	})
-	return _c
-}
-
-func (_c *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call) Return(err error) *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call {
-	_c.Call.Return(err)
-	return _c
-}
-
-func (_c *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call) RunAndReturn(run func(ctx context.Context, websiteID uint) error) *MockWebsiteService_ActivatePlatformSubdomainWebsite_Call {
 	_c.Call.Return(run)
 	return _c
 }

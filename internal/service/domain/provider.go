@@ -13,6 +13,16 @@ import (
 type DomainProvider interface {
 	Protocol() string
 	Validate(domain string) error
+	// Inspect queries the domain's on-chain/registry state at bind time and
+	// reports whether the name is managed on-chain (e.g. a Handshake HIP-5 name
+	// whose NS record is a HIP-5 TX record pointing at an external contract).
+	// An on-chain managed name serves its own DNS, so the portal must NOT
+	// provision a PowerDNS zone for it and proves ownership via TXT token.
+	// Providers without an on-chain concept (ICANN) always return false.
+	// Detection is best-effort: HNS returns false when the resolver cannot
+	// answer (name not yet registered, resolver unreachable), defaulting to
+	// native so binding can proceed.
+	Inspect(ctx context.Context, domain string) (onchainManaged bool, err error)
 	BuildDelegation(ctx context.Context, zoneID uint, domain string, website *pluginDb.Website, config json.RawMessage) (any, error)
 	VerifyDelegation(ctx context.Context, domain string, expectedDS string) (bool, error)
 	// OnCertAvailable is called when a cert is pushed via /internal/dns/cert.

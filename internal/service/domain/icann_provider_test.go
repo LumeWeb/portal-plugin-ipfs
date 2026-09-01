@@ -36,6 +36,14 @@ func TestICANNProvider_BuildDelegation(t *testing.T) {
 	assert.Contains(t, bundle.Nameservers, "ns1.example.com.")
 }
 
+func TestICANNProvider_Inspect(t *testing.T) {
+	// ICANN names are never on-chain managed: Inspect is a static false.
+	p := NewICANNProvider(nil)
+	onchain, err := p.Inspect(context.Background(), "example.com")
+	assert.NoError(t, err)
+	assert.False(t, onchain)
+}
+
 func TestICANNProvider_VerifyDelegation(t *testing.T) {
 	p := NewICANNProvider(nil)
 	// ICANN ignores expectedDS entirely.

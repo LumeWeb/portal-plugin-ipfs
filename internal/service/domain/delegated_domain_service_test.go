@@ -20,6 +20,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -717,4 +718,282 @@ func TestDelegatedDomainService_UpdateTLSA_PublishesToManagedZone(t *testing.T) 
 			mockDNS.AssertNotCalled(tb, "SetTLSARecord")
 		}, keyTestOptions)
 	})
+}
+
+// testOptionsWithHNSResolver is TestOptions with the DNS service config's
+// HNSResolver pointed at the given address, so the factory's HNSProvider
+// performs HIP-5 inspection against a live test server. It intentionally does
+// NOT combine with the package-level TestOptions: building a second mock
+// plugin would re-register the ipfs plugin and panic.
+func testOptionsWithHNSResolver(addr string) coreTesting.TestContextBuilderOption {
+	// Combine with the package-level TestOptions (which registers the ipfs
+	// plugin once) and push the resolver into the config manager via the
+	// core-testing service-config option — GetServiceConfig reads the config
+	// manager, not the mock service's GetConfig().
+	return coreTesting.CombineOptions(
+		TestOptions,
+		coreTesting.WithServiceConfig(internal.ProtocolName, pluginCore.DNS_SERVICE, &pluginConfig.DnsConfig{HNSResolver: addr}),
+	)
+}
+
+func TestDelegatedDomainService_CreateDomain_Hip5OnchainManaged(t *testing.T) {
+	// A Handshake name whose NS record is a HIP-5 TX record must bind as on-chain
+	// managed: no zone, no DANE, TXT-verification status. A managed-DNS request
+	// (dnsHostingEnabled=true, the UX default) is coerced to onchain_managed with
+	// dns_hosting_enabled=false — portal hosting is impossible for a
+	// contract-served name — rather than failing the bind.
+	const domain = "myname"
+
+	addr, _ := startCustomPortDNSServer(t, domain+".",
+		[]string{"0x36fc69f0983e536d1787cc83f481581f22cca2a1._eth."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		// The test DNS server answers NS queries with the HIP-5 record for any
+		// name, so each subtest uses a distinct bound domain to avoid colliding
+		// on the (domain, namespace) unique key.
+		domains := []string{"myname", "myname2"}
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		// Point the registered HNS provider at the live test resolver. The
+		// factory only reads DnsConfig.HNSResolver at startup; assigning the
+		// provider's resolver here keeps the test deterministic.
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		require.NotNil(tb, hnsProv)
+		hnsProv.resolverAddr = addr
+
+		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+		for i, hostingRequest := range []bool{true, false} {
+			name := "hosting request coerced"
+			if !hostingRequest {
+				name = "explicit self-hosted request"
+			}
+			t.Run(name, func(t *testing.T) {
+				d := domains[i]
+				website := createTestWebsite(tb, db, 1, d)
+
+				mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
+
+				wd, err := svc.CreateDomain(context.Background(), "hns", d, website.ID, 1, hostingRequest, true, nil, nil)
+				require.NoError(tb, err)
+				assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, wd.Status)
+				assert.Equal(tb, uint(0), wd.ZoneID)
+				// Portal DNS hosting is coerced off for on-chain managed names,
+				// even when the caller requested managed DNS.
+				assert.False(tb, wd.DNSHostingEnabled)
+				assert.Nil(tb, wd.DelegationData)
+
+				// The binding is recorded as the website's primary so the website
+				// service resolves the apex domain via PrimaryDomainID.
+				var reloaded pluginDb.Website
+				require.NoError(tb, db.First(&reloaded, website.ID).Error)
+				require.NotNil(tb, reloaded.PrimaryDomainID)
+				assert.Equal(tb, wd.ID, *reloaded.PrimaryDomainID)
+
+				// The persisted flag agrees with the absence of a zone.
+				var persisted pluginDb.WebsiteDomain
+				require.NoError(tb, db.First(&persisted, wd.ID).Error)
+				assert.False(tb, persisted.DNSHostingEnabled)
+			})
+		}
+	}, testOptionsWithHNSResolver(addr))
+}
+
+func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
+	// A native HNS binding (portal-hosted zone + DNSSEC/delegation) whose name
+	// has since been pointed at an external contract converts to on-chain
+	// managed: the managed zone is deleted, delegation/DNSSEC state is dropped,
+	// but DANE/SSL state (ProtocolData) is retained and the website re-arms
+	// validation.
+	const domain = "convertme"
+	const zoneID = uint(77)
+
+	hip5Addr, _ := startCustomPortDNSServer(t, domain+".",
+		[]string{"0x36fc69f0983e536d1787cc83f481581f22cca2a1._eth."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, domain)
+		// Simulate a website already serving the site so the conversion
+		// re-arms validation back to pending.
+		require.NoError(tb, db.Model(&website).Update("status", pluginDb.WebsiteStatusActive).Error)
+
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID:         website.ID,
+			UserID:            1,
+			Domain:            domain,
+			Namespace:         pluginDb.DomainNamespaceHNS,
+			ZoneName:          domain + ".",
+			GatewayHost:       "1.2.3.4",
+			ZoneID:            zoneID,
+			Status:            pluginDb.DomainStatusActive,
+			DNSHostingEnabled: true,
+			DelegationData: datatypes.JSONMap{
+				"mode": "delegated",
+				"authoritative_records": []map[string]any{
+					{"type": "NS", "value": "ns1.lumeweb\nns2.lumeweb"},
+				},
+			},
+			// Simulated DANE state that must survive the conversion (DANE/SSL
+			// still applies on-chain; only PowerDNS-served records go away).
+			ProtocolData: datatypes.JSONMap{
+				"dane_cert_pem":    "CERT",
+				"tlsa":             "3 1 1 abc",
+				"owner_name":       "_443._tcp." + domain + ".",
+				"dane_private_key": "encrypted-key",
+			},
+		}
+		require.NoError(tb, db.Create(wd).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		hnsProv.resolverAddr = hip5Addr
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().DeleteZone(mock.Anything, zoneID).
+			// The conversion persists the on-chain state BEFORE deleting the
+			// zone: at delete time the DB row must already be onchain with the
+			// zone cleared, so a delete failure can never strand a binding
+			// pointing at a destroyed zone.
+			Run(func(_ context.Context, z uint) {
+				var now pluginDb.WebsiteDomain
+				require.NoError(tb, ctx.DB().First(&now, wd.ID).Error)
+				assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, now.Status)
+				assert.Equal(tb, uint(0), now.ZoneID)
+			}).
+			Return(nil).Once()
+
+		converted, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, wd.ID)
+		require.NoError(tb, err)
+		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, converted.Status)
+		assert.Equal(tb, uint(0), converted.ZoneID)
+		assert.False(tb, converted.DNSHostingEnabled)
+		assert.Nil(tb, converted.DelegationData)
+		// DANE/SSL ProtocolData is retained.
+		require.NotNil(tb, converted.ProtocolData)
+		assert.Equal(tb, "CERT", converted.ProtocolData["dane_cert_pem"])
+		assert.Equal(tb, "3 1 1 abc", converted.ProtocolData["tlsa"])
+
+		// Persisted state mirrors the in-memory binding.
+		var persisted pluginDb.WebsiteDomain
+		require.NoError(tb, db.First(&persisted, wd.ID).Error)
+		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, persisted.Status)
+		assert.Equal(tb, uint(0), persisted.ZoneID)
+		assert.Nil(tb, persisted.DelegationData)
+		assert.False(tb, persisted.DNSHostingEnabled)
+		assert.Equal(tb, "CERT", persisted.ProtocolData["dane_cert_pem"])
+
+		// The website re-armed validation (active -> pending_validation).
+		var reloaded pluginDb.Website
+		require.NoError(tb, db.First(&reloaded, website.ID).Error)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), reloaded.Status)
+	}, TestOptions)
+}
+
+func TestDelegatedDomainService_ConvertToOnChain_NotHIP5Refused(t *testing.T) {
+	// Conversion is refused until the name genuinely serves a HIP-5 record; it
+	// never tears down DNS on the caller's word alone.
+	const domain = "staysnative"
+	nativeAddr, _ := startCustomPortDNSServer(t, domain+".", []string{"ns1.lumeweb."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, domain)
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: domain,
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: 9,
+			Status: pluginDb.DomainStatusActive, DNSHostingEnabled: true,
+			GatewayHost:    "1.2.3.4",
+			DelegationData: datatypes.JSONMap{"mode": "delegated"},
+		}
+		require.NoError(tb, db.Create(wd).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		hnsProv.resolverAddr = nativeAddr
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+
+		_, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, wd.ID)
+		require.Error(tb, err)
+		assert.Contains(tb, err.Error(), "not yet on-chain managed")
+		mockDNS.AssertNotCalled(tb, "DeleteZone", mock.Anything, mock.Anything)
+	}, TestOptions)
+}
+
+func TestDelegatedDomainService_ConvertToOnChain_AlreadyOnchainRefused(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "onchain")
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: "onchain",
+			Namespace: pluginDb.DomainNamespaceHNS,
+			Status:    pluginDb.DomainStatusOnchainManaged,
+		}
+		require.NoError(tb, db.Create(wd).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+
+		_, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, wd.ID)
+		require.Error(tb, err)
+		assert.Contains(tb, err.Error(), "already on-chain managed")
+	}, TestOptions)
+}
+
+func TestDelegatedDomainService_ConvertToOnChain_SharedZoneRefused(t *testing.T) {
+	// A zone shared with other live bindings (their parent/apex zone) must not
+	// be deleted; conversion is refused so the owner detaches them first.
+	const domain = "sharedzone"
+	hip5Addr, _ := startCustomPortDNSServer(t, domain+".",
+		[]string{"0xdeadbeef._eth."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, domain)
+
+		apex := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: domain,
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: 55,
+			Status: pluginDb.DomainStatusActive, DNSHostingEnabled: true,
+			GatewayHost:    "1.2.3.4",
+			DelegationData: datatypes.JSONMap{"mode": "delegated"},
+		}
+		require.NoError(tb, db.Create(apex).Error)
+		// A second binding under the same apex zone.
+		sub := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: "sub." + domain,
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: 55,
+			Status: pluginDb.DomainStatusActive, DNSHostingEnabled: true,
+			GatewayHost:    "1.2.3.4",
+			DelegationData: datatypes.JSONMap{"mode": "delegated"},
+		}
+		require.NoError(tb, db.Create(sub).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		hnsProv.resolverAddr = hip5Addr
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+
+		_, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, apex.ID)
+		require.Error(tb, err)
+		assert.ErrorIs(tb, err, ErrDomainZoneShared)
+		assert.Contains(tb, err.Error(), "shared by other bindings")
+		mockDNS.AssertNotCalled(tb, "DeleteZone", mock.Anything, mock.Anything)
+	}, TestOptions)
+}
+
+func TestDelegatedDomainService_ConvertToOnChain_NotFound(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		_, err := svc.ConvertToOnChain(context.Background(), 1, 1, 999999)
+		require.Error(tb, err)
+		assert.True(tb, errors.Is(err, gorm.ErrRecordNotFound))
+	}, TestOptions)
 }

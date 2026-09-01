@@ -863,6 +863,12 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				zap.Error(err),
 				zap.Uint("website_id", websiteID))
 		} else if wd != nil {
+			// A primary binding that is on-chain managed (HIP-5) cannot be put
+			// under portal DNS hosting; refuse the flip rather than persisting a
+			// flag that would disagree with the absence of a zone.
+			if enableDNS && wd.Status == pluginDb.DomainStatusOnchainManaged {
+				return nil, onchainDNSHostingUnavailableError(wd.Domain)
+			}
 			wd.DNSHostingEnabled = enableDNS
 			if uerr := s.DB().WithContext(ctx).Model(wd).Update("dns_hosting_enabled", enableDNS).Error; uerr != nil {
 				s.Logger().Warn("Failed to persist dns_hosting_enabled on primary domain",
@@ -1470,11 +1476,29 @@ func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Websit
 		s.Logger().Debug("skipping TXT token (platform subdomain, operator-controlled DNS)", zap.String("domain", primaryWD.Domain))
 		return false
 	}
+	// An on-chain managed name (HIP-5) proves ownership with the TXT
+	// verification token, resolved through the namespace-appropriate resolver
+	// (HNS resolver → on-chain contract serves the PINNER-VERIFY TXT), exactly
+	// like ICANN. This must be checked before UsesDelegationForOwnership, which
+	// would otherwise treat the HNS name as delegation-owned and skip the token.
+	if primaryWD.Status == pluginDb.DomainStatusOnchainManaged {
+		s.Logger().Debug("performing TXT token (on-chain managed HIP-5 domain)", zap.String("domain", primaryWD.Domain))
+		return true
+	}
 	if s.delegatedDomainSvc != nil && s.delegatedDomainSvc.UsesDelegationForOwnership(primaryWD.Domain) {
 		s.Logger().Debug("skipping TXT token (ownership proven via delegation verification)", zap.String("domain", primaryWD.Domain))
 		return false
 	}
 	return true
+}
+
+// onchainDNSHostingUnavailableError returns the error shared by every path
+// that refuses to put an on-chain managed (HIP-5) binding under portal DNS
+// hosting: the external contract serves the name's DNS, so a portal zone would
+// be unreachable and the dns_hosting_enabled flag would disagree with the
+// absence of a zone.
+func onchainDNSHostingUnavailableError(domain string) error {
+	return fmt.Errorf("DNS hosting is not available for on-chain managed domain %q (HIP-5); its DNS is served by the external contract", domain)
 }
 
 func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, websiteID uint) (pluginCore.ValidateDNSResult, error) {
@@ -2369,6 +2393,15 @@ func (s *WebsiteServiceDefault) SetDomainDNSEnabled(ctx context.Context, userID,
 		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
 		First(&wd).Error; err != nil {
 		return nil, fmt.Errorf("domain lookup failed: %w", err)
+	}
+
+	// An on-chain managed (HIP-5) binding serves its DNS from the external
+	// contract; the portal cannot host it. Enabling portal DNS hosting is
+	// refused with a clear error rather than silently creating a PowerDNS zone
+	// no resolver would ever query. Disabling is already a no-op (the binding
+	// is flag=false, zone=0, so it is reconciled below).
+	if enabled && wd.Status == pluginDb.DomainStatusOnchainManaged {
+		return nil, onchainDNSHostingUnavailableError(wd.Domain)
 	}
 
 	// Already in the desired state with nothing left to reconcile. The binding

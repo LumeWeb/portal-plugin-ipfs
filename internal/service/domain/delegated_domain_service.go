@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	dane "go.lumeweb.com/dane"
@@ -25,6 +26,12 @@ type DelegatedDomainService struct {
 	*core.BaseComponent
 	registry *Registry
 	dnsSvc   DNSZoneService
+	// zoneLifecycleLocks serializes zone lifecycle transitions (a bind that
+	// provisions/reuses a zone in CreateDomain vs a conversion that deletes a
+	// zone in ConvertToOnChain), keyed by the zone's canonical apex name, so a
+	// concurrent bind can never have its zone destroyed by a conversion's
+	// delete. sync.Map so the service can be copied/value-constructed safely.
+	zoneLifecycleLocks sync.Map // string(zone apex) -> *sync.Mutex
 	// websiteSvc is resolved once at startup for cross-service calls (e.g.
 	// activating a website after a platform subdomain is claimed). It is always
 	// present: the portal registers all service instances before running
@@ -229,6 +236,35 @@ func (s *DelegatedDomainService) resolveManagedZone(ctx context.Context, domain 
 	return z, true, nil
 }
 
+// zoneLifecycleKey returns the canonical apex name of the PowerDNS zone a
+// bind/convert of `domain` lives in, mirroring the one-zone rule in
+// resolveManagedZone (apex owns its zone; a subdomain reuses the parent's
+// zone). Both CreateDomain and ConvertToOnChain derive the same key so their
+// per-zone lifecycle locks collide.
+func zoneLifecycleKey(domain string) string {
+	if p := parentDomain(domain); p != "" {
+		return canonicalZoneName(p)
+	}
+	return canonicalZoneName(domain)
+}
+
+// zoneLifecycleLock returns the per-zone mutex serializing zone lifecycle
+// transitions for the given zone apex.
+func (s *DelegatedDomainService) zoneLifecycleLock(zoneApex string) *sync.Mutex {
+	v, _ := s.zoneLifecycleLocks.LoadOrStore(zoneApex, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+// withZoneLifecycleLock runs fn while holding the per-zone lifecycle lock for
+// the given zone apex, serializing zone provisioning (CreateDomain) against
+// zone deletion (ConvertToOnChain) for the same zone.
+func (s *DelegatedDomainService) withZoneLifecycleLock(zoneApex string, fn func() error) error {
+	lock := s.zoneLifecycleLock(zoneApex)
+	lock.Lock()
+	defer lock.Unlock()
+	return fn()
+}
+
 // parentDomain returns the domain's parent (everything after the first label),
 // or "" when the domain is an apex (single-label HNS, or a bare TLD-less ICANN
 // name). Mirrors the website service's extractParentDomain.
@@ -261,6 +297,32 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 
 	if err := provider.Validate(domain); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	// Detect whether the name is managed on-chain (e.g. a Handshake HIP-5 name
+	// whose NS record points at an external contract). Best-effort: providers
+	// without an on-chain concept (ICANN) return false immediately; HNS defaults
+	// to native when the resolver cannot answer.
+	//
+	// A HIP-5 name serves its own DNS from the contract, so portal DNS hosting
+	// cannot apply to it. Binding is NOT rejected for dnsHostingEnabled=true
+	// (users default to managed DNS in the UX flow): the request is coerced to
+	// onchain_managed with dns_hosting_enabled=false — the only coherent state —
+	// and the response (status onchain_managed) lets the UI explain that DNS is
+	// served on-chain rather than failing the bind.
+	//
+	// Platform subdomain claims (platformRootID != nil) never inspect: the
+	// platform root is operator-owned and its subdomains resolve via the
+	// operator's own portal-managed zone, so they can never be HIP-5 — and
+	// skipping the resolver query keeps the operator hot path (every platform
+	// claim) free of a per-bind DNS round-trip.
+	var onchainManaged bool
+	if platformRootID == nil {
+		var inspectErr error
+		onchainManaged, inspectErr = provider.Inspect(ctx, domain)
+		if inspectErr != nil {
+			return nil, fmt.Errorf("domain inspection failed: %w", inspectErr)
+		}
 	}
 
 	var website pluginDb.Website
@@ -302,6 +364,43 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		return nil, fmt.Errorf("persist failed: %w", err)
 	}
 
+	// An on-chain managed name (HIP-5) serves its DNS from an external
+	// contract: the portal owns only ownership verification (a TXT token
+	// resolved through the HNS-aware resolver, which bridges to the contract)
+	// — no zone, no DNSLink/apex, no DNSSEC, no DANE. The binding is recorded
+	// with a distinct status so downstream code routes it to TXT-token
+	// verification instead of the delegation/DS flow used by native HNS.
+	// dnsHostingEnabled is always coerced to false here, even when the caller
+	// requested managed DNS (the default in the UX flow): portal hosting is
+	// impossible for a contract-served name, and the persisted flag must agree
+	// with the absence of a zone.
+	if onchainManaged {
+		wd.Status = pluginDb.DomainStatusOnchainManaged
+		wd.DNSHostingEnabled = false
+		if err := s.DB().WithContext(ctx).Model(wd).Updates(map[string]any{
+			"status":              pluginDb.DomainStatusOnchainManaged,
+			"dns_hosting_enabled": false,
+		}).Error; err != nil {
+			// The row was already inserted with dns_hosting_enabled from the
+			// request (true by default). A half-finalized onchain binding is the
+			// worst failure shape: it would look like an "enable-orphan" to
+			// SetDomainDNSEnabled and a retry could provision a PowerDNS zone
+			// for a genuinely HIP-5 name. Remove the row so the bind is cleanly
+			// rolled back and the name can be retried.
+			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			return nil, fmt.Errorf("failed to finalize domain record: %w", err)
+		}
+		// This binding is the new website's first (primary) domain. Record it
+		// so the website service resolves the apex domain via PrimaryDomainID
+		// rather than the status=active fallback. A failure rolls the just-
+		// inserted row back so the bind is cleanly retryable.
+		if err := s.assignPrimaryAndNotify(ctx, &website, wd, notifyCreated); err != nil {
+			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			return nil, err
+		}
+		return wd, nil
+	}
+
 	// A self-hosted DNS binding owns no PowerDNS zone: the user runs the
 	// authoritative server, so the portal must not create a zone, DNSLink,
 	// apex, or generated delegation. The binding is marked self_hosted (bound,
@@ -322,130 +421,138 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		// This binding is the new website's first (primary) domain. Record it
 		// so the website service resolves the apex domain via PrimaryDomainID
 		// rather than the status=active fallback — a self-hosted binding is
-		// not active, so it would otherwise resolve to an empty domain.
-		if website.PrimaryDomainID == nil {
-			primaryID := wd.ID
-			if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", primaryID).Error; err != nil {
-				return nil, fmt.Errorf("failed to set primary domain: %w", err)
-			}
-			website.PrimaryDomainID = &primaryID
-		}
-		// Self-hosted bindings skip the managed-DNS primary assignment below,
-		// so fire the created notification here for a genuine creation. The
-		// PrimaryDomainID set above lets the service resolve the domain.
-		if notifyCreated {
-			s.notifyAdminWebsiteCreated(ctx, website.ID)
+		// not active, so it would otherwise resolve to an empty domain. The
+		// created notification fires here because self-hosted bindings skip
+		// the managed-DNS assignment path below.
+		if err := s.assignPrimaryAndNotify(ctx, &website, wd, notifyCreated); err != nil {
+			return nil, err
 		}
 		return wd, nil
 	}
 
 	// Managed DNS: create DNS resources only after the DB row is committed.
 	// The authoritative zone follows the one-zone rule — apex owns, subdomain
-	// reuses the parent's zone.
-	zone, zoneCreated, err := s.resolveManagedZone(ctx, domain, userID, platformRootID)
-	if err != nil {
-		s.DB().WithContext(ctx).Unscoped().Delete(wd)
-		return nil, fmt.Errorf("zone resolution failed: %w", err)
-	}
-
-	target := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
-	// Name the record after the binding's domain (not the zone apex) so a
-	// subdomain reusing a parent zone writes its own _dnslink.<subdomain>,
-	// not the parent's.
-	if err := s.dnsSvc.CreateDNSLinkRecord(ctx, zone.ID, domain, target); err != nil {
-		s.DB().WithContext(ctx).Unscoped().Delete(wd)
-		if zoneCreated {
-			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+	// reuses the parent's zone. The per-zone lifecycle lock is held across zone
+	// resolution through the row's zone-id commit so a concurrent
+	// ConvertToOnChain cannot delete the zone (and its records/DNSSEC) between
+	// the bind deciding to use it and the binding committing its reference.
+	if err := s.withZoneLifecycleLock(zoneLifecycleKey(domain), func() error {
+		zone, zoneCreated, err := s.resolveManagedZone(ctx, domain, userID, platformRootID)
+		if err != nil {
+			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			return fmt.Errorf("zone resolution failed: %w", err)
 		}
-		return nil, fmt.Errorf("dnslink creation failed: %w", err)
-	}
 
-	// Create apex record pointing to the gateway. DNSSEC-signed alt-root
-	// providers (e.g. HNS) need a real A record (gateway IP) so the apex
-	// carries an RRSIG; otherwise use an ALIAS to the gateway hostname.
-	apexType := provider.ApexRecordType()
-	var apexContent string
-	if apexType == pluginCore.RecordTypeA {
-		apexContent = s.gatewayIP()
-		if apexContent == "" {
+		target := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
+		// Name the record after the binding's domain (not the zone apex) so a
+		// subdomain reusing a parent zone writes its own _dnslink.<subdomain>,
+		// not the parent's.
+		if err := s.dnsSvc.CreateDNSLinkRecord(ctx, zone.ID, domain, target); err != nil {
 			s.DB().WithContext(ctx).Unscoped().Delete(wd)
 			if zoneCreated {
 				_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
 			}
-			return nil, fmt.Errorf("gateway_ip not configured: alt-root apex requires a real A record and cannot fall back to ALIAS (set dns.gateway_ip, e.g. to the gateway IP)")
+			return fmt.Errorf("dnslink creation failed: %w", err)
 		}
-	} else if gatewayHost := s.gatewayHost(); gatewayHost != "" {
-		apexContent = gatewayHost
-	}
 
-	if apexContent != "" {
-		if err := s.dnsSvc.CreateApexRecord(ctx, zone.ID, domain, apexType, apexContent); err != nil {
+		// Create apex record pointing to the gateway. DNSSEC-signed alt-root
+		// providers (e.g. HNS) need a real A record (gateway IP) so the apex
+		// carries an RRSIG; otherwise use an ALIAS to the gateway hostname.
+		apexType := provider.ApexRecordType()
+		var apexContent string
+		if apexType == pluginCore.RecordTypeA {
+			apexContent = s.gatewayIP()
+			if apexContent == "" {
+				s.DB().WithContext(ctx).Unscoped().Delete(wd)
+				if zoneCreated {
+					_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+				}
+				return fmt.Errorf("gateway_ip not configured: alt-root apex requires a real A record and cannot fall back to ALIAS (set dns.gateway_ip, e.g. to the gateway IP)")
+			}
+		} else if gatewayHost := s.gatewayHost(); gatewayHost != "" {
+			apexContent = gatewayHost
+		}
+
+		if apexContent != "" {
+			if err := s.dnsSvc.CreateApexRecord(ctx, zone.ID, domain, apexType, apexContent); err != nil {
+				s.DB().WithContext(ctx).Unscoped().Delete(wd)
+				if zoneCreated {
+					_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+				}
+				return fmt.Errorf("apex record creation failed: %w", err)
+			}
+			wd.GatewayHost = apexContent
+		}
+
+		// Build delegation after zone is created (needs zone ID).
+		delegationAny, err := provider.BuildDelegation(ctx, zone.ID, domain, &website, config)
+		if err != nil {
+			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			// Only tear down a zone this call created. For a platform claim the
+			// zone is the operator's shared platform-root zone (zoneCreated is
+			// false), which must never be deleted on a per-claim failure —
+			// doing so would take down every subdomain on that root.
+			if zoneCreated {
+				_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+			}
+			return fmt.Errorf("delegation build failed: %w", err)
+		}
+		delegationBytes, err := json.Marshal(delegationAny)
+		if err != nil {
 			s.DB().WithContext(ctx).Unscoped().Delete(wd)
 			if zoneCreated {
 				_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
 			}
-			return nil, fmt.Errorf("apex record creation failed: %w", err)
+			return fmt.Errorf("marshal delegation data: %w", err)
 		}
-		wd.GatewayHost = apexContent
+
+		// Update the row with zone info, delegation data, and final status.
+		wd.ZoneID = zone.ID
+		wd.Status = pluginDb.DomainStatusRecordsGenerated
+		wd.DelegationData = jsonToMap(delegationBytes)
+		if err := s.DB().WithContext(ctx).Model(wd).Updates(map[string]any{
+			"zone_id":             zone.ID,
+			"status":              pluginDb.DomainStatusRecordsGenerated,
+			"delegation_data":     wd.DelegationData,
+			"dns_hosting_enabled": wd.DNSHostingEnabled,
+		}).Error; err != nil {
+			return fmt.Errorf("failed to finalize domain record: %w", err)
+		}
+
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
-	// Build delegation after zone is created (needs zone ID).
-	delegationAny, err := provider.BuildDelegation(ctx, zone.ID, domain, &website, config)
-	if err != nil {
-		s.DB().WithContext(ctx).Unscoped().Delete(wd)
-		// Only tear down a zone this call created. For a platform claim the
-		// zone is the operator's shared platform-root zone (zoneCreated is
-		// false), which must never be deleted on a per-claim failure —
-		// doing so would take down every subdomain on that root.
-		if zoneCreated {
-			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
-		}
-		return nil, fmt.Errorf("delegation build failed: %w", err)
-	}
-	delegationBytes, err := json.Marshal(delegationAny)
-	if err != nil {
-		s.DB().WithContext(ctx).Unscoped().Delete(wd)
-		if zoneCreated {
-			_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
-		}
-		return nil, fmt.Errorf("marshal delegation data: %w", err)
-	}
-
-	// Update the row with zone info, delegation data, and final status.
-	wd.ZoneID = zone.ID
-	wd.Status = pluginDb.DomainStatusRecordsGenerated
-	wd.DelegationData = jsonToMap(delegationBytes)
-	if err := s.DB().WithContext(ctx).Model(wd).Updates(map[string]any{
-		"zone_id":             zone.ID,
-		"status":              pluginDb.DomainStatusRecordsGenerated,
-		"delegation_data":     wd.DelegationData,
-		"dns_hosting_enabled": wd.DNSHostingEnabled,
-	}).Error; err != nil {
-		return nil, fmt.Errorf("failed to finalize domain record: %w", err)
-	}
-
-	// If the owning website has no primary domain yet, make this binding the
-	// primary so Website.PrimaryDomainID never dangles after the first domain
-	// is added. This is how a website created with a transparent primary domain
-	// (and additional domains added later) keeps its FK consistent.
-	if website.PrimaryDomainID == nil {
-		if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", wd.ID).Error; err != nil {
-			return nil, fmt.Errorf("failed to set primary domain: %w", err)
-		}
-		website.PrimaryDomainID = &wd.ID
-	}
-
-	// Only a genuine website creation (flagged by the create API caller) fires
-	// the admin "website created" notification. Domain-add operations on an
-	// existing website, which also flow through CreateDomain, must not emit a
-	// spurious created email. Firing here (service layer) lets the email's
-	// Domain field resolve against the binding just persisted. Non-fatal: a
-	// template/mail failure must not fail domain creation.
-	if notifyCreated {
-		s.notifyAdminWebsiteCreated(ctx, website.ID)
+	// Primary/notify handled by the shared helper: a fresh website gets its
+	// first binding recorded as primary, and only a genuine website creation
+	// (flag set by the create API caller) fires the admin created email —
+	// domain-add operations on an existing website must not emit one.
+	if err := s.assignPrimaryAndNotify(ctx, &website, wd, notifyCreated); err != nil {
+		return nil, err
 	}
 
 	return wd, nil
+}
+
+// assignPrimaryAndNotify records wd as the website's primary when the website
+// has none yet — so the website service resolves the apex domain via
+// PrimaryDomainID rather than the status=active fallback — and, when
+// notifyCreated, fires the admin "website created" notification. Shared by the
+// managed, self-hosted, and on-chain managed bind paths. Only the primary
+// write is fatal; the notification (via notifyAdminWebsiteCreated) is
+// best-effort.
+func (s *DelegatedDomainService) assignPrimaryAndNotify(ctx context.Context, website *pluginDb.Website, wd *pluginDb.WebsiteDomain, notifyCreated bool) error {
+	if website.PrimaryDomainID == nil {
+		if err := s.DB().WithContext(ctx).Model(website).Update("primary_domain_id", wd.ID).Error; err != nil {
+			return fmt.Errorf("failed to set primary domain: %w", err)
+		}
+		website.PrimaryDomainID = &wd.ID
+	}
+	if notifyCreated {
+		s.notifyAdminWebsiteCreated(ctx, website.ID)
+	}
+	return nil
 }
 
 // notifyAdminWebsiteCreated fires the admin "website created" notification for
@@ -1081,6 +1188,7 @@ func NewDelegatedDomainServiceFactory() (core.Service, []core.ContextBuilderOpti
 			var nsList []string
 			var hnsNSList []string
 			hnsResolver := ""
+			var hip5BlockedTLDs []string
 			if dnsCfg != nil {
 				nsList = dnsCfg.Nameservers
 				hnsNSList = dnsCfg.HNSNameservers
@@ -1090,9 +1198,19 @@ func NewDelegatedDomainServiceFactory() (core.Service, []core.ContextBuilderOpti
 					hnsNSList = nsList
 				}
 				hnsResolver = dnsCfg.HNSResolver
+				hip5BlockedTLDs = dnsCfg.HIP5BlockedTLDs
 			}
 			reg.Register(NewICANNProvider(nsList))
 			hnsProv := NewHNSProvider(hnsResolver, hnsNSList, TLSASource{})
+			// Apply the configured HIP-5 blocked-TLD set. The override is applied
+			// whenever the config is present (even an empty slice): an empty set
+			// intentionally disables blocked-TLD detection, leaving only
+			// underscore-prefixed protocol tags counted. A nil/absent dnsCfg
+			// keeps the constructor's built-in defaults, matching the DnsConfig
+			// defaults of ["eth","bit"].
+			if dnsCfg != nil {
+				hnsProv.SetHIP5BlockedTLDs(hip5BlockedTLDs)
+			}
 			dns := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
 			if dns != nil {
 				hnsProv.SetDNSService(dns)

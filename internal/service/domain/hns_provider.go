@@ -123,6 +123,10 @@ type HNSProvider struct {
 	tlsaSource   TLSASource
 	tlsaMu       sync.RWMutex
 	dnsSvc       DNSZoneService
+	// hip5BlockedTLDs are TLDs that are blocked on the HNS root and therefore
+	// mark an NS record's final label as a HIP-5 protocol tag (e.g. "eth",
+	// "bit"), in addition to underscore-prefixed labels which are always HIP-5.
+	hip5BlockedTLDs map[string]bool
 }
 
 // TLSASource holds certificates keyed by domain for TLSA computation.
@@ -133,10 +137,33 @@ type TLSASource struct {
 
 func NewHNSProvider(resolver string, nsRecords []string, tlsa TLSASource) *HNSProvider {
 	return &HNSProvider{
-		resolverAddr: resolver,
-		nsRecords:    nsRecords,
-		tlsaSource:   tlsa,
+		resolverAddr:    resolver,
+		nsRecords:       nsRecords,
+		tlsaSource:      tlsa,
+		hip5BlockedTLDs: defaultHIP5BlockedTLDs(),
 	}
+}
+
+// defaultHIP5BlockedTLDs returns the TLDs that are blocked on the HNS root and
+// thus treated as HIP-5 protocol tags, alongside underscore-prefixed labels.
+// Operators may extend the set via SetHIP5BlockedTLDs.
+func defaultHIP5BlockedTLDs() map[string]bool {
+	return map[string]bool{
+		"eth": true,
+		"bit": true,
+	}
+}
+
+// SetHIP5BlockedTLDs replaces the set of TLDs marking an NS record's final
+// label as a HIP-5 protocol tag (see hip5BlockedTLDs). An empty list leaves
+// only underscore-prefixed labels counted as HIP-5. Must be called before the
+// provider serves requests (it is not synchronized with Inspect).
+func (p *HNSProvider) SetHIP5BlockedTLDs(tlds []string) {
+	m := make(map[string]bool, len(tlds))
+	for _, t := range tlds {
+		m[strings.ToLower(t)] = true
+	}
+	p.hip5BlockedTLDs = m
 }
 
 // SetDNSService injects the DNS zone service for DNSSEC enablement.
@@ -187,6 +214,65 @@ func (p *HNSProvider) Validate(domain string) error {
 		return fmt.Errorf("%q ends in an ICANN TLD; use the ICANN namespace", domain)
 	}
 	return nil
+}
+
+// Inspect reports whether the HNS name is managed on-chain via HIP-5: it
+// queries the HNS resolver for the name's NS records and checks whether any of
+// them is a HIP-5 TX record (whose final label is a HIP-5 protocol tag, e.g.
+// "_eth" or a blocked TLD like "eth"). Such a name serves its DNS from an
+// external contract, so the portal must not provision a PowerDNS zone for it
+// and proves ownership with a TXT token resolved through the resolver.
+//
+// Detection is best-effort: when the resolver is not configured or cannot
+// answer (name not yet registered on-chain, resolver unreachable), it returns
+// false so the name binds as native HNS and can be converted to on-chain
+// managed later by an explicit admin action — never silently guessed by the
+// janitor.
+//
+// The query runs under a short deadline of its own: Inspect is on the bind
+// hot path (every user HNS bind), so a slow/unreachable resolver must not
+// stall a bind for the DNS client's 5s timeout. A deadline expiration is
+// treated like any resolver failure: bind as native, to be reconciled later.
+func (p *HNSProvider) Inspect(ctx context.Context, domain string) (bool, error) {
+	if p.resolverAddr == "" {
+		return false, nil
+	}
+	inspectCtx, cancel := context.WithTimeout(ctx, hip5InspectTimeout)
+	defer cancel()
+	nss, err := queryNS(inspectCtx, p.resolverAddr, dnsname.EnsureFQDN(domain))
+	if err != nil {
+		return false, nil
+	}
+	for _, ns := range nss {
+		if p.isHIP5TX(ns) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// hip5InspectTimeout bounds how long the HIP5 inspection DNS query may run.
+// It is deliberately shorter than the DNS client timeout (5s) so the bind
+// path never blocks on a slow resolver.
+const hip5InspectTimeout = 1500 * time.Millisecond
+
+// isHIP5TX detects a HIP-5 TX record by its final label, per HIP-0005 the
+// protocol tag: it is either structurally invalid on the HNS root
+// (underscore-prefixed, e.g. "_eth") or a TLD blocked by the HNS root
+// (e.g. "eth", "bit"). The labels before it are the chain-specific input (an
+// ETH hex address, a SOL base58 address, ...) and are deliberately not parsed
+// here — the HNS resolver already validated the record when it served it, and
+// the address format is not our concern.
+func (p *HNSProvider) isHIP5TX(ns string) bool {
+	labels := strings.Split(strings.TrimSuffix(ns, "."), ".")
+	if len(labels) < 2 {
+		return false
+	}
+	last := strings.ToLower(labels[len(labels)-1])
+	if strings.HasPrefix(last, "_") {
+		return true
+	}
+	return p.hip5BlockedTLDs[last]
 }
 
 func (p *HNSProvider) BuildDelegation(ctx context.Context, zoneID uint,

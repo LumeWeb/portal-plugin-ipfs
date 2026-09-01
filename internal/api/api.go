@@ -14,8 +14,8 @@ import (
 	"github.com/ipld/go-car/v2"
 	"github.com/labstack/echo/v4"
 	"github.com/tus/tusd/v2/pkg/handler"
-	portalMw "go.lumeweb.com/portal-middleware/middleware"
 	"go.lumeweb.com/portal-middleware/auth/jwt"
+	portalMw "go.lumeweb.com/portal-middleware/middleware"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
@@ -40,22 +40,22 @@ const TUS_HTTP_ROUTE = "/api/upload/tus"
 
 type API struct {
 	*core.BaseComponent
-	coreUploadService     core.UploadService
-	uploadService         pluginCore.UploadService
-	pinService            pluginCore.IPFSPinService
-	blockService          pluginCore.BlockService
-	fileManagerService    pluginCore.FileManagerService
-	workflowService       core.WorkflowService
-	ipnsKeyService        pluginCore.IPNSKeyService
-	websiteService        pluginCore.WebsiteService
-	delegatedDomainSvc    *domain.DelegatedDomainService
-	dnsService            pluginCore.DNSService
-	dnsConfig            *pluginConfig.DnsConfig
-	tusService           core.TUSService
-	requestService       core.RequestService
-	tus                  core.TusHandler
-	ipfs                 protocol.ProtoNode
-	sse                  *sseState
+	coreUploadService  core.UploadService
+	uploadService      pluginCore.UploadService
+	pinService         pluginCore.IPFSPinService
+	blockService       pluginCore.BlockService
+	fileManagerService pluginCore.FileManagerService
+	workflowService    core.WorkflowService
+	ipnsKeyService     pluginCore.IPNSKeyService
+	websiteService     pluginCore.WebsiteService
+	delegatedDomainSvc *domain.DelegatedDomainService
+	dnsService         pluginCore.DNSService
+	dnsConfig          *pluginConfig.DnsConfig
+	tusService         core.TUSService
+	requestService     core.RequestService
+	tus                core.TusHandler
+	ipfs               protocol.ProtoNode
+	sse                *sseState
 }
 
 func NewAPI() (core.API, []core.ContextBuilderOption, error) {
@@ -244,7 +244,7 @@ See also: GET /pins (list pins), GET /pins/{id} (get pin details)`),
 				router.WithTags("Pinning"),
 				router.WithRequestBody(&dto.PinRequest{}, "Pin object", true),
 				router.WithSuccessResponse(http.StatusAccepted, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
-			router.WithoutDefaultSuccessResponse(),
+				router.WithoutDefaultSuccessResponse(),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/pins/:requestid", a.getPin,
@@ -274,7 +274,7 @@ See also:.*`),
 				router.WithPathParam("requestid", "Unique identifier for the pin operation. Example: bafkreiexample", ""),
 				router.WithRequestBody(&dto.PinRequest{}, "Pin object", true),
 				router.WithSuccessResponse(http.StatusAccepted, "Successful response", router.WithJSONContent(dto.PinStatusResponse{})),
-			router.WithoutDefaultSuccessResponse(),
+				router.WithoutDefaultSuccessResponse(),
 			),
 		),
 		router.NewRoute(http.MethodDelete, "/pins/:requestid", a.deletePin,
@@ -289,7 +289,7 @@ See also:.*`),
 				router.WithTags("Pinning"),
 				router.WithPathParam("requestid", "Unique identifier for the pin operation. Example: bafkreiexample", ""),
 				router.WithSuccessResponse(http.StatusAccepted, "Successful response"),
-			router.WithoutDefaultSuccessResponse(),
+				router.WithoutDefaultSuccessResponse(),
 			),
 		),
 		router.NewRoute(http.MethodOptions, "/pins", a.handlePinOptions,
@@ -554,7 +554,7 @@ See also:.*`),
 				router.WithTags("IPNS"),
 				router.WithRequestBody(&dto.IPNSKeyRequest{}, "IPNS key request", true),
 				router.WithSuccessResponse(http.StatusCreated, "IPNS key created", router.WithJSONContent(dto.IPNSKeyResponse{})),
-			router.WithoutDefaultSuccessResponse(),
+				router.WithoutDefaultSuccessResponse(),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/ipns/keys", a.listIPNSKeys,
@@ -596,7 +596,7 @@ See also:.*`),
 				router.WithTags("IPNS"),
 				router.WithPathParam("id", "Numeric ID of the IPNS key. Example: 123", ""),
 				router.WithSuccessResponse(http.StatusNoContent, "IPNS key deleted"),
-			router.WithoutDefaultSuccessResponse(),
+				router.WithoutDefaultSuccessResponse(),
 			),
 		),
 	)
@@ -673,7 +673,7 @@ See also:.*`),
 				router.WithTags("Websites"),
 				router.WithRequestBody(&dto.WebsiteRequest{}, "Website request", true),
 				router.WithSuccessResponse(http.StatusCreated, "Website created", router.WithJSONContent(dto.WebsiteResponse{})),
-			router.WithoutDefaultSuccessResponse(),
+				router.WithoutDefaultSuccessResponse(),
 				router.WithErrorResponses(router.DefineSwaggerErrorResponses(
 					DefineErrorResponse(http.StatusBadRequest, "Invalid request body or validation error"),
 					DefineErrorResponse(http.StatusGone, "Website target content is broken"),
@@ -701,9 +701,9 @@ See also:.*`),
 					DefineErrorResponse(http.StatusUnauthorized, "Authentication required"),
 					DefineErrorResponse(http.StatusInternalServerError, "Internal server error occurred"),
 				)),
-				),
 			),
-				router.NewRoute(http.MethodGet, "/websites/:id", a.getWebsite,
+		),
+		router.NewRoute(http.MethodGet, "/websites/:id", a.getWebsite,
 			router.WithAccess(core.ACCESS_USER_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Get website"),
@@ -756,7 +756,7 @@ See also:.*`),
 				router.WithTags("Websites"),
 				router.WithPathParam("id", "Website ID", ""),
 				router.WithSuccessResponse(http.StatusNoContent, "Website deleted"),
-			router.WithoutDefaultSuccessResponse(),
+				router.WithoutDefaultSuccessResponse(),
 			),
 		),
 		router.NewRoute(http.MethodPost, "/websites/:id/validate", a.validateWebsiteDNS,
@@ -824,7 +824,7 @@ See also:.*`),
 				router.WithPathParam("id", "Website ID", ""),
 				router.WithPathParam("domain_id", "Domain ID", ""),
 				router.WithSuccessResponse(http.StatusNoContent, "Domain deleted"),
-			router.WithoutDefaultSuccessResponse(),
+				router.WithoutDefaultSuccessResponse(),
 			),
 		),
 		router.NewRoute(http.MethodPost, "/websites/:id/domains/:domain_id/verify", a.verifyDomain,
@@ -866,6 +866,17 @@ See also:.*`),
 				router.WithPathParam("id", "Website ID", ""),
 				router.WithPathParam("domain_id", "Domain ID", ""),
 				router.WithSuccessResponse(http.StatusOK, "Domain DNS requirements", router.WithJSONContent(dto.DomainResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/websites/:id/domains/:domain_id/onchain", a.convertDomainToOnChain,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Reclassify domain as on-chain managed"),
+				router.WithDescription(`Reclassifies a bound domain as on-chain managed (e.g. a Handshake HIP-5 name whose NS now points at an external contract). Deletes the portal-managed PowerDNS zone and DNSSEC for the binding and switches ownership verification to the TXT token; DANE/SSL state is retained. One-way.`),
+				router.WithTags("Websites", "Domains"),
+				router.WithPathParam("id", "Website ID", ""),
+				router.WithPathParam("domain_id", "Domain ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Converted domain", router.WithJSONContent(dto.DomainResponse{})),
 			),
 		),
 		router.NewRoute(http.MethodPost, "/websites/:id/domains/:domain_id/dane/republish", a.republishDomainDANE,
@@ -918,7 +929,7 @@ See also:.*`),
 				router.WithTags("DNS", "Zones"),
 				router.WithRequestBody(&dto.ZoneRequest{}, "Zone request", true),
 				router.WithSuccessResponse(http.StatusCreated, "Zone created", router.WithJSONContent(dto.ZoneResponse{})),
-			router.WithoutDefaultSuccessResponse(),
+				router.WithoutDefaultSuccessResponse(),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/dns/zones", a.listZones,
@@ -975,7 +986,7 @@ See also:.*`),
 				router.WithTags("DNS", "Zones"),
 				router.WithPathParam("id", "Zone ID", ""),
 				router.WithSuccessResponse(http.StatusNoContent, "Zone deleted"),
-			router.WithoutDefaultSuccessResponse(),
+				router.WithoutDefaultSuccessResponse(),
 			),
 		),
 		router.NewRoute(http.MethodPost, "/dns/zones/:id/validate", a.validateZone,
@@ -1049,7 +1060,7 @@ See also:.*`),
 				router.WithPathParam("id", "Zone ID", ""),
 				router.WithRequestBody(&dto.RecordRequest{}, "Record request", true),
 				router.WithSuccessResponse(http.StatusCreated, "Record created", router.WithJSONContent(dto.RecordResponse{})),
-			router.WithoutDefaultSuccessResponse(),
+				router.WithoutDefaultSuccessResponse(),
 			),
 		),
 		router.NewRoute(http.MethodPut, "/dns/zones/:id/records/:name/:type", a.updateRecord,
@@ -1084,7 +1095,7 @@ See also:.*`),
 				router.WithPathParam("type", "Record type (A, AAAA, CNAME, TXT, etc.)", ""),
 				router.WithRequestBody(&dto.RecordDeleteRequest{}, "Optional content selector: when set, only the record with this content is deleted; when the body is absent the whole RRSet is deleted, and a present body with empty content is rejected", false),
 				router.WithSuccessResponse(http.StatusNoContent, "Record deleted"),
-			router.WithoutDefaultSuccessResponse(),
+				router.WithoutDefaultSuccessResponse(),
 			),
 		),
 		router.NewRoute(http.MethodPost, "/dns/zones/:id/records/bulk", a.bulkRecords,
@@ -1349,7 +1360,7 @@ See also:.*`),
 	)
 
 	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), internalSSLStatusRoutes,
-		router.WithMiddlewares(gatewayAuthMw),  // Use gateway auth, not user auth
+		router.WithMiddlewares(gatewayAuthMw), // Use gateway auth, not user auth
 		router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register internal SSL status routes: %w", err)
 	}

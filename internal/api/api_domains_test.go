@@ -639,3 +639,95 @@ func mustIssueTestCert(t testing.TB, _ string, domain string) string {
 	}
 	return certPEM
 }
+
+func TestAPI_DomainDNSRequirements_OnchainManaged(t *testing.T) {
+	// An on-chain managed (HIP-5) binding has no portal delegation: dns-
+	// requirements must report no delegation and no DNSSEC, and the hosting flag
+	// must be false, so clients render the on-chain explanation rather than
+	// NS/DS setup guidance.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, userID, testCID, _ := helper.SetupAuthenticatedTest()
+
+		website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
+		require.NoError(t, ctx.DB().Create(website).Error)
+
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID:         1,
+			UserID:            userID,
+			Domain:            "onchain",
+			Namespace:         pluginDb.DomainNamespaceHNS,
+			Status:            pluginDb.DomainStatusOnchainManaged,
+			DNSHostingEnabled: false,
+		}
+		require.NoError(t, ctx.DB().Create(wd).Error)
+
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites/1/domains/1/dns-requirements", token, nil)
+		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+		var resp dto.DomainResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		assert.Equal(t, "onchain", resp.Domain)
+		assert.Equal(t, string(pluginDb.DomainStatusOnchainManaged), resp.Status)
+		assert.False(t, resp.DNSHostingEnabled)
+		assert.Nil(t, resp.Delegation, "on-chain managed domains have no portal delegation/NS-DS guidance")
+	}, TestOptions)
+}
+
+func TestAPI_ConvertDomainToOnChain(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, userID, testCID, _ := helper.SetupAuthenticatedTest()
+
+		website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
+		require.NoError(t, ctx.DB().Create(website).Error)
+
+		createBinding := func(domain string, status pluginDb.DomainStatus, zoneID uint) *pluginDb.WebsiteDomain {
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: 1,
+				UserID:    userID,
+				Domain:    domain,
+				Namespace: pluginDb.DomainNamespaceHNS,
+				Status:    status,
+			}
+			if zoneID != 0 {
+				wd.ZoneID = zoneID
+				wd.GatewayHost = "1.2.3.4"
+				wd.DNSHostingEnabled = true
+				wd.DelegationData = datatypes.JSONMap{"mode": "delegated"}
+			}
+			require.NoError(t, ctx.DB().Create(wd).Error)
+			return wd
+		}
+
+		native := createBinding("native", pluginDb.DomainStatusRecordsGenerated, 5)
+		onchainBinding := createBinding("onchain", pluginDb.DomainStatusOnchainManaged, 0)
+
+		t.Run("refuses_when_not_onchain", func(t *testing.T) {
+			// A native binding whose NS still points at the portal must NOT be
+			// converted: the zone and delegation stay intact.
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/1/domains/1/onchain", token, nil)
+			require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "not yet on-chain managed")
+
+			var persisted pluginDb.WebsiteDomain
+			require.NoError(t, ctx.DB().First(&persisted, native.ID).Error)
+			assert.Equal(t, pluginDb.DomainStatusRecordsGenerated, persisted.Status)
+			assert.Equal(t, uint(5), persisted.ZoneID)
+			require.NotNil(t, persisted.DelegationData)
+		})
+
+		t.Run("refuses_when_already_onchain", func(t *testing.T) {
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/1/domains/2/onchain", token, nil)
+			require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "already on-chain managed")
+		})
+
+		t.Run("not_found", func(t *testing.T) {
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/1/domains/999/onchain", token, nil)
+			require.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
+		})
+
+		_ = onchainBinding // already-on-chain guard exercised above
+	}, TestOptions)
+}
