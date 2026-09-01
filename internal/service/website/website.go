@@ -2123,6 +2123,16 @@ func (s *WebsiteServiceDefault) ActivatePlatformSubdomainWebsite(ctx context.Con
 		return nil
 	}
 
+	// Verify the target is genuinely valid before auto-activating. A fresh
+	// deploy's target is pinned at create, but a platform subdomain may also be
+	// bound to an existing site whose target is no longer valid — reusing
+	// CheckStatus (which validates both IPFS and IPNS targets) avoids serving
+	// unpinned/invalid content. When the target is not valid, leave the site
+	// pending for the normal validation/janitor handling.
+	if status, err := s.CheckStatus(ctx, &website); err != nil || status != pluginDb.WebsiteStatusActive {
+		return nil
+	}
+
 	if err := s.activateValidatedWebsite(ctx, &website); err != nil {
 		return fmt.Errorf("failed to activate platform subdomain website %d: %w", websiteID, err)
 	}
