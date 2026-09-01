@@ -611,11 +611,12 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 	// binding is not part of the portal's lifecycle (no DS to reconcile, no
 	// SOA/DNSSEC to self-heal), so verification is a no-op that leaves the
 	// binding's existing status rather than querying PowerDNS for a zone that
-	// does not exist. The presence of a real PowerDNS zone (ZoneID != 0) is
-	// the authoritative marker of a portal-hosted binding, regardless of the
-	// dns_hosting_enabled flag (which may be false on legacy bindings that
-	// still hold a zone).
-	if wd.ZoneID == 0 {
+	// does not exist. The binding's class expresses the same authority: only
+	// portal-managed bindings (ZoneID != 0, regardless of dns_hosting_enabled,
+	// which may be false on legacy bindings that still hold a zone) have
+	// delegation to verify; self-hosted, on-chain managed (HIP-5), and draft
+	// bindings exit here.
+	if wd.Class() != pluginDb.ClassPortalManaged {
 		return false, nil
 	}
 
@@ -642,7 +643,7 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		if dsErr != nil {
 			return false, fmt.Errorf("resolve live DS for zone %d: %w", wd.ZoneID, dsErr)
 		}
-	} else if wd.ZoneID != 0 {
+	} else {
 		// Best-effort for non-DNSSEC providers: surface DB/PowerDNS errors so
 		// they are observable, but the provider verifies on NS and ignores DS,
 		// so a failure here must not block delegation.
@@ -695,7 +696,10 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 // requiring the user to re-bind. The two invariants are gated independently:
 //
 //  1. DNSSEC active signing key (fatal). For managed-DNSSEC namespaces
-//     (UsesManagedZoneTLSA, e.g. HNS). A "no active key" result (("", nil))
+//     (RequiresDNSSEC, e.g. HNS). Uses the same capability as the expectedDS
+//     computation in VerifyDomain: a namespace that requires a live DS still
+//     heals its signing key even when it does not publish DANE. A
+//     "no active key" result (("", nil))
 //     means DNSSEC was never enabled or the key was rotated away: EnableDNSSEC
 //     is idempotent (reuses an active key, mints one only when none exists),
 //     then the live DS is re-read. Failure is fatal — a managed zone without a
@@ -712,8 +716,10 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 //
 // It returns the (possibly healed) expected DS and a fatal error, or nil.
 func (s *DelegatedDomainService) selfHealZone(ctx context.Context, provider DomainProvider, wd *pluginDb.WebsiteDomain, expectedDS string) (string, error) {
-	// DNSSEC self-heal: only managed-DNSSEC namespaces (UsesManagedZoneTLSA).
-	if provider.UsesManagedZoneTLSA() && expectedDS == "" {
+	// DNSSEC self-heal: only managed-DNSSEC namespaces (RequiresDNSSEC, the
+	// same gate VerifyDomain uses for expectedDS; a DNSSEC-required namespace
+	// that does not publish DANE must still heal its signing key).
+	if provider.RequiresDNSSEC() && expectedDS == "" {
 		if _, err := s.dnsSvc.EnableDNSSEC(ctx, wd.ZoneID); err != nil {
 			return "", fmt.Errorf("enable dnssec for zone %d: %w", wd.ZoneID, err)
 		}

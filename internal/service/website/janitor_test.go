@@ -53,7 +53,7 @@ func TestWebsiteJanitorJob_Run_Disabled(t *testing.T) {
 		janitorJob := job.(*WebsiteJanitorJob)
 		janitorJob.config = websiteConfig
 		janitorJob.db = ctx.DB()
-		janitorJob.logger = nil
+		janitorJob.logger = ctx.Logger()
 
 		err := job.Run(ctx, context.Background())
 
@@ -75,7 +75,7 @@ func TestWebsiteJanitorJob_Run_NoWebsites(t *testing.T) {
 		janitorJob := job.(*WebsiteJanitorJob)
 		janitorJob.config = websiteConfig
 		janitorJob.db = ctx.DB()
-		janitorJob.logger = nil
+		janitorJob.logger = ctx.Logger()
 
 		err := job.Run(ctx, context.Background())
 
@@ -97,7 +97,7 @@ func TestWebsiteJanitorJob_validateWebsite_SkipsPendingValidation(t *testing.T) 
 		janitorJob := job.(*WebsiteJanitorJob)
 		janitorJob.config = websiteConfig
 		janitorJob.db = ctx.DB()
-		janitorJob.logger = nil
+		janitorJob.logger = ctx.Logger()
 
 		// Build an IPFS website in pending_validation state whose CID is NOT
 		// pinned. Before the fix, the janitor would mark it broken.
@@ -143,7 +143,7 @@ func TestWebsiteJanitorJob_validateWebsite_GracePeriodDefersBroken(t *testing.T)
 		janitorJob := job.(*WebsiteJanitorJob)
 		janitorJob.config = websiteConfig
 		janitorJob.db = ctx.DB()
-		janitorJob.logger = nil
+		janitorJob.logger = ctx.Logger()
 
 		// An active website whose CID is NOT pinned, created just now (within
 		// the grace period).
@@ -190,7 +190,7 @@ func TestWebsiteJanitorJob_validateWebsite_GracePeriodDisabledMarksBroken(t *tes
 		janitorJob := job.(*WebsiteJanitorJob)
 		janitorJob.config = websiteConfig
 		janitorJob.db = ctx.DB()
-		janitorJob.logger = nil
+		janitorJob.logger = ctx.Logger()
 
 		mhBytes, err := mh.Sum([]byte("unpinned-no-grace"), mh.SHA2_256, -1)
 		require.NoError(tb, err)
@@ -232,7 +232,7 @@ func TestWebsiteJanitorJob_validateWebsite_GracePeriodElapsedMarksBroken(t *test
 		janitorJob := job.(*WebsiteJanitorJob)
 		janitorJob.config = websiteConfig
 		janitorJob.db = ctx.DB()
-		janitorJob.logger = nil
+		janitorJob.logger = ctx.Logger()
 
 		mhBytes, err := mh.Sum([]byte("unpinned-grace-elapsed"), mh.SHA2_256, -1)
 		require.NoError(tb, err)

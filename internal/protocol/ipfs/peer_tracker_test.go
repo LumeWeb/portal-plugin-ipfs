@@ -6,6 +6,8 @@ import (
 
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multihash"
+
+	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 )
 
 func TestBlockRequestTracker_AddRequest(t *testing.T) {
@@ -525,8 +527,8 @@ func TestBlockRequestTracker_RemovePeerFromAll_DisconnectScenario(t *testing.T) 
 
 func TestBlockRequestTrackerMaintainsPeerIndex(t *testing.T) {
 	tracker := NewBlockRequestTracker()
-	cidA := mustTestCID(t, "QmYwAPJzv5CZsnA625qs3FTJ2xDkg7WjNnCm129r48gVfX")
-	cidB := mustTestCID(t, "QmYwAPJzv5CZsnA625qs3FTJ2xDkg7WjNnCm129r48gVfW")
+	cidA := encoding.NormalizeCid(mustTestCID(t, "QmYwAPJzv5CZsnA625qs3FTJ2xDkg7WjNnCm129r48gVfX"))
+	cidB := encoding.NormalizeCid(mustTestCID(t, "QmYwAPJzv5CZsnA625qs3FTJ2xDkg7WjNnCm129r48gVfW"))
 
 	tracker.AddRequest(cidA, "peer-a")
 	tracker.AddRequest(cidA, "peer-a")
@@ -561,8 +563,8 @@ func TestBlockRequestTrackerMaintainsPeerIndex(t *testing.T) {
 
 func TestBlockRequestTrackerRemovesReverseIndexEntries(t *testing.T) {
 	tracker := NewBlockRequestTracker()
-	cidA := mustTestCID(t, "QmYwAPJzv5CZsnA625qs3FTJ2xDkg7WjNnCm129r48gVfX")
-	cidB := mustTestCID(t, "QmYwAPJzv5CZsnA625qs3FTJ2xDkg7WjNnCm129r48gVfW")
+	cidA := encoding.NormalizeCid(mustTestCID(t, "QmYwAPJzv5CZsnA625qs3FTJ2xDkg7WjNnCm129r48gVfX"))
+	cidB := encoding.NormalizeCid(mustTestCID(t, "QmYwAPJzv5CZsnA625qs3FTJ2xDkg7WjNnCm129r48gVfW"))
 
 	tracker.AddRequest(cidA, "peer-a")
 	tracker.AddRequest(cidA, "peer-b")

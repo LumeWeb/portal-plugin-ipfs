@@ -34,6 +34,42 @@ const (
 	DomainStatusOnchainManaged DomainStatus = "onchain_managed"
 )
 
+// DomainClass classifies a bound name by who serves its DNS. It is derived
+// from persisted state (status + ZoneID), never stored. dns_hosting_enabled is
+// excluded on purpose: when the flag disagrees with the zone reference it is a
+// reconcile orphan that SetDomainDNSEnabled repairs, and classification must
+// follow the same zone reference the rest of the code keys on.
+type DomainClass uint8
+
+const (
+	// ClassPortalManaged names served from a portal-created PowerDNS zone.
+	// ZoneID != 0 is the authoritative marker (see VerifyDomain), so a binding
+	// with a zone is portal-managed regardless of lifecycle status.
+	ClassPortalManaged DomainClass = iota
+	// ClassSelfHosted names whose DNS the user runs themselves (status
+	// self_hosted), and bindings with no portal zone yet (draft): no
+	// DS/TLSA/DNSSEC reconciliation applies to them.
+	ClassSelfHosted
+	// ClassOnChainManaged marks a name whose DNS is served on-chain (e.g. a
+	// Handshake HIP-5 name whose NS record points at an external contract).
+	// The portal owns only the ownership check (TXT token through the
+	// namespace resolver) and never provisions a zone, DNSSEC, or DANE.
+	ClassOnChainManaged
+)
+
+// Class returns the binding's DNS-hosting locus. Derived from state, not
+// stored; see DomainClass for why dns_hosting_enabled is not an input.
+func (wd *WebsiteDomain) Class() DomainClass {
+	switch {
+	case wd.Status == DomainStatusOnchainManaged:
+		return ClassOnChainManaged
+	case wd.ZoneID != 0:
+		return ClassPortalManaged
+	default:
+		return ClassSelfHosted
+	}
+}
+
 // WebsiteDomain binds a domain (by namespace) to a website.
 type WebsiteDomain struct {
 	ID             uint `gorm:"primaryKey"`
@@ -91,10 +127,7 @@ func (WebsiteDomain) TableName() string {
 // zone, so there is no shared record set to preserve even though the namespace
 // is HNS.
 func (wd *WebsiteDomain) DelegationRecordsOwned() bool {
-	if wd.Status == DomainStatusOnchainManaged {
-		return false
-	}
-	return wd.Namespace == DomainNamespaceHNS || wd.DelegationOwned()
+	return wd.Class() != ClassOnChainManaged && (wd.Namespace == DomainNamespaceHNS || wd.DelegationOwned())
 }
 
 // DelegationOwned reports whether this binding's PowerDNS zone also hosts

@@ -301,6 +301,7 @@ func TestCreatePlatformSubdomain_NestedRoot_UsesGrantedRootZone(t *testing.T) {
 		createPlatformRoot(tb, ctx, "api.platform.com", pluginDb.DomainNamespaceICANN, nestedZone.ID, true)
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		websiteMock := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 		// The subdomain must resolve to the GRANTED root's zone (parentZone),
 		// not the nested root's. The mock only allows the parent zone lookup.
@@ -308,6 +309,7 @@ func TestCreatePlatformSubdomain_NestedRoot_UsesGrantedRootZone(t *testing.T) {
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: parentZone.ID}, Domain: "platform.com"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(parentZone.ID), mock.Anything, mock.Anything).Return(nil).Once()
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(parentZone.ID), mock.Anything, pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
+		websiteMock.EXPECT().ActivatePlatformSubdomainWebsite(mock.Anything, website.ID).Return(nil).Once()
 
 		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "blog", false, false)
 		require.NoError(tb, err)
@@ -540,9 +542,11 @@ func TestCreatePlatformSubdomain_Generate_RetriesOnCollision(t *testing.T) {
 		}
 
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		websiteMock := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.com").
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.com"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), mock.Anything, mock.Anything).Return(nil).Once()
+		websiteMock.EXPECT().ActivatePlatformSubdomainWebsite(mock.Anything, website.ID).Return(nil).Once()
 
 		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "", true, false)
 		require.NoError(tb, err)
@@ -564,10 +568,12 @@ func TestCreatePlatformSubdomain_Generate_WritesApexToOperatorZone(t *testing.T)
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		websiteMock := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.com").
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.com"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), mock.Anything, mock.Anything).Return(nil).Once()
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(7), mock.Anything, pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
+		websiteMock.EXPECT().ActivatePlatformSubdomainWebsite(mock.Anything, website.ID).Return(nil).Once()
 
 		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "blog", false, false)
 		require.NoError(tb, err)
@@ -609,11 +615,13 @@ func TestCreatePlatformSubdomain_HNS_HappyPath(t *testing.T) {
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		websiteMock := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "altroot").
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "altroot"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), mock.Anything, mock.Anything).Return(nil).Once()
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(7), mock.Anything, pluginCore.RecordTypeA, "127.0.0.1").Return(nil).Once()
 		mockDNS.EXPECT().EnableDNSSEC(mock.Anything, uint(7)).Return("", nil).Maybe()
+		websiteMock.EXPECT().ActivatePlatformSubdomainWebsite(mock.Anything, website.ID).Return(nil).Once()
 
 		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "blog", false, false)
 		require.NoError(tb, err)
@@ -639,11 +647,13 @@ func TestCreatePlatformSubdomain_HNS_Generate(t *testing.T) {
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		websiteMock := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "altroot").
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "altroot"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), mock.Anything, mock.Anything).Return(nil).Once()
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(7), mock.Anything, pluginCore.RecordTypeA, "127.0.0.1").Return(nil).Once()
 		mockDNS.EXPECT().EnableDNSSEC(mock.Anything, uint(7)).Return("", nil).Maybe()
+		websiteMock.EXPECT().ActivatePlatformSubdomainWebsite(mock.Anything, website.ID).Return(nil).Once()
 
 		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "", true, false)
 		require.NoError(tb, err)
@@ -737,11 +747,13 @@ func TestBindPlatformRootApex_WritesApexIntoOperatorZone(t *testing.T) {
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		websiteMock := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		// Apex match resolves the operator's zone; records are written into it.
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinned.site").
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "pinned.site"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), "pinned.site", mock.Anything).Return(nil).Once()
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(7), "pinned.site", pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
+		websiteMock.EXPECT().ActivatePlatformSubdomainWebsite(mock.Anything, website.ID).Return(nil).Once()
 
 		wd, err := svc.BindPlatformRootApex(context.Background(), website.ID, 1, pd.ID)
 		require.NoError(tb, err)
@@ -795,6 +807,8 @@ func TestBindPlatformRootApex_MultipleRootsAsAdditionalDomains(t *testing.T) {
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 22}, Domain: "pinner.xyz"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(22), "pinner.xyz", mock.Anything).Return(nil).Once()
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(22), "pinner.xyz", pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
+		websiteMock := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		websiteMock.EXPECT().ActivatePlatformSubdomainWebsite(mock.Anything, website.ID).Return(nil).Twice()
 
 		wdSite, err := svc.BindPlatformRootApex(context.Background(), website.ID, 1, pdSite.ID)
 		require.NoError(tb, err)

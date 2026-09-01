@@ -208,6 +208,10 @@ func TestAPI_CreateDomain_PlatformClaim(t *testing.T) {
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinned.site").
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "pinned.site"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), mock.Anything, mock.Anything).Return(nil).Maybe()
+		// Claiming triggers the website activation hook (FSM transition is
+		// exercised by the website-service tests).
+		core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE).
+			EXPECT().ActivatePlatformSubdomainWebsite(mock.Anything, uint(1)).Return(nil).Once()
 
 		rec := helper.makeAuthenticatedRequest(http.MethodPost, "/api/websites/1/domains",
 			token, []byte(`{"platform_domain":"pinned.site","generate":true}`))
