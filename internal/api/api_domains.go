@@ -79,7 +79,7 @@ func (a *API) createDomain(c echo.Context) error {
 			apiErr := NewError(ErrKeyValidationFailed, fmt.Errorf("platform domain %q not found or disabled", req.PlatformDomain))
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
-		wd, err = a.delegatedDomainSvc.CreatePlatformSubdomain(reqCtx, uint(websiteID), userID, pd.ID, req.Label, req.Generate)
+		wd, err = a.delegatedDomainSvc.CreatePlatformSubdomain(reqCtx, uint(websiteID), userID, pd.ID, req.Label, req.Generate, false)
 	} else {
 		// User-owned domain binding.
 		if req.Domain == "" || req.Namespace == "" {

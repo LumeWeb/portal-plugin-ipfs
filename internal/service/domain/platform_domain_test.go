@@ -309,7 +309,7 @@ func TestCreatePlatformSubdomain_NestedRoot_UsesGrantedRootZone(t *testing.T) {
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(parentZone.ID), mock.Anything, mock.Anything).Return(nil).Once()
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(parentZone.ID), mock.Anything, pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
 
-		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "blog", false)
+		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "blog", false, false)
 		require.NoError(tb, err)
 		require.NotNil(tb, wd)
 		assert.Equal(t, "blog.platform.com", wd.Domain)
@@ -374,7 +374,7 @@ func TestCreatePlatformSubdomain_ExplicitLabelAlreadyTaken(t *testing.T) {
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.com"}, nil).Maybe()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), mock.Anything, mock.Anything).Return(nil).Maybe()
 
-		_, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "taken", false)
+		_, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "taken", false, false)
 		require.Error(tb, err)
 		assert.Contains(tb, err.Error(), "already taken")
 	}, TestOptions)
@@ -391,12 +391,12 @@ func TestCreatePlatformSubdomain_LabelWWWRejected(t *testing.T) {
 		pd := createPlatformRoot(tb, ctx, "platform.com", pluginDb.DomainNamespaceICANN, 7, true)
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
-		_, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "www", false)
+		_, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "www", false, false)
 		require.Error(tb, err)
 		assert.Contains(tb, err.Error(), "reserved")
 
 		// Any www.-prefixed label is likewise rejected.
-		_, err = svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "www.blog", false)
+		_, err = svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "www.blog", false, false)
 		require.Error(tb, err)
 		assert.Contains(tb, err.Error(), "reserved")
 	}, TestOptions)
@@ -418,7 +418,7 @@ func TestCreatePlatformSubdomain_Generate_HappyPath(t *testing.T) {
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.com"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), mock.Anything, mock.Anything).Return(nil).Once()
 
-		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "", true)
+		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "", true, false)
 		require.NoError(tb, err)
 		require.NotNil(tb, wd)
 		require.NotNil(tb, wd.PlatformDomainID)
@@ -436,7 +436,7 @@ func TestCreatePlatformSubdomain_RequiresLabelWhenNotGenerate(t *testing.T) {
 		pd := createPlatformRoot(tb, ctx, "platform.com", pluginDb.DomainNamespaceICANN, 7, true)
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
-		_, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "", false)
+		_, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "", false, false)
 		require.Error(tb, err)
 		assert.Contains(tb, err.Error(), "required")
 	}, TestOptions)
@@ -449,7 +449,7 @@ func TestCreatePlatformSubdomain_DisabledRootRejected(t *testing.T) {
 		pd := createPlatformRoot(tb, ctx, "platform.com", pluginDb.DomainNamespaceICANN, 7, false)
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
-		_, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "foo", false)
+		_, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "foo", false, false)
 		require.Error(tb, err)
 		assert.Contains(tb, err.Error(), "disabled")
 	}, TestOptions)
@@ -536,7 +536,7 @@ func TestCreatePlatformSubdomain_Generate_RetriesOnCollision(t *testing.T) {
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.com"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), mock.Anything, mock.Anything).Return(nil).Once()
 
-		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "", true)
+		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "", true, false)
 		require.NoError(tb, err)
 		require.NotNil(tb, wd)
 		assert.Equal(tb, "beta.platform.com", wd.Domain)
@@ -561,7 +561,7 @@ func TestCreatePlatformSubdomain_Generate_WritesApexToOperatorZone(t *testing.T)
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), mock.Anything, mock.Anything).Return(nil).Once()
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(7), mock.Anything, pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
 
-		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "blog", false)
+		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "blog", false, false)
 		require.NoError(tb, err)
 		require.NotNil(tb, wd)
 		assert.Equal(tb, "blog.platform.com", wd.Domain)
@@ -607,7 +607,7 @@ func TestCreatePlatformSubdomain_HNS_HappyPath(t *testing.T) {
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(7), mock.Anything, pluginCore.RecordTypeA, "127.0.0.1").Return(nil).Once()
 		mockDNS.EXPECT().EnableDNSSEC(mock.Anything, uint(7)).Return("", nil).Maybe()
 
-		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "blog", false)
+		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "blog", false, false)
 		require.NoError(tb, err)
 		require.NotNil(tb, wd)
 		assert.Equal(tb, "blog.altroot", wd.Domain)
@@ -637,7 +637,7 @@ func TestCreatePlatformSubdomain_HNS_Generate(t *testing.T) {
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(7), mock.Anything, pluginCore.RecordTypeA, "127.0.0.1").Return(nil).Once()
 		mockDNS.EXPECT().EnableDNSSEC(mock.Anything, uint(7)).Return("", nil).Maybe()
 
-		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "", true)
+		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "", true, false)
 		require.NoError(tb, err)
 		require.NotNil(tb, wd)
 		assert.Contains(tb, wd.Domain, ".altroot")

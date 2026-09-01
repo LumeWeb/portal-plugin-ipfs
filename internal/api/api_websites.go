@@ -314,7 +314,7 @@ func (a *API) claimPlatformSubdomain(ctx httputil.RequestContext, reqCtx context
 	if pd == nil {
 		return a.rollbackAndFail(ctx, reqCtx, user, websiteID, ErrKeyInvalidRequest, fmt.Errorf("no enabled platform domain configured; specify platform_domain or label"))
 	}
-	if _, cerr := a.delegatedDomainSvc.CreatePlatformSubdomain(reqCtx, websiteID, user, pd.ID, req.Label, req.Generate); cerr != nil {
+	if _, cerr := a.delegatedDomainSvc.CreatePlatformSubdomain(reqCtx, websiteID, user, pd.ID, req.Label, req.Generate, true); cerr != nil {
 		if isDuplicateKeyError(cerr) || strings.Contains(cerr.Error(), "already taken") {
 			a.Logger().Warn("Platform subdomain already claimed",
 				zap.String("platform_domain", req.PlatformDomain), zap.String("label", req.Label), zap.Error(cerr))

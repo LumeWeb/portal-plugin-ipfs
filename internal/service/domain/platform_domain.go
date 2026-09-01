@@ -325,7 +325,7 @@ func (s *DelegatedDomainService) BindPlatformRootApex(ctx context.Context, websi
 		return nil, fmt.Errorf("unsupported namespace: %s", pd.Namespace)
 	}
 
-	return s.createPlatformBinding(ctx, websiteID, userID, &pd, provider, pd.Domain)
+	return s.createPlatformBinding(ctx, websiteID, userID, &pd, provider, pd.Domain, false)
 }
 
 // CreatePlatformSubdomain claims a subdomain under a platform root for a
@@ -333,8 +333,11 @@ func (s *DelegatedDomainService) BindPlatformRootApex(ctx context.Context, websi
 // (GitHub-style adjective-noun-number); otherwise label is used verbatim.
 // The resulting binding is created through the normal CreateDomain flow
 // (which resolves the platform-owned zone via resolveManagedZone) and then
-// marked with the PlatformDomain reference.
-func (s *DelegatedDomainService) CreatePlatformSubdomain(ctx context.Context, websiteID, userID, platformDomainID uint, label string, generate bool) (*pluginDb.WebsiteDomain, error) {
+// marked with the PlatformDomain reference. notifyCreated is threaded into
+// CreateDomain so a brand-new website minted on a platform subdomain fires the
+// admin "website created" notification (matching the custom-domain create
+// flow); it is false for domain-adds on an existing website.
+func (s *DelegatedDomainService) CreatePlatformSubdomain(ctx context.Context, websiteID, userID, platformDomainID uint, label string, generate, notifyCreated bool) (*pluginDb.WebsiteDomain, error) {
 	if s.DB() == nil {
 		return nil, fmt.Errorf("database not available")
 	}
@@ -383,7 +386,7 @@ func (s *DelegatedDomainService) CreatePlatformSubdomain(ctx context.Context, we
 			} else if !available {
 				continue
 			}
-			wd, err := s.createPlatformBinding(ctx, websiteID, userID, &pd, provider, fqdn)
+			wd, err := s.createPlatformBinding(ctx, websiteID, userID, &pd, provider, fqdn, notifyCreated)
 			if err == nil {
 				return wd, nil
 			}
@@ -424,7 +427,7 @@ func (s *DelegatedDomainService) CreatePlatformSubdomain(ctx context.Context, we
 	if !available {
 		return nil, fmt.Errorf("platform subdomain %q is already taken", fqdn)
 	}
-	wd, err := s.createPlatformBinding(ctx, websiteID, userID, &pd, provider, fqdn)
+	wd, err := s.createPlatformBinding(ctx, websiteID, userID, &pd, provider, fqdn, notifyCreated)
 	if err != nil {
 		if isDuplicateKeyError(err) {
 			return nil, fmt.Errorf("platform subdomain %q is already taken", fqdn)
@@ -440,8 +443,8 @@ func (s *DelegatedDomainService) CreatePlatformSubdomain(ctx context.Context, we
 // resolves the operator zone from this exact root — never by re-deriving via
 // longest suffix-match across registered roots (which could mis-allocate a
 // claim to a differently-registered nested root).
-func (s *DelegatedDomainService) createPlatformBinding(ctx context.Context, websiteID, userID uint, pd *pluginDb.PlatformDomain, provider DomainProvider, fqdn string) (*pluginDb.WebsiteDomain, error) {
-	wd, err := s.CreateDomain(ctx, string(pd.Namespace), fqdn, websiteID, userID, true, false, nil, &pd.ID)
+func (s *DelegatedDomainService) createPlatformBinding(ctx context.Context, websiteID, userID uint, pd *pluginDb.PlatformDomain, provider DomainProvider, fqdn string, notifyCreated bool) (*pluginDb.WebsiteDomain, error) {
+	wd, err := s.CreateDomain(ctx, string(pd.Namespace), fqdn, websiteID, userID, true, notifyCreated, nil, &pd.ID)
 	if err != nil {
 		return nil, err
 	}
