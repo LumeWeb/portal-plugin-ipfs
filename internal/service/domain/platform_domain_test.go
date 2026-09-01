@@ -413,10 +413,14 @@ func TestCreatePlatformSubdomain_Generate_HappyPath(t *testing.T) {
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		websiteMock := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		// resolveManagedZone (platform-managed) resolves the operator zone.
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.com").
 			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "platform.com"}, nil).Once()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), mock.Anything, mock.Anything).Return(nil).Once()
+		// Claiming the subdomain must trigger the website activation hook (the
+		// FSM transition itself is exercised by the website-service tests).
+		websiteMock.EXPECT().ActivatePlatformSubdomainWebsite(mock.Anything, website.ID).Return(nil).Once()
 
 		wd, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "", true)
 		require.NoError(tb, err)
@@ -427,11 +431,9 @@ func TestCreatePlatformSubdomain_Generate_HappyPath(t *testing.T) {
 		assert.True(tb, wd.DNSHostingEnabled)
 		assert.Contains(tb, wd.Domain, ".platform.com")
 
-		// The website must follow the binding to active immediately — no external
+		// The activation hook must fire as part of the claim — no external
 		// websites_validate call should be required for a platform subdomain.
-		var activated pluginDb.Website
-		require.NoError(tb, db.First(&activated, website.ID).Error)
-		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), activated.Status)
+		websiteMock.AssertExpectations(tb)
 	}, TestOptions)
 }
 

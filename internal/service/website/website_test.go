@@ -1858,6 +1858,37 @@ func TestWebsiteService_DeleteWebsite_PlatformSubdomain_OperatorApexAndZoneIntac
 	}, TestOptions)
 }
 
+// TestWebsiteService_ActivatePlatformSubdomainWebsite_FlipsToActive proves
+// that a website whose primary binding is a just-created platform subdomain is
+// activated without any external websites_validate call. The platform controls
+// both ends of the DNS check, so a pending site is safe to activate as soon as
+// the binding is live.
+func TestWebsiteService_ActivatePlatformSubdomainWebsite_FlipsToActive(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+		// A freshly deployed website awaiting DNS validation.
+		website := createTestIPFSWebsite(testUserID1, "dark-forest-7.pinned.site", util.GenerateTestCID(t, "site data").String())
+		website.Status = string(pluginDb.WebsiteStatusPendingValidation)
+		require.NoError(tb, db.Create(website).Error)
+
+		pdID := uint(7)
+		wd := createTestWebsiteDomain(website.ID, "dark-forest-7.pinned.site")
+		wd.Status = pluginDb.DomainStatusActive
+		wd.DNSHostingEnabled = true
+		wd.PlatformDomainID = &pdID
+		require.NoError(tb, db.Create(wd).Error)
+		require.NoError(tb, db.Model(&pluginDb.Website{ID: website.ID}).UpdateColumn("primary_domain_id", wd.ID).Error)
+
+		require.NoError(tb, websiteService.ActivatePlatformSubdomainWebsite(context.Background(), website.ID))
+
+		var activated pluginDb.Website
+		require.NoError(tb, db.First(&activated, website.ID).Error)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), activated.Status)
+	}, TestOptions)
+}
+
 func TestWebsiteService_CreateWebsite_DNSHostingDisabled_NoDNSOperations(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange

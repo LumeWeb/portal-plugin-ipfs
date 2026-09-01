@@ -459,11 +459,14 @@ func (s *DelegatedDomainService) createPlatformBinding(ctx context.Context, webs
 	// are operator-controlled on both ends of the DNS check, so awaiting DNS
 	// validation is moot; without this the site would sit in pending_validation
 	// forever (the janitor skips pending sites by design and nothing server-side
-	// would ever activate it). Activation must not fail the claim: the binding
-	// is already created, so a failure here is logged and swallowed.
-	if aerr := s.websiteSvc.ActivatePlatformSubdomainWebsite(ctx, websiteID); aerr != nil {
-		s.Logger().Warn("Failed to activate platform subdomain website",
-			zap.Uint("website_id", websiteID), zap.String("domain", fqdn), zap.Error(aerr))
+	// would ever activate it). Activation is best-effort: the binding is already
+	// created, so a failure here (or an unavailable website service) is logged
+	// and never fails the claim.
+	if s.websiteSvc != nil {
+		if aerr := s.websiteSvc.ActivatePlatformSubdomainWebsite(ctx, websiteID); aerr != nil {
+			s.Logger().Warn("Failed to activate platform subdomain website",
+				zap.Uint("website_id", websiteID), zap.String("domain", fqdn), zap.Error(aerr))
+		}
 	}
 
 	return wd, nil
