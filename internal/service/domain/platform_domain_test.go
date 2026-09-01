@@ -426,6 +426,12 @@ func TestCreatePlatformSubdomain_Generate_HappyPath(t *testing.T) {
 		assert.Equal(tb, pluginDb.DomainStatusActive, wd.Status)
 		assert.True(tb, wd.DNSHostingEnabled)
 		assert.Contains(tb, wd.Domain, ".platform.com")
+
+		// The website must follow the binding to active immediately — no external
+		// websites_validate call should be required for a platform subdomain.
+		var activated pluginDb.Website
+		require.NoError(tb, db.First(&activated, website.ID).Error)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), activated.Status)
 	}, TestOptions)
 }
 

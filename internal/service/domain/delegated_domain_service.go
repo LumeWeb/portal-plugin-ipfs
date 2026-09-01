@@ -25,6 +25,11 @@ type DelegatedDomainService struct {
 	*core.BaseComponent
 	registry *Registry
 	dnsSvc   DNSZoneService
+	// websiteSvc is resolved once at startup for cross-service calls (e.g.
+	// activating a website after a platform subdomain is claimed). It is always
+	// present: the portal registers all service instances before running
+	// startup funcs, and WEBSITE_SERVICE is part of this same plugin.
+	websiteSvc pluginCore.WebsiteService
 	// slugGen produces a DNS-safe label for auto-generated platform
 	// subdomains. It defaults to pluginConfig.GenerateDNSSlug and is
 	// injectable so tests can control the slug sequence.
@@ -1106,6 +1111,12 @@ func NewDelegatedDomainServiceFactory() (core.Service, []core.ContextBuilderOpti
 			svc.registry = reg
 
 			svc.dnsSvc = dns
+
+			// Resolve the website service once for cross-service calls (e.g.
+			// activating a site after a platform subdomain claim). All service
+			// instances are registered before startup funcs run, so this is
+			// always present.
+			svc.websiteSvc = core.GetServiceOptional[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 
 			return nil
 		}),
