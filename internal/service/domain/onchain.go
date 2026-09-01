@@ -136,11 +136,29 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 		// deliberate: the DB runs first so a delete failure can never strand
 		// the binding pointing at a destroyed zone (the unrecoverable state). A
 		// leftover/unreferenced zone is harmless (nothing serves it — the name
-		// resolves via the contract) and is logged for ops cleanup. The zone
-		// lock guarantees no other binding is attached between the check above
-		// and here.
+		// resolves via the contract) and is logged for ops cleanup.
+		//
+		// Re-count sharers immediately before the delete as defense-in-depth.
+		// The per-zone lock above serializes against CreateDomain for the
+		// common apex case, but the lock key can diverge from the real zone
+		// apex when a "subdomain" owns its zone (parent has none) and it does
+		// NOT serialize other zone_id writers (e.g. the website-enable path).
+		// Re-checking committed state right before DeleteZone catches any
+		// binding attached by those writers: if any live binding shares the
+		// zone, the delete is skipped and the (now-referenced) zone is left
+		// intact.
 		if zoneID != 0 && s.dnsSvc != nil {
-			if err := s.dnsSvc.DeleteZone(ctx, zoneID); err != nil {
+			var sharers int64
+			if err := s.DB().WithContext(ctx).
+				Model(&pluginDb.WebsiteDomain{}).
+				Where("zone_id = ? AND deleted_at IS NULL", zoneID).
+				Count(&sharers).Error; err != nil {
+				s.Logger().Warn("failed to re-count zone sharers before on-chain conversion zone delete",
+					zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain), zap.Error(err))
+			} else if sharers > 0 {
+				s.Logger().Info("on-chain conversion: zone picked up by another binding; leaving it intact",
+					zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain))
+			} else if err := s.dnsSvc.DeleteZone(ctx, zoneID); err != nil {
 				s.Logger().Warn("on-chain conversion: failed to delete orphaned managed zone (non-fatal)",
 					zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain), zap.Error(err))
 			}
