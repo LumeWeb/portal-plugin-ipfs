@@ -988,3 +988,40 @@ func TestValidatePlatformBinding(t *testing.T) {
 		}, TestOptions)
 	})
 }
+
+// TestCreatePlatformSubdomain_ZoneMismatch_RejectedAndRolledBack proves the
+// createPlatformBinding trust guard actually executes (regression for the
+// no-op validator where PlatformDomainID had not yet been hydrated): when the
+// operator-zone lookup returns a different zone than the one recorded on the
+// platform root, the claim is rejected — not silently promoted to Active — and
+// the just-created binding is rolled back.
+func TestCreatePlatformSubdomain_ZoneMismatch_RejectedAndRolledBack(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "example.com")
+		// Platform root whose recorded operator zone is ID 7.
+		pd := createPlatformRoot(tb, ctx, "platform.com", pluginDb.DomainNamespaceICANN, 7, true)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, mockDNS)
+
+		// The operator-zone lookup returns a DIFFERENT zone (123) than the one
+		// recorded on the platform root (7) — inconsistent state. The claim must
+		// be rejected by the shared trust validator, never promoted Active.
+		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "platform.com").
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 123}, Domain: "platform.com", UserID: 1}, nil).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(123), mock.Anything, mock.Anything).Return(nil).Maybe()
+
+		_, err := svc.CreatePlatformSubdomain(context.Background(), website.ID, 1, pd.ID, "starter", false, false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "trust check failed")
+
+		// The mismatched binding was rolled back.
+		var count int64
+		require.NoError(t, db.Unscoped().Model(&pluginDb.WebsiteDomain{}).
+			Where("domain = ?", "starter.platform.com").Count(&count).Error)
+		assert.Zero(t, count, "a mismatched platform claim must not leave a persisted binding")
+	}, TestOptions)
+}

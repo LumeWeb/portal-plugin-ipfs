@@ -500,11 +500,15 @@ func (s *DelegatedDomainService) createPlatformBinding(ctx context.Context, webs
 	if err != nil {
 		return nil, err
 	}
-	// Re-validate the trust relationship on the persisted binding before
-	// promoting it: the created binding must sit on the exact operator zone
+	// Hydrate the platform reference in memory first (CreateDomain never
+	// persists it) so the shared validator actually checks the trust
+	// relationship: the created binding must sit on the exact operator zone
 	// (zone identity), under the same namespace, as the granted root. A
-	// mismatch aborts the claim without activating it or touching the website.
+	// mismatch aborts the claim, rolls back the just-created binding (the
+	// operator zone is shared and left intact), and never touches the website.
+	wd.PlatformDomainID = &pd.ID
 	if err := s.ValidatePlatformBinding(ctx, wd); err != nil {
+		s.DB().WithContext(ctx).Unscoped().Delete(wd)
 		return nil, fmt.Errorf("platform binding trust check failed: %w", err)
 	}
 	// The platform controls both sides of the DNS check (see VerifyDomain's
@@ -513,7 +517,6 @@ func (s *DelegatedDomainService) createPlatformBinding(ctx context.Context, webs
 	if err := s.DB().WithContext(ctx).Model(wd).Updates(updates).Error; err != nil {
 		return nil, fmt.Errorf("failed to mark platform subdomain: %w", err)
 	}
-	wd.PlatformDomainID = &pd.ID
 	wd.Status = pluginDb.DomainStatusActive
 
 	// The website itself must follow the binding to active. Platform subdomains
