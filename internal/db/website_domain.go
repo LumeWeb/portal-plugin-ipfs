@@ -25,6 +25,13 @@ const (
 	DomainStatusActive            DomainStatus = "active"
 	DomainStatusSelfHosted        DomainStatus = "self_hosted"
 	DomainStatusError             DomainStatus = "error"
+	// DomainStatusOnchainManaged marks a name whose DNS is served on-chain
+	// (e.g. a Handshake HIP-5 name whose NS record points at an external
+	// contract). The portal provisions no zone, DNSSEC, or DANE for it; it owns
+	// ownership verification only (TXT token resolved through the namespace
+	// resolver). Distinct from self_hosted, which means the user runs their own
+	// authoritative servers under their own delegation.
+	DomainStatusOnchainManaged DomainStatus = "onchain_managed"
 )
 
 // WebsiteDomain binds a domain (by namespace) to a website.
@@ -79,7 +86,14 @@ func (WebsiteDomain) TableName() string {
 // shared DNSLink and apex records. HNS zones are DNSSEC-signed at the apex and
 // their records are provisioned by the delegation path even if delegation_data
 // or status is stale during a transition.
+//
+// On-chain managed (HIP-5) bindings are excluded: they own no portal-managed
+// zone, so there is no shared record set to preserve even though the namespace
+// is HNS.
 func (wd *WebsiteDomain) DelegationRecordsOwned() bool {
+	if wd.Status == DomainStatusOnchainManaged {
+		return false
+	}
 	return wd.Namespace == DomainNamespaceHNS || wd.DelegationOwned()
 }
 

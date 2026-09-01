@@ -1470,6 +1470,15 @@ func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Websit
 		s.Logger().Debug("skipping TXT token (platform subdomain, operator-controlled DNS)", zap.String("domain", primaryWD.Domain))
 		return false
 	}
+	// An on-chain managed name (HIP-5) proves ownership with the TXT
+	// verification token, resolved through the namespace-appropriate resolver
+	// (HNS resolver → on-chain contract serves the PINNER-VERIFY TXT), exactly
+	// like ICANN. This must be checked before UsesDelegationForOwnership, which
+	// would otherwise treat the HNS name as delegation-owned and skip the token.
+	if primaryWD.Status == pluginDb.DomainStatusOnchainManaged {
+		s.Logger().Debug("performing TXT token (on-chain managed HIP-5 domain)", zap.String("domain", primaryWD.Domain))
+		return true
+	}
 	if s.delegatedDomainSvc != nil && s.delegatedDomainSvc.UsesDelegationForOwnership(primaryWD.Domain) {
 		s.Logger().Debug("skipping TXT token (ownership proven via delegation verification)", zap.String("domain", primaryWD.Domain))
 		return false

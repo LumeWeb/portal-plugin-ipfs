@@ -170,6 +170,72 @@ func (_c *MockDomainProvider_BuildDelegation_Call) RunAndReturn(run func(ctx con
 	return _c
 }
 
+// Inspect provides a mock function for the type MockDomainProvider
+func (_mock *MockDomainProvider) Inspect(ctx context.Context, domain string) (bool, error) {
+	ret := _mock.Called(ctx, domain)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Inspect")
+	}
+
+	var r0 bool
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (bool, error)); ok {
+		return returnFunc(ctx, domain)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) bool); ok {
+		r0 = returnFunc(ctx, domain)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = returnFunc(ctx, domain)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockDomainProvider_Inspect_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Inspect'
+type MockDomainProvider_Inspect_Call struct {
+	*mock.Call
+}
+
+// Inspect is a helper method to define mock.On call
+//   - ctx context.Context
+//   - domain string
+func (_e *MockDomainProvider_Expecter) Inspect(ctx any, domain any) *MockDomainProvider_Inspect_Call {
+	return &MockDomainProvider_Inspect_Call{Call: _e.mock.On("Inspect", ctx, domain)}
+}
+
+func (_c *MockDomainProvider_Inspect_Call) Run(run func(ctx context.Context, domain string)) *MockDomainProvider_Inspect_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockDomainProvider_Inspect_Call) Return(onchainManaged bool, err error) *MockDomainProvider_Inspect_Call {
+	_c.Call.Return(onchainManaged, err)
+	return _c
+}
+
+func (_c *MockDomainProvider_Inspect_Call) RunAndReturn(run func(ctx context.Context, domain string) (bool, error)) *MockDomainProvider_Inspect_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // LiveNameservers provides a mock function for the type MockDomainProvider
 func (_mock *MockDomainProvider) LiveNameservers(ctx context.Context, domain string) ([]string, error) {
 	ret := _mock.Called(ctx, domain)
@@ -391,50 +457,6 @@ func (_c *MockDomainProvider_Protocol_Call) RunAndReturn(run func() string) *Moc
 	return _c
 }
 
-// UsesManagedZoneTLSA provides a mock function for the type MockDomainProvider
-func (_mock *MockDomainProvider) UsesManagedZoneTLSA() bool {
-	ret := _mock.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for UsesManagedZoneTLSA")
-	}
-
-	var r0 bool
-	if returnFunc, ok := ret.Get(0).(func() bool); ok {
-		r0 = returnFunc()
-	} else {
-		r0 = ret.Get(0).(bool)
-	}
-	return r0
-}
-
-// MockDomainProvider_UsesManagedZoneTLSA_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UsesManagedZoneTLSA'
-type MockDomainProvider_UsesManagedZoneTLSA_Call struct {
-	*mock.Call
-}
-
-// UsesManagedZoneTLSA is a helper method to define mock.On call
-func (_e *MockDomainProvider_Expecter) UsesManagedZoneTLSA() *MockDomainProvider_UsesManagedZoneTLSA_Call {
-	return &MockDomainProvider_UsesManagedZoneTLSA_Call{Call: _e.mock.On("UsesManagedZoneTLSA")}
-}
-
-func (_c *MockDomainProvider_UsesManagedZoneTLSA_Call) Run(run func()) *MockDomainProvider_UsesManagedZoneTLSA_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockDomainProvider_UsesManagedZoneTLSA_Call) Return(b bool) *MockDomainProvider_UsesManagedZoneTLSA_Call {
-	_c.Call.Return(b)
-	return _c
-}
-
-func (_c *MockDomainProvider_UsesManagedZoneTLSA_Call) RunAndReturn(run func() bool) *MockDomainProvider_UsesManagedZoneTLSA_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // RequiresDNSSEC provides a mock function for the type MockDomainProvider
 func (_mock *MockDomainProvider) RequiresDNSSEC() bool {
 	ret := _mock.Called()
@@ -475,6 +497,50 @@ func (_c *MockDomainProvider_RequiresDNSSEC_Call) Return(b bool) *MockDomainProv
 }
 
 func (_c *MockDomainProvider_RequiresDNSSEC_Call) RunAndReturn(run func() bool) *MockDomainProvider_RequiresDNSSEC_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// UsesManagedZoneTLSA provides a mock function for the type MockDomainProvider
+func (_mock *MockDomainProvider) UsesManagedZoneTLSA() bool {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for UsesManagedZoneTLSA")
+	}
+
+	var r0 bool
+	if returnFunc, ok := ret.Get(0).(func() bool); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	return r0
+}
+
+// MockDomainProvider_UsesManagedZoneTLSA_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UsesManagedZoneTLSA'
+type MockDomainProvider_UsesManagedZoneTLSA_Call struct {
+	*mock.Call
+}
+
+// UsesManagedZoneTLSA is a helper method to define mock.On call
+func (_e *MockDomainProvider_Expecter) UsesManagedZoneTLSA() *MockDomainProvider_UsesManagedZoneTLSA_Call {
+	return &MockDomainProvider_UsesManagedZoneTLSA_Call{Call: _e.mock.On("UsesManagedZoneTLSA")}
+}
+
+func (_c *MockDomainProvider_UsesManagedZoneTLSA_Call) Run(run func()) *MockDomainProvider_UsesManagedZoneTLSA_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockDomainProvider_UsesManagedZoneTLSA_Call) Return(b bool) *MockDomainProvider_UsesManagedZoneTLSA_Call {
+	_c.Call.Return(b)
+	return _c
+}
+
+func (_c *MockDomainProvider_UsesManagedZoneTLSA_Call) RunAndReturn(run func() bool) *MockDomainProvider_UsesManagedZoneTLSA_Call {
 	_c.Call.Return(run)
 	return _c
 }

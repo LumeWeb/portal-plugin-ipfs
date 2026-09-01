@@ -263,6 +263,20 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
+	// Detect whether the name is managed on-chain (e.g. a Handshake HIP-5 name
+	// whose NS record points at an external contract). Best-effort: providers
+	// without an on-chain concept (ICANN) return false immediately; HNS defaults
+	// to native when the resolver cannot answer. A HIP-5 name serves its own
+	// DNS from the contract, so the portal cannot host it — binding with
+	// dnsHostingEnabled=true is rejected before any zone-dependent work.
+	onchainManaged, err := provider.Inspect(ctx, domain)
+	if err != nil {
+		return nil, fmt.Errorf("domain inspection failed: %w", err)
+	}
+	if onchainManaged && dnsHostingEnabled {
+		return nil, fmt.Errorf("domain %q is managed on-chain (HIP-5) and cannot use portal DNS hosting; bind with dns_hosting_enabled=false", domain)
+	}
+
 	var website pluginDb.Website
 	if err := s.DB().WithContext(ctx).
 		Where("user_id = ? AND id = ?", userID, websiteID).
@@ -300,6 +314,34 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 
 	if err := s.DB().WithContext(ctx).Create(wd).Error; err != nil {
 		return nil, fmt.Errorf("persist failed: %w", err)
+	}
+
+	// An on-chain managed name (HIP-5) serves its DNS from an external
+	// contract: the portal owns only ownership verification (a TXT token
+	// resolved through the HNS-aware resolver, which bridges to the contract)
+	// — no zone, no DNSLink/apex, no DNSSEC, no DANE. dnsHostingEnabled is
+	// false here (enforced above), and the binding is recorded with a distinct
+	// status so downstream code routes it to TXT-token verification instead of
+	// the delegation/DS flow used by native HNS.
+	if onchainManaged {
+		wd.Status = pluginDb.DomainStatusOnchainManaged
+		if err := s.DB().WithContext(ctx).Model(wd).Update("status", pluginDb.DomainStatusOnchainManaged).Error; err != nil {
+			return nil, fmt.Errorf("failed to finalize domain record: %w", err)
+		}
+		// This binding is the new website's first (primary) domain. Record it
+		// so the website service resolves the apex domain via PrimaryDomainID
+		// rather than the status=active fallback.
+		if website.PrimaryDomainID == nil {
+			primaryID := wd.ID
+			if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", primaryID).Error; err != nil {
+				return nil, fmt.Errorf("failed to set primary domain: %w", err)
+			}
+			website.PrimaryDomainID = &primaryID
+		}
+		if notifyCreated {
+			s.notifyAdminWebsiteCreated(ctx, website.ID)
+		}
+		return wd, nil
 	}
 
 	// A self-hosted DNS binding owns no PowerDNS zone: the user runs the
@@ -1081,6 +1123,7 @@ func NewDelegatedDomainServiceFactory() (core.Service, []core.ContextBuilderOpti
 			var nsList []string
 			var hnsNSList []string
 			hnsResolver := ""
+			var hip5BlockedTLDs []string
 			if dnsCfg != nil {
 				nsList = dnsCfg.Nameservers
 				hnsNSList = dnsCfg.HNSNameservers
@@ -1090,9 +1133,15 @@ func NewDelegatedDomainServiceFactory() (core.Service, []core.ContextBuilderOpti
 					hnsNSList = nsList
 				}
 				hnsResolver = dnsCfg.HNSResolver
+				hip5BlockedTLDs = dnsCfg.HIP5BlockedTLDs
 			}
 			reg.Register(NewICANNProvider(nsList))
 			hnsProv := NewHNSProvider(hnsResolver, hnsNSList, TLSASource{})
+			// Override the default HIP-5 blocked-TLD set when configured; an
+			// empty slice leaves only underscore-prefixed protocol tags counted.
+			if dnsCfg != nil && len(hip5BlockedTLDs) > 0 {
+				hnsProv.SetHIP5BlockedTLDs(hip5BlockedTLDs)
+			}
 			dns := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
 			if dns != nil {
 				hnsProv.SetDNSService(dns)

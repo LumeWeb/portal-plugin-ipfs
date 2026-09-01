@@ -718,3 +718,70 @@ func TestDelegatedDomainService_UpdateTLSA_PublishesToManagedZone(t *testing.T) 
 		}, keyTestOptions)
 	})
 }
+
+// testOptionsWithHNSResolver is TestOptions with the DNS service config's
+// HNSResolver pointed at the given address, so the factory's HNSProvider
+// performs HIP-5 inspection against a live test server. It intentionally does
+// NOT combine with the package-level TestOptions: building a second mock
+// plugin would re-register the ipfs plugin and panic.
+func testOptionsWithHNSResolver(addr string) coreTesting.TestContextBuilderOption {
+	// Combine with the package-level TestOptions (which registers the ipfs
+	// plugin once) and push the resolver into the config manager via the
+	// core-testing service-config option — GetServiceConfig reads the config
+	// manager, not the mock service's GetConfig().
+	return coreTesting.CombineOptions(
+		TestOptions,
+		coreTesting.WithServiceConfig(internal.ProtocolName, pluginCore.DNS_SERVICE, &pluginConfig.DnsConfig{HNSResolver: addr}),
+	)
+}
+
+func TestDelegatedDomainService_CreateDomain_Hip5OnchainManaged(t *testing.T) {
+	// A Handshake name whose NS record is a HIP-5 TX record must bind as on-chain
+	// managed: no zone, no DANE, TXT-verification status, and binding with portal
+	// DNS hosting (dnsHostingEnabled=true) must be rejected.
+	const domain = "myname"
+
+	addr, _ := startCustomPortDNSServer(t, domain+".",
+		[]string{"0x36fc69f0983e536d1787cc83f481581f22cca2a1._eth."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, domain)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		// Point the registered HNS provider at the live test resolver. The
+		// factory only reads DnsConfig.HNSResolver at startup; assigning the
+		// provider's resolver here keeps the test deterministic.
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		require.NotNil(tb, hnsProv)
+		hnsProv.resolverAddr = addr
+
+		// Portal DNS hosting must be rejected for an on-chain managed name; no
+		// row is persisted by the failed attempt.
+		_, err := svc.CreateDomain(context.Background(), "hns", domain, website.ID, 1, true, false, nil, nil)
+		require.Error(tb, err)
+		assert.Contains(tb, err.Error(), "HIP-5")
+
+		// Self-hosted (dnsHostingEnabled=false) binds as onchain_managed with no
+		// zone, no delegation data, and fires the created notification (the
+		// binding is the new website's primary).
+		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
+
+		wd, err := svc.CreateDomain(context.Background(), "hns", domain, website.ID, 1, false, true, nil, nil)
+		require.NoError(tb, err)
+		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, wd.Status)
+		assert.Equal(tb, uint(0), wd.ZoneID)
+		assert.False(tb, wd.DNSHostingEnabled)
+		assert.Nil(tb, wd.DelegationData)
+
+		// The binding is recorded as the website's primary so the website
+		// service resolves the apex domain via PrimaryDomainID.
+		var reloaded pluginDb.Website
+		require.NoError(tb, db.First(&reloaded, website.ID).Error)
+		require.NotNil(tb, reloaded.PrimaryDomainID)
+		assert.Equal(tb, wd.ID, *reloaded.PrimaryDomainID)
+	}, testOptionsWithHNSResolver(addr))
+}

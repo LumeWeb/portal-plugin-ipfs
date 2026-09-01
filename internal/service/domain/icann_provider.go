@@ -53,6 +53,13 @@ func (p *ICANNProvider) Validate(domain string) error {
 	return nil
 }
 
+// Inspect reports that ICANN names are never on-chain managed: the
+// registry/registrar model lives out-of-band, so the portal always provisions
+// a managed zone for them as normal.
+func (p *ICANNProvider) Inspect(ctx context.Context, domain string) (bool, error) {
+	return false, nil
+}
+
 func (p *ICANNProvider) BuildDelegation(ctx context.Context, zoneID uint,
 	domain string, website *pluginDb.Website, config json.RawMessage) (any, error) {
 
