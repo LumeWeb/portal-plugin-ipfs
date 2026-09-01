@@ -274,9 +274,19 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	// onchain_managed with dns_hosting_enabled=false — the only coherent state —
 	// and the response (status onchain_managed) lets the UI explain that DNS is
 	// served on-chain rather than failing the bind.
-	onchainManaged, err := provider.Inspect(ctx, domain)
-	if err != nil {
-		return nil, fmt.Errorf("domain inspection failed: %w", err)
+	//
+	// Platform subdomain claims (platformRootID != nil) never inspect: the
+	// platform root is operator-owned and its subdomains resolve via the
+	// operator's own portal-managed zone, so they can never be HIP-5 — and
+	// skipping the resolver query keeps the operator hot path (every platform
+	// claim) free of a per-bind DNS round-trip.
+	var onchainManaged bool
+	if platformRootID == nil {
+		var inspectErr error
+		onchainManaged, inspectErr = provider.Inspect(ctx, domain)
+		if inspectErr != nil {
+			return nil, fmt.Errorf("domain inspection failed: %w", inspectErr)
+		}
 	}
 
 	var website pluginDb.Website
@@ -335,6 +345,13 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 			"status":              pluginDb.DomainStatusOnchainManaged,
 			"dns_hosting_enabled": false,
 		}).Error; err != nil {
+			// The row was already inserted with dns_hosting_enabled from the
+			// request (true by default). A half-finalized onchain binding is the
+			// worst failure shape: it would look like an "enable-orphan" to
+			// SetDomainDNSEnabled and a retry could provision a PowerDNS zone
+			// for a genuinely HIP-5 name. Remove the row so the bind is cleanly
+			// rolled back and the name can be retried.
+			s.DB().WithContext(ctx).Unscoped().Delete(wd)
 			return nil, fmt.Errorf("failed to finalize domain record: %w", err)
 		}
 		// This binding is the new website's first (primary) domain. Record it
@@ -343,6 +360,7 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		if website.PrimaryDomainID == nil {
 			primaryID := wd.ID
 			if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", primaryID).Error; err != nil {
+				s.DB().WithContext(ctx).Unscoped().Delete(wd)
 				return nil, fmt.Errorf("failed to set primary domain: %w", err)
 			}
 			website.PrimaryDomainID = &primaryID
@@ -683,6 +701,15 @@ func (s *DelegatedDomainService) selfHealZone(ctx context.Context, provider Doma
 	return expectedDS, nil
 }
 
+// Sentinel errors returned by ConvertToOnChain for user-correctable state
+// conflicts, so the API can map them to 4xx while genuine infrastructure
+// failures (DB, DNS service) surface as 5xx. Match with errors.Is.
+var (
+	ErrDomainAlreadyOnChain = errors.New("domain is already on-chain managed")
+	ErrDomainNotOnChain     = errors.New("domain is not yet on-chain managed")
+	ErrDomainZoneShared     = errors.New("domain's DNS zone is shared by other bindings")
+)
+
 // ConvertToOnChain converts a bound domain into an on-chain managed (HIP-5)
 // binding — the explicit, one-way path for the HNS-DNS → on-chain-DNS
 // transition, used when the name's NS record now points at an external
@@ -718,7 +745,7 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 	}
 
 	if wd.Status == pluginDb.DomainStatusOnchainManaged {
-		return nil, fmt.Errorf("domain %q is already on-chain managed (HIP-5)", wd.Domain)
+		return nil, fmt.Errorf("%w: %q", ErrDomainAlreadyOnChain, wd.Domain)
 	}
 
 	provider := s.registry.Get(string(wd.Namespace))
@@ -731,27 +758,23 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 		return nil, fmt.Errorf("domain inspection failed: %w", err)
 	}
 	if !onchain {
-		return nil, fmt.Errorf("domain %q is not yet on-chain managed (HIP-5); its NS record does not point at an external contract", wd.Domain)
+		return nil, fmt.Errorf("%w: %q; its NS record does not point at an external contract", ErrDomainNotOnChain, wd.Domain)
 	}
 
-	// Only delete the binding's PowerDNS zone when it is the sole owner. A zone
-	// shared with other live bindings (their parent/apex zone) must be kept —
-	// deleting it would destroy their records and DNSSEC.
-	if wd.ZoneID != 0 {
+	// Only the binding's sole-owner PowerDNS zone may be deleted. A zone shared
+	// with other live bindings (their parent/apex zone) must be kept — deleting
+	// it would destroy their records and DNSSEC.
+	zoneID := wd.ZoneID
+	if zoneID != 0 {
 		var sharers int64
 		if err := s.DB().WithContext(ctx).
 			Model(&pluginDb.WebsiteDomain{}).
-			Where("zone_id = ? AND id != ? AND deleted_at IS NULL", wd.ZoneID, wd.ID).
+			Where("zone_id = ? AND id != ? AND deleted_at IS NULL", zoneID, wd.ID).
 			Count(&sharers).Error; err != nil {
-			return nil, fmt.Errorf("failed to count bindings sharing zone %d: %w", wd.ZoneID, err)
+			return nil, fmt.Errorf("failed to count bindings sharing zone %d: %w", zoneID, err)
 		}
 		if sharers > 0 {
-			return nil, fmt.Errorf("domain %q cannot be converted (HIP-5): %d other binding(s) share its DNS zone; remove or convert them first", wd.Domain, sharers)
-		}
-		if s.dnsSvc != nil {
-			if err := s.dnsSvc.DeleteZone(ctx, wd.ZoneID); err != nil {
-				return nil, fmt.Errorf("failed to delete managed zone %d: %w", wd.ZoneID, err)
-			}
+			return nil, fmt.Errorf("%w: %q (%d other binding(s)); remove or convert them first", ErrDomainZoneShared, wd.Domain, sharers)
 		}
 	}
 
@@ -777,12 +800,42 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 	wd.DNSHostingEnabled = false
 	wd.Status = pluginDb.DomainStatusOnchainManaged
 
+	// Delete the now-unreferenced PowerDNS zone LAST, best-effort. Order is
+	// deliberate: the DB runs first so a delete failure can never strand the
+	// binding pointing at a destroyed zone (the unrecoverable state). If a
+	// concurrent bind landed in this zone between the check above and here, the
+	// zone is re-counted and left alone so another binding's records/DNSSEC are
+	// not destroyed. A leftover/unreferenced zone is harmless (nothing serves
+	// it — the name resolves via the contract) and is logged for ops cleanup.
+	if zoneID != 0 && s.dnsSvc != nil {
+		var sharers int64
+		if err := s.DB().WithContext(ctx).
+			Model(&pluginDb.WebsiteDomain{}).
+			Where("zone_id = ? AND id != ? AND deleted_at IS NULL", zoneID, wd.ID).
+			Count(&sharers).Error; err != nil {
+			s.Logger().Warn("failed to re-count zone sharers before on-chain conversion zone delete",
+				zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain), zap.Error(err))
+		} else if sharers > 0 {
+			s.Logger().Info("on-chain conversion: zone now shared by other bindings; leaving it intact",
+				zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain))
+		} else if err := s.dnsSvc.DeleteZone(ctx, zoneID); err != nil {
+			// Non-fatal: the binding is already cleanly on-chain; the orphaned
+			// zone is unreachable garbage an operator can clear.
+			s.Logger().Warn("on-chain conversion: failed to delete orphaned managed zone (non-fatal)",
+				zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain), zap.Error(err))
+		}
+	}
+
 	// DNS moved on-chain: the site must prove ownership against the contract
 	// with the TXT token, so re-arm validation. A blocked website stays blocked
 	// (only an admin can lift an admin block); a pending one needs no change.
+	// A website-load failure is surfaced rather than silently skipped so the
+	// caller knows validation was not re-armed.
 	var website pluginDb.Website
-	if err := s.DB().WithContext(ctx).First(&website, wd.WebsiteID).Error; err == nil &&
-		website.Status != string(pluginDb.WebsiteStatusBlocked) &&
+	if err := s.DB().WithContext(ctx).First(&website, wd.WebsiteID).Error; err != nil {
+		return nil, fmt.Errorf("failed to load website %d for on-chain conversion: %w", wd.WebsiteID, err)
+	}
+	if website.Status != string(pluginDb.WebsiteStatusBlocked) &&
 		website.Status != string(pluginDb.WebsiteStatusPendingValidation) {
 		if err := s.DB().WithContext(ctx).Model(&website).Update("status", pluginDb.WebsiteStatusPendingValidation).Error; err != nil {
 			return nil, fmt.Errorf("failed to reset website to pending_validation: %w", err)

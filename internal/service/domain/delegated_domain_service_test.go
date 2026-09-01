@@ -854,7 +854,18 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 		hnsProv.resolverAddr = hip5Addr
 
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
-		mockDNS.EXPECT().DeleteZone(mock.Anything, zoneID).Return(nil).Once()
+		mockDNS.EXPECT().DeleteZone(mock.Anything, zoneID).
+			// The conversion persists the on-chain state BEFORE deleting the
+			// zone: at delete time the DB row must already be onchain with the
+			// zone cleared, so a delete failure can never strand a binding
+			// pointing at a destroyed zone.
+			Run(func(_ context.Context, z uint) {
+				var now pluginDb.WebsiteDomain
+				require.NoError(tb, ctx.DB().First(&now, wd.ID).Error)
+				assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, now.Status)
+				assert.Equal(tb, uint(0), now.ZoneID)
+			}).
+			Return(nil).Once()
 
 		converted, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, wd.ID)
 		require.NoError(tb, err)
@@ -970,7 +981,8 @@ func TestDelegatedDomainService_ConvertToOnChain_SharedZoneRefused(t *testing.T)
 
 		_, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, apex.ID)
 		require.Error(tb, err)
-		assert.Contains(tb, err.Error(), "share its DNS zone")
+		assert.ErrorIs(tb, err, ErrDomainZoneShared)
+		assert.Contains(tb, err.Error(), "shared by other bindings")
 		mockDNS.AssertNotCalled(tb, "DeleteZone", mock.Anything, mock.Anything)
 	}, TestOptions)
 }

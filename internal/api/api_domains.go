@@ -12,6 +12,7 @@ import (
 	mcontext "go.lumeweb.com/portal-middleware/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/queryutil"
 	queryutilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
@@ -640,10 +641,20 @@ func (a *API) convertDomainToOnChain(c echo.Context) error {
 			apiErr := NewError(ErrKeyDomainNotFound, errors.New("domain not found"))
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
-		// Refusals (already on-chain, not yet on-chain, shared zone) are
-		// user-correctable state conflicts, surfaced as 422 — never a 500.
-		apiErr := NewError(ErrKeyInvalidRequest, err)
-		return ctx.Error(apiErr, apiErr.HttpStatus())
+		// User-correctable state conflicts (already on-chain, not yet on-chain,
+		// shared zone) are 422. Anything else is an infrastructure failure
+		// (DB/DNS service) and must be a 500, not a validation error.
+		switch {
+		case errors.Is(err, domain.ErrDomainAlreadyOnChain),
+			errors.Is(err, domain.ErrDomainNotOnChain),
+			errors.Is(err, domain.ErrDomainZoneShared):
+			apiErr := NewError(ErrKeyInvalidRequest, err)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		default:
+			a.Logger().Error("Failed to convert domain on-chain", zap.Error(err))
+			apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("failed to convert domain on-chain"))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
 	}
 
 	resp := dto.DomainResponse{}

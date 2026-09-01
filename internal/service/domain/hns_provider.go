@@ -228,11 +228,18 @@ func (p *HNSProvider) Validate(domain string) error {
 // false so the name binds as native HNS and can be converted to on-chain
 // managed later by an explicit admin action — never silently guessed by the
 // janitor.
+//
+// The query runs under a short deadline of its own: Inspect is on the bind
+// hot path (every user HNS bind), so a slow/unreachable resolver must not
+// stall a bind for the DNS client's 5s timeout. A deadline expiration is
+// treated like any resolver failure: bind as native, to be reconciled later.
 func (p *HNSProvider) Inspect(ctx context.Context, domain string) (bool, error) {
 	if p.resolverAddr == "" {
 		return false, nil
 	}
-	nss, err := queryNS(ctx, p.resolverAddr, dnsname.EnsureFQDN(domain))
+	inspectCtx, cancel := context.WithTimeout(ctx, hip5InspectTimeout)
+	defer cancel()
+	nss, err := queryNS(inspectCtx, p.resolverAddr, dnsname.EnsureFQDN(domain))
 	if err != nil {
 		return false, nil
 	}
@@ -243,6 +250,11 @@ func (p *HNSProvider) Inspect(ctx context.Context, domain string) (bool, error) 
 	}
 	return false, nil
 }
+
+// hip5InspectTimeout bounds how long the HIP5 inspection DNS query may run.
+// It is deliberately shorter than the DNS client timeout (5s) so the bind
+// path never blocks on a slow resolver.
+const hip5InspectTimeout = 1500 * time.Millisecond
 
 // isHIP5TX detects a HIP-5 TX record by its final label, per HIP-0005 the
 // protocol tag: it is either structurally invalid on the HNS root
