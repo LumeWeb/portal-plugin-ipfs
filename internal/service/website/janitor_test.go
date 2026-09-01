@@ -18,6 +18,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	"gorm.io/gorm"
 )
 
 var JanitorTestOptions = coreTesting.CombineOptions(
@@ -276,4 +277,47 @@ func TestWebsiteJanitorJob_DisplayName(t *testing.T) {
 func TestWebsiteJanitorJob_Origin(t *testing.T) {
 	job := NewWebsiteJanitorJob()
 	assert.Equal(t, core.JobOriginPlugin, job.Origin())
+}
+
+// recordingDelegatedDomainSvc records the statuses the janitor polls for
+// pending delegations, so tests can assert exactly which lifecycle states are
+// ever inspected (and that on-chain managed bindings are not).
+type recordingDelegatedDomainSvc struct {
+	statuses []pluginDb.DomainStatus
+}
+
+func (r *recordingDelegatedDomainSvc) UsesDelegationForOwnership(string) bool { return false }
+func (r *recordingDelegatedDomainSvc) VerifyDomain(context.Context, *pluginDb.WebsiteDomain) (bool, error) {
+	return true, nil
+}
+func (r *recordingDelegatedDomainSvc) GetNamespaceForDomain(string) (string, bool) { return "", false }
+func (r *recordingDelegatedDomainSvc) GetWebsiteDomainByName(context.Context, string) (*pluginDb.WebsiteDomain, error) {
+	return nil, gorm.ErrRecordNotFound
+}
+func (r *recordingDelegatedDomainSvc) GetPendingWebsiteDomainsPaginated(_ context.Context, status pluginDb.DomainStatus, _, _ int) ([]pluginDb.WebsiteDomain, error) {
+	r.statuses = append(r.statuses, status)
+	return nil, nil
+}
+
+func TestWebsiteJanitorJob_verifyPendingDelegations_IgnoresOnchainManaged(t *testing.T) {
+	// The janitor's delegation verification must only ever poll the delegation
+	// lifecycle statuses (records_generated, waiting_delegation). On-chain
+	// managed (HIP-5) bindings prove ownership via the TXT token flow and must
+	// never be picked up for NS/DS delegation verification.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		job := NewWebsiteJanitorJob()
+		janitorJob := job.(*WebsiteJanitorJob)
+		janitorJob.db = ctx.DB()
+		janitorJob.logger = ctx.Logger()
+		fake := &recordingDelegatedDomainSvc{}
+		janitorJob.delegatedDomainSvc = fake
+
+		require.NoError(tb, janitorJob.verifyPendingDelegations(context.Background()))
+
+		assert.ElementsMatch(tb, []pluginDb.DomainStatus{
+			pluginDb.DomainStatusWaitingDelegation,
+			pluginDb.DomainStatusRecordsGenerated,
+		}, fake.statuses)
+		assert.NotContains(tb, fake.statuses, pluginDb.DomainStatusOnchainManaged)
+	}, JanitorTestOptions)
 }

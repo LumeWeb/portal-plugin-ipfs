@@ -683,6 +683,115 @@ func (s *DelegatedDomainService) selfHealZone(ctx context.Context, provider Doma
 	return expectedDS, nil
 }
 
+// ConvertToOnChain converts a bound domain into an on-chain managed (HIP-5)
+// binding — the explicit, one-way path for the HNS-DNS → on-chain-DNS
+// transition, used when the name's NS record now points at an external
+// contract (a HIP-5 TX record the owner set on-chain).
+//
+// The portal stops owning the PowerDNS-served DNS for the name: the managed
+// zone (and the DNSSEC/DS carried by it) is deleted and the binding is
+// re-marked onchain_managed with dns_hosting_enabled=false, so ownership is
+// proven with the TXT token through the resolver instead of NS/DS delegation.
+// DANE/SSL state (ProtocolData: key, cert, TLSA, owner) is deliberately KEPT —
+// DANE still applies on-chain; only the PowerDNS-published records and DNSSEC
+// (not a concept on-chain) are dropped. The owning website is reset to
+// pending_validation so the TXT-token verification flow re-runs.
+//
+// Safety (never tear down on the caller's word alone):
+//   - Refused until Inspect confirms the name genuinely serves a HIP-5 record.
+//   - The PowerDNS zone is deleted only when no other live binding shares it:
+//     a shared zone is the parent of other native bindings, and deleting it
+//     would destroy their records/DNSSEC. Conversion is refused for shared
+//     zones with a clear instruction to detach those bindings first — a HIP-5
+//     apex resolves every subdomain via the contract anyway.
+//   - Refused for a binding already onchain_managed.
+func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID, userID, domainID uint) (*pluginDb.WebsiteDomain, error) {
+	if s.DB() == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+
+	var wd pluginDb.WebsiteDomain
+	if err := s.DB().WithContext(ctx).
+		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+		First(&wd).Error; err != nil {
+		return nil, err // includes gorm.ErrRecordNotFound
+	}
+
+	if wd.Status == pluginDb.DomainStatusOnchainManaged {
+		return nil, fmt.Errorf("domain %q is already on-chain managed (HIP-5)", wd.Domain)
+	}
+
+	provider := s.registry.Get(string(wd.Namespace))
+	if provider == nil {
+		return nil, fmt.Errorf("unsupported namespace: %s", wd.Namespace)
+	}
+
+	onchain, err := provider.Inspect(ctx, wd.Domain)
+	if err != nil {
+		return nil, fmt.Errorf("domain inspection failed: %w", err)
+	}
+	if !onchain {
+		return nil, fmt.Errorf("domain %q is not yet on-chain managed (HIP-5); its NS record does not point at an external contract", wd.Domain)
+	}
+
+	// Only delete the binding's PowerDNS zone when it is the sole owner. A zone
+	// shared with other live bindings (their parent/apex zone) must be kept —
+	// deleting it would destroy their records and DNSSEC.
+	if wd.ZoneID != 0 {
+		var sharers int64
+		if err := s.DB().WithContext(ctx).
+			Model(&pluginDb.WebsiteDomain{}).
+			Where("zone_id = ? AND id != ? AND deleted_at IS NULL", wd.ZoneID, wd.ID).
+			Count(&sharers).Error; err != nil {
+			return nil, fmt.Errorf("failed to count bindings sharing zone %d: %w", wd.ZoneID, err)
+		}
+		if sharers > 0 {
+			return nil, fmt.Errorf("domain %q cannot be converted (HIP-5): %d other binding(s) share its DNS zone; remove or convert them first", wd.Domain, sharers)
+		}
+		if s.dnsSvc != nil {
+			if err := s.dnsSvc.DeleteZone(ctx, wd.ZoneID); err != nil {
+				return nil, fmt.Errorf("failed to delete managed zone %d: %w", wd.ZoneID, err)
+			}
+		}
+	}
+
+	// Drop the PowerDNS-backed delegation state. ProtocolData (DANE key, cert,
+	// TLSA, owner) and per-domain SSL state are intentionally preserved: DANE/
+	// SSL still apply to the name — the records are simply served by the
+	// external contract now — and DNSSEC is not a concept on-chain.
+	updates := map[string]any{
+		"zone_id":             0,
+		"zone_name":           "",
+		"gateway_host":        "",
+		"delegation_data":     nil,
+		"dns_hosting_enabled": false,
+		"status":              pluginDb.DomainStatusOnchainManaged,
+	}
+	if err := s.DB().WithContext(ctx).Model(&wd).Updates(updates).Error; err != nil {
+		return nil, fmt.Errorf("failed to persist on-chain managed state: %w", err)
+	}
+	wd.ZoneID = 0
+	wd.ZoneName = ""
+	wd.GatewayHost = ""
+	wd.DelegationData = nil
+	wd.DNSHostingEnabled = false
+	wd.Status = pluginDb.DomainStatusOnchainManaged
+
+	// DNS moved on-chain: the site must prove ownership against the contract
+	// with the TXT token, so re-arm validation. A blocked website stays blocked
+	// (only an admin can lift an admin block); a pending one needs no change.
+	var website pluginDb.Website
+	if err := s.DB().WithContext(ctx).First(&website, wd.WebsiteID).Error; err == nil &&
+		website.Status != string(pluginDb.WebsiteStatusBlocked) &&
+		website.Status != string(pluginDb.WebsiteStatusPendingValidation) {
+		if err := s.DB().WithContext(ctx).Model(&website).Update("status", pluginDb.WebsiteStatusPendingValidation).Error; err != nil {
+			return nil, fmt.Errorf("failed to reset website to pending_validation: %w", err)
+		}
+	}
+
+	return &wd, nil
+}
+
 // DeleteDomain deletes a WebsiteDomain row scoped by id, website_id, and user_id.
 // Returns gorm.ErrRecordNotFound if no row was deleted.
 func (s *DelegatedDomainService) DeleteDomain(ctx context.Context, domainID, websiteID, userID uint) error {

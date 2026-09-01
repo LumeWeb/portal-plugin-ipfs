@@ -603,6 +603,57 @@ func (a *API) republishDomainDANE(c echo.Context) error {
 	return httputil.EncodeResponse(ctx, &wd, &resp)
 }
 
+// convertDomainToOnChain converts a bound domain to on-chain managed (HIP-5),
+// the explicit one-way transition for an HNS name whose NS now points at an
+// external contract. It is destructive to the portal's PowerDNS state for that
+// binding (the managed zone is deleted) but deliberately keeps the domain's
+// DANE/SSL state (ProtocolData), which still applies on-chain.
+func (a *API) convertDomainToOnChain(c echo.Context) error {
+	ctx := httputil.Context(c)
+	reqCtx := ctx.Context.Request().Context()
+
+	userID, err := mcontext.GetUserID(c)
+	if err != nil {
+		return ctx.Error(err, http.StatusUnauthorized)
+	}
+
+	websiteID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid website ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	domainID, err := strconv.ParseUint(c.Param("domain_id"), 10, 64)
+	if err != nil {
+		apiErr := NewError(ErrKeyInvalidPathID, errors.New("invalid domain ID"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	if a.delegatedDomainSvc == nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, fmt.Errorf("domain service not available"))
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	wd, err := a.delegatedDomainSvc.ConvertToOnChain(reqCtx, uint(websiteID), userID, uint(domainID))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			apiErr := NewError(ErrKeyDomainNotFound, errors.New("domain not found"))
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
+		// Refusals (already on-chain, not yet on-chain, shared zone) are
+		// user-correctable state conflicts, surfaced as 422 — never a 500.
+		apiErr := NewError(ErrKeyInvalidRequest, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	resp := dto.DomainResponse{}
+	if err := resp.FromModel(wd); err != nil {
+		apiErr := NewError(ErrKeyFileProcessingFailed, err)
+		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+	return ctx.JSON(http.StatusOK, &resp)
+}
+
 // checkPlatformDomainAvailability returns, for the given label, whether it is
 // claimable on each enabled platform root. Auth-only (per-user rate limiting is
 // enforced by the auth middleware); it only ever probes platform roots, never

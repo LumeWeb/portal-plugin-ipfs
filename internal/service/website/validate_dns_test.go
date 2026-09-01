@@ -918,3 +918,96 @@ func TestValidateDNS_DelegatedAttached_VerifyError_Fails(t *testing.T) {
 		assert.Contains(tb, result.Message, "Domain delegation not yet published")
 	}, TestOptions)
 }
+
+// onchainPrimaryDomain binds `domain` to `website` as an on-chain managed
+// (HIP-5) primary binding: HNS namespace, onchain_managed status, no zone.
+func onchainPrimaryDomain(tb testing.TB, ctx coreTesting.TestContext, website *pluginDb.Website, domain string) *pluginDb.WebsiteDomain {
+	tb.Helper()
+	wd := prebindPrimaryDomain(tb, ctx, website, domain, false)
+	wd.Namespace = pluginDb.DomainNamespaceHNS
+	wd.Status = pluginDb.DomainStatusOnchainManaged
+	require.NoError(tb, ctx.DB().Model(wd).Updates(map[string]interface{}{
+		"namespace": string(pluginDb.DomainNamespaceHNS),
+		"status":    string(pluginDb.DomainStatusOnchainManaged),
+	}).Error)
+	// prebindPrimaryDomain only mutates the in-memory PrimaryDomainID; persist
+	// it so ValidateDNS (which reloads the website from the DB) resolves the
+	// primary binding.
+	require.NoError(tb, ctx.DB().Model(website).Update("primary_domain_id", wd.ID).Error)
+	return wd
+}
+
+func TestValidateDNS_OnchainManaged_ValidTokenValidates(t *testing.T) {
+	// An on-chain managed (HIP-5) binding must run the full TXT-token
+	// verification flow through the resolver: it is neither delegation-owned
+	// (no zone to verify) nor blocked from the token check, so a matching
+	// DNSLink + pinner-verify TXT activates the site.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "onchain-validate")
+		domain := "onchain.hns"
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		onchainPrimaryDomain(tb, ctx, created, domain)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		mockResolver.EXPECT().LookupTXT(mock.Anything, "lumeweb-verify."+domain).Return([]string{
+			fmt.Sprintf("lumeweb-verify=%s", created.ValidationToken),
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
+
+		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
+	}, TestOptions)
+}
+
+func TestValidateDNS_OnchainManaged_MissingTokenTokenMissing(t *testing.T) {
+	// The TXT token check MUST run for an on-chain managed binding: a
+	// missing/stale pinner-verify TXT record must block activation
+	// (TokenMissing), proving the flow is not skipped as it is for native-HNS
+	// delegation.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "onchain-missing-token")
+		domain := "onchain-token.hns"
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		onchainPrimaryDomain(tb, ctx, created, domain)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		// The contract serves the token record but with a STALE token.
+		mockResolver.EXPECT().LookupTXT(mock.Anything, "lumeweb-verify."+domain).Return([]string{
+			"lumeweb-verify=wrong-token",
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.False(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonTokenMissing, result.Reason)
+	}, TestOptions)
+}
