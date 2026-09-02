@@ -105,6 +105,7 @@ func getPluginInfoWithoutTemplates() core.PluginInfo {
 			&db.WebsiteDomain{},
 			&db.DNSZone{},
 			&db.PlatformDomain{},
+			&db.WebsiteEvent{},
 		},
 		Metrics:         GetCollectors(),
 		Migrations:      core.DBMigration{core.DB_TYPE_SQLITE: migrations.GetSQLite(), core.DB_TYPE_MYSQL: migrations.GetMySQL()},

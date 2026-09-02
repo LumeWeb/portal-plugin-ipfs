@@ -1200,9 +1200,27 @@ See also:.*`),
 				router.WithSummary("Stream website events via SSE"),
 				router.WithDescription(`Server-Sent Events endpoint for gateway-to-portal communication.
 Streams website lifecycle events (published, removed) in real time.
+Supports Last-Event-ID replay of durable events after a reconnect.
 Requires X-Gateway-Secret header for authentication.`),
 				router.WithTags("Gateway"),
 				router.WithSuccessResponse(http.StatusOK, "SSE event stream"),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/internal/websites/changes", a.getWebsiteChanges,
+			router.WithSwagger(
+				router.WithSummary("Reconcile website changes"),
+				router.WithDescription(`Returns durable website lifecycle changes (published, removed) after the
+supplied cursor, in ascending durable-ID order, together with the current
+replay high-water mark. The gateway calls this after an SSE reconnect to
+discover domains it missed during the gap without relying on visitor traffic.
+Requires X-Gateway-Secret header for authentication.`),
+				router.WithTags("Gateway"),
+				router.WithQueryParam("after", "Durable event cursor to resume after. Returns all events with id > after. Omit to start from the beginning of the retained window.", "0"),
+				router.WithSuccessResponse(http.StatusOK, "Reconciled changes", router.WithJSONContent(dto.WebsiteChangesResponse{})),
+				router.WithErrorResponses(router.DefineSwaggerErrorResponses(
+					DefineErrorResponse(http.StatusBadRequest, "Invalid after cursor"),
+					DefineErrorResponse(http.StatusInternalServerError, "Internal server error occurred"),
+				)),
 			),
 		),
 	)
