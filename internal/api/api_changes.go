@@ -46,10 +46,19 @@ func (a *API) getWebsiteChanges(c echo.Context) error {
 		return ctx.Error(err, http.StatusInternalServerError)
 	}
 
+	// Truncated is derived from the last returned event's actual ID rather than
+	// assuming gapless contiguous ids, because purged rows can leave gaps in the
+	// id space. When there are no events, the batch is complete only if the
+	// cursor has already reached the high-water mark.
+	truncated := after < hwm
+	if len(events) > 0 {
+		truncated = events[len(events)-1].ID < hwm
+	}
+
 	resp := &dto.WebsiteChangesResponse{
 		Events:        make([]dto.WebsiteChangeEvent, 0, len(events)),
 		HighWaterMark: hwm,
-		Truncated:     len(events) >= limit && after+uint64(len(events)) < hwm,
+		Truncated:     truncated,
 	}
 	for _, ev := range events {
 		resp.Events = append(resp.Events, dto.WebsiteChangeEvent{

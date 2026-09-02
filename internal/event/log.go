@@ -71,12 +71,22 @@ func (s *Store) HighWaterMark(ctx context.Context) (uint64, error) {
 	return *maxID, nil
 }
 
-// PurgeBefore deletes all events older than before and returns the number of
-// rows removed. It enforces the documented retention window so the log does not
-// grow without bound; consumers must process events within the window.
+// PurgeBefore enforces the documented retention window so the log does not
+// grow without bound. It removes rows whose durable cursor lies at or below the
+// largest-id row that has aged past `before`, so the retention cut is aligned
+// with the id-ordered replay cursor and high-water mark rather than
+// created_at ordering (which is not guaranteed to match id order). Consumers
+// must process events within the retention window.
 func (s *Store) PurgeBefore(ctx context.Context, before time.Time) (int64, error) {
+	// id <= (SELECT MAX(id) WHERE created_at < before) deletes the low-id tail
+	// up to the newest expired row. When no row has aged past retention the
+	// subquery yields NULL and `id <= NULL` matches nothing.
+	sub := s.db.Model(&pluginDb.WebsiteEvent{}).
+		Select("MAX(id)").
+		Where("created_at < ?", before)
+
 	res := s.db.WithContext(ctx).
-		Where("created_at < ?", before).
+		Where("id <= (?)", sub).
 		Delete(&pluginDb.WebsiteEvent{})
 	if res.Error != nil {
 		return 0, res.Error

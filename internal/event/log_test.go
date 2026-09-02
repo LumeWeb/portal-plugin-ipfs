@@ -137,3 +137,52 @@ func TestStore_PurgeBefore(t *testing.T) {
 	require.Len(t, remaining, 1)
 	assert.Equal(t, id, remaining[0].ID)
 }
+
+// TestStore_PurgeBefore_AlignedToID guards against purging by created_at while
+// the replay cursor/high-water mark key on the auto-increment id. When a
+// higher-id event carries an older timestamp than a lower-id event, the purge
+// boundary must still be id-aligned so the remaining id space is a gapless
+// prefix (no hole below the high-water mark that would corrupt the Truncated
+// flag / replay window).
+func TestStore_PurgeBefore_AlignedToID(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	now := time.Now()
+	old := now.Add(-48 * time.Hour)
+
+	// Lower id (1) is new; higher ids (2,3) are older than retention.
+	e1 := db.WebsiteEvent{EventType: string(db.WebsiteEventPublished), Domain: "a.example", CreatedAt: now}
+	e2 := db.WebsiteEvent{EventType: string(db.WebsiteEventPublished), Domain: "b.example", CreatedAt: old}
+	e3 := db.WebsiteEvent{EventType: string(db.WebsiteEventPublished), Domain: "c.example", CreatedAt: old}
+	require.NoError(t, store.db.Create(&e1).Error)
+	require.NoError(t, store.db.Create(&e2).Error)
+	require.NoError(t, store.db.Create(&e3).Error)
+
+	removed, err := store.PurgeBefore(ctx, now.Add(-24*time.Hour))
+	require.NoError(t, err)
+
+	// MAX(id WHERE created_at < before) = 3, so the whole id-prefix <= 3 is purged,
+	// keeping the id space a gapless prefix (never a random interior hole).
+	assert.Equal(t, int64(3), removed)
+
+	remaining, err := store.ListAfter(ctx, 0, 0)
+	require.NoError(t, err)
+	require.Empty(t, remaining)
+
+	// Re-seed and verify a partial purge still leaves a gapless prefix.
+	e4 := db.WebsiteEvent{EventType: string(db.WebsiteEventPublished), Domain: "d.example", CreatedAt: now}
+	e5 := db.WebsiteEvent{EventType: string(db.WebsiteEventPublished), Domain: "e.example", CreatedAt: now}
+	require.NoError(t, store.db.Create(&e4).Error)
+	require.NoError(t, store.db.Create(&e5).Error)
+
+	hwm, err := store.HighWaterMark(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, e5.ID, hwm)
+
+	remaining, err = store.ListAfter(ctx, 0, 0)
+	require.NoError(t, err)
+	require.Len(t, remaining, 2)
+	assert.Equal(t, e4.ID, remaining[0].ID)
+	assert.Equal(t, e5.ID, remaining[1].ID)
+}

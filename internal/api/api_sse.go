@@ -8,6 +8,7 @@ import (
 	"time"
 
 	sseServer "github.com/apt304/sse-go/server"
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
@@ -142,12 +143,18 @@ func (a *API) publishWebsiteEvent(ctx context.Context, eventType string, eventDa
 
 	// Persist first so the event survives a gateway gap and the returned
 	// durable ID is available as the SSE id (making Last-Event-ID meaningful).
+	// A durable-write failure must not suppress live delivery: log it, continue,
+	// and fall back to a non-durable id so the gateway's authoritative
+	// /internal/websites/changes reconciliation can close any gap.
 	eventID, err := a.sse.log.Append(ctx, rec)
+	idStr := ""
 	if err != nil {
-		a.Logger().Error("failed to append website event to durable log",
+		a.Logger().Error("failed to append website event to durable log; continuing live SSE delivery",
 			zap.String("event_type", eventType),
 			zap.Error(err))
-		return err
+		idStr = uuid.New().String()
+	} else {
+		idStr = strconv.FormatUint(eventID, 10)
 	}
 
 	sseEvent := pluginEvent.NewSSEEvent(eventType, eventData)
@@ -160,7 +167,7 @@ func (a *API) publishWebsiteEvent(ctx context.Context, eventType string, eventDa
 	}
 
 	event := sseServer.Event{
-		ID:    strconv.FormatUint(eventID, 10),
+		ID:    idStr,
 		Type:  eventType,
 		Data:  eventJSON,
 		Retry: 3000, // Recommended retry interval in milliseconds
@@ -242,6 +249,16 @@ func (a *API) replayWebsiteEvents(c echo.Context, lastEventID string) {
 			a.Logger().Warn("SSE replay write failed", zap.Error(err))
 			return
 		}
+	}
+
+	// Re-read the high-water mark after draining the replay so the terminal
+	// event reflects the freshest known id, shrinking the window in which an
+	// event published between replay and live-subscribe would be missed. SSE
+	// replay is best-effort: for authoritative catch-up the gateway compares
+	// this high-water mark against its cursor and reconciles via
+	// /internal/websites/changes, which is what actually closes the gap.
+	if fresh, err := a.sse.log.HighWaterMark(reqCtx); err == nil {
+		hwm = fresh
 	}
 
 	hwmData, _ := json.Marshal(dto.SSEHighWaterMark{HighWaterMark: hwm})
