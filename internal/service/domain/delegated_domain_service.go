@@ -656,6 +656,12 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 				zap.String("status", string(wd.Status)),
 				zap.Uint("zone_id", wd.ZoneID))
 		}
+		s.Logger().Debug("delegation verification not applicable for binding",
+			zap.Uint("id", wd.ID),
+			zap.String("domain", wd.Domain),
+			zap.String("namespace", string(wd.Namespace)),
+			zap.String("status", string(wd.Status)),
+			zap.Uint("zone_id", wd.ZoneID))
 		return DelegationVerificationResult{State: DelegationNotApplicable}, nil
 	}
 
@@ -719,6 +725,13 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		wd.Status = pluginDb.DomainStatusActive
 		state = DelegationVerified
 	} else {
+		s.Logger().Debug("delegation not visible at parent zone yet",
+			zap.Uint("id", wd.ID),
+			zap.String("domain", wd.Domain),
+			zap.String("namespace", string(wd.Namespace)),
+			zap.Uint("zone_id", wd.ZoneID),
+			zap.Bool("dnssec_required", provider.RequiresDNSSEC()),
+			zap.Bool("expected_ds_present", expectedDS != ""))
 		wd.Status = pluginDb.DomainStatusWaitingDelegation
 	}
 
