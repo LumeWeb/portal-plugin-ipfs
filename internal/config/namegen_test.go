@@ -14,19 +14,25 @@ func TestGenerateDNSSlug_Format(t *testing.T) {
 	// Generated labels are adjective-noun-number, DNS-safe (lowercase,
 	// hyphen-separated, <= 63 labels), and pronounceable/opaque — never a bare
 	// sequential counter that reveals usage volume.
-	seen := map[string]bool{}
+	seen := make(map[string]struct{})
 	for i := 0; i < 100; i++ {
 		slug := GenerateDNSSlug()
 		require.LessOrEqual(t, len(slug), 63)
 		assert.Regexp(t, slugPattern, slug, "slug %q should match adjective-noun-number", slug)
-		assert.False(t, seen[slug], "slug %q should vary across calls", slug)
-		seen[slug] = true
+		seen[slug] = struct{}{}
 
 		// Must pass a strict DNS-label validation (no underscores, no leading
 		// digits beyond allowed, no empty labels).
 		assert.NotContains(t, slug, "_")
 		assert.NotContains(t, slug, "..")
 	}
+
+	// The generator samples uniformly from an adjective-noun-suffix space of
+	// ~400k values, so over 100 draws a repeated slug is an ordinary birthday
+	// collision, not a regression — requiring 100 unique values would make this
+	// test flaky. Assert healthy variety instead: a degenerate constant or
+	// sequential generator collapses to ~1 distinct value and fails here.
+	assert.GreaterOrEqual(t, len(seen), 90, "generated slugs should vary across calls")
 }
 
 func TestGenerateDNSSlug_DNSValid(t *testing.T) {
