@@ -394,4 +394,4 @@ require (
 	modernc.org/sqlite v1.54.0 // indirect
 )
 
-replace github.com/libp2p/go-libp2p => github.com/LumeWeb/go-libp2p v0.0.0-20260902043403-e59b50d42d53
+replace github.com/libp2p/go-libp2p => github.com/LumeWeb/go-libp2p v0.0.0-20260902062722-205a3fd3a87d
