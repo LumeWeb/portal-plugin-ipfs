@@ -46,7 +46,7 @@ require (
 	go.lumeweb.com/dane v0.0.3
 	go.lumeweb.com/httputil v0.5.8
 	go.lumeweb.com/ipfs-content v0.1.18
-	go.lumeweb.com/portal v0.5.2-0.20260901043913-d57a2e764d6b
+	go.lumeweb.com/portal v0.5.2-0.20260901224729-28545c81cdbf
 	go.lumeweb.com/portal-middleware v0.3.7
 	go.lumeweb.com/portal-plugin-core v0.1.0
 	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260815204120-fcf90d4324ee
@@ -89,7 +89,7 @@ require (
 	github.com/slok/go-http-metrics v0.13.0 // indirect
 	github.com/woodsbury/decimal128 v1.4.0 // indirect
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2 // indirect
-	go.lumeweb.com/oauth v0.1.6 // indirect
+	go.lumeweb.com/oauth v0.1.8 // indirect
 	go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.70.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.21.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0 // indirect
