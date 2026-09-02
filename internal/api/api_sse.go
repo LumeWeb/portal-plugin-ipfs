@@ -8,7 +8,6 @@ import (
 	"time"
 
 	sseServer "github.com/apt304/sse-go/server"
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
@@ -149,10 +148,13 @@ func (a *API) publishWebsiteEvent(ctx context.Context, eventType string, eventDa
 	eventID, err := a.sse.log.Append(ctx, rec)
 	idStr := ""
 	if err != nil {
-		a.Logger().Error("failed to append website event to durable log; continuing live SSE delivery",
+		// No durable cursor exists, so emit without an id: a non-numeric id would
+		// advance the gateway's cursor to an unparseable value (Last-Event-ID and
+		// /changes?after= both parse uint). The event is best-effort live-only and
+		// cannot be replayed or reconciled until the durable log recovers.
+		a.Logger().Error("failed to append website event to durable log; emitting live SSE event without durable id",
 			zap.String("event_type", eventType),
 			zap.Error(err))
-		idStr = uuid.New().String()
 	} else {
 		idStr = strconv.FormatUint(eventID, 10)
 	}
