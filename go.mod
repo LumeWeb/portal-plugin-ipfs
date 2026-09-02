@@ -3,7 +3,7 @@ module go.lumeweb.com/portal-plugin-ipfs // v0.2.0
 go 1.26.0
 
 require (
-	github.com/Oudwins/zog v0.22.2
+	github.com/Oudwins/zog v0.23.0
 	github.com/apt304/sse-go v0.0.3
 	github.com/avast/retry-go/v5 v5.0.0
 	github.com/bits-and-blooms/bloom/v3 v3.7.1
