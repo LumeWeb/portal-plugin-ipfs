@@ -10,6 +10,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.uber.org/zap"
 )
 
@@ -63,7 +64,7 @@ func (a *API) getWebsiteChanges(c echo.Context) error {
 	for _, ev := range events {
 		resp.Events = append(resp.Events, dto.WebsiteChangeEvent{
 			ID:        ev.ID,
-			EventType: ev.EventType,
+			EventType: pluginDb.WebsiteEventType(ev.EventType),
 			Domain:    ev.Domain,
 			CID:       ev.CID,
 			WebsiteID: ev.WebsiteID,

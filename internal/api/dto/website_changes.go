@@ -1,17 +1,21 @@
 package dto
 
-import "time"
+import (
+	"time"
+
+	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+)
 
 // WebsiteChangeEvent is a single durable website lifecycle event returned by
 // the reconciliation endpoint.
 type WebsiteChangeEvent struct {
-	ID        uint64    `json:"id"`
-	EventType string    `json:"event_type"` // published | removed
-	Domain    string    `json:"domain"`
-	CID       string    `json:"cid,omitempty"` // target hash for published events
-	WebsiteID uint      `json:"website_id,omitempty"`
-	UserID    uint      `json:"user_id,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        uint64              `json:"id"`
+	EventType db.WebsiteEventType `json:"event_type" jsonschema:"enum=published,enum=removed"`
+	Domain    string              `json:"domain"`
+	CID       string              `json:"cid,omitempty"` // target hash for published events
+	WebsiteID uint                `json:"website_id,omitempty"`
+	UserID    uint                `json:"user_id,omitempty"`
+	CreatedAt time.Time           `json:"created_at"`
 }
 
 // WebsiteChangesResponse is the payload of

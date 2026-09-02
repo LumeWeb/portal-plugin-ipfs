@@ -34,7 +34,7 @@ func TestAPI_GetWebsiteChanges(t *testing.T) {
 			assert.Equal(t, ev3.ID, resp.HighWaterMark)
 			require.Len(t, resp.Events, 3)
 			assert.Equal(t, ev1.ID, resp.Events[0].ID)
-			assert.Equal(t, string(pluginDb.WebsiteEventPublished), resp.Events[0].EventType)
+			assert.Equal(t, pluginDb.WebsiteEventPublished, resp.Events[0].EventType)
 			assert.Equal(t, "alpha.example", resp.Events[0].Domain)
 			assert.Equal(t, "bafy1", resp.Events[0].CID)
 			assert.Equal(t, ev2.ID, resp.Events[1].ID)
