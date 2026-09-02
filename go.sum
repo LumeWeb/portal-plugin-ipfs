@@ -1386,6 +1386,8 @@ go.lumeweb.com/ipfs-sdk/dnsname v0.1.64 h1:RTBD+zoXHOYYKreNRoQhyLLKKWp/VgYfr7qoj
 go.lumeweb.com/ipfs-sdk/dnsname v0.1.64/go.mod h1:1++6EWMiG/BC5UQjlIobId2YcWDVHjHEhdsEzeISKpQ=
 go.lumeweb.com/oauth v0.1.6 h1:6c6LrXxMwx5klbq3OshzXjkGwvYVjAQhjX2FxCAgqqg=
 go.lumeweb.com/oauth v0.1.6/go.mod h1:Bfdxi1gkv+Ypj9yj9uOSmKnbZX8C7q7Pyn1OdPyuCbM=
+go.lumeweb.com/oauth v0.1.8 h1:KWtejCCOeRycj7hJs0yhyKZgN3qZh/39S0cPo0w8x4s=
+go.lumeweb.com/oauth v0.1.8/go.mod h1:PFrhkCHi5JG4iwpzMvWScjQhM4Xqshal+N/fSyHcayI=
 go.lumeweb.com/portal v0.5.2-0.20260724130026-d74f4f158e63 h1:vaHWpirPRR2dfzKFKDKi06sQVW2ECTtsvPMvZue4jhI=
 go.lumeweb.com/portal v0.5.2-0.20260724130026-d74f4f158e63/go.mod h1:dtgCsLBWhVS7Rsik+3LHzuNdLCbbDR5li6REsvpqDB8=
 go.lumeweb.com/portal v0.5.2-0.20260727130906-c632318fe632 h1:5Dp4xQr3vhb7o9/VvIm085tlXnw9FiUUdNal8ejTK7g=
@@ -1452,6 +1454,8 @@ go.lumeweb.com/portal v0.5.2-0.20260829094141-1f089e7c5ab4 h1:aQwEieP/OHTjf/A2wp
 go.lumeweb.com/portal v0.5.2-0.20260829094141-1f089e7c5ab4/go.mod h1:rtB9peWTa5gZmNq7KKiEc6qY9dDBu5jcdNPrvN72XDo=
 go.lumeweb.com/portal v0.5.2-0.20260901043913-d57a2e764d6b h1:+NL7fhAOQexkahMf/EzZOf3AjMpReBJVcZQ+bh0+h0Q=
 go.lumeweb.com/portal v0.5.2-0.20260901043913-d57a2e764d6b/go.mod h1:GuwmIAOiYwRIZoPXjLihG0WmazKF2L7gcUioqzbFrQk=
+go.lumeweb.com/portal v0.5.2-0.20260901224729-28545c81cdbf h1:FO/LzyjLGffNj5GOqSQGv4xpoG97tWSazZF+98fr06U=
+go.lumeweb.com/portal v0.5.2-0.20260901224729-28545c81cdbf/go.mod h1:2kF4Tsf4vFB0glbglXPloCMXfXiKRKjBDRl7c077BpA=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.1.0 h1:bHHJ7oZrBKmBvdUFutr3Dx6FdwvSg/ZeF33QaRM0DKU=
