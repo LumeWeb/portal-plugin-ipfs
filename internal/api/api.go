@@ -123,15 +123,16 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 
 				api.fileManagerService = core.GetService[pluginCore.FileManagerService](ctx, pluginCore.FILE_MANAGER_SERVICE)
 
+				// Initialize SSE server for website event streaming. This runs
+				// after all startup funcs complete so the API's DB is wired.
+				if err := api.initSSEServer(ctx); err != nil {
+					return fmt.Errorf("failed to initialize SSE server: %w", err)
+				}
+
 				return nil
 			})
 
 			api.ipfs = proto.(protocol.ProtoNode)
-
-			// Initialize SSE server for website event streaming
-			if err := api.initSSEServer(ctx); err != nil {
-				return fmt.Errorf("failed to initialize SSE server: %w", err)
-			}
 
 			return nil
 		}),
