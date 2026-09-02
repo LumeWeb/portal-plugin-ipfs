@@ -303,7 +303,7 @@ require (
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.62.0 // indirect
-	github.com/quic-go/webtransport-go v0.12.0 // indirect
+	github.com/quic-go/webtransport-go v0.13.0 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
@@ -394,6 +394,4 @@ require (
 	modernc.org/sqlite v1.54.0 // indirect
 )
 
-replace github.com/quic-go/quic-go => github.com/quic-go/quic-go v0.62.0
-
-replace github.com/quic-go/webtransport-go => github.com/quic-go/webtransport-go v0.13.0
+replace github.com/libp2p/go-libp2p => github.com/LumeWeb/go-libp2p v0.0.0-20260902043403-e59b50d42d53
