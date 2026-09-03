@@ -14,6 +14,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
+	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/queryutil"
 	queryutilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
@@ -353,10 +354,22 @@ func (a *API) verifyDomain(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	if _, err := a.delegatedDomainSvc.VerifyDomain(reqCtx, &wd); err != nil {
+	res, err := a.delegatedDomainSvc.VerifyDomain(reqCtx, &wd)
+	if err != nil {
 		a.Logger().Error("Failed to verify domain", zap.Error(err))
 		apiErr := NewError(ErrKeyValidationFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
+	}
+
+	if res.State != domsvc.DelegationVerified {
+		a.Logger().Info("delegation not verified",
+			zap.String("domain", wd.Domain),
+			zap.String("namespace", string(wd.Namespace)),
+			zap.Uint("id", wd.ID),
+			zap.Uint("zone_id", wd.ZoneID),
+			zap.Uint8("state", uint8(res.State)),
+			zap.Strings("approved_ns", res.ApprovedNS),
+			zap.Strings("live_ns", res.LiveNS))
 	}
 
 	resp := dto.DomainResponse{}
