@@ -1462,6 +1462,8 @@ go.lumeweb.com/portal v0.5.2-0.20260901043913-d57a2e764d6b h1:+NL7fhAOQexkahMf/E
 go.lumeweb.com/portal v0.5.2-0.20260901043913-d57a2e764d6b/go.mod h1:GuwmIAOiYwRIZoPXjLihG0WmazKF2L7gcUioqzbFrQk=
 go.lumeweb.com/portal v0.5.2-0.20260901224729-28545c81cdbf h1:FO/LzyjLGffNj5GOqSQGv4xpoG97tWSazZF+98fr06U=
 go.lumeweb.com/portal v0.5.2-0.20260901224729-28545c81cdbf/go.mod h1:2kF4Tsf4vFB0glbglXPloCMXfXiKRKjBDRl7c077BpA=
+go.lumeweb.com/portal v0.5.2-0.20260903135222-c56b4cea6397 h1:cuxhbPitNlu0mZ+6ZshPGQZxOJIXTq8wYTTwlW8dOgc=
+go.lumeweb.com/portal v0.5.2-0.20260903135222-c56b4cea6397/go.mod h1:2kF4Tsf4vFB0glbglXPloCMXfXiKRKjBDRl7c077BpA=
 go.lumeweb.com/portal-middleware v0.3.7 h1:kq4SZq4T/uhauqHehw2JaTbNJpPpE8/EQAC3R737H7c=
 go.lumeweb.com/portal-middleware v0.3.7/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.1.0 h1:bHHJ7oZrBKmBvdUFutr3Dx6FdwvSg/ZeF33QaRM0DKU=
