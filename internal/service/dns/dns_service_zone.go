@@ -358,6 +358,10 @@ func (s *DNSServiceDefault) ValidateNameservers(ctx context.Context, zoneID uint
 	}
 
 	if !valid {
+		s.Logger().Debug("no approved nameservers in DNS delegation",
+			zap.String("domain", zone.Domain),
+			zap.Strings("approved", approvedNameservers),
+			zap.Strings("live", liveNameservers))
 		zone.LastNameserverCheckAt = new(time.Now())
 		_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 			return tx.Save(zone)

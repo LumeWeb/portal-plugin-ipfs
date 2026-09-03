@@ -553,6 +553,11 @@ func (j *WebsiteJanitorJob) verifyPendingDelegations(ctx context.Context) error 
 				if res.State != domsvc.DelegationVerified {
 					// Still pending (or not applicable): leave it for a later
 					// run — the status was left as-is by VerifyDomain.
+					j.logger.Debug("delegation verification not complete",
+						zap.String("domain", wd.Domain),
+						zap.String("namespace", string(wd.Namespace)),
+						zap.Uint("id", wd.ID),
+						zap.Uint8("state", uint8(res.State)))
 					continue
 				}
 
