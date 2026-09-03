@@ -120,6 +120,12 @@ const (
 // on-chain/self-hosted bindings.
 type DelegationVerificationResult struct {
 	State DelegationVerificationState
+	// ApprovedNS / LiveNS carry the expected vs discovered nameservers for
+	// pending delegations (mirroring the janitor's zone NS validation) so a
+	// stuck waiting_delegation is diagnosable from logs alone. Both are empty
+	// unless the state is pending.
+	ApprovedNS []string
+	LiveNS     []string
 }
 
 // NewDelegatedDomainService creates a DelegatedDomainService with the given
@@ -721,17 +727,32 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 	}
 
 	state := DelegationPending
+	var approvedNS, liveNS []string
 	if verified {
 		wd.Status = pluginDb.DomainStatusActive
 		state = DelegationVerified
 	} else {
+		// Grab the expected vs discovered NS (same comparison the janitor's
+		// zone validation performs) so a stuck waiting_delegation can be
+		// diagnosed from logs alone. Best-effort: an NS lookup failure must
+		// not mask the pending outcome.
+		approvedNS = provider.Nameservers()
+		if live, nsErr := provider.LiveNameservers(ctx, wd.Domain); nsErr != nil {
+			s.Logger().Debug("failed to resolve live nameservers for pending delegation",
+				zap.String("domain", wd.Domain),
+				zap.Error(nsErr))
+		} else {
+			liveNS = live
+		}
 		s.Logger().Debug("delegation not visible at parent zone yet",
 			zap.Uint("id", wd.ID),
 			zap.String("domain", wd.Domain),
 			zap.String("namespace", string(wd.Namespace)),
 			zap.Uint("zone_id", wd.ZoneID),
 			zap.Bool("dnssec_required", provider.RequiresDNSSEC()),
-			zap.Bool("expected_ds_present", expectedDS != ""))
+			zap.Bool("expected_ds_present", expectedDS != ""),
+			zap.Strings("approved_ns", approvedNS),
+			zap.Strings("live_ns", liveNS))
 		wd.Status = pluginDb.DomainStatusWaitingDelegation
 	}
 
@@ -741,7 +762,7 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		}
 	}
 
-	return DelegationVerificationResult{State: state}, nil
+	return DelegationVerificationResult{State: state, ApprovedNS: approvedNS, LiveNS: liveNS}, nil
 }
 
 // selfHealZone re-ensures the portal-managed-zone invariants that are

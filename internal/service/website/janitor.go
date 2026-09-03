@@ -557,7 +557,9 @@ func (j *WebsiteJanitorJob) verifyPendingDelegations(ctx context.Context) error 
 						zap.String("domain", wd.Domain),
 						zap.String("namespace", string(wd.Namespace)),
 						zap.Uint("id", wd.ID),
-						zap.Uint8("state", uint8(res.State)))
+						zap.Uint8("state", uint8(res.State)),
+						zap.Strings("approved_ns", res.ApprovedNS),
+						zap.Strings("live_ns", res.LiveNS))
 					continue
 				}
 
