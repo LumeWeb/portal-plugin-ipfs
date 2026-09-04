@@ -104,4 +104,8 @@ type WebsiteService interface {
 
 	// WaitForPublishes blocks until all in-flight async publish operations complete
 	WaitForPublishes()
+
+	// WaitForValidations blocks until all in-flight background auto-validation
+	// operations complete
+	WaitForValidations()
 }

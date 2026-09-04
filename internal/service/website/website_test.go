@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	dnslink "github.com/dnslink-std/go"
+
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/peer"
 	mh "github.com/multiformats/go-multihash"
@@ -800,6 +802,109 @@ func TestWebsiteService_UpdateWebsite_NotFound(t *testing.T) {
 		// Assert
 		assert.Error(tb, err)
 		assert.Nil(tb, updatedWebsite)
+	}, TestOptions)
+}
+
+func TestWebsiteService_UpdateWebsite_BrokenSite_AutoValidates(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		testCID := util.GenerateTestCID(t, "broken-recover")
+		website := createTestIPFSWebsite(testUserID1, "broken-recover.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+		_ = bindPrimaryDomain(tb, ctx, createdWebsite.ID, "broken-recover.com", false)
+
+		_, err = websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
+			"status": string(pluginDb.WebsiteStatusBroken),
+		})
+		require.NoError(tb, err)
+
+		newCID := util.GenerateTestCID(t, "broken-recover-new")
+		stubPinnedCID(t, ctx, testUserID1, newCID.String())
+
+		// The auto-validation runs synchronously inside the update: with the
+		// target re-pointed (and proven pinned) it should re-resolve the
+		// DNSLink against the NEW target and activate the site. A broken
+		// website skips the TXT token check (shouldPerformTokenCheck gates it
+		// to pending_validation), so only ResolveDNSLink is expected.
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("broken-recover.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: newCID.String()}},
+			},
+		}, nil)
+		setMockResolver(websiteService, mockResolver)
+
+		// Act - re-point the target of the broken website (a deploy)
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
+			"target_hash": newCID.String(),
+		})
+
+		websiteService.WaitForValidations()
+
+		// Assert
+		require.NoError(tb, err)
+		require.NotNil(tb, updatedWebsite)
+
+		final, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
+		assert.Equal(tb, newCID.String(), final.TargetHash())
+	}, TestOptions)
+}
+
+func TestWebsiteService_UpdateWebsite_BrokenSite_ValidationFails_StatusUnchanged(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		testCID := util.GenerateTestCID(t, "broken-fail")
+		website := createTestIPFSWebsite(testUserID1, "broken-fail.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+		_ = bindPrimaryDomain(tb, ctx, createdWebsite.ID, "broken-fail.com", false)
+
+		_, err = websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
+			"status": string(pluginDb.WebsiteStatusBroken),
+		})
+		require.NoError(tb, err)
+
+		newCID := util.GenerateTestCID(t, "broken-fail-new")
+		stubPinnedCID(t, ctx, testUserID1, newCID.String())
+
+		// DNSLink does not match the new target: auto-validation must be
+		// best-effort and never fail or roll back the deploy itself.
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("broken-fail.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{},
+		}, nil)
+		setMockResolver(websiteService, mockResolver)
+
+		// Act
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
+			"target_hash": newCID.String(),
+		})
+
+		// Assert
+		websiteService.WaitForValidations()
+
+		require.NoError(tb, err, "failed auto-validation must not fail the update")
+		require.NotNil(tb, updatedWebsite)
+		assert.Equal(tb, newCID.String(), updatedWebsite.TargetHash())
+
+		final, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
+		require.NoError(tb, err)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusBroken), final.Status, "site stays broken for the normal recovery paths when validation fails")
 	}, TestOptions)
 }
 

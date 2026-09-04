@@ -1657,3 +1657,36 @@ func (_c *MockWebsiteService_WaitForPublishes_Call) RunAndReturn(run func()) *Mo
 	_c.Run(run)
 	return _c
 }
+
+// WaitForValidations provides a mock function for the type MockWebsiteService
+func (_mock *MockWebsiteService) WaitForValidations() {
+	_mock.Called()
+	return
+}
+
+// MockWebsiteService_WaitForValidations_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'WaitForValidations'
+type MockWebsiteService_WaitForValidations_Call struct {
+	*mock.Call
+}
+
+// WaitForValidations is a helper method to define mock.On call
+func (_e *MockWebsiteService_Expecter) WaitForValidations() *MockWebsiteService_WaitForValidations_Call {
+	return &MockWebsiteService_WaitForValidations_Call{Call: _e.mock.On("WaitForValidations")}
+}
+
+func (_c *MockWebsiteService_WaitForValidations_Call) Run(run func()) *MockWebsiteService_WaitForValidations_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockWebsiteService_WaitForValidations_Call) Return() *MockWebsiteService_WaitForValidations_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockWebsiteService_WaitForValidations_Call) RunAndReturn(run func()) *MockWebsiteService_WaitForValidations_Call {
+	_c.Run(run)
+	return _c
+}
