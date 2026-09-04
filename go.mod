@@ -89,6 +89,7 @@ require (
 	github.com/slok/go-http-metrics v0.13.0 // indirect
 	github.com/woodsbury/decimal128 v1.4.0 // indirect
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2 // indirect
+	go.lumeweb.com/icann-tlds v0.1.0 // indirect
 	go.lumeweb.com/oauth v0.1.8 // indirect
 	go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.70.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.21.0 // indirect
