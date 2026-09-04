@@ -17,8 +17,8 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 
-	"go.lumeweb.com/icann-tlds"
 	"github.com/miekg/dns"
+	"go.lumeweb.com/icann-tlds"
 )
 
 const (
@@ -233,7 +233,9 @@ func (p *HNSProvider) Validate(domain string) error {
 	// treated as "not ICANN": silently accepting an ICANN-suffixed name into
 	// the HNS namespace would be worse than failing the bind while the list
 	// is briefly unavailable on first use.
-	isICANN, err := icann.IsICANN(context.Background(), domain)
+	checkCtx, cancel := tldCheckCtx()
+	defer cancel()
+	isICANN, err := icann.IsICANN(checkCtx, domain)
 	if err != nil {
 		return fmt.Errorf("check IANA root zone list: %w", err)
 	}

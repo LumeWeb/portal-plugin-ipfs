@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 
@@ -17,13 +18,20 @@ import (
 // can assert the DNS service delegates per-namespace routing to it.
 type stubNameserverResolver struct {
 	nsByDomain      map[string][]string
+	nsErrByDomain   map[string]error
 	liveByDomain    map[string][]string
 	liveErrByDomain map[string]error
 }
 
-func (s *stubNameserverResolver) NameserversFor(domain string) ([]string, bool) {
+func (s *stubNameserverResolver) NameserversFor(domain string) ([]string, error) {
+	if err, ok := s.nsErrByDomain[domain]; ok {
+		return nil, err
+	}
 	ns, ok := s.nsByDomain[domain]
-	return ns, ok
+	if !ok {
+		return nil, pluginCore.ErrNoProviderForDomain
+	}
+	return ns, nil
 }
 
 func (s *stubNameserverResolver) LiveNameservers(ctx context.Context, domain string) ([]string, error) {
@@ -107,4 +115,23 @@ func TestLiveNameservers_FallsBackToLookup_OnNoProvider(t *testing.T) {
 	live, err := svc.liveNameservers(context.Background(), "unmatched.example")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"ns1.default.example."}, live)
+}
+
+// TestK1_NameserversForDomain_PropagatesTLDListFailure verifies that a TLD
+// registry load failure from the resolver is returned to the zone path
+// rather than silently falling back to the config nameservers, which would
+// publish another namespace's NS records for the zone.
+func TestK1_NameserversForDomain_PropagatesTLDListFailure(t *testing.T) {
+	resolver := &stubNameserverResolver{
+		nsErrByDomain: map[string]error{
+			"lumeweb": fmt.Errorf("iana root zone list unavailable in namespace %q: %w", "hns", pluginCore.ErrTLDListUnavailable),
+		},
+	}
+	svc := &DNSServiceDefault{
+		nameserverResolver: resolver,
+		config:             &pluginConfig.DnsConfig{Nameservers: []string{"ns1.icann.example."}},
+	}
+
+	_, err := svc.nameserversForDomain("lumeweb")
+	assert.ErrorIs(t, err, pluginCore.ErrTLDListUnavailable)
 }

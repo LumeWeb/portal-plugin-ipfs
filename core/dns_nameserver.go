@@ -12,6 +12,14 @@ import (
 // continue their fallback.
 var ErrNoProviderForDomain = errors.New("no provider validates domain")
 
+// ErrTLDListUnavailable is returned when a provider could not classify a
+// domain because the IANA root zone list is not loaded (the authority was
+// unreachable). This is a transient infrastructure failure, not a namespace
+// rejection: unlike ErrNoProviderForDomain, callers must fail loudly instead
+// of falling back to another namespace's defaults (e.g. publishing ICANN
+// nameservers for an HNS zone), because the domain's namespace is unknown.
+var ErrTLDListUnavailable = errors.New("iana root zone list unavailable")
+
 // NameserverResolver resolves per-namespace nameserver and delegation
 // behavior for a domain, so namespace-agnostic services (DNS zone
 // provisioning and validation) can consult the right provider without
@@ -25,9 +33,11 @@ var ErrNoProviderForDomain = errors.New("no provider validates domain")
 type NameserverResolver interface {
 	// NameserversFor returns the nameservers to publish for the given
 	// domain's namespace (ICANN list for ICANN domains, HNS list for HNS
-	// domains). The second return is false when no provider matches the
-	// domain.
-	NameserversFor(domain string) ([]string, bool)
+	// domains). It returns ErrNoProviderForDomain when no provider matches
+	// the domain (callers may fall back for unmatched domains), and
+	// ErrTLDListUnavailable when the IANA root zone list is not loaded
+	// (callers must not fall back: the domain's namespace is unknown).
+	NameserversFor(domain string) ([]string, error)
 
 	// LiveNameservers returns the live NS records currently served for the
 	// domain, resolved against the namespace-appropriate resolver (the HNS

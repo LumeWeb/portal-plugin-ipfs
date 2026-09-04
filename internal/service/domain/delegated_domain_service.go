@@ -1317,6 +1317,10 @@ func NewDelegatedDomainServiceFactory() (core.Service, []core.ContextBuilderOpti
 				hnsResolver = dnsCfg.HNSResolver
 				hip5BlockedTLDs = dnsCfg.HIP5BlockedTLDs
 			}
+			// Prefetch the IANA root zone list so provider Validate calls
+			// hit the in-memory snapshot instead of racing a cold network
+			// fetch on the bind path.
+			go warmTLDList()
 			reg.Register(NewICANNProvider(nsList))
 			hnsProv := NewHNSProvider(hnsResolver, hnsNSList, TLSASource{})
 			// Apply the configured HIP-5 blocked-TLD set. The override is applied

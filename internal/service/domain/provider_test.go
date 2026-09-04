@@ -1,12 +1,17 @@
 package domain
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.lumeweb.com/icann-tlds"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 )
 
@@ -162,19 +167,93 @@ func TestRegistry_NameserversFor(t *testing.T) {
 	r.Register(NewICANNProvider([]string{"ns1.icann.example.", "ns2.icann.example."}))
 	r.Register(NewHNSProvider("", []string{"ns1.hns.example"}, TLSASource{}))
 
-	ns, ok := r.NameserversFor("example.com")
-	assert.True(t, ok)
+	ns, err := r.NameserversFor("example.com")
+	require.NoError(t, err)
 	assert.Equal(t, []string{"ns1.icann.example.", "ns2.icann.example."}, ns)
 
-	ns, ok = r.NameserversFor("lumeweb")
-	assert.True(t, ok)
+	ns, err = r.NameserversFor("lumeweb")
+	require.NoError(t, err)
 	assert.Equal(t, []string{"ns1.hns.example"}, ns)
 
 	// Mutual exclusion: a dotted name under a non-ICANN TLD routes to HNS,
 	// and an ICANN-TLD-suffixed name routes to ICANN.
-	ns, ok = r.NameserversFor("blog.altroot")
-	assert.True(t, ok)
+	ns, err = r.NameserversFor("blog.altroot")
+	require.NoError(t, err)
 	assert.Equal(t, []string{"ns1.hns.example"}, ns)
+
+	// A domain no provider validates reports ErrNoProviderForDomain so the
+	// caller can fall back to a default resolution path.
+	_, err = r.NameserversFor("bad..altroot")
+	assert.ErrorIs(t, err, pluginCore.ErrNoProviderForDomain)
+}
+
+// failingProvider is a stub DomainProvider whose Validate returns a canned
+// error, used to exercise registry error propagation.
+type failingProvider struct {
+	validate func(string) error
+}
+
+func (f failingProvider) Protocol() string { return "failing" }
+func (f failingProvider) Policy() pluginCore.ProviderPolicy {
+	return pluginCore.ProviderPolicy{
+		DNSSEC:         pluginCore.DNSSECNotRequired,
+		TLSA:           pluginCore.TLSANotManaged,
+		ApexRecordType: pluginCore.RecordTypeALIAS,
+	}
+}
+func (f failingProvider) UsesManagedZoneTLSA() bool { return false }
+func (f failingProvider) RequiresDNSSEC() bool      { return false }
+func (f failingProvider) ApexRecordType() pluginCore.RecordType {
+	return pluginCore.RecordTypeALIAS
+}
+func (f failingProvider) Validate(domain string) error { return f.validate(domain) }
+func (f failingProvider) Inspect(ctx context.Context, domain string) (bool, error) {
+	return false, nil
+}
+func (f failingProvider) BuildDelegation(ctx context.Context, zoneID uint, domain string, website *pluginDb.Website, config json.RawMessage) (json.RawMessage, error) {
+	return nil, nil
+}
+func (f failingProvider) VerifyDelegation(ctx context.Context, domain string, expectedDS string) (bool, error) {
+	return true, nil
+}
+func (f failingProvider) Nameservers() []string { return []string{"ns1.failing.example"} }
+func (f failingProvider) LiveNameservers(ctx context.Context, domain string) ([]string, error) {
+	return nil, errors.New("not live")
+}
+
+// TestK1_Registry_PropagatesTLDListLoadFailure verifies that a Validate
+// failure caused by an unloaded IANA root zone list is surfaced as
+// ErrTLDListUnavailable (and NOT as "no provider"), while an ordinary
+// rejection still reports ErrNoProviderForDomain.
+func TestK1_Registry_PropagatesTLDListLoadFailure(t *testing.T) {
+	r := NewRegistry()
+	r.Register(failingProvider{validate: func(string) error {
+		return fmt.Errorf("check IANA root zone list: %w", icann.ErrNotLoaded)
+	}})
+
+	// Load failure is NOT a namespace rejection: no silent fallback.
+	_, err := r.NameserversFor("example.com")
+	assert.ErrorIs(t, err, pluginCore.ErrTLDListUnavailable)
+
+	_, err = r.LiveNameservers(context.Background(), "example.com")
+	assert.ErrorIs(t, err, pluginCore.ErrTLDListUnavailable)
+	// A live-lookup load failure must not be mistaken for a resolution
+	// fallback trigger (ErrNoProviderForDomain).
+	assert.NotErrorIs(t, err, pluginCore.ErrNoProviderForDomain)
+}
+
+// TestK1_Registry_RejectionIsNoProvider verifies that a Validate failure that
+// is not a TLD-list load failure still counts as "no provider", preserving
+// the caller fallback semantics.
+func TestK1_Registry_RejectionIsNoProvider(t *testing.T) {
+	r := NewRegistry()
+	r.Register(failingProvider{validate: func(string) error {
+		return errors.New("domain rejected by policy")
+	}})
+
+	_, err := r.NameserversFor("example.com")
+	assert.ErrorIs(t, err, pluginCore.ErrNoProviderForDomain)
+	assert.NotErrorIs(t, err, pluginCore.ErrTLDListUnavailable)
 }
 
 func TestRegistry_LiveNameservers_RoutesByNamespace(t *testing.T) {

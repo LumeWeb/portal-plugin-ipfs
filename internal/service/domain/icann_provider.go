@@ -70,7 +70,9 @@ func (p *ICANNProvider) Validate(domain string) error {
 	// A domain is ICANN only if its final label is a TLD registered in the
 	// IANA root zone list. The IANA list is the authoritative decision
 	// procedure — a name is never ICANN merely because it is dotted.
-	isICANN, err := icann.IsICANN(context.Background(), domain)
+	checkCtx, cancel := tldCheckCtx()
+	defer cancel()
+	isICANN, err := icann.IsICANN(checkCtx, domain)
 	if err != nil {
 		return fmt.Errorf("check IANA root zone list: %w", err)
 	}

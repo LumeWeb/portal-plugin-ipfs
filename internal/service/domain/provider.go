@@ -3,13 +3,39 @@ package domain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/samber/lo"
+	"go.lumeweb.com/icann-tlds"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 )
+
+// tldCheckTimeout bounds the cold fetch of the IANA root zone list performed
+// from Validate, which has no context of its own. The registry caches the
+// list for the process lifetime, so after the first successful fetch this
+// path is a pure in-memory lookup; the deadline only bounds a cold / retried
+// fetch so a slow authority can never stall call paths unboundedly.
+const tldCheckTimeout = 5 * time.Second
+
+// tldCheckCtx returns a bounded context for IANA root zone list fetches.
+func tldCheckCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), tldCheckTimeout)
+}
+
+// warmTLDList fetches the IANA root zone list once at startup so domain
+// validation never races a cold network fetch on a bind or zone path. A
+// failure here is non-fatal: Validate falls back to a bounded, single-flight
+// fetch and load failures surface as ErrTLDListUnavailable rather than a
+// silent namespace fallback.
+func warmTLDList() {
+	ctx, cancel := context.WithTimeout(context.Background(), tldCheckTimeout)
+	defer cancel()
+	_ = icann.Default().Refresh(ctx)
+}
 
 // DNSSECPolicy, TLSAPolicy, and ProviderPolicy live in the plugin core package
 // (pluginCore) so they can be referenced without import cycles by consumers
@@ -128,7 +154,7 @@ func (r *Registry) Names() []string {
 }
 
 // providerForDomain returns the provider whose namespace accepts `domain`,
-// or nil when no registered provider validates it.
+// or (nil, nil) when no registered provider validates it.
 //
 // Iteration is deterministic (Names returns sorted keys). When more than one
 // provider accepts a dotted name (both ICANN's "must contain a dot" and HNS's
@@ -137,42 +163,68 @@ func (r *Registry) Names() []string {
 // alt-root, and any dotted name is at least plausibly ICANN. The service layer
 // (getNamespaceForDomain) further overrides this default by preferring a
 // registered platform root's namespace when the domain descends from one.
-func (r *Registry) providerForDomain(domain string) DomainProvider {
+//
+// A Validate failure caused by an unloaded IANA root zone list
+// (icann.ErrNotLoaded) is not a namespace rejection: if the providers cannot
+// classify the domain at all, its namespace is unknown, and reporting "no
+// provider" would silently misroute it (e.g. publish ICANN nameservers for an
+// HNS zone). Such a failure is surfaced as ErrTLDListUnavailable so callers
+// fail loudly, while genuine rejections still report "no provider".
+func (r *Registry) providerForDomain(domain string) (DomainProvider, error) {
 	if r == nil {
-		return nil
+		return nil, nil
 	}
 	// Provider.Validate calls are mutually exclusive by construction: a domain
 	// ends in an IANA ICANN TLD (ICANN) or it does not (HNS). Iterating the
 	// deterministically-sorted namespaces therefore yields a single match, so
 	// no tie-breaking is required.
+	var listErr error
 	for _, ns := range r.Names() {
 		prov := r.Get(ns)
-		if prov != nil && prov.Validate(domain) == nil {
-			return prov
+		if prov == nil {
+			continue
 		}
+		if err := prov.Validate(domain); err != nil {
+			if errors.Is(err, icann.ErrNotLoaded) {
+				listErr = fmt.Errorf("%w in namespace %q: %w", pluginCore.ErrTLDListUnavailable, ns, err)
+			}
+			continue
+		}
+		return prov, nil
 	}
-	return nil
+	return nil, listErr
 }
 
 var _ pluginCore.NameserverResolver = (*Registry)(nil)
 
 // NameserversFor returns the nameservers to publish for the given domain's
-// namespace by delegating to the matching provider. The second return is
-// false when no provider validates the domain.
-func (r *Registry) NameserversFor(domain string) ([]string, bool) {
-	prov := r.providerForDomain(domain)
-	if prov == nil {
-		return nil, false
+// namespace by delegating to the matching provider. It returns
+// pluginCore.ErrNoProviderForDomain when no registered provider validates the
+// domain (callers may fall back for unmatched domains), and
+// ErrTLDListUnavailable when the IANA root zone list is not loaded (callers
+// must not fall back: the domain's namespace is unknown).
+func (r *Registry) NameserversFor(domain string) ([]string, error) {
+	prov, listErr := r.providerForDomain(domain)
+	if listErr != nil {
+		return nil, listErr
 	}
-	return prov.Nameservers(), true
+	if prov == nil {
+		return nil, pluginCore.ErrNoProviderForDomain
+	}
+	return prov.Nameservers(), nil
 }
 
 // LiveNameservers returns the live NS records for the domain resolved
 // against the matching provider's namespace-appropriate resolver. It returns
-// pluginCore.ErrNoProviderForDomain when no registered provider validates the
-// domain, so callers can fall back to a default resolution path.
+// pluginCore.ErrNoProviderForDomain when no registered provider validates
+// the domain, so callers can fall back to a default resolution path, and
+// ErrTLDListUnavailable when the IANA root zone list is not loaded (no
+// fallback: the namespace is unknown).
 func (r *Registry) LiveNameservers(ctx context.Context, domain string) ([]string, error) {
-	prov := r.providerForDomain(domain)
+	prov, listErr := r.providerForDomain(domain)
+	if listErr != nil {
+		return nil, listErr
+	}
 	if prov == nil {
 		return nil, pluginCore.ErrNoProviderForDomain
 	}
