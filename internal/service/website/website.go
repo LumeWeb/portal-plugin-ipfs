@@ -611,6 +611,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 	var dnsEnabledChanged bool
 	var enableDNS bool
 	var targetHashChanged bool
+	var oldStatus pluginDb.WebsiteStatus
 
 	err := core.MetricTrack(
 		UpdateWebsiteDuration.WithLabelValues(),
@@ -631,6 +632,7 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				// Store old values for DNS updates and state transitions
 				oldTargetHash := website.TargetHash()
 				oldTargetType := pluginDb.WebsiteTargetType(website.TargetType)
+				oldStatus = pluginDb.WebsiteStatus(website.Status)
 				targetHashChanged = false
 				ipnsAutoCreated := false
 				var newTargetHashStr string
@@ -927,6 +929,37 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 		core.Fire(s.Context(), pluginEvent.EVENT_WEBSITE_PUBLISHED, pluginEvent.NewWebsitePublishedEvent(
 			ctx, s.primaryDomainName(ctx, updatedWebsite), updatedWebsite.TargetHash(), updatedWebsite.UserID, updatedWebsite.ID,
 		))
+	}
+
+	// Best-effort auto-recovery: a deploy that re-points a broken website to a
+	// validated target (the update itself proves the CID is pinned) should be
+	// able to revive it without waiting for the janitor or a manual validate.
+	// A failed validation never fails or rolls back the update — the site keeps
+	// its broken (or other) status for the existing recovery paths.
+	if targetHashChanged && updatedWebsite != nil && oldStatus == pluginDb.WebsiteStatusBroken {
+		result, verr := s.ValidateDNS(ctx, userID, websiteID)
+		switch {
+		case verr != nil:
+			s.Logger().Warn("Auto-validation of broken website after update failed",
+				zap.Error(verr),
+				zap.Uint("website_id", websiteID),
+				zap.Uint("user_id", userID))
+		case !result.Valid:
+			s.Logger().Warn("Auto-validation of broken website after update did not validate",
+				zap.String("reason", string(result.Reason)),
+				zap.Uint("website_id", websiteID),
+				zap.Uint("user_id", userID))
+		default:
+			s.Logger().Info("Recovered broken website via auto-validation after update",
+				zap.Uint("website_id", websiteID),
+				zap.Uint("user_id", userID))
+		}
+		// Reload so the caller sees the auto-activated status/expiry from
+		// validation rather than the pre-validation snapshot.
+		var reloaded pluginDb.Website
+		if rerr := s.DB().WithContext(ctx).First(&reloaded, websiteID).Error; rerr == nil {
+			updatedWebsite = &reloaded
+		}
 	}
 
 	// Send notification to admin
