@@ -185,7 +185,7 @@ func (r *IPNSRepublishResponse) FromModel(any) error {
 //     a computed label). The namespace and DNS hosting are derived from the
 //     platform root, mirroring the domain-bind flow.
 type WebsiteRequest struct {
-	Domain     string               `json:"domain,omitempty"`               // primary domain (transparently created as a WebsiteDomain binding); omitted when claiming a platform subdomain
+	Domain     string               `json:"domain,omitempty"`              // primary domain (transparently created as a WebsiteDomain binding); omitted when claiming a platform subdomain
 	Namespace  *db.DomainNamespace  `json:"namespace,omitempty"`           // icann (default) or hns
 	TargetType db.WebsiteTargetType `json:"target_type"`                   // db.WebsiteTargetTypeIPFS or db.WebsiteTargetTypeIPNS
 	TargetHash string               `json:"target_hash"`                   // CID or IPNS peer ID
@@ -387,10 +387,10 @@ func (r *WebsiteUpdateRequest) ToModel() (*db.Website, error) {
 
 // SSLStatusInfo represents SSL certificate status information
 type SSLStatusInfo struct {
-	Status        string     `json:"status"`
-	Error         string     `json:"error,omitempty"`
-	IssuedAt      *time.Time `json:"issued_at,omitempty"`
-	LastUpdatedAt *time.Time `json:"last_updated_at,omitempty"`
+	Status        db.SSLStatus `json:"status" jsonschema:"enum=pending,enum=issuing,enum=ready,enum=failed"`
+	Error         string       `json:"error,omitempty"`
+	IssuedAt      *time.Time   `json:"issued_at,omitempty"`
+	LastUpdatedAt *time.Time   `json:"last_updated_at,omitempty"`
 }
 
 // WebsiteResponse represents a website response
