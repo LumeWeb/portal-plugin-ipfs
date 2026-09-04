@@ -45,6 +45,7 @@ require (
 	github.com/tus/tusd/v2 v2.10.0
 	go.lumeweb.com/dane v0.0.3
 	go.lumeweb.com/httputil v0.5.8
+	go.lumeweb.com/icann-tlds v0.1.0
 	go.lumeweb.com/ipfs-content v0.1.18
 	go.lumeweb.com/portal v0.5.2-0.20260901224729-28545c81cdbf
 	go.lumeweb.com/portal-middleware v0.3.7
@@ -89,7 +90,6 @@ require (
 	github.com/slok/go-http-metrics v0.13.0 // indirect
 	github.com/woodsbury/decimal128 v1.4.0 // indirect
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2 // indirect
-	go.lumeweb.com/icann-tlds v0.1.0 // indirect
 	go.lumeweb.com/oauth v0.1.8 // indirect
 	go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.70.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.21.0 // indirect
