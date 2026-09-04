@@ -429,7 +429,7 @@ func TestAPI_GetSSLStatus(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, uint(1), response.ID)
 			assert.Equal(t, TestDomain, response.Domain)
-			assert.Equal(t, "ready", response.SSL.Status)
+			assert.Equal(t, pluginDb.SSLStatusReady, response.SSL.Status)
 		}, TestOptions)
 	})
 
@@ -464,7 +464,7 @@ func TestAPI_GetSSLStatus(t *testing.T) {
 			var response dto.WebsiteResponse
 			err := json.Unmarshal(rec.Body.Bytes(), &response)
 			require.NoError(t, err)
-			assert.Equal(t, "pending", response.SSL.Status)
+			assert.Equal(t, pluginDb.SSLStatusPending, response.SSL.Status)
 		}, TestOptions)
 	})
 
@@ -535,7 +535,7 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, uint(1), response.ID)
 			assert.Equal(t, TestDomain, response.Domain)
-			assert.Equal(t, "ready", response.SSL.Status)
+			assert.Equal(t, pluginDb.SSLStatusReady, response.SSL.Status)
 		}, TestOptions)
 	})
 
@@ -558,7 +558,7 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, uint(1), response.ID)
 			assert.Equal(t, TestDomain, response.Domain)
-			assert.Equal(t, "failed", response.SSL.Status)
+			assert.Equal(t, pluginDb.SSLStatusFailed, response.SSL.Status)
 			assert.Equal(t, "certificate validation failed", response.SSL.Error)
 		}, TestOptions)
 	})
@@ -582,7 +582,7 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, uint(1), response.ID)
 			assert.Equal(t, TestDomain, response.Domain)
-			assert.Equal(t, "pending", response.SSL.Status)
+			assert.Equal(t, pluginDb.SSLStatusPending, response.SSL.Status)
 		}, TestOptions)
 	})
 
@@ -605,7 +605,7 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, uint(1), response.ID)
 			assert.Equal(t, TestDomain, response.Domain)
-			assert.Equal(t, "issuing", response.SSL.Status)
+			assert.Equal(t, pluginDb.SSLStatusIssuing, response.SSL.Status)
 		}, TestOptions)
 	})
 
@@ -736,7 +736,7 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			var response1 dto.WebsiteResponse
 			err := json.Unmarshal(rec1.Body.Bytes(), &response1)
 			require.NoError(t, err)
-			assert.Equal(t, "pending", response1.SSL.Status)
+			assert.Equal(t, pluginDb.SSLStatusPending, response1.SSL.Status)
 
 			reqBody2 := fmt.Sprintf(`{"status":"issuing","timestamp":"%s"}`, timestamp2.Format(time.RFC3339))
 			rec2 := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody2))
@@ -744,7 +744,7 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			var response2 dto.WebsiteResponse
 			err = json.Unmarshal(rec2.Body.Bytes(), &response2)
 			require.NoError(t, err)
-			assert.Equal(t, "issuing", response2.SSL.Status)
+			assert.Equal(t, pluginDb.SSLStatusIssuing, response2.SSL.Status)
 
 			reqBody3 := fmt.Sprintf(`{"status":"ready","timestamp":"%s"}`, timestamp3.Format(time.RFC3339))
 			rec3 := helper.makeGatewayAuthenticatedRequest(http.MethodPost, "/internal/websites/"+TestDomain+"/ssl-status", testGatewaySecret(), []byte(reqBody3))
@@ -752,7 +752,7 @@ func TestAPI_UpdateSSLStatus_Webhook(t *testing.T) {
 			var response3 dto.WebsiteResponse
 			err = json.Unmarshal(rec3.Body.Bytes(), &response3)
 			require.NoError(t, err)
-			assert.Equal(t, "ready", response3.SSL.Status)
+			assert.Equal(t, pluginDb.SSLStatusReady, response3.SSL.Status)
 		}, TestOptions)
 	})
 }
