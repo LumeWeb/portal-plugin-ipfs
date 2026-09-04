@@ -9,7 +9,8 @@ import (
 
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/tlds"
+
+	"go.lumeweb.com/icann-tlds"
 )
 
 // ICANNDelegation is the typed result for ICANN BuildDelegation.
@@ -69,7 +70,13 @@ func (p *ICANNProvider) Validate(domain string) error {
 	// A domain is ICANN only if its final label is a TLD registered in the
 	// IANA root zone list. The IANA list is the authoritative decision
 	// procedure — a name is never ICANN merely because it is dotted.
-	if !tlds.IsICANN(domain) {
+	checkCtx, cancel := tldCheckCtx()
+	defer cancel()
+	isICANN, err := icann.IsICANN(checkCtx, domain)
+	if err != nil {
+		return fmt.Errorf("check IANA root zone list: %w", err)
+	}
+	if !isICANN {
 		return fmt.Errorf("%q does not end in an ICANN TLD", domain)
 	}
 	return nil

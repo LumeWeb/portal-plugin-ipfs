@@ -1094,15 +1094,18 @@ func (s *DelegatedDomainService) getNamespaceForDomain(domain string) (string, b
 	if s.registry == nil {
 		return "", false
 	}
-	for _, ns := range s.registry.Names() {
-		prov := s.registry.Get(ns)
-		if prov != nil {
-			if err := prov.Validate(domain); err == nil {
-				return ns, true
-			}
-		}
+	// Route through providerForDomain so namespace classification (and its
+	// unloaded-list semantics) has a single implementation. This call is a
+	// best-effort hint (resolver selection, ownership verification mode), so
+	// an unloaded IANA list degrades to "no special namespace" instead of
+	// failing: downstream resolution/verification fails loudly on its own
+	// rather than silently publishing misrouted DNS (providerForDomain's
+	// ErrTLDListUnavailable path is for the NS publication surfaces).
+	prov, err := s.registry.providerForDomain(domain)
+	if err != nil || prov == nil {
+		return "", false
 	}
-	return "", false
+	return prov.Protocol(), true
 }
 
 // GetWebsiteDomainByName looks up a domain across all namespaces.
@@ -1317,6 +1320,10 @@ func NewDelegatedDomainServiceFactory() (core.Service, []core.ContextBuilderOpti
 				hnsResolver = dnsCfg.HNSResolver
 				hip5BlockedTLDs = dnsCfg.HIP5BlockedTLDs
 			}
+			// Prefetch the IANA root zone list so provider Validate calls
+			// hit the in-memory snapshot instead of racing a cold network
+			// fetch on the bind path.
+			go warmTLDList()
 			reg.Register(NewICANNProvider(nsList))
 			hnsProv := NewHNSProvider(hnsResolver, hnsNSList, TLSASource{})
 			// Apply the configured HIP-5 blocked-TLD set. The override is applied

@@ -28,11 +28,21 @@ type DNSLinkTarget string
 // behavior for deployments without the provider resolver wired up.
 func (s *DNSServiceDefault) nameserversForDomain(domain string) ([]string, error) {
 	if s.nameserverResolver != nil {
-		if nss, ok := s.nameserverResolver.NameserversFor(domain); ok {
+		nss, err := s.nameserverResolver.NameserversFor(domain)
+		switch {
+		case err == nil:
 			if len(nss) == 0 {
 				return nil, fmt.Errorf("no nameservers configured for domain %s", domain)
 			}
 			return nss, nil
+		case errors.Is(err, pluginCore.ErrNoProviderForDomain):
+			// No provider matches the domain; fall back to the config
+			// nameservers below, mirroring liveNameservers' fallback.
+		default:
+			// A namespace lookup failure (e.g. IANA root zone list not
+			// loaded) must not silently publish another namespace's
+			// nameservers for the zone.
+			return nil, err
 		}
 	}
 	nss := s.config.Nameservers
