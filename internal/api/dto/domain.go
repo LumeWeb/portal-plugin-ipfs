@@ -143,13 +143,13 @@ type DNSDelegation struct {
 
 // DomainResponse is a bound domain.
 type DomainResponse struct {
-	ID          uint           `json:"id"`
-	Domain      string         `json:"domain"`
-	Namespace   string         `json:"namespace"`
-	Status      string         `json:"status,omitempty"`
-	ZoneName    string         `json:"zone_name,omitempty"`
-	GatewayHost string         `json:"gateway_host,omitempty"`
-	Delegation  *DNSDelegation `json:"delegation,omitempty"`
+	ID          uint               `json:"id"`
+	Domain      string             `json:"domain"`
+	Namespace   db.DomainNamespace `json:"namespace" jsonschema:"enum=icann,enum=hns"`
+	Status      db.DomainStatus    `json:"status,omitempty" jsonschema:"enum=draft,enum=records_generated,enum=waiting_delegation,enum=active,enum=self_hosted,enum=error,enum=onchain_managed"`
+	ZoneName    string             `json:"zone_name,omitempty"`
+	GatewayHost string             `json:"gateway_host,omitempty"`
+	Delegation  *DNSDelegation     `json:"delegation,omitempty"`
 	// DNSHostingEnabled reports whether the portal manages DNS for this
 	// specific domain binding (the per-domain DNS hosting flag).
 	DNSHostingEnabled bool `json:"dns_hosting_enabled"`
@@ -161,15 +161,15 @@ type DomainResponse struct {
 func (r *DomainResponse) FromModel(m *db.WebsiteDomain) error {
 	r.ID = m.ID
 	r.Domain = m.Domain
-	r.Namespace = string(m.Namespace)
-	r.Status = string(m.Status)
+	r.Namespace = m.Namespace
+	r.Status = m.Status
 	r.ZoneName = m.ZoneName
 	r.GatewayHost = m.GatewayHost
 	r.DNSHostingEnabled = m.DNSHostingEnabled
 
 	if m.SSLStatus != "" {
 		r.SSL = &SSLStatusInfo{
-			Status: m.SSLStatus,
+			Status: db.SSLStatus(m.SSLStatus),
 			Error:  m.SSLError,
 		}
 		if m.SSLIssuedAt != nil {
@@ -202,17 +202,17 @@ func (r *DomainResponse) FromModel(m *db.WebsiteDomain) error {
 // embedding DomainResponse, because the gswagger schema generator rejects Go
 // embedded structs (potential infinite recursion).
 type DomainDANERepublishResponse struct {
-	ID          uint           `json:"id"`
-	Domain      string         `json:"domain"`
-	Namespace   string         `json:"namespace"`
-	Status      string         `json:"status,omitempty"`
-	ZoneName    string         `json:"zone_name,omitempty"`
-	GatewayHost string         `json:"gateway_host,omitempty"`
-	Delegation  *DNSDelegation `json:"delegation,omitempty"`
-	SSL         *SSLStatusInfo `json:"ssl,omitempty"`
-	TLSARecord  string         `json:"tlsa_record,omitempty"` // full "_443._tcp.<domain> ... TLSA ..." presentation
-	OwnerName   string         `json:"owner_name,omitempty"`  // "_443._tcp.<domain>"
-	TLSARData   string         `json:"tlsa_rdata,omitempty"`  // "3 1 1 <hex>"
+	ID          uint               `json:"id"`
+	Domain      string             `json:"domain"`
+	Namespace   db.DomainNamespace `json:"namespace" jsonschema:"enum=icann,enum=hns"`
+	Status      db.DomainStatus    `json:"status,omitempty" jsonschema:"enum=draft,enum=records_generated,enum=waiting_delegation,enum=active,enum=self_hosted,enum=error,enum=onchain_managed"`
+	ZoneName    string             `json:"zone_name,omitempty"`
+	GatewayHost string             `json:"gateway_host,omitempty"`
+	Delegation  *DNSDelegation     `json:"delegation,omitempty"`
+	SSL         *SSLStatusInfo     `json:"ssl,omitempty"`
+	TLSARecord  string             `json:"tlsa_record,omitempty"` // full "_443._tcp.<domain> ... TLSA ..." presentation
+	OwnerName   string             `json:"owner_name,omitempty"`  // "_443._tcp.<domain>"
+	TLSARData   string             `json:"tlsa_rdata,omitempty"`  // "3 1 1 <hex>"
 }
 
 // FromModel populates the DomainResponse-backed fields from a WebsiteDomain.
@@ -225,13 +225,13 @@ func (r *DomainDANERepublishResponse) FromModel(m *db.WebsiteDomain) error {
 func (r *DomainDANERepublishResponse) DomainResponseFromModel(m *db.WebsiteDomain) error {
 	r.ID = m.ID
 	r.Domain = m.Domain
-	r.Namespace = string(m.Namespace)
-	r.Status = string(m.Status)
+	r.Namespace = m.Namespace
+	r.Status = m.Status
 	r.ZoneName = m.ZoneName
 	r.GatewayHost = m.GatewayHost
 	if m.SSLStatus != "" {
 		r.SSL = &SSLStatusInfo{
-			Status: m.SSLStatus,
+			Status: db.SSLStatus(m.SSLStatus),
 			Error:  m.SSLError,
 		}
 		if m.SSLIssuedAt != nil {

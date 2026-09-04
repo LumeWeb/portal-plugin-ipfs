@@ -42,8 +42,8 @@ func TestDomainResponse_FromModel_HNS(t *testing.T) {
 
 	assert.Equal(t, uint(7), resp.ID)
 	assert.Equal(t, "lumeweb", resp.Domain)
-	assert.Equal(t, "hns", resp.Namespace)
-	assert.Equal(t, "records_generated", resp.Status)
+	assert.Equal(t, pluginDb.DomainNamespaceHNS, resp.Namespace)
+	assert.Equal(t, pluginDb.DomainStatusRecordsGenerated, resp.Status)
 	assert.Equal(t, "lumeweb.", resp.ZoneName)
 	assert.Equal(t, "gateway.lumeweb.com", resp.GatewayHost)
 
@@ -110,7 +110,7 @@ func TestDomainResponse_FromModel_NoDelegation(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, uint(1), resp.ID)
-	assert.Equal(t, "draft", resp.Status)
+	assert.Equal(t, pluginDb.DomainStatusDraft, resp.Status)
 	assert.Nil(t, resp.Delegation, "delegation should be nil when no DelegationData")
 	assert.Empty(t, resp.GatewayHost)
 }

@@ -933,7 +933,7 @@ func (a *API) applyApexSSLStatus(ctx context.Context, resp *dto.WebsiteResponse,
 // sslStatusInfoFromDomain converts a domain binding's SSL state to the DTO.
 func sslStatusInfoFromDomain(wd *pluginDb.WebsiteDomain) *dto.SSLStatusInfo {
 	info := &dto.SSLStatusInfo{
-		Status: wd.SSLStatus,
+		Status: pluginDb.SSLStatus(wd.SSLStatus),
 		Error:  wd.SSLError,
 	}
 	if wd.SSLIssuedAt != nil {
