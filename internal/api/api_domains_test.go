@@ -135,7 +135,7 @@ func TestAPI_DomainDNSRequirements(t *testing.T) {
 			var resp dto.DomainResponse
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 			assert.Equal(t, "lumeweb", resp.Domain)
-			assert.Equal(t, "hns", resp.Namespace)
+			assert.Equal(t, pluginDb.DomainNamespaceHNS, resp.Namespace)
 			require.NotNil(t, resp.Delegation)
 			assert.Equal(t, "delegated", resp.Delegation.Mode)
 			// No first-class DS field — the live DS is injected into
@@ -453,7 +453,7 @@ func TestAPI_DANERepublish(t *testing.T) {
 			var resp dto.DomainDANERepublishResponse
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 			assert.Equal(t, "hns-repub.test", resp.Domain)
-			assert.Equal(t, "hns", resp.Namespace)
+			assert.Equal(t, pluginDb.DomainNamespaceHNS, resp.Namespace)
 			require.NotEmpty(t, resp.TLSARData)
 			require.NotEmpty(t, resp.OwnerName)
 			assert.Contains(t, resp.TLSARecord, "TLSA")
@@ -668,7 +668,7 @@ func TestAPI_DomainDNSRequirements_OnchainManaged(t *testing.T) {
 		var resp dto.DomainResponse
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 		assert.Equal(t, "onchain", resp.Domain)
-		assert.Equal(t, string(pluginDb.DomainStatusOnchainManaged), resp.Status)
+		assert.Equal(t, pluginDb.DomainStatusOnchainManaged, resp.Status)
 		assert.False(t, resp.DNSHostingEnabled)
 		assert.Nil(t, resp.Delegation, "on-chain managed domains have no portal delegation/NS-DS guidance")
 	}, TestOptions)
