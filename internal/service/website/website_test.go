@@ -846,10 +846,11 @@ func TestWebsiteService_UpdateWebsite_BrokenSite_AutoValidates(t *testing.T) {
 			"target_hash": newCID.String(),
 		})
 
+		websiteService.WaitForValidations()
+
 		// Assert
 		require.NoError(tb, err)
 		require.NotNil(tb, updatedWebsite)
-		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), updatedWebsite.Status, "broken site should be auto-recovered when the deploy target validates")
 
 		final, err := websiteService.GetWebsite(context.Background(), testUserID1, createdWebsite.ID)
 		require.NoError(tb, err)
@@ -895,6 +896,8 @@ func TestWebsiteService_UpdateWebsite_BrokenSite_ValidationFails_StatusUnchanged
 		})
 
 		// Assert
+		websiteService.WaitForValidations()
+
 		require.NoError(tb, err, "failed auto-validation must not fail the update")
 		require.NotNil(tb, updatedWebsite)
 		assert.Equal(tb, newCID.String(), updatedWebsite.TargetHash())

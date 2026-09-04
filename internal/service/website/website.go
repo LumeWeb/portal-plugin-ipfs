@@ -32,6 +32,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// autoValidationTimeout bounds the background re-validation of a broken
+// website after a deploy so a hung resolver cannot leak a goroutine forever.
+const autoValidationTimeout = 30 * time.Second
+
 func (s *WebsiteServiceDefault) verificationTokenKey() string {
 	if s.dnsConfig != nil && s.dnsConfig.VerificationTokenKey != "" {
 		return s.dnsConfig.VerificationTokenKey
@@ -79,6 +83,7 @@ type WebsiteServiceDefault struct {
 	delegatedDomainSvc delegatedDomainService
 	resolver           DNSResolver
 	publishWg          sync.WaitGroup
+	validationWg       sync.WaitGroup
 }
 
 // Ensure WebsiteServiceDefault implements the interface
@@ -935,31 +940,10 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 	// validated target (the update itself proves the CID is pinned) should be
 	// able to revive it without waiting for the janitor or a manual validate.
 	// A failed validation never fails or rolls back the update — the site keeps
-	// its broken (or other) status for the existing recovery paths.
+	// its broken (or other) status for the existing recovery paths. It runs in
+	// the background so the deploy response never waits on external DNS.
 	if targetHashChanged && updatedWebsite != nil && oldStatus == pluginDb.WebsiteStatusBroken {
-		result, verr := s.ValidateDNS(ctx, userID, websiteID)
-		switch {
-		case verr != nil:
-			s.Logger().Warn("Auto-validation of broken website after update failed",
-				zap.Error(verr),
-				zap.Uint("website_id", websiteID),
-				zap.Uint("user_id", userID))
-		case !result.Valid:
-			s.Logger().Warn("Auto-validation of broken website after update did not validate",
-				zap.String("reason", string(result.Reason)),
-				zap.Uint("website_id", websiteID),
-				zap.Uint("user_id", userID))
-		default:
-			s.Logger().Info("Recovered broken website via auto-validation after update",
-				zap.Uint("website_id", websiteID),
-				zap.Uint("user_id", userID))
-		}
-		// Reload so the caller sees the auto-activated status/expiry from
-		// validation rather than the pre-validation snapshot.
-		var reloaded pluginDb.Website
-		if rerr := s.DB().WithContext(ctx).First(&reloaded, websiteID).Error; rerr == nil {
-			updatedWebsite = &reloaded
-		}
+		s.autoValidateBrokenWebsite(ctx, userID, websiteID)
 	}
 
 	// Send notification to admin
@@ -2016,6 +2000,53 @@ func (s *WebsiteServiceDefault) publishCIDAsync(ctx context.Context, peerID, cid
 
 func (s *WebsiteServiceDefault) WaitForPublishes() {
 	s.publishWg.Wait()
+}
+
+// autoValidateBrokenWebsite re-validates a broken website in the background
+// after a deploy re-pointed its target. The update path already proved the new
+// target is pinned, so DNS validation is the only remaining gate between the
+// site and recovery to active. Runs detached so HTTP deploy latency never
+// depends on external DNS; a failure only logs — janitor and manual validate
+// remain the fallback recovery paths.
+func (s *WebsiteServiceDefault) autoValidateBrokenWebsite(ctx context.Context, userID, websiteID uint) {
+	s.validationWg.Add(1)
+	go func() {
+		defer s.validationWg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				s.Logger().Error("Recovered from panic in autoValidateBrokenWebsite",
+					zap.Any("panic", r),
+					zap.Uint("website_id", websiteID),
+					zap.Uint("user_id", userID))
+			}
+		}()
+		vctx, cancel := context.WithTimeout(core.DetachContext(ctx), autoValidationTimeout)
+		defer cancel()
+
+		result, err := s.ValidateDNS(vctx, userID, websiteID)
+		switch {
+		case err != nil:
+			s.Logger().Warn("Auto-validation of broken website after update failed",
+				zap.Error(err),
+				zap.Uint("website_id", websiteID),
+				zap.Uint("user_id", userID))
+		case !result.Valid:
+			s.Logger().Warn("Auto-validation of broken website after update did not validate",
+				zap.String("reason", string(result.Reason)),
+				zap.Uint("website_id", websiteID),
+				zap.Uint("user_id", userID))
+		default:
+			s.Logger().Info("Recovered broken website via auto-validation after update",
+				zap.Uint("website_id", websiteID),
+				zap.Uint("user_id", userID))
+		}
+	}()
+}
+
+// WaitForValidations blocks until all background auto-validations complete.
+// Test convenience — production callers never wait on recovery work.
+func (s *WebsiteServiceDefault) WaitForValidations() {
+	s.validationWg.Wait()
 }
 
 // setIPNSTargetUpdates populates the updates map with IPNS target fields
