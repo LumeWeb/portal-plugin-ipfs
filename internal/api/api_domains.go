@@ -361,7 +361,15 @@ func (a *API) verifyDomain(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	if res.State != domsvc.DelegationVerified {
+	switch res.State {
+	case domsvc.DelegationNotApplicable:
+		a.Logger().Debug("delegation verification not applicable",
+			zap.String("domain", wd.Domain),
+			zap.String("namespace", string(wd.Namespace)),
+			zap.Uint("id", wd.ID),
+			zap.Uint("zone_id", wd.ZoneID),
+		)
+	case domsvc.DelegationPending:
 		a.Logger().Info("delegation not verified",
 			zap.String("domain", wd.Domain),
 			zap.String("namespace", string(wd.Namespace)),
