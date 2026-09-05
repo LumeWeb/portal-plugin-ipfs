@@ -241,6 +241,84 @@ func TestDANEKeyNotConfiguredSentinel(t *testing.T) {
 	}, TestOptions)
 }
 
+func TestRepublishChainDANERecord(t *testing.T) {
+	t.Run("recomputes_from_stored_key_when_encryption_key_configured", func(t *testing.T) {
+		// With the key-encryption key configured, RepublishChainDANERecord
+		// derives the TLSA fresh from the stable DANE key (source of truth) and
+		// persists it, even when no cert was ever pushed.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, svc)
+
+			require.NoError(tb, ctx.DB().Create(&pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "chain.hns", Namespace: pluginDb.DomainNamespaceHNS,
+				Status: pluginDb.DomainStatusOnchainManaged,
+			}).Error)
+
+			tlsa, owner, err := svc.RepublishChainDANERecord(ctx, "hns", "chain.hns")
+			require.NoError(tb, err)
+			require.NotEmpty(tb, tlsa)
+			require.NotEmpty(tb, owner)
+
+			// The recomputed record must persist as the stored DANE identity.
+			storedTLSa, storedOwner, err := svc.GetDANERecord(ctx, "hns", "chain.hns")
+			require.NoError(tb, err)
+			assert.Equal(tb, tlsa, storedTLSa)
+			assert.Equal(tb, owner, storedOwner)
+		}, keyTestOptions)
+	})
+
+	t.Run("falls_back_to_stored_tlsa_without_encryption_key", func(t *testing.T) {
+		// The real-world flaw: a chain-managed name whose cert was pushed but
+		// whose private key was never persisted (no key-encryption key). The
+		// stored TLSA must be returned rather than a NoStoredCertificate error.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, svc)
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "chain-fallback.hns", Namespace: pluginDb.DomainNamespaceHNS,
+				Status: pluginDb.DomainStatusOnchainManaged,
+			}
+			require.NoError(tb, ctx.DB().Create(wd).Error)
+
+			keyPEM := mustGenerateKey(tb)
+			certPEM, _ := issueCertFromKey(tb, keyPEM, "chain-fallback.hns")
+			// No key-encryption key configured: the push stores tlsa/owner/cert
+			// but skips persisting the private key.
+			_, _, err := svc.UpdateTLSAFromCert(ctx, "hns", wd.Domain, certPEM, keyPEM)
+			require.NoError(tb, err)
+
+			// Precondition: TLSA present, private key absent.
+			stored, _, err := svc.GetDANERecord(ctx, "hns", wd.Domain)
+			require.NoError(tb, err)
+			require.NotEmpty(tb, stored)
+			_, err = svc.GetCertificateKey(ctx, "hns", wd.Domain)
+			require.ErrorIs(tb, err, gorm.ErrRecordNotFound)
+
+			tlsa, owner, err := svc.RepublishChainDANERecord(ctx, "hns", wd.Domain)
+			require.NoError(tb, err)
+			assert.Equal(tb, stored, tlsa)
+			require.NotEmpty(tb, owner)
+		}, TestOptions)
+	})
+
+	t.Run("errors_when_no_identity_exists", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, svc)
+
+			require.NoError(tb, ctx.DB().Create(&pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "empty.hns", Namespace: pluginDb.DomainNamespaceHNS,
+				Status: pluginDb.DomainStatusOnchainManaged,
+			}).Error)
+
+			_, _, err := svc.RepublishChainDANERecord(ctx, "hns", "empty.hns")
+			require.ErrorIs(tb, err, gorm.ErrRecordNotFound)
+		}, TestOptions)
+	})
+}
+
 func TestGetCertificateKey_NotFound(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)

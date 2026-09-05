@@ -1388,6 +1388,32 @@ func (s *DelegatedDomainService) GetDANERecord(ctx context.Context, namespace, d
 	return tlsa, ownerName, nil
 }
 
+// RepublishChainDANERecord force-refreshes the stored DANE TLSA for a
+// chain-managed (HIP-5) binding and returns the record the owner must install
+// in the name's on-chain zone data. DANE TLSA 3 1 1 pins the stable DANE key's
+// SPKI, so the record is recomputed from the key — the source of truth — rather
+// than from a certificate, and no PowerDNS zone write occurs. When the DANE
+// key-encryption key is unset so a fresh key cannot be persisted, it falls back
+// to the already-stored TLSA (bind-time best-effort policy); if no identity
+// exists at all it returns gorm.ErrRecordNotFound.
+func (s *DelegatedDomainService) RepublishChainDANERecord(ctx context.Context, namespace, domain string) (tlsa, ownerName string, err error) {
+	sc, err := s.EnsureCertificateKey(ctx, namespace, domain)
+	if err == nil {
+		return sc.TLSA, sc.OwnerName, nil
+	}
+	if !errors.Is(err, errDANEKeyNotConfigured) {
+		return "", "", fmt.Errorf("refresh on-chain DANE identity: %w", err)
+	}
+	tlsa, ownerName, err = s.GetDANERecord(ctx, namespace, domain)
+	if err != nil {
+		return "", "", err
+	}
+	if tlsa == "" {
+		return "", "", gorm.ErrRecordNotFound
+	}
+	return tlsa, ownerName, nil
+}
+
 // GetActiveWebsiteDomainByDomain finds an active domain across all namespaces.
 func (s *DelegatedDomainService) GetActiveWebsiteDomainByDomain(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error) {
 	var wd pluginDb.WebsiteDomain

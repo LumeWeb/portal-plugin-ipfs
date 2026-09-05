@@ -21,6 +21,7 @@ import (
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
 
 func TestAPI_DeleteDomain(t *testing.T) {
@@ -512,6 +513,58 @@ func TestAPI_DANERepublish(t *testing.T) {
 			assert.False(t, resp.PublishedToManagedZone,
 				"chain-managed binding has no portal zone; the TLSA must be installed on-chain")
 		}, daneRepublishTestOptions)
+	})
+
+	t.Run("onchain_hns_with_stored_tlsa_but_no_private_key_republishes", func(t *testing.T) {
+		// A chain-managed (HIP-5) HNS binding frequently has a stored TLSA/cert
+		// but no stored private key — the key is only persisted when the DANE
+		// key-encryption key is configured, and legacy certificates may predate
+		// key bootstrap. Republish must NOT require a stored certificate: it
+		// must refresh/return the stored TLSA (published_to_managed_zone=false)
+		// instead of failing with NoStoredCertificate.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID, _, _ := helper.SetupAuthenticatedTest()
+
+			website := createTestIPFSGatewayWebsite(1, userID, "onchain-notlsa.hns", util.GenerateTestCID(t, "td"), pluginDb.WebsiteStatusActive)
+			require.NoError(t, ctx.DB().Create(website).Error)
+			websiteID := website.ID
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: websiteID,
+				UserID:    userID,
+				Domain:    "onchain-notlsa.hns",
+				Namespace: pluginDb.DomainNamespaceHNS,
+				Status:    pluginDb.DomainStatusOnchainManaged,
+			}
+			require.NoError(t, ctx.DB().Create(wd).Error)
+
+			// Seed the TLSA/cert WITHOUT the DANE key-encryption key: the push
+			// stores tlsa/owner/cert but skips persisting the private key,
+			// reproducing the no-stored-certificate condition.
+			svc := core.GetService[*domain.DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, svc)
+			keyPEM := mustGenerateTestKey(t)
+			certPEM := mustIssueTestCert(t, keyPEM, "onchain-notlsa.hns")
+			_, _, err := svc.UpdateTLSAFromCert(ctx, "hns", wd.Domain, certPEM, keyPEM)
+			require.NoError(t, err, "seeding stored TLSA via UpdateTLSAFromCert")
+
+			// Confirm the degenerate precondition: TLSA present, private key absent.
+			tlsa, _, dErr := svc.GetDANERecord(ctx, "hns", wd.Domain)
+			require.NoError(t, dErr)
+			require.NotEmpty(t, tlsa, "TLSA must be stored for the precondition")
+			_, gErr := svc.GetCertificateKey(ctx, "hns", wd.Domain)
+			require.ErrorIs(t, gErr, gorm.ErrRecordNotFound, "private key must be absent for the precondition")
+
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, republishPath(int(websiteID), int(wd.ID)), token, nil)
+			require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+			var resp dto.DomainDANERepublishResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.NotEmpty(t, resp.TLSARData, "republish must return the stored TLSA")
+			require.NotEmpty(t, resp.OwnerName)
+			assert.False(t, resp.PublishedToManagedZone)
+		}, TestOptions)
 	})
 }
 

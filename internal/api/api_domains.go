@@ -633,22 +633,42 @@ func (a *API) republishDomainDANE(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	cert, err := a.delegatedDomainSvc.GetCertificateKey(reqCtx, ns, wd.Domain)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			apiErr := NewError(ErrKeyNoStoredCertificate, err)
+	var tlsa, ownerName string
+	if locus == domsvc.DANEPublishChain {
+		// Chain-managed (HIP-5): DANE still applies on-chain, so republish just
+		// refreshes the stored TLSA from the stable DANE key — the source of
+		// truth for the SPKI pin — and returns it for the owner to install in
+		// the name's on-chain zone data. No stored certificate and no PowerDNS
+		// zone write are involved: TLSA 3 1 1 pins the key, not a cert, and a
+		// chain-managed name owns no portal zone.
+		tlsa, ownerName, err = a.delegatedDomainSvc.RepublishChainDANERecord(reqCtx, ns, wd.Domain)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				apiErr := NewError(ErrKeyNoStoredCertificate, err)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			a.Logger().Error("Failed to republish on-chain DANE record", zap.Error(err), zap.String("domain", wd.Domain))
+			apiErr := NewError(ErrKeyFileProcessingFailed, err)
 			return ctx.Error(apiErr, apiErr.HttpStatus())
 		}
-		a.Logger().Error("Failed to load stored certificate for DANE republish", zap.Error(err), zap.String("domain", wd.Domain))
-		apiErr := NewError(ErrKeyFileProcessingFailed, err)
-		return ctx.Error(apiErr, apiErr.HttpStatus())
-	}
+	} else {
+		cert, err := a.delegatedDomainSvc.GetCertificateKey(reqCtx, ns, wd.Domain)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				apiErr := NewError(ErrKeyNoStoredCertificate, err)
+				return ctx.Error(apiErr, apiErr.HttpStatus())
+			}
+			a.Logger().Error("Failed to load stored certificate for DANE republish", zap.Error(err), zap.String("domain", wd.Domain))
+			apiErr := NewError(ErrKeyFileProcessingFailed, err)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
 
-	tlsa, ownerName, err := a.delegatedDomainSvc.UpdateTLSAFromCert(reqCtx, ns, wd.Domain, cert.CertPEM, cert.PrivateKeyPEM)
-	if err != nil {
-		a.Logger().Error("Failed to republish DANE TLSA", zap.Error(err), zap.String("domain", wd.Domain))
-		apiErr := NewError(ErrKeyFileProcessingFailed, err)
-		return ctx.Error(apiErr, apiErr.HttpStatus())
+		tlsa, ownerName, err = a.delegatedDomainSvc.UpdateTLSAFromCert(reqCtx, ns, wd.Domain, cert.CertPEM, cert.PrivateKeyPEM)
+		if err != nil {
+			a.Logger().Error("Failed to republish DANE TLSA", zap.Error(err), zap.String("domain", wd.Domain))
+			apiErr := NewError(ErrKeyFileProcessingFailed, err)
+			return ctx.Error(apiErr, apiErr.HttpStatus())
+		}
 	}
 
 	// Reload wd after the publish: UpdateTLSAFromCert rewrites the row's
