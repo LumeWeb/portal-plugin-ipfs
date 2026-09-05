@@ -1308,7 +1308,6 @@ func NewDelegatedDomainServiceFactory() (core.Service, []core.ContextBuilderOpti
 			var nsList []string
 			var hnsNSList []string
 			hnsResolver := ""
-			var hip5BlockedTLDs []string
 			if dnsCfg != nil {
 				nsList = dnsCfg.Nameservers
 				hnsNSList = dnsCfg.HNSNameservers
@@ -1318,7 +1317,6 @@ func NewDelegatedDomainServiceFactory() (core.Service, []core.ContextBuilderOpti
 					hnsNSList = nsList
 				}
 				hnsResolver = dnsCfg.HNSResolver
-				hip5BlockedTLDs = dnsCfg.HIP5BlockedTLDs
 			}
 			// Prefetch the IANA root zone list so provider Validate calls
 			// hit the in-memory snapshot instead of racing a cold network
@@ -1326,15 +1324,6 @@ func NewDelegatedDomainServiceFactory() (core.Service, []core.ContextBuilderOpti
 			go warmTLDList()
 			reg.Register(NewICANNProvider(nsList))
 			hnsProv := NewHNSProvider(hnsResolver, hnsNSList, TLSASource{})
-			// Apply the configured HIP-5 blocked-TLD set. The override is applied
-			// whenever the config is present (even an empty slice): an empty set
-			// intentionally disables blocked-TLD detection, leaving only
-			// underscore-prefixed protocol tags counted. A nil/absent dnsCfg
-			// keeps the constructor's built-in defaults, matching the DnsConfig
-			// defaults of ["eth","bit"].
-			if dnsCfg != nil {
-				hnsProv.SetHIP5BlockedTLDs(hip5BlockedTLDs)
-			}
 			dns := core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
 			if dns != nil {
 				hnsProv.SetDNSService(dns)

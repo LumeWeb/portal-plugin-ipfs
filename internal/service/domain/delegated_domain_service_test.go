@@ -896,7 +896,7 @@ func TestDelegatedDomainService_ConvertToOnChain_NotHIP5Refused(t *testing.T) {
 	// Conversion is refused until the name genuinely serves a HIP-5 record; it
 	// never tears down DNS on the caller's word alone.
 	const domain = "staysnative"
-	nativeAddr, _ := startCustomPortDNSServer(t, domain+".", []string{"ns1.lumeweb."})
+	nativeAddr, _ := startCustomPortDNSServerWithAuthority(t, domain+".", []string{"ns1.lumeweb."}, false)
 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
