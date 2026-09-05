@@ -892,6 +892,37 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 	}, TestOptions)
 }
 
+func TestDelegatedDomainService_VerifyDomain_ReclassifiesExistingHIP5(t *testing.T) {
+	const domain = "verify-convertme"
+	const zoneID = uint(88)
+	hip5Addr, _ := startCustomPortDNSServer(t, domain+".", []string{"ignored.target."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, domain)
+		require.NoError(tb, db.Model(&website).Update("status", pluginDb.WebsiteStatusActive).Error)
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: domain,
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: zoneID,
+			Status: pluginDb.DomainStatusWaitingDelegation, DNSHostingEnabled: true,
+		}
+		require.NoError(tb, db.Create(wd).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		hnsProv.resolverAddr = hip5Addr
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().DeleteZone(mock.Anything, zoneID).Return(nil).Once()
+
+		result, err := svc.VerifyDomain(context.Background(), wd)
+		require.NoError(tb, err)
+		assert.Equal(tb, DelegationNotApplicable, result.State)
+		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, wd.Status)
+		assert.Zero(tb, wd.ZoneID)
+		assert.False(tb, wd.DNSHostingEnabled)
+	}, TestOptions)
+}
+
 func TestDelegatedDomainService_ConvertToOnChain_NotHIP5Refused(t *testing.T) {
 	// Conversion is refused until the name genuinely serves a HIP-5 record; it
 	// never tears down DNS on the caller's word alone.

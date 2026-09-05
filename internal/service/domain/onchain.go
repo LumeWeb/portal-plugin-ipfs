@@ -19,27 +19,7 @@ var (
 )
 
 // ConvertToOnChain converts a bound domain into an on-chain managed (HIP-5)
-// binding — the explicit, one-way path for the HNS-DNS → on-chain-DNS
-// transition, used when the name's NS record now points at an external
-// contract (a HIP-5 TX record the owner set on-chain).
-//
-// The portal stops owning the PowerDNS-served DNS for the name: the managed
-// zone (and the DNSSEC/DS carried by it) is deleted and the binding is
-// re-marked onchain_managed with dns_hosting_enabled=false, so ownership is
-// proven with the TXT token through the resolver instead of NS/DS delegation.
-// DANE/SSL state (ProtocolData: key, cert, TLSA, owner) is deliberately KEPT —
-// DANE still applies on-chain; only the PowerDNS-published records and DNSSEC
-// (not a concept on-chain) are dropped. The owning website is reset to
-// pending_validation so the TXT-token verification flow re-runs.
-//
-// Safety (never tear down on the caller's word alone):
-//   - Refused until Inspect confirms the name genuinely serves a HIP-5 record.
-//   - The PowerDNS zone is deleted only when no other live binding shares it:
-//     a shared zone is the parent of other native bindings, and deleting it
-//     would destroy their records/DNSSEC. Conversion is refused for shared
-//     zones with a clear instruction to detach those bindings first — a HIP-5
-//     apex resolves every subdomain via the contract anyway.
-//   - Refused for a binding already onchain_managed.
+// binding after Inspect confirms that handover serves it authoritatively.
 func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID, userID, domainID uint) (*pluginDb.WebsiteDomain, error) {
 	if s.DB() == nil {
 		return nil, fmt.Errorf("database not available")
@@ -49,7 +29,7 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 	if err := s.DB().WithContext(ctx).
 		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
 		First(&wd).Error; err != nil {
-		return nil, err // includes gorm.ErrRecordNotFound
+		return nil, err
 	}
 
 	if wd.Status == pluginDb.DomainStatusOnchainManaged {
@@ -60,24 +40,30 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 	if provider == nil {
 		return nil, fmt.Errorf("unsupported namespace: %s", wd.Namespace)
 	}
-
 	onchain, err := provider.Inspect(ctx, wd.Domain)
 	if err != nil {
 		return nil, fmt.Errorf("domain inspection failed: %w", err)
 	}
 	if !onchain {
-		return nil, fmt.Errorf("%w: %q; its NS record does not point at an external contract", ErrDomainNotOnChain, wd.Domain)
+		return nil, fmt.Errorf("%w: %q; handover did not select an authoritative response", ErrDomainNotOnChain, wd.Domain)
 	}
 
-	// Serialize this conversion against CreateDomain's zone provisioning so a
-	// concurrent bind into the same zone can never have its zone (and records/
-	// DNSSEC) destroyed between our sharer check and the delete. Both paths key
-	// the same per-zone lock on the zone's canonical apex name.
+	if err := s.convertInspectedBindingToOnChain(ctx, &wd); err != nil {
+		return nil, err
+	}
+	return &wd, nil
+}
+
+// convertInspectedBindingToOnChain applies an already-confirmed handover
+// decision. Callers must hold the decision that the domain is on-chain; this
+// keeps VerifyDomain from issuing a second source-detection query.
+func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Context, wd *pluginDb.WebsiteDomain) error {
+	if wd.Status == pluginDb.DomainStatusOnchainManaged {
+		return nil
+	}
+
 	zoneID := wd.ZoneID
 	if err := s.withZoneLifecycleLock(zoneLifecycleKey(wd.Domain), func() error {
-		// Only the binding's sole-owner PowerDNS zone may be deleted. A zone
-		// shared with other live bindings (their parent/apex zone) must be kept
-		// — deleting it would destroy their records and DNSSEC.
 		if zoneID != 0 {
 			var sharers int64
 			if err := s.DB().WithContext(ctx).
@@ -91,13 +77,6 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 			}
 		}
 
-		// Re-arm the website to pending_validation BEFORE committing the
-		// conversion. A failure here is clean (nothing has been converted yet
-		// and the caller can retry), whereas failing after the on-chain commit
-		// would leave an already-converted domain reported as a 500 and make
-		// retry hit "already on-chain managed". A blocked website stays blocked
-		// (only an admin can lift an admin block); a pending one needs no
-		// change.
 		var website pluginDb.Website
 		if err := s.DB().WithContext(ctx).First(&website, wd.WebsiteID).Error; err != nil {
 			return fmt.Errorf("failed to load website %d for on-chain conversion: %w", wd.WebsiteID, err)
@@ -109,11 +88,6 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 			}
 		}
 
-		// Drop the PowerDNS-backed delegation state. ProtocolData (DANE key,
-		// cert, TLSA, owner) and per-domain SSL state are intentionally
-		// preserved: DANE/SSL still apply to the name — the records are simply
-		// served by the external contract now — and DNSSEC is not a concept
-		// on-chain.
 		updates := map[string]any{
 			"zone_id":             0,
 			"zone_name":           "",
@@ -122,7 +96,7 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 			"dns_hosting_enabled": false,
 			"status":              pluginDb.DomainStatusOnchainManaged,
 		}
-		if err := s.DB().WithContext(ctx).Model(&wd).Updates(updates).Error; err != nil {
+		if err := s.DB().WithContext(ctx).Model(wd).Updates(updates).Error; err != nil {
 			return fmt.Errorf("failed to persist on-chain managed state: %w", err)
 		}
 		wd.ZoneID = 0
@@ -132,21 +106,6 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 		wd.DNSHostingEnabled = false
 		wd.Status = pluginDb.DomainStatusOnchainManaged
 
-		// Delete the now-unreferenced PowerDNS zone LAST, best-effort. Order is
-		// deliberate: the DB runs first so a delete failure can never strand
-		// the binding pointing at a destroyed zone (the unrecoverable state). A
-		// leftover/unreferenced zone is harmless (nothing serves it — the name
-		// resolves via the contract) and is logged for ops cleanup.
-		//
-		// Re-count sharers immediately before the delete as defense-in-depth.
-		// The per-zone lock above serializes against CreateDomain for the
-		// common apex case, but the lock key can diverge from the real zone
-		// apex when a "subdomain" owns its zone (parent has none) and it does
-		// NOT serialize other zone_id writers (e.g. the website-enable path).
-		// Re-checking committed state right before DeleteZone catches any
-		// binding attached by those writers: if any live binding shares the
-		// zone, the delete is skipped and the (now-referenced) zone is left
-		// intact.
 		if zoneID != 0 && s.dnsSvc != nil {
 			var sharers int64
 			if err := s.DB().WithContext(ctx).
@@ -165,8 +124,7 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 		}
 		return nil
 	}); err != nil {
-		return nil, err
+		return err
 	}
-
-	return &wd, nil
+	return nil
 }
