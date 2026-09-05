@@ -519,6 +519,27 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 		}
 	}
 
+	// Chain-managed (HIP-5) bindings own their zone data: there is no portal
+	// delegation to verify (Delegation is nil), but DANE still applies on-chain
+	// — surface the stored TLSA so the owner knows the record to install in the
+	// name's on-chain zone data. Omitted until a DANE identity exists (bind-time
+	// bootstrap or first cert push). Portal-managed bindings carry their TLSA in
+	// Delegation.AuthoritativeRecords instead, so they are not duplicated here.
+	if a.delegatedDomainSvc != nil {
+		if locus, ok := a.delegatedDomainSvc.DANEPublicationTargetFor(&wd); ok && locus == domsvc.DANEPublishChain {
+			tlsa, ownerName, daneErr := a.delegatedDomainSvc.GetDANERecord(reqCtx, string(wd.Namespace), wd.Domain)
+			if daneErr != nil {
+				// A missing/errored row is not fatal to DNS-requirements: the
+				// core domain fields are still valid. Surface the TLSA lazily.
+				a.Logger().Warn("could not load stored DANE record for dns-requirements",
+					zap.String("domain", wd.Domain), zap.Error(daneErr))
+			} else if tlsa != "" {
+				resp.TLSARData = tlsa
+				resp.OwnerName = ownerName
+			}
+		}
+	}
+
 	// Encode the DTO directly rather than via EncodeResponse(model, dto):
 	// EncodeResponse re-derives the DTO from the model (FromModel -> mapDNSDelegation
 	// -> removeStoredDS), which would discard the live DS injected into
@@ -568,12 +589,20 @@ func removeDSRecord(records []dto.DNSDelegationRecord) []dto.DNSDelegationRecord
 	return out
 }
 
-// republishDomainDANE forces re-publication of a bound domain's DANE records
-// (the TLSA for a portal-managed, DNSSEC-signed zone) into the authoritative
-// PowerDNS zone. It re-pushes the stored certificate/key through
-// UpdateTLSAFromCert, which idempotently rewrites the _443._tcp.<domain> TLSA
-// RRset (PowerDNS REPLACE). This is the operator's escape hatch for a TLSA
-// that was deleted or went missing and won't be re-triggered by cert renewal.
+// republishDomainDANE forces re-publication of a bound domain's DANE record.
+// It re-pushes the stored certificate/key through UpdateTLSAFromCert, which
+// idempotently rewrites the _443._tcp.<domain> TLSA RRset. This is the
+// operator's escape hatch for a TLSA that was deleted or went missing and
+// won't be re-triggered by cert renewal.
+//
+// The publication target is binding-class-dependent (see
+// DelegatedDomainService.DANEPublicationTargetFor): a portal-managed binding
+// republishes the TLSA into its authoritative PowerDNS zone, while a
+// chain-managed (HIP-5) binding refreshes the stored TLSA — which is served
+// from the name's on-chain zone data — and reports
+// published_to_managed_zone=false so the owner knows to install the record
+// on-chain. Non-DANE namespaces (ICANN), self-hosted, and unresolved bindings
+// carry no portal DANE publication duty and are rejected.
 func (a *API) republishDomainDANE(c echo.Context) error {
 	p := a.parseDomainPath(c)
 	if p.err != nil {
@@ -591,27 +620,16 @@ func (a *API) republishDomainDANE(c echo.Context) error {
 	}
 
 	ns := string(wd.Namespace)
-	// Only DANE-capable namespaces whose provider publishes a managed-zone TLSA
-	// can be force-republished. Non-DANE namespaces (e.g. ICANN) have no TLSA.
-	if !a.delegatedDomainSvc.NamespaceUsesManagedZoneTLSA(ns) {
-		apiErr := NewError(ErrKeyNoStoredCertificate, fmt.Errorf("namespace %q does not use managed-zone DANE", ns))
-		return ctx.Error(apiErr, apiErr.HttpStatus())
-	}
-
-	// The republish writes the TLSA into the portal-managed authoritative zone
-	// resolved by the domain's ZoneID. If no zone is assigned there is nothing
-	// to publish into -- short-circuit rather than return a false success.
-	if wd.ZoneID == 0 {
-		apiErr := NewError(ErrKeyNoStoredCertificate, fmt.Errorf("domain %q has no assigned managed zone; cannot republish", wd.Domain))
-		return ctx.Error(apiErr, apiErr.HttpStatus())
-	}
-
-	// Only portal-managed bindings may be force-republished: on-chain,
-	// self-hosted, and unresolved bindings never authorize managed-zone TLSA
-	// writes, and an inconsistent on-chain binding with a stray zone must not
-	// be routed through the DANE republish path at all.
-	if !wd.CanPublishManagedZoneRecords() {
-		apiErr := NewError(ErrKeyNoStoredCertificate, fmt.Errorf("domain %q is not portal-managed; cannot republish DANE", wd.Domain))
+	// Only DANE-eligible bindings may be force-republished, resolved by the
+	// single publication-target helper: portal-managed bindings republish into
+	// the managed PowerDNS zone, and chain-managed (HIP-5) bindings refresh the
+	// stored TLSA — DANE still applies on-chain, the record is just served from
+	// the name's on-chain zone data instead of a portal zone. Non-DANE
+	// namespaces (e.g. ICANN), self-hosted, and unresolved bindings carry no
+	// portal DANE publication duty and are rejected.
+	locus, ok := a.delegatedDomainSvc.DANEPublicationTargetFor(&wd)
+	if !ok {
+		apiErr := NewError(ErrKeyNoStoredCertificate, fmt.Errorf("domain %q (namespace %q) has no portal DANE publication target; cannot republish", wd.Domain, ns))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
@@ -650,9 +668,11 @@ func (a *API) republishDomainDANE(c echo.Context) error {
 	}
 	resp.TLSARData = tlsa
 	resp.OwnerName = ownerName
-	if ownerName != "" && tlsa != "" {
-		resp.TLSARecord = fmt.Sprintf("%s. 3600 IN TLSA %s", ownerName, tlsa)
-	}
+	// A chain-managed binding has no portal zone: the republish refreshed the
+	// stored TLSA but the record is served from (and must be installed into)
+	// the name's on-chain zone data, so report the publication target to the
+	// consumer instead of implying a PowerDNS write happened.
+	resp.PublishedToManagedZone = locus == domsvc.DANEPublishManagedZone
 	return httputil.EncodeResponse(ctx, &wd, &resp)
 }
 

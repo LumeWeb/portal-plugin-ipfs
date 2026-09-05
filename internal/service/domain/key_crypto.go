@@ -15,6 +15,13 @@ import (
 	"go.lumeweb.com/portal/core"
 )
 
+// errDANEKeyNotConfigured is returned when the DANE key-encryption key is
+// empty. Callers that treat DANE persistence as best-effort (e.g. bind-time
+// DANE identity bootstrap) skip on this sentinel specifically, rather than on
+// any encryption-key parse failure, so a genuine failure is never masked as a
+// missing key.
+var errDANEKeyNotConfigured = errors.New("dane key encryption key not configured")
+
 // daneEncryptionKey extracts and parses the configured base64 AES-256 key.
 func (s *DelegatedDomainService) daneEncryptionKey() ([]byte, error) {
 	var raw string
@@ -25,7 +32,7 @@ func (s *DelegatedDomainService) daneEncryptionKey() ([]byte, error) {
 		}
 	}
 	if raw == "" {
-		return nil, errors.New("dane key encryption key not configured")
+		return nil, errDANEKeyNotConfigured
 	}
 	key, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {

@@ -414,9 +414,12 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	// An on-chain managed name (HIP-5) serves its DNS from an external
 	// contract: the portal owns only ownership verification (a TXT token
 	// resolved through the HNS-aware resolver, which bridges to the contract)
-	// — no zone, no DNSLink/apex, no DNSSEC, no DANE. The binding is recorded
-	// with a distinct status so downstream code routes it to TXT-token
-	// verification instead of the delegation/DS flow used by native HNS.
+	// — no zone, no DNSLink/apex, no DNSSEC, and no portal-published DANE. The
+	// binding is still recorded with a distinct status so downstream code
+	// routes it to TXT-token verification instead of the delegation/DS flow
+	// used by native HNS. DANE is not dropped, though: the stable TLSA the
+	// on-chain zone data must serve is bootstrapped and exposed at bind time
+	// (see ensureDANEIdentity), because DANE still applies on-chain.
 	// dnsHostingEnabled is always coerced to false here, even when the caller
 	// requested managed DNS (the default in the UX flow): portal hosting is
 	// impossible for a contract-served name, and the persisted flag must agree
@@ -436,6 +439,15 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 			// rolled back and the name can be retried.
 			s.DB().WithContext(ctx).Unscoped().Delete(wd)
 			return nil, fmt.Errorf("failed to finalize domain record: %w", err)
+		}
+		// DANE still applies to a chain-managed name (the TLSA is served from
+		// the name's on-chain zone data), so the stable DANE key must exist at
+		// bind time — the same bootstrap invariant the self-hosted path
+		// enforces. A failure rolls the just-inserted row back so the bind is
+		// cleanly retryable.
+		if err := s.ensureDANEIdentity(ctx, provider, namespace, domain); err != nil {
+			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			return nil, err
 		}
 		// This binding is the new website's first (primary) domain. Record it
 		// so the website service resolves the apex domain via PrimaryDomainID
@@ -459,11 +471,9 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		if err := s.DB().WithContext(ctx).Model(wd).Update("status", pluginDb.DomainStatusSelfHosted).Error; err != nil {
 			return nil, fmt.Errorf("failed to finalize domain record: %w", err)
 		}
-		if provider.UsesManagedZoneTLSA() {
-			if _, err := s.EnsureCertificateKey(ctx, namespace, domain); err != nil {
-				s.DB().WithContext(ctx).Unscoped().Delete(wd)
-				return nil, fmt.Errorf("failed to bootstrap DANE identity: %w", err)
-			}
+		if err := s.ensureDANEIdentity(ctx, provider, namespace, domain); err != nil {
+			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			return nil, err
 		}
 		// This binding is the new website's first (primary) domain. Record it
 		// so the website service resolves the apex domain via PrimaryDomainID
@@ -1085,14 +1095,77 @@ func (s *DelegatedDomainService) UsesDelegationForOwnership(domain string) bool 
 }
 
 // NamespaceUsesManagedZoneTLSA reports whether the given namespace's provider
-// translates certs into a DANE TLSA that the portal publishes into its managed
-// authoritative zone. Only such namespaces (e.g. HNS) can be force-republished.
+// translates certs into a DANE TLSA. Only such namespaces (e.g. HNS) carry a
+// DANE publication duty anywhere — into a portal-managed zone for native
+// bindings or into the on-chain zone data for chain-managed bindings. Non-DANE
+// namespaces (e.g. ICANN) have no TLSA anywhere.
 func (s *DelegatedDomainService) NamespaceUsesManagedZoneTLSA(namespace string) bool {
 	if s.registry == nil {
 		return false
 	}
 	prov := s.registry.Get(namespace)
 	return prov != nil && prov.UsesManagedZoneTLSA()
+}
+
+// DANEPublicationTarget describes where a DANE-capable binding's TLSA is served.
+type DANEPublicationTarget string
+
+const (
+	// DANEPublishManagedZone marks a portal-managed binding whose TLSA is
+	// published into the portal's authoritative PowerDNS zone.
+	DANEPublishManagedZone DANEPublicationTarget = "managed_zone"
+	// DANEPublishChain marks a chain-managed (HIP-5) binding whose TLSA is
+	// served from the name's on-chain zone data: the portal only computes and
+	// stores the record, and the owner installs it in the chain zone.
+	DANEPublishChain DANEPublicationTarget = "chain"
+)
+
+// DANEPublicationTargetFor resolves where a bound domain's DANE TLSA is served,
+// and whether the DANE republish flow applies to it at all. It is the single
+// source of truth for DANE publication eligibility: a DANE-capable namespace
+// republishes either into the portal-managed zone (portal-managed bindings) or
+// into the on-chain name data (chain-managed bindings — DANE still applies
+// on-chain). Self-hosted and unresolved bindings carry no portal DANE
+// publication duty and are rejected.
+func (s *DelegatedDomainService) DANEPublicationTargetFor(wd *pluginDb.WebsiteDomain) (DANEPublicationTarget, bool) {
+	if !s.NamespaceUsesManagedZoneTLSA(string(wd.Namespace)) {
+		return "", false
+	}
+	switch wd.Class() {
+	case pluginDb.ClassPortalManaged:
+		return DANEPublishManagedZone, true
+	case pluginDb.ClassOnChainManaged:
+		return DANEPublishChain, true
+	default:
+		return "", false
+	}
+}
+
+// ensureDANEIdentity bootstraps the stable DANE key/identity for namespaces
+// whose provider translates certs into DANE TLSA. Binding paths (self-hosted
+// and on-chain managed) call it so the TLSA the owner must publish exists at
+// bind time, before any certificate push; the key is stable, so the published
+// SPKI pin never rotates across cert re-issuance. It is a no-op for providers
+// without a DANE concept.
+func (s *DelegatedDomainService) ensureDANEIdentity(ctx context.Context, provider DomainProvider, namespace, domain string) error {
+	if !provider.UsesManagedZoneTLSA() {
+		return nil
+	}
+	if _, err := s.EnsureCertificateKey(ctx, namespace, domain); err != nil {
+		// DANE persistence is best-effort at bind time: when the key-encryption
+		// key is empty, the contract (config/dns.go) skips persistence rather
+		// than failing, mirroring UpdateTLSAFromCert. Match the missing-key
+		// sentinel specifically (errors.Is) so a genuine failure that merely
+		// co-occurs with an absent key — DB error, AEAD decrypt failure, row
+		// not found — is still surfaced instead of silently skipped.
+		if errors.Is(err, errDANEKeyNotConfigured) {
+			s.Logger().Warn("DANE identity not persisted (encryption key not configured); skipping",
+				zap.String("domain", domain), zap.Error(err))
+			return nil
+		}
+		return fmt.Errorf("failed to bootstrap DANE identity: %w", err)
+	}
+	return nil
 }
 
 // NamespaceRequiresDNSSEC reports whether the given namespace's provider
@@ -1294,6 +1367,25 @@ func (s *DelegatedDomainService) GetCertificateKey(ctx context.Context, namespac
 		result.OwnerName = v
 	}
 	return result, nil
+}
+
+// GetDANERecord returns the stored DANE TLSA rdata and owner name for a domain
+// without decrypting the private key — the lightweight read surface for
+// consumers that only need the record to publish into the name's zone (e.g.
+// dns-requirements). Returns gorm.ErrRecordNotFound when the binding does not
+// exist and empty strings when no DANE identity has been computed yet.
+func (s *DelegatedDomainService) GetDANERecord(ctx context.Context, namespace, domain string) (tlsa, ownerName string, err error) {
+	wd, err := s.GetWebsiteDomainByDomainAndNamespace(ctx, domain, pluginDb.DomainNamespace(namespace))
+	if err != nil {
+		return "", "", err
+	}
+	if v, ok := wd.ProtocolData[protocolDataTLSAKey].(string); ok {
+		tlsa = v
+	}
+	if v, ok := wd.ProtocolData[protocolDataOwnerKey].(string); ok {
+		ownerName = v
+	}
+	return tlsa, ownerName, nil
 }
 
 // GetActiveWebsiteDomainByDomain finds an active domain across all namespaces.
