@@ -186,7 +186,11 @@ func TestDelegatedDomainService_CreateDomain_DuplicateKey(t *testing.T) {
 	}, TestOptions)
 }
 
-func TestDelegatedDomainService_CreateDomain_SelfHostedDANEFailurePurgesBinding(t *testing.T) {
+func TestDelegatedDomainService_CreateDomain_SelfHostedSkipsDANEPersistenceWithoutEncryptionKey(t *testing.T) {
+	// Without a configured DANE key-encryption key, DANE persistence is
+	// best-effort (config contract: "empty key skips persistence", mirroring
+	// UpdateTLSAFromCert). A self-hosted HNS bind must therefore STILL succeed —
+	// DANE identity is skipped, not fatal — rather than purging the binding.
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		website := createTestWebsite(tb, db, 1, "example")
@@ -194,15 +198,14 @@ func TestDelegatedDomainService_CreateDomain_SelfHostedDANEFailurePurgesBinding(
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		require.NotNil(tb, svc)
 
-		_, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, false, false, nil, nil)
-		require.Error(tb, err)
-		assert.Contains(tb, err.Error(), "failed to bootstrap DANE identity")
-
-		var count int64
-		require.NoError(tb, db.Unscoped().Model(&pluginDb.WebsiteDomain{}).
-			Where("domain = ? AND namespace = ?", "example", pluginDb.DomainNamespaceHNS).
-			Count(&count).Error)
-		assert.Zero(tb, count, "failed self-hosted DANE bootstrap must purge the binding")
+		wd, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, false, false, nil, nil)
+		require.NoError(tb, err)
+		assert.Equal(tb, pluginDb.DomainStatusSelfHosted, wd.Status)
+		assert.Equal(tb, uint(0), wd.ZoneID)
+		assert.False(tb, wd.DNSHostingEnabled)
+		require.Nil(tb, wd.ProtocolData)
+		assert.Nil(tb, wd.ProtocolData[protocolDataPrivateKeyKey],
+			"DANE identity not persisted when the encryption key is unconfigured")
 	}, TestOptions)
 }
 
