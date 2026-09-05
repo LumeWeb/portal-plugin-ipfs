@@ -642,6 +642,32 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		return DelegationVerificationResult{State: DelegationVerified}, nil
 	}
 
+	// A binding created before handover source detection may still carry a
+	// portal-managed zone even though the name has since become HIP-5. Inspect
+	// that source before touching DNSSEC or portal delegation; the same response
+	// is then passed to the conversion helper so verification performs one query.
+	if wd.Namespace == pluginDb.DomainNamespaceHNS && wd.ZoneID != 0 &&
+		wd.Status != pluginDb.DomainStatusOnchainManaged {
+		onchain, inspectErr := provider.Inspect(ctx, wd.Domain)
+		if inspectErr != nil {
+			return DelegationVerificationResult{}, fmt.Errorf("domain inspection failed: %w", inspectErr)
+		}
+		if onchain {
+			if err := s.convertInspectedBindingToOnChain(ctx, wd); err != nil {
+				if errors.Is(err, ErrDomainZoneShared) {
+					s.Logger().Info("HIP-5 binding shares its zone; skipping reclassification",
+						zap.Uint("id", wd.ID),
+						zap.String("domain", wd.Domain),
+						zap.Error(err))
+				} else {
+					return DelegationVerificationResult{}, fmt.Errorf("convert on-chain binding: %w", err)
+				}
+			} else {
+				return DelegationVerificationResult{State: DelegationNotApplicable}, nil
+			}
+		}
+	}
+
 	// Only portal-managed bindings have portal delegation to verify
 	// (NeedsDelegationVerification, the authoritative derived hosting locus):
 	//   - self-hosted: the user runs the authoritative server; DNSSEC/DANE

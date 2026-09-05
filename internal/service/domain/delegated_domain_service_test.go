@@ -892,6 +892,37 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 	}, TestOptions)
 }
 
+func TestDelegatedDomainService_VerifyDomain_ReclassifiesExistingHIP5(t *testing.T) {
+	const domain = "verify-convertme"
+	const zoneID = uint(88)
+	hip5Addr, _ := startCustomPortDNSServer(t, domain+".", []string{"ignored.target."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, domain)
+		require.NoError(tb, db.Model(&website).Update("status", pluginDb.WebsiteStatusActive).Error)
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: domain,
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: zoneID,
+			Status: pluginDb.DomainStatusWaitingDelegation, DNSHostingEnabled: true,
+		}
+		require.NoError(tb, db.Create(wd).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		hnsProv.resolverAddr = hip5Addr
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().DeleteZone(mock.Anything, zoneID).Return(nil).Once()
+
+		result, err := svc.VerifyDomain(context.Background(), wd)
+		require.NoError(tb, err)
+		assert.Equal(tb, DelegationNotApplicable, result.State)
+		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, wd.Status)
+		assert.Zero(tb, wd.ZoneID)
+		assert.False(tb, wd.DNSHostingEnabled)
+	}, TestOptions)
+}
+
 func TestDelegatedDomainService_ConvertToOnChain_NotHIP5Refused(t *testing.T) {
 	// Conversion is refused until the name genuinely serves a HIP-5 record; it
 	// never tears down DNS on the caller's word alone.
@@ -981,6 +1012,42 @@ func TestDelegatedDomainService_ConvertToOnChain_SharedZoneRefused(t *testing.T)
 		require.Error(tb, err)
 		assert.ErrorIs(tb, err, ErrDomainZoneShared)
 		assert.Contains(tb, err.Error(), "shared by other bindings")
+		mockDNS.AssertNotCalled(tb, "DeleteZone", mock.Anything, mock.Anything)
+	}, TestOptions)
+}
+
+func TestDelegatedDomainService_VerifyDomain_SharedHIP5ZoneFallsThrough(t *testing.T) {
+	const domain = "verify-sharedzone"
+	const zoneID = uint(56)
+	hip5Addr, _ := startCustomPortDNSServer(t, domain+".", []string{"0xdeadbeef._eth."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, domain)
+		apex := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: domain,
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: zoneID,
+			Status: pluginDb.DomainStatusWaitingDelegation, DNSHostingEnabled: true,
+		}
+		sub := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: "sub." + domain,
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: zoneID,
+			Status: pluginDb.DomainStatusActive, DNSHostingEnabled: true,
+		}
+		require.NoError(tb, db.Create(apex).Error)
+		require.NoError(tb, db.Create(sub).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		hnsProv.resolverAddr = hip5Addr
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, zoneID).Return("60776 13 2 abc", nil).Once()
+		mockDNS.EXPECT().EnsureSOAMNAME(mock.Anything, zoneID, domain, mock.Anything).Return(nil).Once()
+
+		result, err := svc.VerifyDomain(context.Background(), apex)
+		require.NoError(tb, err)
+		assert.Equal(tb, DelegationPending, result.State)
+		assert.Equal(tb, pluginDb.DomainStatusWaitingDelegation, apex.Status)
 		mockDNS.AssertNotCalled(tb, "DeleteZone", mock.Anything, mock.Anything)
 	}, TestOptions)
 }
