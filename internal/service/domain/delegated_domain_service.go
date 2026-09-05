@@ -1388,15 +1388,24 @@ func (s *DelegatedDomainService) GetDANERecord(ctx context.Context, namespace, d
 	return tlsa, ownerName, nil
 }
 
-// RepublishChainDANERecord force-refreshes the stored DANE TLSA for a
-// chain-managed (HIP-5) binding and returns the record the owner must install
-// in the name's on-chain zone data. DANE TLSA 3 1 1 pins the stable DANE key's
-// SPKI, so the record is recomputed from the key — the source of truth — rather
-// than from a certificate, and no PowerDNS zone write occurs. When the DANE
-// key-encryption key is unset so a fresh key cannot be persisted, it falls back
-// to the already-stored TLSA (bind-time best-effort policy); if no identity
-// exists at all it returns gorm.ErrRecordNotFound.
+// RepublishChainDANERecord returns the DANE TLSA the owner must install in a
+// chain-managed (HIP-5) binding's on-chain zone data. Republish must preserve
+// an already-installed identity — deriving from the key would rotate the SPKI
+// pin and invalidate the live on-chain record — so an existing stored TLSA is
+// returned unchanged. Only a binding with no on-chain identity yet is
+// bootstrapped from the stable DANE key (the source of truth for TLSA 3 1 1,
+// never a certificate), and no PowerDNS zone write occurs. If no identity
+// exists and a fresh key cannot be persisted (key-encryption key unset), it
+// returns gorm.ErrRecordNotFound.
 func (s *DelegatedDomainService) RepublishChainDANERecord(ctx context.Context, namespace, domain string) (tlsa, ownerName string, err error) {
+	// Preserve the already-installed on-chain identity instead of rotating the
+	// SPKI pin: a stored TLSA is authoritative for what is live on-chain.
+	if tlsa, ownerName, err := s.GetDANERecord(ctx, namespace, domain); err != nil {
+		return "", "", err
+	} else if tlsa != "" {
+		return tlsa, ownerName, nil
+	}
+
 	sc, err := s.EnsureCertificateKey(ctx, namespace, domain)
 	if err == nil {
 		return sc.TLSA, sc.OwnerName, nil
@@ -1404,14 +1413,7 @@ func (s *DelegatedDomainService) RepublishChainDANERecord(ctx context.Context, n
 	if !errors.Is(err, errDANEKeyNotConfigured) {
 		return "", "", fmt.Errorf("refresh on-chain DANE identity: %w", err)
 	}
-	tlsa, ownerName, err = s.GetDANERecord(ctx, namespace, domain)
-	if err != nil {
-		return "", "", err
-	}
-	if tlsa == "" {
-		return "", "", gorm.ErrRecordNotFound
-	}
-	return tlsa, ownerName, nil
+	return "", "", gorm.ErrRecordNotFound
 }
 
 // GetActiveWebsiteDomainByDomain finds an active domain across all namespaces.

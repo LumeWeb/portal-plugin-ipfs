@@ -268,6 +268,40 @@ func TestRepublishChainDANERecord(t *testing.T) {
 		}, keyTestOptions)
 	})
 
+	t.Run("preserves_installed_tlsa_without_rotating_key", func(t *testing.T) {
+		// Regression: republish must NOT rotate an installed on-chain identity.
+		// The key-encryption key IS configured here (so generating a fresh key
+		// would be possible), but a binding with an already-installed TLSA and no
+		// stored private key must return that exact TLSA and persist no new key —
+		// otherwise the SPKI pin rotates and the live DANE record breaks.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, svc)
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "chain-installed.hns", Namespace: pluginDb.DomainNamespaceHNS,
+				Status: pluginDb.DomainStatusOnchainManaged,
+				ProtocolData: datatypes.JSONMap{
+					"tlsa":       "3 1 1 aabbcc",
+					"owner_name": "_443._tcp.chain-installed.hns",
+				},
+			}
+			require.NoError(tb, ctx.DB().Create(wd).Error)
+
+			tlsa, owner, err := svc.RepublishChainDANERecord(ctx, "hns", "chain-installed.hns")
+			require.NoError(tb, err)
+			assert.Equal(tb, "3 1 1 aabbcc", tlsa)
+			assert.Equal(tb, "_443._tcp.chain-installed.hns", owner)
+
+			// The installed identity must be preserved verbatim: no private key
+			// is persisted and the TLSA is unchanged, so no rotation occurred.
+			_, gErr := svc.GetCertificateKey(ctx, "hns", "chain-installed.hns")
+			assert.ErrorIs(tb, gErr, gorm.ErrRecordNotFound, "republish must not persist a new key for an installed identity")
+			stored, _, _ := svc.GetDANERecord(ctx, "hns", "chain-installed.hns")
+			assert.Equal(tb, "3 1 1 aabbcc", stored)
+		}, keyTestOptions)
+	})
+
 	t.Run("falls_back_to_stored_tlsa_without_encryption_key", func(t *testing.T) {
 		// The real-world flaw: a chain-managed name whose cert was pushed but
 		// whose private key was never persisted (no key-encryption key). The
