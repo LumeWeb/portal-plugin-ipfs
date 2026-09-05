@@ -31,11 +31,14 @@ import (
 // real local DNS server on an ephemeral port and asserting VerifyDelegation
 // resolves against it (not the system resolver).
 
-// startCustomPortDNSServer runs a real miekg/dns UDP+TCP server bound to an
-// ephemeral port on loopback. The handler answers NS queries for `name` with
-// the given nameservers and increments a counter so the test can assert the
-// query actually reached this server.
+// startCustomPortDNSServer runs an authoritative test resolver.
 func startCustomPortDNSServer(t *testing.T, name string, nsRecords []string, dsRecord ...string) (addr string, served *atomicCounter) {
+	return startCustomPortDNSServerWithAuthority(t, name, nsRecords, true, dsRecord...)
+}
+
+// startCustomPortDNSServerWithAuthority runs a test resolver with an explicit
+// AA flag so source-selection behavior can be tested independently of records.
+func startCustomPortDNSServerWithAuthority(t *testing.T, name string, nsRecords []string, authoritative bool, dsRecord ...string) (addr string, served *atomicCounter) {
 	t.Helper()
 
 	// The single DS record the server serves, if any.
@@ -49,7 +52,7 @@ func startCustomPortDNSServer(t *testing.T, name string, nsRecords []string, dsR
 		served.add(1)
 		m := new(dns.Msg)
 		m.SetReply(req)
-		m.Authoritative = true
+		m.Authoritative = authoritative
 		if len(req.Question) > 0 {
 			qtype := req.Question[0].Qtype
 			switch qtype {
