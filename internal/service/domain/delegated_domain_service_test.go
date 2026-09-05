@@ -1016,6 +1016,42 @@ func TestDelegatedDomainService_ConvertToOnChain_SharedZoneRefused(t *testing.T)
 	}, TestOptions)
 }
 
+func TestDelegatedDomainService_VerifyDomain_SharedHIP5ZoneFallsThrough(t *testing.T) {
+	const domain = "verify-sharedzone"
+	const zoneID = uint(56)
+	hip5Addr, _ := startCustomPortDNSServer(t, domain+".", []string{"0xdeadbeef._eth."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, domain)
+		apex := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: domain,
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: zoneID,
+			Status: pluginDb.DomainStatusWaitingDelegation, DNSHostingEnabled: true,
+		}
+		sub := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: "sub." + domain,
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: zoneID,
+			Status: pluginDb.DomainStatusActive, DNSHostingEnabled: true,
+		}
+		require.NoError(tb, db.Create(apex).Error)
+		require.NoError(tb, db.Create(sub).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		hnsProv.resolverAddr = hip5Addr
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, zoneID).Return("60776 13 2 abc", nil).Once()
+		mockDNS.EXPECT().EnsureSOAMNAME(mock.Anything, zoneID, domain, mock.Anything).Return(nil).Once()
+
+		result, err := svc.VerifyDomain(context.Background(), apex)
+		require.NoError(tb, err)
+		assert.Equal(tb, DelegationPending, result.State)
+		assert.Equal(tb, pluginDb.DomainStatusWaitingDelegation, apex.Status)
+		mockDNS.AssertNotCalled(tb, "DeleteZone", mock.Anything, mock.Anything)
+	}, TestOptions)
+}
+
 func TestDelegatedDomainService_ConvertToOnChain_NotFound(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)

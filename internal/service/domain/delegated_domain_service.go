@@ -654,9 +654,17 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		}
 		if onchain {
 			if err := s.convertInspectedBindingToOnChain(ctx, wd); err != nil {
-				return DelegationVerificationResult{}, fmt.Errorf("convert on-chain binding: %w", err)
+				if errors.Is(err, ErrDomainZoneShared) {
+					s.Logger().Info("HIP-5 binding shares its zone; skipping reclassification",
+						zap.Uint("id", wd.ID),
+						zap.String("domain", wd.Domain),
+						zap.Error(err))
+				} else {
+					return DelegationVerificationResult{}, fmt.Errorf("convert on-chain binding: %w", err)
+				}
+			} else {
+				return DelegationVerificationResult{State: DelegationNotApplicable}, nil
 			}
-			return DelegationVerificationResult{State: DelegationNotApplicable}, nil
 		}
 	}
 
