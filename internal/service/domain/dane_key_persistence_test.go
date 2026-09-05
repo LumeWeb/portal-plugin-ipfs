@@ -302,6 +302,31 @@ func TestRepublishChainDANERecord(t *testing.T) {
 		}, keyTestOptions)
 	})
 
+	t.Run("recomputes_owner_when_stored_record_has_none", func(t *testing.T) {
+		// A stored TLSA with a missing/corrupt owner_name must still yield a
+		// usable owner — the owner name is deterministic from the domain, so
+		// republish recomputes it instead of returning a bare TLSA.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, svc)
+
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: "chain-noowner.hns", Namespace: pluginDb.DomainNamespaceHNS,
+				Status: pluginDb.DomainStatusOnchainManaged,
+				ProtocolData: datatypes.JSONMap{
+					"tlsa": "3 1 1 aabbcc",
+					// no owner_name
+				},
+			}
+			require.NoError(tb, ctx.DB().Create(wd).Error)
+
+			tlsa, owner, err := svc.RepublishChainDANERecord(ctx, "hns", "chain-noowner.hns")
+			require.NoError(tb, err)
+			assert.Equal(tb, "3 1 1 aabbcc", tlsa)
+			assert.Equal(tb, "_443._tcp.chain-noowner.hns", owner)
+		}, TestOptions)
+	})
+
 	t.Run("falls_back_to_stored_tlsa_without_encryption_key", func(t *testing.T) {
 		// The real-world flaw: a chain-managed name whose cert was pushed but
 		// whose private key was never persisted (no key-encryption key). The

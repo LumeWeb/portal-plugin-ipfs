@@ -1399,10 +1399,16 @@ func (s *DelegatedDomainService) GetDANERecord(ctx context.Context, namespace, d
 // returns gorm.ErrRecordNotFound.
 func (s *DelegatedDomainService) RepublishChainDANERecord(ctx context.Context, namespace, domain string) (tlsa, ownerName string, err error) {
 	// Preserve the already-installed on-chain identity instead of rotating the
-	// SPKI pin: a stored TLSA is authoritative for what is live on-chain.
+	// SPKI pin: a stored TLSA is authoritative for what is live on-chain. The
+	// owner name is deterministic from the domain, so if the stored record has
+	// no owner_name (missing/corrupt metadata) recompute it rather than return a
+	// bare TLSA the client cannot install.
 	if tlsa, ownerName, err := s.GetDANERecord(ctx, namespace, domain); err != nil {
 		return "", "", err
 	} else if tlsa != "" {
+		if ownerName == "" {
+			ownerName = dane.TLSAOwnerName(domain, DaneTLSAPort, DaneTLSATransport)
+		}
 		return tlsa, ownerName, nil
 	}
 
