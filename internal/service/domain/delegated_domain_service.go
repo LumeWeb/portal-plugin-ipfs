@@ -1388,6 +1388,40 @@ func (s *DelegatedDomainService) GetDANERecord(ctx context.Context, namespace, d
 	return tlsa, ownerName, nil
 }
 
+// RepublishChainDANERecord returns the DANE TLSA the owner must install in a
+// chain-managed (HIP-5) binding's on-chain zone data. Republish must preserve
+// an already-installed identity — deriving from the key would rotate the SPKI
+// pin and invalidate the live on-chain record — so an existing stored TLSA is
+// returned unchanged. Only a binding with no on-chain identity yet is
+// bootstrapped from the stable DANE key (the source of truth for TLSA 3 1 1,
+// never a certificate), and no PowerDNS zone write occurs. If no identity
+// exists and a fresh key cannot be persisted (key-encryption key unset), it
+// returns gorm.ErrRecordNotFound.
+func (s *DelegatedDomainService) RepublishChainDANERecord(ctx context.Context, namespace, domain string) (tlsa, ownerName string, err error) {
+	// Preserve the already-installed on-chain identity instead of rotating the
+	// SPKI pin: a stored TLSA is authoritative for what is live on-chain. The
+	// owner name is deterministic from the domain, so if the stored record has
+	// no owner_name (missing/corrupt metadata) recompute it rather than return a
+	// bare TLSA the client cannot install.
+	if tlsa, ownerName, err := s.GetDANERecord(ctx, namespace, domain); err != nil {
+		return "", "", err
+	} else if tlsa != "" {
+		if ownerName == "" {
+			ownerName = dane.TLSAOwnerName(domain, DaneTLSAPort, DaneTLSATransport)
+		}
+		return tlsa, ownerName, nil
+	}
+
+	sc, err := s.EnsureCertificateKey(ctx, namespace, domain)
+	if err == nil {
+		return sc.TLSA, sc.OwnerName, nil
+	}
+	if !errors.Is(err, errDANEKeyNotConfigured) {
+		return "", "", fmt.Errorf("refresh on-chain DANE identity: %w", err)
+	}
+	return "", "", gorm.ErrRecordNotFound
+}
+
 // GetActiveWebsiteDomainByDomain finds an active domain across all namespaces.
 func (s *DelegatedDomainService) GetActiveWebsiteDomainByDomain(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error) {
 	var wd pluginDb.WebsiteDomain
