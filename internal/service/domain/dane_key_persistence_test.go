@@ -226,6 +226,21 @@ func TestGetDANERecord(t *testing.T) {
 	}, TestOptions)
 }
 
+func TestDANEKeyNotConfiguredSentinel(t *testing.T) {
+	// With no DANE key-encryption key configured, daneEncryptionKey must return
+	// the errDANEKeyNotConfigured sentinel — not a generic error — so
+	// ensureDANEIdentity can skip persistence on the empty-key case specifically
+	// without masking genuine failures that merely co-occur with an absent key.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		_, err := svc.daneEncryptionKey()
+		require.Error(tb, err)
+		assert.ErrorIs(tb, err, errDANEKeyNotConfigured)
+	}, TestOptions)
+}
+
 func TestGetCertificateKey_NotFound(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)

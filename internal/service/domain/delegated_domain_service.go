@@ -1153,10 +1153,12 @@ func (s *DelegatedDomainService) ensureDANEIdentity(ctx context.Context, provide
 	}
 	if _, err := s.EnsureCertificateKey(ctx, namespace, domain); err != nil {
 		// DANE persistence is best-effort at bind time: when the key-encryption
-		// key is not configured, the contract (config/dns.go) skips persistence
-		// rather than failing, mirroring UpdateTLSAFromCert. Only a genuine
-		// failure with a configured key is fatal.
-		if _, encErr := s.daneEncryptionKey(); encErr != nil {
+		// key is empty, the contract (config/dns.go) skips persistence rather
+		// than failing, mirroring UpdateTLSAFromCert. Match the missing-key
+		// sentinel specifically (errors.Is) so a genuine failure that merely
+		// co-occurs with an absent key — DB error, AEAD decrypt failure, row
+		// not found — is still surfaced instead of silently skipped.
+		if errors.Is(err, errDANEKeyNotConfigured) {
 			s.Logger().Warn("DANE identity not persisted (encryption key not configured); skipping",
 				zap.String("domain", domain), zap.Error(err))
 			return nil
