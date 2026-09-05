@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
 	"go.lumeweb.com/dane"
@@ -138,6 +139,91 @@ func TestEnsureCertificateKey_BootstrapsAndReusesStableSPKI(t *testing.T) {
 		assert.Equal(tb, first.PrivateKeyPEM, stored.PrivateKeyPEM)
 		assert.Equal(tb, second.TLSA, stored.TLSA)
 	}, keyTestOptions)
+}
+
+func TestDANEPublicationTargetFor(t *testing.T) {
+	// The publication-target helper is the single source of truth for DANE
+	// republish eligibility. Portal-managed HNS republishes into its managed
+	// zone; chain-managed (HIP-5) republishes to the on-chain name data; every
+	// other binding / namespace carries no portal DANE duty.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		mk := func(domain string, ns pluginDb.DomainNamespace, status pluginDb.DomainStatus, zoneID uint) *pluginDb.WebsiteDomain {
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: 1, UserID: 1, Domain: domain, Namespace: ns, Status: status, ZoneID: zoneID,
+			}
+			require.NoError(tb, db.Create(wd).Error)
+			return wd
+		}
+
+		portalManaged := mk("ptl", pluginDb.DomainNamespaceHNS, pluginDb.DomainStatusActive, 99)
+		if locus, ok := svc.DANEPublicationTargetFor(portalManaged); assert.True(tb, ok) {
+			assert.Equal(tb, DANEPublishManagedZone, locus)
+		}
+
+		onchain := mk("chain", pluginDb.DomainNamespaceHNS, pluginDb.DomainStatusOnchainManaged, 0)
+		if locus, ok := svc.DANEPublicationTargetFor(onchain); assert.True(tb, ok) {
+			assert.Equal(tb, DANEPublishChain, locus)
+		}
+
+		// An on-chain binding carrying a stray zone is still chain-managed:
+		// class (not the zone reference) decides the locus.
+		stray := mk("stray", pluginDb.DomainNamespaceHNS, pluginDb.DomainStatusOnchainManaged, 7)
+		if locus, ok := svc.DANEPublicationTargetFor(stray); assert.True(tb, ok) {
+			assert.Equal(tb, DANEPublishChain, locus)
+		}
+
+		// ICANN has no DANE locus anywhere.
+		icann := mk("x.com", pluginDb.DomainNamespaceICANN, pluginDb.DomainStatusActive, 1)
+		_, ok := svc.DANEPublicationTargetFor(icann)
+		assert.False(tb, ok)
+
+		// Self-hosted and unresolved bindings have no portal DANE publication
+		// duty even though the namespace is DANE-capable.
+		selfHosted := mk("sh", pluginDb.DomainNamespaceHNS, pluginDb.DomainStatusSelfHosted, 0)
+		_, ok = svc.DANEPublicationTargetFor(selfHosted)
+		assert.False(tb, ok)
+		unresolved := mk("unr", pluginDb.DomainNamespaceHNS, pluginDb.DomainStatusDraft, 0)
+		_, ok = svc.DANEPublicationTargetFor(unresolved)
+		assert.False(tb, ok)
+	}, TestOptions)
+}
+
+func TestGetDANERecord(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID: 1, UserID: 1, Domain: "dane.hns", Namespace: pluginDb.DomainNamespaceHNS,
+			Status: pluginDb.DomainStatusOnchainManaged,
+			ProtocolData: datatypes.JSONMap{
+				"tlsa":       "3 1 1 aabb",
+				"owner_name": "_443._tcp.dane.hns",
+			},
+		}
+		require.NoError(tb, db.Create(wd).Error)
+
+		tlsa, owner, err := svc.GetDANERecord(ctx, "hns", "dane.hns")
+		require.NoError(tb, err)
+		assert.Equal(tb, "3 1 1 aabb", tlsa)
+		assert.Equal(tb, "_443._tcp.dane.hns", owner)
+
+		// A binding with no DANE identity reports empty, not an error.
+		wd2 := &pluginDb.WebsiteDomain{
+			WebsiteID: 1, UserID: 1, Domain: "nodane.hns", Namespace: pluginDb.DomainNamespaceHNS,
+			Status: pluginDb.DomainStatusOnchainManaged,
+		}
+		require.NoError(tb, db.Create(wd2).Error)
+		tlsa, owner, err = svc.GetDANERecord(ctx, "hns", "nodane.hns")
+		require.NoError(tb, err)
+		assert.Empty(tb, tlsa)
+		assert.Empty(tb, owner)
+	}, TestOptions)
 }
 
 func TestGetCertificateKey_NotFound(t *testing.T) {

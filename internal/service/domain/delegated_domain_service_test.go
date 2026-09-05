@@ -736,10 +736,12 @@ func testOptionsWithHNSResolver(addr string) coreTesting.TestContextBuilderOptio
 
 func TestDelegatedDomainService_CreateDomain_Hip5OnchainManaged(t *testing.T) {
 	// A Handshake name whose NS record is a HIP-5 TX record must bind as on-chain
-	// managed: no zone, no DANE, TXT-verification status. A managed-DNS request
+	// managed: no PowerDNS zone and TXT-verification status. Portal DNS hosting is
+	// impossible for a contract-served name, so a managed-DNS request
 	// (dnsHostingEnabled=true, the UX default) is coerced to onchain_managed with
-	// dns_hosting_enabled=false — portal hosting is impossible for a
-	// contract-served name — rather than failing the bind.
+	// dns_hosting_enabled=false rather than failing the bind. DANE still applies
+	// on-chain, so the stable DANE identity is bootstrapped at bind time even
+	// though no portal zone exists to publish the TLSA into.
 	const domain = "myname"
 
 	addr, _ := startCustomPortDNSServer(t, domain+".",
@@ -795,9 +797,22 @@ func TestDelegatedDomainService_CreateDomain_Hip5OnchainManaged(t *testing.T) {
 				var persisted pluginDb.WebsiteDomain
 				require.NoError(tb, db.First(&persisted, wd.ID).Error)
 				assert.False(tb, persisted.DNSHostingEnabled)
+
+				// DANE still applies on-chain: a stable identity is bootstrapped
+				// at bind time (key + TLSA + owner) so the owner can install the
+				// TLSA in the name's on-chain zone data before any cert exists.
+				assert.NotEmpty(tb, persisted.ProtocolData[protocolDataPrivateKeyKey],
+					"on-chain bind must bootstrap the DANE key")
+				assert.NotEmpty(tb, persisted.ProtocolData[protocolDataTLSAKey],
+					"on-chain bind must compute the DANE TLSA")
+				assert.NotEmpty(tb, persisted.ProtocolData[protocolDataOwnerKey],
+					"on-chain bind must compute the TLSA owner")
 			})
 		}
-	}, testOptionsWithHNSResolver(addr))
+	}, coreTesting.CombineOptions(
+		testOptionsWithHNSResolver(addr),
+		coreTesting.WithConfig("plugin.ipfs.service.dns.dane_key_encryption_key", testDANEKey),
+	))
 }
 
 func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
@@ -819,6 +834,17 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 		// re-arms validation back to pending.
 		require.NoError(tb, db.Model(&website).Update("status", pluginDb.WebsiteStatusActive).Error)
 
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		// DANE state must survive the conversion (DANE/SSL still applies
+		// on-chain; only PowerDNS-served records go away). The private key is
+		// stored encrypted with the configured at-rest key so the conversion's
+		// DANE-identity bootstrap (which re-reads it) succeeds.
+		keyPEM := mustGenerateKey(t)
+		encKey, err := svc.encryptPrivateKey(ctx, keyPEM)
+		require.NoError(tb, err)
+
 		wd := &pluginDb.WebsiteDomain{
 			WebsiteID:         website.ID,
 			UserID:            1,
@@ -835,19 +861,14 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 					{"type": "NS", "value": "ns1.lumeweb\nns2.lumeweb"},
 				},
 			},
-			// Simulated DANE state that must survive the conversion (DANE/SSL
-			// still applies on-chain; only PowerDNS-served records go away).
 			ProtocolData: datatypes.JSONMap{
 				"dane_cert_pem":    "CERT",
 				"tlsa":             "3 1 1 abc",
 				"owner_name":       "_443._tcp." + domain + ".",
-				"dane_private_key": "encrypted-key",
+				"dane_private_key": encKey,
 			},
 		}
 		require.NoError(tb, db.Create(wd).Error)
-
-		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
-		require.NotNil(tb, svc)
 		hnsProv := svc.registry.Get("hns").(*HNSProvider)
 		hnsProv.resolverAddr = hip5Addr
 
@@ -864,6 +885,10 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 				assert.Equal(tb, uint(0), now.ZoneID)
 			}).
 			Return(nil).Once()
+
+		// The DANE-identity bootstrap is a no-op when the binding already holds
+		// a key: it must not have touched DNS or rewritten DANE state.
+		mockDNS.AssertNotCalled(tb, "SetTLSARecord", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 
 		converted, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, wd.ID)
 		require.NoError(tb, err)
@@ -889,7 +914,7 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 		var reloaded pluginDb.Website
 		require.NoError(tb, db.First(&reloaded, website.ID).Error)
 		assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), reloaded.Status)
-	}, TestOptions)
+	}, keyTestOptions)
 }
 
 func TestDelegatedDomainService_VerifyDomain_ReclassifiesExistingHIP5(t *testing.T) {

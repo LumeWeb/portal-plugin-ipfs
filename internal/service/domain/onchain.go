@@ -48,6 +48,16 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 		return nil, fmt.Errorf("%w: %q; handover did not select an authoritative response", ErrDomainNotOnChain, wd.Domain)
 	}
 
+	// DANE still applies once the name is chain-managed (the TLSA is served
+	// from the on-chain zone data), so the stable DANE identity must exist
+	// before any destructive work. Running this after inspection but before
+	// convertInspectedBindingToOnChain makes a bootstrap failure fail-fast with
+	// nothing converted or torn down; it is a no-op when the binding already
+	// holds a persisted key (the common case for a site, via prior cert pushes).
+	if err := s.ensureDANEIdentity(ctx, provider, string(wd.Namespace), wd.Domain); err != nil {
+		return nil, err
+	}
+
 	if err := s.convertInspectedBindingToOnChain(ctx, &wd); err != nil {
 		return nil, err
 	}
@@ -77,6 +87,13 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 			}
 		}
 
+		// Re-arm the website to pending_validation BEFORE committing the
+		// conversion. A failure here is clean (nothing has been converted yet
+		// and the caller can retry), whereas failing after the on-chain commit
+		// would leave an already-converted domain reported as a 500 and make
+		// retry hit "already on-chain managed". A blocked website stays blocked
+		// (only an admin can lift an admin block); a pending one needs no
+		// change.
 		var website pluginDb.Website
 		if err := s.DB().WithContext(ctx).First(&website, wd.WebsiteID).Error; err != nil {
 			return fmt.Errorf("failed to load website %d for on-chain conversion: %w", wd.WebsiteID, err)

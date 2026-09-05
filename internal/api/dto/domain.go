@@ -156,6 +156,14 @@ type DomainResponse struct {
 	// Per-domain SSL certificate state. SSL is a per-domain property, so it is
 	// exposed on the domain record (not the website).
 	SSL *SSLStatusInfo `json:"ssl,omitempty"`
+
+	// DANE TLSA that applies to the name. Populated by dns-requirements for
+	// chain-managed (HIP-5) bindings — where it is the record the owner must
+	// install in the name's on-chain zone data — and omitted until a DANE
+	// identity exists. Portal-managed bindings surface their TLSA via
+	// Delegation.AuthoritativeRecords instead.
+	OwnerName string `json:"owner_name,omitempty"` // "_443._tcp.<domain>"
+	TLSARData string `json:"tlsa_rdata,omitempty"` // "3 1 1 <hex>"
 }
 
 func (r *DomainResponse) FromModel(m *db.WebsiteDomain) error {
@@ -210,9 +218,13 @@ type DomainDANERepublishResponse struct {
 	GatewayHost string             `json:"gateway_host,omitempty"`
 	Delegation  *DNSDelegation     `json:"delegation,omitempty"`
 	SSL         *SSLStatusInfo     `json:"ssl,omitempty"`
-	TLSARecord  string             `json:"tlsa_record,omitempty"` // full "_443._tcp.<domain> ... TLSA ..." presentation
-	OwnerName   string             `json:"owner_name,omitempty"`  // "_443._tcp.<domain>"
-	TLSARData   string             `json:"tlsa_rdata,omitempty"`  // "3 1 1 <hex>"
+	OwnerName   string             `json:"owner_name,omitempty"` // "_443._tcp.<domain>"
+	TLSARData   string             `json:"tlsa_rdata,omitempty"` // "3 1 1 <hex>"
+
+	// PublishedToManagedZone reports whether the listed TLSA was written into a
+	// portal-managed PowerDNS zone (true) or must be installed by the owner in
+	// the name's on-chain zone data (false, chain-managed/HIP-5 bindings).
+	PublishedToManagedZone bool `json:"published_to_managed_zone"`
 }
 
 // FromModel populates the DomainResponse-backed fields from a WebsiteDomain.

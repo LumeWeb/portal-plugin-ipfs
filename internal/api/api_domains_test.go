@@ -456,10 +456,61 @@ func TestAPI_DANERepublish(t *testing.T) {
 			assert.Equal(t, pluginDb.DomainNamespaceHNS, resp.Namespace)
 			require.NotEmpty(t, resp.TLSARData)
 			require.NotEmpty(t, resp.OwnerName)
-			assert.Contains(t, resp.TLSARecord, "TLSA")
+			// A portal-managed binding publishes into its own managed zone.
+			assert.True(t, resp.PublishedToManagedZone)
 
 			// The DNS publish must have happened for the managed zone.
 			mockDNS.AssertNumberOfCalls(tb, "SetTLSARecord", 2)
+		}, daneRepublishTestOptions)
+	})
+
+	t.Run("onchain_hns_with_stored_cert_republishes_for_chain", func(t *testing.T) {
+		// A chain-managed (HIP-5) HNS binding has no portal zone but DANE still
+		// applies on-chain: republish must refresh the stored TLSA from the cert
+		// and return the record (published_to_managed_zone=false) for the owner
+		// to install in the name's on-chain zone data — without touching DNS.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			helper := newMockHelper(t, ctx)
+			token, userID, _, _ := helper.SetupAuthenticatedTest()
+
+			website := createTestIPFSGatewayWebsite(1, userID, "onchain-repub.hns", util.GenerateTestCID(t, "td"), pluginDb.WebsiteStatusActive)
+			require.NoError(t, ctx.DB().Create(website).Error)
+			websiteID := website.ID
+
+			// Chain-managed binding: onchain_managed status, no portal zone.
+			wd := &pluginDb.WebsiteDomain{
+				WebsiteID: websiteID,
+				UserID:    userID,
+				Domain:    "onchain-repub.hns",
+				Namespace: pluginDb.DomainNamespaceHNS,
+				Status:    pluginDb.DomainStatusOnchainManaged,
+			}
+			require.NoError(t, ctx.DB().Create(wd).Error)
+
+			svc := core.GetService[*domain.DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, svc)
+			keyPEM := mustGenerateTestKey(t)
+			certPEM := mustIssueTestCert(t, keyPEM, "onchain-repub.hns")
+			_, _, err := svc.UpdateTLSAFromCert(ctx, "hns", wd.Domain, certPEM, keyPEM)
+			require.NoError(t, err, "seeding stored cert via UpdateTLSAFromCert")
+
+			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+			require.NotNil(tb, mockDNS)
+			// On-chain republish must never write into a PowerDNS zone (there is
+			// none); stray SetTLSARecord calls would indicate a portal-zone write.
+			mockDNS.AssertNotCalled(tb, "SetTLSARecord", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+
+			rec := helper.makeAuthenticatedRequest(http.MethodPost, republishPath(int(websiteID), int(wd.ID)), token, nil)
+			require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+			var resp dto.DomainDANERepublishResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			assert.Equal(t, "onchain-repub.hns", resp.Domain)
+			assert.Equal(t, pluginDb.DomainStatusOnchainManaged, resp.Status)
+			require.NotEmpty(t, resp.TLSARData)
+			require.NotEmpty(t, resp.OwnerName)
+			assert.False(t, resp.PublishedToManagedZone,
+				"chain-managed binding has no portal zone; the TLSA must be installed on-chain")
 		}, daneRepublishTestOptions)
 	})
 }
@@ -671,6 +722,45 @@ func TestAPI_DomainDNSRequirements_OnchainManaged(t *testing.T) {
 		assert.Equal(t, pluginDb.DomainStatusOnchainManaged, resp.Status)
 		assert.False(t, resp.DNSHostingEnabled)
 		assert.Nil(t, resp.Delegation, "on-chain managed domains have no portal delegation/NS-DS guidance")
+		// No DANE identity exists yet, so no TLSA record is surfaced.
+		assert.Empty(t, resp.OwnerName)
+		assert.Empty(t, resp.TLSARData)
+	}, TestOptions)
+}
+
+func TestAPI_DomainDNSRequirements_OnchainManaged_ExposesDANERecord(t *testing.T) {
+	// A chain-managed (HIP-5) binding with a stored DANE identity surfaces the
+	// TLSA record the owner must install into the name's on-chain zone data —
+	// DANE still applies on-chain even though there is no portal delegation.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, userID, testCID, _ := helper.SetupAuthenticatedTest()
+
+		website := createTestIPFSGatewayWebsite(1, userID, "example.com", testCID, pluginDb.WebsiteStatusActive)
+		require.NoError(t, ctx.DB().Create(website).Error)
+
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID: 1,
+			UserID:    userID,
+			Domain:    "dane-onchain.hns",
+			Namespace: pluginDb.DomainNamespaceHNS,
+			Status:    pluginDb.DomainStatusOnchainManaged,
+			ProtocolData: datatypes.JSONMap{
+				"tlsa":       "3 1 1 aabbcc",
+				"owner_name": "_443._tcp.dane-onchain.hns",
+			},
+		}
+		require.NoError(t, ctx.DB().Create(wd).Error)
+
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/websites/1/domains/1/dns-requirements", token, nil)
+		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+		var resp dto.DomainResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		assert.Equal(t, pluginDb.DomainStatusOnchainManaged, resp.Status)
+		assert.Nil(t, resp.Delegation)
+		assert.Equal(t, "3 1 1 aabbcc", resp.TLSARData)
+		assert.Equal(t, "_443._tcp.dane-onchain.hns", resp.OwnerName)
 	}, TestOptions)
 }
 
