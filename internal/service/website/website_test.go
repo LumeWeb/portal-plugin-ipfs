@@ -2297,6 +2297,11 @@ func TestWebsiteService_EnableDNSHosting_RecordFailurePreservesDelegationZone(t 
 			"delegation_data": wd.DelegationData,
 		}).Error)
 
+		// Delegation-owned bindings assert the dnslink from the current target
+		// alongside the validation record; both runs precede the failure.
+		mockDNS.EXPECT().UpdateWebsiteDNSRecords(
+			mock.Anything, testZoneID, domain, mock.Anything, mock.Anything,
+		).Return(nil).Once()
 		mockDNS.EXPECT().CreateWebsiteValidationRecord(
 			mock.Anything, testZoneID, domain, mock.Anything,
 		).Return(assert.AnError).Once()
@@ -2842,11 +2847,11 @@ func TestWebsiteService_UpdateWebsite_ConvertIPNSToIPFS_UpdatesDNSRecords(t *tes
 	}, TestOptions)
 }
 
-// TestWebsiteService_UpdateWebsite_IPNSToIPNS_NoDNSUpdate verifies that
-// when a website with DNS hosting stays as IPNS (only the CID published
-// to the IPNS key changes), DNS records are NOT updated since the peer ID
-// in the _dnslink record stays the same.
-func TestWebsiteService_UpdateWebsite_IPNSToIPNS_NoDNSUpdate(t *testing.T) {
+// TestWebsiteService_UpdateWebsite_IPNSToIPNS_KeySwitch_UpdatesDNSRecords
+// verifies that when a website with DNS hosting switches to a different
+// IPNS key (staying as IPNS but changing the peer ID), the _dnslink record
+// is updated to the new peer ID.
+func TestWebsiteService_UpdateWebsite_IPNSToIPNS_KeySwitch_UpdatesDNSRecords(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
@@ -2894,6 +2899,16 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPNS_NoDNSUpdate(t *testing.T) {
 		mockIPNSKey.EXPECT().GetKeyByID(mock.Anything, testUserID1, *createdWebsite.IPNSKeyID).Return(testIPNSKey, nil).Once()
 		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
 
+		// The _dnslink record must be re-pointed to the new peer ID even
+		// though the target type did not change.
+		mockDNS.EXPECT().UpdateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID,
+			domain,
+			testPeerID,
+			pluginDb.WebsiteTargetTypeIPNS,
+		).Return(nil).Once()
+
 		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, updates)
 		websiteService.WaitForPublishes()
 
@@ -2901,9 +2916,6 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPNS_NoDNSUpdate(t *testing.T) {
 		require.NoError(tb, err)
 		require.NotNil(tb, updatedWebsite)
 		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), updatedWebsite.TargetType)
-
-		// DNS records should NOT be updated when staying as IPNS
-		mockDNS.AssertNotCalled(t, "UpdateWebsiteDNSRecords")
 	}, TestOptions)
 }
 
@@ -3389,5 +3401,133 @@ func TestWebsiteService_DisableDNSHosting_PreservesDelegationOwnedZone(t *testin
 		require.NoError(tb, err)
 		assert.False(tb, updated.DNSHostingEnabled, "hosting flag should be off")
 		assert.Equal(tb, testZoneID, updated.ZoneID, "delegation-owned zone must be preserved on DNS-host disable")
+	}, TestOptions)
+}
+
+// newDelegationOwnedIPFSWebsite inserts a website whose primary binding is a
+// fully-managed delegation-owned ICANN domain (delegation_data present,
+// records_generated status, hosting enabled, real zone) targeting IPFS —
+// the state every managed custom-domain bind ends in. Returns the website
+// ID and the bound domain for the caller's DNS expectations.
+func newDelegationOwnedIPFSWebsite(t *testing.T, tb coreTesting.TB, ctx coreTesting.TestContext, id uint, domain string, zoneID uint, cidStr string) {
+	website := createTestIPFSWebsite(testUserID1, domain, cidStr)
+	stubPinnedCID(t, ctx, testUserID1, cidStr)
+	website.ID = id
+	website.Status = string(pluginDb.WebsiteStatusActive)
+	require.NoError(tb, ctx.DB().Create(website).Error)
+
+	wd := prebindPrimaryDomain(tb, ctx, website, domain, true)
+	// The website row was inserted before the binding existed, so persist the
+	// primary reference it now holds only in memory.
+	require.NoError(tb, ctx.DB().Model(website).Update("primary_domain_id", wd.ID).Error)
+	wd.ZoneID = zoneID
+	wd.Status = pluginDb.DomainStatusRecordsGenerated
+	wd.DelegationData = datatypes.JSONMap{"ns": []interface{}{"dns1.example."}}
+	require.NoError(tb, ctx.DB().Model(wd).Updates(map[string]interface{}{
+		"zone_id":         zoneID,
+		"status":          string(pluginDb.DomainStatusRecordsGenerated),
+		"delegation_data": wd.DelegationData,
+	}).Error)
+}
+
+// TestWebsiteService_UpdateWebsite_DelegationOwned_ConvertIPFSToIPNS tests
+// that converting a fully-managed delegation-owned website from IPFS to IPNS
+// updates the _dnslink record to the new peer ID. The dnslink is target-
+// derived from the website (the bind path writes it from the target), so
+// delegation ownership of the apex/DS/TLSA records must not strand the
+// dnslink at its bind-time value — the bug that left production sites
+// validating against a stale /ipfs/ record.
+func TestWebsiteService_UpdateWebsite_DelegationOwned_ConvertIPFSToIPNS(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "delegation-convert-ipns-test.com"
+		testZoneID := uint(9010)
+
+		newDelegationOwnedIPFSWebsite(t, tb, ctx, 9020, domain, testZoneID, testCID.String())
+		testIPNSKey := setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
+		peerID := testIPNSKey.PeerID().String()
+
+		mockDNS.EXPECT().UpdateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID,
+			domain,
+			peerID,
+			pluginDb.WebsiteTargetTypeIPNS,
+		).Return(nil).Once()
+
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, 9020, map[string]interface{}{
+			"target_type": string(pluginDb.WebsiteTargetTypeIPNS),
+		})
+		websiteService.WaitForPublishes()
+
+		require.NoError(tb, err)
+		require.NotNil(tb, updatedWebsite)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), updatedWebsite.TargetType)
+		assert.Equal(tb, peerID, updatedWebsite.TargetHash())
+	}, TestOptions)
+}
+
+// TestWebsiteService_UpdateWebsite_DelegationOwned_NoOpReconcilesDNSLink
+// tests that a repeated enable-ipns on a delegation-owned website whose IDNS
+// record carries a stale value converges: the no-op reconcile must write the
+// current /ipns/<peerID> target despite delegation ownership.
+func TestWebsiteService_UpdateWebsite_DelegationOwned_NoOpReconcilesDNSLink(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "delegation-noop-reconcile-test.com"
+		testZoneID := uint(9011)
+
+		newDelegationOwnedIPFSWebsite(t, tb, ctx, 9021, domain, testZoneID, testCID.String())
+		testIPNSKey := setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
+		peerID := testIPNSKey.PeerID().String()
+
+		// First enable-ipns converts IPFS→IPNS and must update the dnslink.
+		mockDNS.EXPECT().UpdateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID,
+			domain,
+			peerID,
+			pluginDb.WebsiteTargetTypeIPNS,
+		).Return(nil).Once()
+
+		converted, err := websiteService.UpdateWebsite(context.Background(), testUserID1, 9021, map[string]interface{}{
+			"target_type": string(pluginDb.WebsiteTargetTypeIPNS),
+		})
+		websiteService.WaitForPublishes()
+		require.NoError(tb, err)
+		require.NotNil(tb, converted)
+
+		// The second enable-ipns is a no-op. The live dnslink mismatches the
+		// target, so the reconcile must rewrite it despite delegation ownership.
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{},
+		}, nil)
+		setMockResolver(websiteService, mockResolver)
+
+		mockDNS.EXPECT().UpdateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID,
+			domain,
+			peerID,
+			pluginDb.WebsiteTargetTypeIPNS,
+		).Return(nil).Once()
+
+		updated, err := websiteService.UpdateWebsite(context.Background(), testUserID1, 9021, map[string]interface{}{
+			"target_type": string(pluginDb.WebsiteTargetTypeIPNS),
+		})
+		websiteService.WaitForPublishes()
+
+		require.NoError(tb, err)
+		require.NotNil(tb, updated)
+		assert.Equal(tb, peerID, updated.TargetHash())
 	}, TestOptions)
 }

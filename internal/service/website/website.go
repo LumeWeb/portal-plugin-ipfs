@@ -857,24 +857,25 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 					}
 				}
 
-				// Update DNS records if target changed and DNS hosting is enabled
-				// on the primary domain. dns_hosting_enabled is always false for
-				// on-chain (HIP-5) bindings (coerced at bind, refused at
-				// enable), so an inconsistent on-chain binding carrying a stray
-				// zone can never reach this managed-record write; the
-				// createWebsiteDNSRecords writer also no-ops for any class
-				// without portal authority.
-				// Note: Skip DNS only when staying as IPNS (peer ID doesn't change)
-				if targetHashChanged && primaryWD != nil && primaryWD.DNSHostingEnabled && primaryWD.ZoneID != 0 && !primaryWD.DelegationRecordsOwned() && s.dnsSvc != nil {
+				// Update the dnslink record if the target changed and the primary
+				// binding is portal-managed. On-chain (HIP-5) bindings carry no
+				// portal zone (coerced at bind, refused at enable), so an
+				// inconsistent on-chain binding carrying a stray zone can never
+				// reach this write. A delegation-owned binding still gets its
+				// dnslink from the website target — the bind path writes it the
+				// same way — so this REPLACE is safe for HNS zones too:
+				// UpdateWebsiteDNSRecords touches only _dnslink.<domain>, never
+				// the delegation-owned apex/DS/TLSA records. No type-based skip
+				// exists: an IPNS→IPNS key switch changes the peer ID and must
+				// propagate just like an IPFS→IPNS conversion.
+				if targetHashChanged && primaryWD != nil && primaryWD.DNSHostingEnabled && primaryWD.ZoneID != 0 && primaryWD.CanPublishManagedZoneRecords() && s.dnsSvc != nil {
+					newTargetHash := website.TargetHash()
 					newTargetType := pluginDb.WebsiteTargetType(website.TargetType)
-					if oldTargetType != pluginDb.WebsiteTargetTypeIPNS || newTargetType != pluginDb.WebsiteTargetTypeIPNS {
-						newTargetHash := website.TargetHash()
-						if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, primaryWD.ZoneID, primaryDomain, newTargetHash, newTargetType); err != nil {
-							s.Logger().Warn("Failed to update DNS records for website",
-								zap.Error(err),
-								zap.Uint("website_id", websiteID),
-								zap.Uint("zone_id", primaryWD.ZoneID))
-						}
+					if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, primaryWD.ZoneID, primaryDomain, newTargetHash, newTargetType); err != nil {
+						s.Logger().Warn("Failed to update DNS records for website",
+							zap.Error(err),
+							zap.Uint("website_id", websiteID),
+							zap.Uint("zone_id", primaryWD.ZoneID))
 					}
 				}
 
@@ -1031,7 +1032,12 @@ func (s *WebsiteServiceDefault) reconcileManagedDNSLink(ctx context.Context, web
 		zap.Uint("zone_id", primaryWD.ZoneID),
 		zap.Bool("dns_hosting_enabled", primaryWD.DNSHostingEnabled),
 		zap.Bool("delegation_records_owned", primaryWD.DelegationRecordsOwned()))
-	if s.dnsSvc == nil || !primaryWD.DNSHostingEnabled || primaryWD.ZoneID == 0 || primaryWD.DelegationRecordsOwned() {
+	// Delegation-owned bindings are reconciled too: the dnslink is target-
+	// derived from the website (the bind path writes it exactly this way) and
+	// UpdateWebsiteDNSRecords touches only _dnslink.<domain>, never the
+	// delegation-owned apex/DS/TLSA records. On-chain bindings have no portal
+	// zone and are excluded by CanPublishManagedZoneRecords.
+	if s.dnsSvc == nil || !primaryWD.DNSHostingEnabled || !primaryWD.CanPublishManagedZoneRecords() {
 		s.Logger().Debug("Skipping dnslink reconcile: binding lacks portal DNS authority",
 			zap.Uint("website_id", website.ID),
 			zap.Uint("binding_id", primaryWD.ID),
@@ -1039,6 +1045,7 @@ func (s *WebsiteServiceDefault) reconcileManagedDNSLink(ctx context.Context, web
 			zap.Bool("has_dns_service", s.dnsSvc != nil),
 			zap.Bool("dns_hosting_enabled", primaryWD.DNSHostingEnabled),
 			zap.Uint("zone_id", primaryWD.ZoneID),
+			zap.Bool("can_publish", primaryWD.CanPublishManagedZoneRecords()),
 			zap.Bool("delegation_records_owned", primaryWD.DelegationRecordsOwned()))
 		return
 	}
@@ -1954,13 +1961,22 @@ func (s *WebsiteServiceDefault) createWebsiteDNSRecords(ctx context.Context, wd 
 	}
 
 	tokenRecord := fmt.Sprintf("%s=%s", s.verificationTokenKey(), validationToken)
-	// HNS zones are DNSSEC-signed at the apex. The generic website writer's
-	// ALIAS apex path is unsafe there even before delegation reaches a status
-	// that makes DelegationOwned true. HNS delegation owns the shared records.
+	targetType := pluginDb.WebsiteTargetType(website.TargetType)
 	if wd.DelegationRecordsOwned() {
+		// HNS zones are DNSSEC-signed at the apex. The generic website writer's
+		// ALIAS apex path is unsafe there even before delegation reaches a
+		// status that makes DelegationOwned true, and after it the apex/DS/TLSA
+		// records are delegation-owned. The dnslink is NOT: it is target-
+		// derived from this website (the bind path wrote it from the target),
+		// so re-assert it from the current target alongside the validation
+		// record — otherwise a target change while hosting was disabled is
+		// stranded forever by the re-enable transition.
+		if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, wd.ZoneID, wd.Domain, website.TargetHash(), targetType); err != nil {
+			return err
+		}
 		return s.dnsSvc.CreateWebsiteValidationRecord(ctx, wd.ZoneID, wd.Domain, tokenRecord)
 	}
-	return s.dnsSvc.CreateWebsiteDNSRecords(ctx, wd.ZoneID, wd.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType), tokenRecord)
+	return s.dnsSvc.CreateWebsiteDNSRecords(ctx, wd.ZoneID, wd.Domain, website.TargetHash(), targetType, tokenRecord)
 }
 
 func (s *WebsiteServiceDefault) regenerateExpiredToken(ctx context.Context, website *pluginDb.Website, wd *pluginDb.WebsiteDomain) error {
