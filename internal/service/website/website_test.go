@@ -3011,6 +3011,83 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 	}, TestOptions)
 }
 
+// TestWebsiteService_UpdateWebsite_NoOpEnableIPNS_ReconcilesDNSWithoutNotification
+// verifies that a repeated enable-ipns (target_type=ipns on a website that
+// already targets IPNS) is treated as a true no-op: no DB update event, no
+// admin "website updated" notification — but the managed dnslink record is
+// still reconciled with the current /ipns/<peerID> target so a previously
+// failed or skipped record write can converge.
+func TestWebsiteService_UpdateWebsite_NoOpEnableIPNS_ReconcilesDNSWithoutNotification(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		mailer := coreTesting.GetMockMailerService(ctx)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "noop-enable-ipns-dns-test.com"
+		testZoneID := uint(9004)
+
+		// Create website with DNS hosting enabled (auto-converts to an IPNS
+		// key target and writes the initial dnslink record).
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
+		website.ID = 8017
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
+
+		testIPNSKey := setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
+
+		// CreateWebsite fires the admin "website created" notification with
+		// notifications enabled; allow it without asserting its payload.
+		mailer.EXPECT().TemplateSend(
+			"website_created_admin",
+			mock.Anything, mock.Anything, mock.Anything,
+		).Return(nil).Maybe()
+
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID,
+			mock.Anything,
+			mock.Anything,
+			pluginDb.WebsiteTargetTypeIPNS,
+			mock.Anything,
+		).Return(nil).Once()
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		websiteService.WaitForPublishes()
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+		require.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType)
+
+		// Repeat enable-ipns: a no-op. The reconcile must still fire with the
+		// current target so a stale dnslink record converges.
+		peerID := testIPNSKey.PeerID().String()
+		mockDNS.EXPECT().UpdateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID,
+			mock.Anything,
+			peerID,
+			pluginDb.WebsiteTargetTypeIPNS,
+		).Return(nil).Once()
+
+		// Updates (with notifications enabled) must NOT fire the admin
+		// "website updated" notification for a no-op: the mock mailer panics
+		// on unexpected TemplateSend calls.
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
+			"target_type": string(pluginDb.WebsiteTargetTypeIPNS),
+		})
+		websiteService.WaitForPublishes()
+
+		// Assert
+		require.NoError(tb, err)
+		require.NotNil(tb, updatedWebsite)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), updatedWebsite.TargetType)
+		assert.Equal(tb, peerID, updatedWebsite.TargetHash())
+		mailer.AssertNotCalled(t, "TemplateSend", "website_updated_admin", mock.Anything, mock.Anything, mock.Anything)
+	}, notifyEnabledTestOptions)
+}
+
 func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
