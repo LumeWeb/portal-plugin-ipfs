@@ -2,6 +2,7 @@ package website
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"testing"
 	"time"
@@ -15,8 +16,9 @@ import (
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	"go.lumeweb.com/portal/core"
@@ -358,6 +360,12 @@ func (r *recordingDelegatedDomainSvc) ValidateOnChainTLSA(context.Context, *plug
 }
 func (r *recordingDelegatedDomainSvc) GetWebsiteDomainByName(context.Context, string) (*pluginDb.WebsiteDomain, error) {
 	return nil, gorm.ErrRecordNotFound
+}
+func (r *recordingDelegatedDomainSvc) DANEPublicationTargetFor(*pluginDb.WebsiteDomain) (domsvc.DANEPublicationTarget, bool) {
+	return "", false
+}
+func (r *recordingDelegatedDomainSvc) CurrentBindingPlan(*pluginDb.WebsiteDomain, *pluginDb.Website) (domainpolicy.Plan, error) {
+	return domainpolicy.Plan{}, errors.New("recordingDelegatedDomainSvc supplies no current-behavior plan")
 }
 func (r *recordingDelegatedDomainSvc) GetPendingWebsiteDomainsPaginated(_ context.Context, status pluginDb.DomainStatus, _, _ int) ([]pluginDb.WebsiteDomain, error) {
 	r.statuses = append(r.statuses, status)

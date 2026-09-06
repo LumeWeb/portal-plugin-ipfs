@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,6 +16,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	"gorm.io/datatypes"
 )
 
 // syntheticTestProvider is a configurable DomainProvider test double for the
@@ -284,4 +286,216 @@ func TestDNSSECCheck_NotRequiredIsPass(t *testing.T) {
 	require.True(t, dnssecCheck(true, "ds").OK)
 	assert.False(t, dnssecCheck(true, "").OK)
 	assert.Equal(t, msgDNSSECNoKey, dnssecCheck(true, "").Message)
+}
+
+// TestCurrentBindingPlan_GateSelection is the shadow assertion: for
+// every current-behavior matrix fixture, the runtime CurrentBindingPlan
+// (persisted facts only, zero route observation — never probed) must select
+// EXACTLY the gates the legacy website-validation predicates selected. The
+// three compared decisions are the ones the website service now sources from
+// the plan:
+//
+//  1. challenge-TXT gate vs legacy token predicate (platform / on-chain /
+//     delegation-owned namespaces skip TXT; ICANN requires it);
+//  2. website delegation gate vs NeedsDelegationVerification (the derived
+//     hosting class; platform subdomains gate on platform trust instead);
+//  3. on-chain TLSA gate vs DANEPublicationTargetFor chain locus (the only
+//     live-verification locus; website validation gains no NEW live TLSA
+//     gate for any other profile).
+//
+// Incoherent fixtures must be rejected with their typed CompatError (the
+// website service treats "no plan" as a legacy-fallback trigger and logs the
+// unavailability). Any gate divergence here is a profile-encoding bug
+// in internal/domainpolicy (never silently reconciled): legacy wins at
+// runtime, and the divergence is reported loudly.
+func TestCurrentBindingPlan_GateSelection(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+		ipfs := compatIPFSWebsite(t)
+
+		// The exact legacy website-consumer predicates.
+		legacyTokenGate := func(wd *pluginDb.WebsiteDomain) bool {
+			if wd.PlatformDomainID != nil {
+				return false
+			}
+			if wd.Status == pluginDb.DomainStatusOnchainManaged {
+				return false
+			}
+			return !svc.UsesDelegationForOwnership(wd.Domain)
+		}
+		legacyDelegationGate := func(wd *pluginDb.WebsiteDomain) bool {
+			return wd.NeedsDelegationVerification()
+		}
+		legacyOnchainTLSA := func(wd *pluginDb.WebsiteDomain) bool {
+			locus, ok := svc.DANEPublicationTargetFor(wd)
+			return ok && locus == DANEPublishChain
+		}
+
+		pd := createPlatformRoot(tb, ctx, "platform.test", pluginDb.DomainNamespaceICANN, 725, true)
+
+		type gateCase struct {
+			name            string
+			wd              *pluginDb.WebsiteDomain
+			website         *pluginDb.Website
+			wantErr         error // typed mapper/plan rejection; nil = plan must bind
+			wantToken       bool
+			wantDelegation  bool
+			wantOnchainTLSA bool
+		}
+		cases := []gateCase{
+			{
+				name: "icann managed",
+				wd: &pluginDb.WebsiteDomain{
+					WebsiteID: 1, UserID: 1, Domain: "gb.example.com",
+					Namespace: pluginDb.DomainNamespaceICANN, ZoneID: 721,
+					Status: pluginDb.DomainStatusActive, DNSHostingEnabled: true,
+				},
+				website:         ipfs,
+				wantToken:       true,
+				wantDelegation:  true,
+				wantOnchainTLSA: false,
+			},
+			{
+				name: "icann owner-hosted",
+				wd: &pluginDb.WebsiteDomain{
+					WebsiteID: 1, UserID: 1, Domain: "gb-owner.example.com",
+					Namespace: pluginDb.DomainNamespaceICANN,
+					Status:    pluginDb.DomainStatusSelfHosted, DNSHostingEnabled: false,
+				},
+				website:         ipfs,
+				wantToken:       true,
+				wantDelegation:  false,
+				wantOnchainTLSA: false,
+			},
+			{
+				name: "native HNS managed",
+				wd: &pluginDb.WebsiteDomain{
+					WebsiteID: 1, UserID: 1, Domain: "gbaltroot",
+					Namespace: pluginDb.DomainNamespaceHNS, ZoneID: 722,
+					Status: pluginDb.DomainStatusWaitingDelegation, DNSHostingEnabled: true,
+					DelegationData: datatypes.JSONMap{"authoritative_records": map[string]any{"type": "ns"}},
+				},
+				website:         ipfs,
+				wantToken:       false,
+				wantDelegation:  true,
+				wantOnchainTLSA: false,
+			},
+			{
+				name: "a.hns dedicated HNS zone (namebase child)",
+				wd: &pluginDb.WebsiteDomain{
+					WebsiteID: 1, UserID: 1, Domain: "gbchild.hns",
+					Namespace: pluginDb.DomainNamespaceHNS, ZoneID: 723,
+					Status: pluginDb.DomainStatusActive, DNSHostingEnabled: true,
+				},
+				website:         ipfs,
+				wantToken:       false,
+				wantDelegation:  true,
+				wantOnchainTLSA: false,
+			},
+			{
+				name: "HNS owner-hosted",
+				wd: &pluginDb.WebsiteDomain{
+					WebsiteID: 1, UserID: 1, Domain: "gbselfaltroot",
+					Namespace: pluginDb.DomainNamespaceHNS,
+					Status:    pluginDb.DomainStatusSelfHosted, DNSHostingEnabled: false,
+				},
+				website:         ipfs,
+				wantToken:       false,
+				wantDelegation:  false,
+				wantOnchainTLSA: false,
+			},
+			{
+				name: "HNS HIP-5 chain",
+				wd: &pluginDb.WebsiteDomain{
+					WebsiteID: 1, UserID: 1, Domain: "gbchain",
+					Namespace: pluginDb.DomainNamespaceHNS,
+					Status:    pluginDb.DomainStatusOnchainManaged, DNSHostingEnabled: false,
+				},
+				website:         ipfs,
+				wantToken:       false,
+				wantDelegation:  false,
+				wantOnchainTLSA: true,
+			},
+			{
+				name: "platform root + subdomain sharing",
+				wd: &pluginDb.WebsiteDomain{
+					WebsiteID: 1, UserID: 2, Domain: "gatebinding.platform.test",
+					Namespace: pluginDb.DomainNamespaceICANN, ZoneID: pd.ZoneID,
+					Status: pluginDb.DomainStatusActive, DNSHostingEnabled: true,
+					PlatformDomainID: &pd.ID,
+				},
+				website:         ipfs,
+				wantToken:       false,
+				wantDelegation:  true,
+				wantOnchainTLSA: false,
+			},
+			{
+				name: "on-chain status with stray zone (typed rejection)",
+				wd: &pluginDb.WebsiteDomain{
+					WebsiteID: 1, UserID: 1, Domain: "gbstray",
+					Namespace: pluginDb.DomainNamespaceHNS,
+					ZoneID:    726, Status: pluginDb.DomainStatusOnchainManaged, DNSHostingEnabled: false,
+				},
+				website: ipfs,
+				wantErr: ErrCompatOnChainWithZone,
+			},
+			{
+				name: "hosted flag with no zone (typed rejection)",
+				wd: &pluginDb.WebsiteDomain{
+					WebsiteID: 1, UserID: 1, Domain: "gborphan.com",
+					Namespace: pluginDb.DomainNamespaceICANN,
+					Status:    pluginDb.DomainStatusWaitingDelegation, DNSHostingEnabled: true,
+				},
+				website: ipfs,
+				wantErr: ErrCompatPortalWithoutZone,
+			},
+		}
+
+		var divergences []string
+		for _, tc := range cases {
+			plan, err := svc.CurrentBindingPlan(tc.wd, tc.website)
+			if tc.wantErr != nil {
+				require.Error(tb, err, "case %q must be rejected with a typed CompatError", tc.name)
+				assert.ErrorIs(tb, err, tc.wantErr, "case %q typed rejection", tc.name)
+				continue
+			}
+			require.NoError(tb, err, "case %q plan binding failed (the website service would fall back to legacy)", tc.name)
+
+			planToken := plan.HasWebsiteGate(domainpolicy.GateChallengeTXT)
+			planDelegation := plan.HasWebsiteGate(domainpolicy.GateNSDelegation) ||
+				plan.HasWebsiteGate(domainpolicy.GatePlatformTrust)
+			planOnchainTLSA := plan.HasWebsiteGate(domainpolicy.GateTLSA) &&
+				plan.DANE.Publication == domainpolicy.PublicationLocusChain
+
+			legacyToken := legacyTokenGate(tc.wd)
+			legacyDelegation := legacyDelegationGate(tc.wd)
+			legacyTLSA := legacyOnchainTLSA(tc.wd)
+
+			if planToken != legacyToken {
+				divergences = append(divergences, fmt.Sprintf("%s: token gate legacy=%v plan=%v", tc.name, legacyToken, planToken))
+			}
+			if planDelegation != legacyDelegation {
+				divergences = append(divergences, fmt.Sprintf("%s: delegation gate legacy=%v plan=%v", tc.name, legacyDelegation, planDelegation))
+			}
+			if planOnchainTLSA != legacyTLSA {
+				divergences = append(divergences, fmt.Sprintf("%s: on-chain TLSA gate legacy=%v plan=%v", tc.name, legacyTLSA, planOnchainTLSA))
+			}
+
+			// A live TLSA verification must never be newly required beyond the
+			// legacy chain locus: only the cross-chain route's website flow
+			// carries a TLSA gate at all.
+			if planOnchainTLSA {
+				assert.Equal(tb, domainpolicy.ResolutionRouteCrossChain, plan.Route,
+					"case %q: a live TLSA gate outside the chain locus would be a new website-validation probe", tc.name)
+			}
+		}
+
+		t.Logf("gate-selection shadow: %d cases, %d divergences", len(cases), len(divergences))
+		for _, d := range divergences {
+			t.Logf("  DIVERGENCE (legacy wins at runtime): %s", d)
+		}
+		assert.Empty(t, divergences,
+			"plan/legacy gate divergence: legacy wins at runtime, but the PR-2 profile encoding must be fixed — %v", divergences)
+	}, TestOptions)
 }

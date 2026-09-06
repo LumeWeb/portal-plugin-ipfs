@@ -18,6 +18,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 	pluginEvent "go.lumeweb.com/portal-plugin-ipfs/internal/event"
 	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 
@@ -98,6 +99,16 @@ type delegatedDomainService interface {
 	GetWebsiteDomainByName(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error)
 	GetPendingWebsiteDomainsPaginated(ctx context.Context, status pluginDb.DomainStatus, limit, offset int) ([]pluginDb.WebsiteDomain, error)
 	ValidateOnChainTLSA(ctx context.Context, wd *pluginDb.WebsiteDomain) (ok bool, detail, expected, found string, err error)
+	// CurrentBindingPlan returns the current-behavior domainpolicy.Plan for a
+	// binding from persisted facts only (never probes the network). It is the
+	// gate-selection source used by the hot path; a returned error means
+	// "no plan available" and every consumer falls back to the legacy
+	// predicates.
+	CurrentBindingPlan(wd *pluginDb.WebsiteDomain, website *pluginDb.Website) (domainpolicy.Plan, error)
+	// DANEPublicationTargetFor reports where the binding's DANE TLSA is served
+	// and whether it carries a publication duty at all. Used only as the
+	// legacy shadow oracle for the plan-driven on-chain TLSA call selection.
+	DANEPublicationTargetFor(wd *pluginDb.WebsiteDomain) (domsvc.DANEPublicationTarget, bool)
 }
 
 // resolverForDomain returns the appropriate DNSResolver for the given domain.
@@ -1669,16 +1680,67 @@ func (s *WebsiteServiceDefault) loadWebsite(ctx context.Context, userID, website
 	return website, nil
 }
 
+// validationBindingPlan resolves the binding's current-behavior plan through
+// the domain service. The boolean reports plan availability: false means no
+// domain service is wired (minimal test/app contexts) or the persisted state
+// was rejected by the mapper with a typed CompatError. Unavailability (and
+// any later gate divergence) is logged loudly; every gate consumer then falls
+// back to the legacy predicate, which stays authoritative at runtime.
+func (s *WebsiteServiceDefault) validationBindingPlan(primaryWD *pluginDb.WebsiteDomain, website *pluginDb.Website) (domainpolicy.Plan, bool) {
+	if s.delegatedDomainSvc == nil {
+		return domainpolicy.Plan{}, false
+	}
+	plan, err := s.delegatedDomainSvc.CurrentBindingPlan(primaryWD, website)
+	if err != nil {
+		s.Logger().Warn("no current-behavior plan available for binding; falling back to legacy gate predicates",
+			zap.String("domain", primaryWD.Domain),
+			zap.Uint("domain_id", primaryWD.ID),
+			zap.Error(err))
+		return domainpolicy.Plan{}, false
+	}
+	return plan, true
+}
+
 // shouldPerformTokenCheck reports whether the user-side TXT verification token
-// must be checked for a website awaiting DNS validation. It is skipped for
-// platform subdomains (minted under an operator-owned root, where the platform
-// controls both ends of the DNS check and no verification record exists) and
-// for namespaces that prove ownership via delegation (e.g. HNS).
-func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Website, primaryWD *pluginDb.WebsiteDomain) bool {
-	needs := website.Status == string(pluginDb.WebsiteStatusPendingValidation)
-	if !needs {
+// must be checked for a website awaiting DNS validation.
+//
+// TRANSITIONAL WRAPPER: the authoritative selection is the binding plan's
+// challenge-TXT gate
+// (plan.HasWebsiteGate(GateChallengeTXT)) — profiles encode the gate exactly
+// for the bindings whose ownership rule requires the TXT token (ICANN, any
+// hosting locus) and omit it for platform subdomains, on-chain managed HIP-5
+// bindings, and delegation-owned namespaces (HNS). The legacy predicate below
+// is kept as the runtime shadow oracle: on any disagreement the legacy answer
+// wins and the divergence is logged loudly, so current fixtures keep
+// byte-equivalent responses. Once parity holds, callers go through the plan
+// gates directly.
+func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Website, primaryWD *pluginDb.WebsiteDomain, bindingPlan domainpolicy.Plan, havePlan bool) bool {
+	// The website status is a lifecycle precondition, not a binding-class
+	// fact: a website not pending validation needs no token check regardless
+	// of the plan (the plan's gates are class-derived).
+	if website.Status != string(pluginDb.WebsiteStatusPendingValidation) {
 		return false
 	}
+	legacy := s.legacyShouldPerformTokenCheck(website, primaryWD)
+	if !havePlan {
+		return legacy
+	}
+	planGate := bindingPlan.HasWebsiteGate(domainpolicy.GateChallengeTXT)
+	if planGate != legacy {
+		s.Logger().Warn("plan/legacy divergence (challenge TXT gate): legacy predicate wins at runtime — report this to the domain-hosting work",
+			zap.String("domain", primaryWD.Domain),
+			zap.String("profile", bindingPlan.ProfileID.String()),
+			zap.Bool("legacy", legacy),
+			zap.Bool("plan", planGate))
+		return legacy
+	}
+	return planGate
+}
+
+// legacyShouldPerformTokenCheck is the original shouldPerformTokenCheck body
+// (minus the pending-status precondition, which the wrapper owns). It is the
+// shadow oracle for the plan's challenge-TXT gate.
+func (s *WebsiteServiceDefault) legacyShouldPerformTokenCheck(website *pluginDb.Website, primaryWD *pluginDb.WebsiteDomain) bool {
 	if primaryWD.PlatformDomainID != nil {
 		s.Logger().Debug("skipping TXT token (platform subdomain, operator-controlled DNS)", zap.String("domain", primaryWD.Domain))
 		return false
@@ -1698,6 +1760,35 @@ func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Websit
 		return false
 	}
 	return true
+}
+
+// onchainTLSAGateSelected reports whether ValidateOnChainTLSA should run for
+// the binding. With a plan available, the call runs exactly when the
+// plan's website flow carries GateTLSA and the DANE publication locus is the
+// chain (the only live-verification locus). The legacy oracle is the
+// DANEPublicationTargetFor chain locus (what ValidateOnChainTLSA
+// self-guards on today); on divergence the legacy answer wins and the
+// disagreement is logged loudly. Without a plan, the legacy call always runs
+// (its internal guard reproduces today's behavior).
+func (s *WebsiteServiceDefault) onchainTLSAGateSelected(primaryWD *pluginDb.WebsiteDomain, bindingPlan domainpolicy.Plan, havePlan bool) bool {
+	if !havePlan {
+		return true
+	}
+	planGate := bindingPlan.HasWebsiteGate(domainpolicy.GateTLSA) &&
+		bindingPlan.DANE.Publication == domainpolicy.PublicationLocusChain
+	legacyGate := false
+	if target, eligible := s.delegatedDomainSvc.DANEPublicationTargetFor(primaryWD); eligible && target == domsvc.DANEPublishChain {
+		legacyGate = true
+	}
+	if planGate != legacyGate {
+		s.Logger().Warn("plan/legacy divergence (on-chain TLSA gate): legacy locus check wins at runtime — report this to the domain-hosting work",
+			zap.String("domain", primaryWD.Domain),
+			zap.String("profile", bindingPlan.ProfileID.String()),
+			zap.Bool("legacy", legacyGate),
+			zap.Bool("plan", planGate))
+		return legacyGate
+	}
+	return planGate
 }
 
 // onchainDNSHostingUnavailableError returns the error shared by every path
@@ -1746,7 +1837,18 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				})
 			}
 
-			needsTokenCheck := s.shouldPerformTokenCheck(&website, primaryWD)
+			// The binding's current-behavior plan selects the validation
+			// gates from persisted facts only (namespace, hosting class, zone
+			// reference, platform relation, target) — never a network probe,
+			// so the ValidateDNS hot path stays DNS-traffic free
+			// (CurrentBindingPlan substitutes a zero route observation).
+			// havePlan=false (no domain service wired, or the mapper rejected
+			// the persisted state with a typed CompatError) falls back to the
+			// legacy predicates below; legacy also wins on any plan/legacy
+			// divergence, reported loudly by the helpers.
+			bindingPlan, havePlan := s.validationBindingPlan(primaryWD, &website)
+
+			needsTokenCheck := s.shouldPerformTokenCheck(&website, primaryWD, bindingPlan, havePlan)
 
 			if needsTokenCheck && website.IsExpired() {
 				if err := s.regenerateExpiredToken(ctx, &website, primaryWD); err != nil {
@@ -1809,7 +1911,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				}
 			}
 
-			if ok, msg, reason, err := s.checkDelegation(ctx, primaryWD); err != nil {
+			if ok, msg, reason, err := s.checkDelegation(ctx, primaryWD, bindingPlan, havePlan); err != nil {
 				return pluginCore.ValidateDNSResult{}, err
 			} else if !ok {
 				addCheck(pluginCore.ValidationCheckDelegation, false, msg, "", "")
@@ -1829,9 +1931,20 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 			// the check is a no-op (portal-managed bindings publish TLSA into
 			// their own PowerDNS zone; self-hosted/ICANN carry no portal
 			// obligation), so it must not add a passing check for them.
+			//
+			// The call is selected from the plan's website-flow TLSA
+			// gate plus the chain publication locus (GateTLSA +
+			// DANE.Publication == chain) instead of the runtime status check
+			// inside ValidateOnChainTLSA. Skipping the call when the plan
+			// carries no gate is behavior-preserving: ValidateOnChainTLSA
+			// would return OK with no detail and add no check. When no plan
+			// is available, the legacy self-guarded call runs unchanged.
 			if s.delegatedDomainSvc == nil {
 				// No domain service wired (minimal test/app contexts): no DANE
 				// gate to evaluate.
+			} else if !s.onchainTLSAGateSelected(primaryWD, bindingPlan, havePlan) {
+				// Plan carries no chain-locus TLSA gate for this locus: the
+				// gated call would pass through as OK without adding a check.
 			} else if ok, detail, expected, found, tlsaErr := s.delegatedDomainSvc.ValidateOnChainTLSA(ctx, primaryWD); tlsaErr == nil && ok && detail != "" {
 				addCheck(pluginCore.ValidationCheckTLSA, true, detail, expected, found)
 			} else if tlsaErr == nil && !ok {
@@ -1965,7 +2078,7 @@ func (s *WebsiteServiceDefault) checkValidationToken(ctx context.Context, websit
 // so a DNSLink that matches the website's exact target is itself an ownership
 // proof for that namespace. NotApplicable is therefore NOT ownership proof on
 // its own; the DNSLink and TXT checks always run earlier in the flow.
-func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *pluginDb.WebsiteDomain) (bool, string, pluginCore.ValidationReason, error) {
+func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *pluginDb.WebsiteDomain, bindingPlan domainpolicy.Plan, havePlan bool) (bool, string, pluginCore.ValidationReason, error) {
 	if s.delegatedDomainSvc == nil {
 		return true, "", "", nil
 	}
@@ -1973,8 +2086,14 @@ func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *
 	// Only portal-managed bindings have a portal delegation to verify. This
 	// short-circuit (rather than delegating to VerifyDomain) also guarantees no
 	// PowerDNS work for on-chain/self-hosted/unresolved bindings, even when an
-	// on-chain binding incoherently carries a stray zone ID.
-	if !primaryWD.NeedsDelegationVerification() {
+	// on-chain binding incoherently carries a stray zone ID. The
+	// short-circuit is plan-driven — the delegation gate applies exactly when
+	// the plan's website flow carries the NS delegation gate (portal-managed
+	// bindings) or the platform-trust gate (operator-minted subdomains, which
+	// route through VerifyDomain's operator validation). The legacy class
+	// predicate (NeedsDelegationVerification) shadows it; legacy wins on
+	// divergence, and replaces it entirely when no plan is available.
+	if !s.delegationGateRequired(primaryWD, bindingPlan, havePlan) {
 		return true, "", "", nil
 	}
 
@@ -1997,6 +2116,30 @@ func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *
 	default:
 		return false, msgDelegationPending, pluginCore.ValidationReasonDelegationPending, nil
 	}
+}
+
+// delegationGateRequired reports whether the website delegation gate applies
+// to the binding. TRANSITIONAL shadow: the plan-side predicate is website
+// NS-delegation gate OR platform-trust gate presence; the legacy oracle is
+// NeedsDelegationVerification (the derived hosting class). On divergence the
+// legacy answer wins and the disagreement is logged loudly; without a plan
+// the legacy predicate decides.
+func (s *WebsiteServiceDefault) delegationGateRequired(primaryWD *pluginDb.WebsiteDomain, bindingPlan domainpolicy.Plan, havePlan bool) bool {
+	legacy := primaryWD.NeedsDelegationVerification()
+	if !havePlan {
+		return legacy
+	}
+	planGate := bindingPlan.HasWebsiteGate(domainpolicy.GateNSDelegation) ||
+		bindingPlan.HasWebsiteGate(domainpolicy.GatePlatformTrust)
+	if planGate != legacy {
+		s.Logger().Warn("plan/legacy divergence (website delegation gate): legacy class check wins at runtime — report this to the domain-hosting work",
+			zap.String("domain", primaryWD.Domain),
+			zap.String("profile", bindingPlan.ProfileID.String()),
+			zap.Bool("legacy", legacy),
+			zap.Bool("plan", planGate))
+		return legacy
+	}
+	return planGate
 }
 
 // createWebsiteDNSRecords writes only the DNS records that website hosting owns.

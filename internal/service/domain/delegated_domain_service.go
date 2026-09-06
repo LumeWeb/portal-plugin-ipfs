@@ -18,6 +18,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
 	"go.uber.org/zap"
@@ -737,13 +738,20 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 	// portal-managed zone even though the name has since become HIP-5. Inspect
 	// that source before touching DNSSEC or portal delegation; the same response
 	// is then passed to the conversion helper so verification performs one query.
+	// The inspection is consumed as the typed route observation; the
+	// legacy Inspect bool is exactly "the observed route is cross-chain"
+	// (OnChainManagedFromRoute), so this decision is unchanged. VerifyDomain
+	// is the only sanctioned inspection point: the website-validation hot
+	// path (ValidateDNS/shouldPerformTokenCheck/checkDelegation) must never
+	// probe the namespace — gate selection is done from the
+	// persisted-facts plan instead.
 	if wd.Namespace == pluginDb.DomainNamespaceHNS && wd.ZoneID != 0 &&
 		wd.Status != pluginDb.DomainStatusOnchainManaged {
-		onchain, inspectErr := provider.Inspect(ctx, wd.Domain)
+		route, inspectErr := provider.InspectRoute(ctx, wd.Domain)
 		if inspectErr != nil {
 			return DelegationVerificationResult{}, fmt.Errorf("domain inspection failed: %w", inspectErr)
 		}
-		if onchain {
+		if route.Route == domainpolicy.ResolutionRouteCrossChain {
 			if err := s.convertInspectedBindingToOnChain(ctx, wd); err != nil {
 				if errors.Is(err, ErrDomainZoneShared) {
 					s.Logger().Info("HIP-5 binding shares its zone; skipping reclassification",
@@ -1373,6 +1381,41 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 func (s *DelegatedDomainService) UsesDelegationForOwnership(domain string) bool {
 	ns, ok := s.getNamespaceForDomain(domain)
 	return ok && ns != string(pluginDb.DomainNamespaceICANN)
+}
+
+// CurrentBindingPlan returns the current-behavior pure domainpolicy.Plan for
+// the given binding, built exclusively from facts already persisted on the
+// loaded rows: the namespace, the status-derived hosting class (db.Class),
+// the zone reference (plus its shared/dedicated topology), the platform
+// trust relation, and the owning website's content target. It performs no
+// network probes — in particular it never calls Inspect/InspectRoute — so
+// website validation may consult it to select its gates without adding DNS
+// traffic to the ValidateDNS hot path.
+// Route inspection stays where verification already performs it (VerifyDomain).
+//
+// The mapping is the legacy compatibility mapper (legacyFacts +
+// legacyProfileFor), promoted to this single runtime entry point: profile
+// selection assumes the route derived from persisted state (a zero route
+// observation means "not probed"). Incoherent persisted state is rejected
+// with a typed CompatError rather than guessed. Callers must treat any error
+// as "no plan available" and fall back to the legacy predicates — which
+// remain authoritative at runtime for current fixtures — while reporting the
+// unavailability/d divergence loudly (the website service does both).
+func (s *DelegatedDomainService) CurrentBindingPlan(wd *pluginDb.WebsiteDomain, website *pluginDb.Website) (domainpolicy.Plan, error) {
+	facts, err := s.legacyFacts(wd, website)
+	if err != nil {
+		return domainpolicy.Plan{}, err
+	}
+	profileID, err := s.legacyProfileFor(wd, domainpolicy.RouteObservation{})
+	if err != nil {
+		return domainpolicy.Plan{}, err
+	}
+	profile, ok := domainpolicy.DefaultRegistry().Lookup(profileID)
+	if !ok {
+		return domainpolicy.Plan{}, newCompatError(CompatErrorProfileUnregistered, wd,
+			"current-behavior profile %q is not registered", profileID.String())
+	}
+	return domainpolicy.PlanBinding(profile, facts)
 }
 
 // NamespaceUsesManagedZoneTLSA reports whether the given namespace's provider
