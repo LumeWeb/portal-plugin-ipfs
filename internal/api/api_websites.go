@@ -877,6 +877,12 @@ func (a *API) validateWebsiteDNS(c echo.Context) error {
 		Valid:   result.Valid,
 		Message: result.Message,
 		Reason:  string(result.Reason),
+		Checks:  make([]dto.ValidationCheck, 0, len(result.Checks)),
+	}
+	for _, c := range result.Checks {
+		resp.Checks = append(resp.Checks, dto.ValidationCheck{
+			Name: c.Name, OK: c.OK, Message: c.Message, Expected: c.Expected, Found: c.Found,
+		})
 	}
 	if primary != nil {
 		resp.Domain = primary.Domain

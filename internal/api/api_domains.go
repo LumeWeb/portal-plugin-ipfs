@@ -385,6 +385,15 @@ func (a *API) verifyDomain(c echo.Context) error {
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
+	// Surface the per-gate delegation checks so a client can render targeted
+	// fix-up guidance (which gate failed, expected vs found NS/DS).
+	resp.Checks = make([]dto.ValidationCheck, 0, len(res.Checks))
+	for _, c := range res.Checks {
+		resp.Checks = append(resp.Checks, dto.ValidationCheck{
+			Name: c.Name, OK: c.OK, Message: c.Message,
+			Expected: c.Expected, Found: c.Found,
+		})
+	}
 	return httputil.EncodeResponse(ctx, &wd, &resp)
 }
 

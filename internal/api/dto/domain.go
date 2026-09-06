@@ -164,6 +164,11 @@ type DomainResponse struct {
 	// Delegation.AuthoritativeRecords instead.
 	OwnerName string `json:"owner_name,omitempty"` // "_443._tcp.<domain>"
 	TLSARData string `json:"tlsa_rdata,omitempty"` // "3 1 1 <hex>"
+
+	// Checks enumerates the delegation-verification gates and their outcome
+	// from the most recent domain verify, so a client can render per-gate
+	// fix-up guidance (which check failed, expected vs found).
+	Checks []ValidationCheck `json:"checks,omitempty"`
 }
 
 func (r *DomainResponse) FromModel(m *db.WebsiteDomain) error {

@@ -33,14 +33,14 @@ func TestShouldPerformTokenCheck(t *testing.T) {
 			},
 		})
 
-		t.Run("onchain managed HNS performs TXT token check", func(t *testing.T) {
+		t.Run("onchain managed HNS skips TXT token check", func(t *testing.T) {
 			wd := &pluginDb.WebsiteDomain{
 				Domain:    "my.hns",
 				Namespace: pluginDb.DomainNamespaceHNS,
 				Status:    pluginDb.DomainStatusOnchainManaged,
 			}
-			assert.True(tb, svc.shouldPerformTokenCheck(pending, wd),
-				"on-chain managed (HIP-5) must prove ownership via TXT token")
+			assert.False(tb, svc.shouldPerformTokenCheck(pending, wd),
+				"on-chain managed (HIP-5) proves ownership at bind and publishes a DANE TLSA; no TXT token")
 		})
 
 		t.Run("native HNS skips TXT token check (delegation)", func(t *testing.T) {

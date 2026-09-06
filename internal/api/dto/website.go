@@ -530,6 +530,18 @@ type WebsiteValidateResponse struct {
 	Valid   bool   `json:"valid"`
 	Message string `json:"message"`
 	Reason  string `json:"reason"`
+	// Checks enumerates each validation gate and its outcome so a client can
+	// render targeted fix-up guidance (which record failed, expected vs found).
+	Checks []ValidationCheck `json:"checks,omitempty"`
+}
+
+// ValidationCheck mirrors core.ValidationCheck for the API surface.
+type ValidationCheck struct {
+	Name     string `json:"name"`
+	OK       bool   `json:"ok"`
+	Message  string `json:"message,omitempty"`
+	Expected string `json:"expected,omitempty"`
+	Found    string `json:"found,omitempty"`
 }
 
 // WebsiteItem represents a website listing item (used in list responses)

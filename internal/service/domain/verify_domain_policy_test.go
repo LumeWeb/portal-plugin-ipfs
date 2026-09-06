@@ -245,6 +245,11 @@ func TestVerifyDomain_OnchainStrayZone_NotApplicableNoPortalDNS(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, DelegationNotApplicable, res.State)
 		assert.False(t, prov.called, "no provider verification for a non-portal binding")
+		// Diagnostics: the on-chain NotApplicable path reports exactly why no
+		// portal delegation applies, using the shared gate name constant.
+		require.Len(t, res.Checks, 1)
+		assert.Equal(t, pluginCore.ValidationCheckDelegation, res.Checks[0].Name)
+		assert.True(t, res.Checks[0].OK)
 
 		mockDNS.AssertNotCalled(t, "GetActiveDNSSECDS")
 		mockDNS.AssertNotCalled(t, "EnableDNSSEC")
