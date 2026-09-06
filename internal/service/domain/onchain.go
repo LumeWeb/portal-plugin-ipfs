@@ -213,7 +213,26 @@ func (s *DelegatedDomainService) bindingIsWebsitePrimary(ctx context.Context, we
 		return tx
 	})
 	if err != nil {
-		return nil, false, err
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, err
+		}
+		// No active binding exists (e.g. the apex is still in
+		// records_generated / waiting_delegation / error). Fall back to
+		// treating a sole non-deleted binding as the primary so converting it
+		// to on-chain still proceeds (and re-arms) instead of aborting with
+		// ErrRecordNotFound (which the API maps to a 404).
+		var count int64
+		if cerr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			if err := tx.Model(&pluginDb.WebsiteDomain{}).
+				Where("website_id = ? AND deleted_at IS NULL", websiteID).
+				Count(&count).Error; err != nil {
+				_ = tx.AddError(err)
+			}
+			return tx
+		}); cerr != nil {
+			return nil, false, cerr
+		}
+		return &website, count <= 1, nil
 	}
 	return &website, apex.ID == domainID, nil
 }

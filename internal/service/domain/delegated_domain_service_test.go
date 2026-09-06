@@ -1030,6 +1030,46 @@ func TestDelegatedDomainService_ConvertToOnChain_NoPrimaryFallsBackToOldestActiv
 	}, keyTestOptions)
 }
 
+func TestDelegatedDomainService_ConvertToOnChain_SoleNonActiveBindingStaysPrimary(t *testing.T) {
+	// Regression (PR review): a website with NO active binding — e.g. a sole
+	// HNS name in an error/waiting state being converted to on-chain to fix it
+	// — has no fallback apex. The conversion must still proceed (not abort
+	// with ErrRecordNotFound / 404) and treat the sole binding as primary so
+	// the website re-arms validation.
+	const zoneID = uint(83)
+	hip5Addr, _ := startCustomPortDNSServer(t, "err-convertme.", []string{"0xerr._eth."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "err.hns")
+		require.NoError(tb, db.Model(&website).Update("status", pluginDb.WebsiteStatusActive).Error)
+
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: "err-convertme.hns",
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: zoneID,
+			// No active binding: error state mirrors an HNS name needing
+			// on-chain conversion to recover.
+			Status: pluginDb.DomainStatusError, DNSHostingEnabled: true,
+		}
+		require.NoError(tb, db.Create(wd).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		hnsProv.resolverAddr = hip5Addr
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().DeleteZone(mock.Anything, zoneID).Return(nil).Once()
+
+		converted, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, wd.ID)
+		require.NoError(tb, err, "sole non-active binding conversion must not abort")
+		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, converted.Status)
+
+		// Sole binding treated as primary: website re-arms to pending_validation.
+		var reloaded pluginDb.Website
+		require.NoError(tb, db.First(&reloaded, website.ID).Error)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), reloaded.Status)
+	}, keyTestOptions)
+}
+
 func TestDelegatedDomainService_VerifyDomain_ReclassifiesExistingHIP5(t *testing.T) {
 	const domain = "verify-convertme"
 	const zoneID = uint(88)
