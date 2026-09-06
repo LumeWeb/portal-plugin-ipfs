@@ -48,7 +48,7 @@ require (
 	go.lumeweb.com/icann-tlds v0.1.0
 	go.lumeweb.com/ipfs-content v0.1.18
 	go.lumeweb.com/portal v0.5.2-0.20260905015449-23ea71e33def
-	go.lumeweb.com/portal-middleware v0.3.7
+	go.lumeweb.com/portal-middleware v0.3.8
 	go.lumeweb.com/portal-plugin-core v0.1.0
 	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260901083018-10a15e7bc5eb
 	go.lumeweb.com/portal-plugin-quota v0.1.0
