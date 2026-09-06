@@ -9,6 +9,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal/db"
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
 	"go.uber.org/zap"
@@ -59,10 +60,15 @@ func (s *DelegatedDomainService) GetEnabledPlatformDomain(ctx context.Context, d
 	}
 	domain = NormalizeDomain(domain)
 	var matches []*pluginDb.PlatformDomain
-	err := s.DB().WithContext(ctx).
-		Where("domain = ? AND enabled = ?", domain, true).
-		Order("id ASC").
-		Find(&matches).Error
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Where("domain = ? AND enabled = ?", domain, true).
+			Order("id ASC").
+			Find(&matches).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -103,10 +109,15 @@ func (s *DelegatedDomainService) IsPlatformRootDomain(ctx context.Context, domai
 		return false, nil
 	}
 	var count int64
-	err := s.DB().WithContext(ctx).
-		Model(&pluginDb.PlatformDomain{}).
-		Where("domain = ? AND enabled = ?", NormalizeDomain(domain), true).
-		Count(&count).Error
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Model(&pluginDb.PlatformDomain{}).
+			Where("domain = ? AND enabled = ?", NormalizeDomain(domain), true).
+			Count(&count).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
 	if err != nil {
 		return false, err
 	}
@@ -177,7 +188,12 @@ func (s *DelegatedDomainService) ValidatePlatformBinding(ctx context.Context, wd
 		return nil // not a platform binding; nothing to validate
 	}
 	var pd pluginDb.PlatformDomain
-	if err := s.DB().WithContext(ctx).First(&pd, *wd.PlatformDomainID).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.First(&pd, *wd.PlatformDomainID).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return fmt.Errorf("platform root %d unavailable: %w", *wd.PlatformDomainID, err)
 	}
 	if pd.Namespace != wd.Namespace {
@@ -199,9 +215,14 @@ func (s *DelegatedDomainService) GetPlatformDomainByName(ctx context.Context, do
 		return nil, nil
 	}
 	var pd pluginDb.PlatformDomain
-	err := s.DB().WithContext(ctx).
-		Where("domain = ? AND namespace = ?", domain, string(namespace)).
-		First(&pd).Error
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Where("domain = ? AND namespace = ?", domain, string(namespace)).
+			First(&pd).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -250,9 +271,14 @@ func (s *DelegatedDomainService) CreatePlatformDomain(ctx context.Context, domai
 	// tombstone for this key so re-registration via a strict unique key works.
 	// Only tombstones (deleted_at IS NOT NULL) are removed; a live same-key row
 	// is a genuine conflict and left to the unique key to reject.
-	if err := s.DB().WithContext(ctx).
-		Where("domain = ? AND namespace = ? AND deleted_at IS NOT NULL", domain, string(namespace)).
-		Unscoped().Delete(&pluginDb.PlatformDomain{}).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Where("domain = ? AND namespace = ? AND deleted_at IS NOT NULL", domain, string(namespace)).
+			Unscoped().Delete(&pluginDb.PlatformDomain{}).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, fmt.Errorf("failed to purge stale platform domain: %w", err)
 	}
 
@@ -262,7 +288,12 @@ func (s *DelegatedDomainService) CreatePlatformDomain(ctx context.Context, domai
 		ZoneID:    z.ID,
 		Enabled:   enabled,
 	}
-	if err := s.DB().WithContext(ctx).Create(pd).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Create(pd).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		if isDuplicateKeyError(err) {
 			return nil, fmt.Errorf("platform domain %q is already registered for namespace %q", domain, namespace)
 		}
@@ -277,18 +308,24 @@ func (s *DelegatedDomainService) ListPlatformDomains(ctx context.Context, filter
 	if s.DB() == nil {
 		return nil, 0, nil
 	}
-	query := s.DB().WithContext(ctx).Model(&pluginDb.PlatformDomain{})
-	query = queryutil.ApplyFilters(query, filters, nil)
-	query = queryutil.ApplySort(query, sort)
-
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	query = queryutil.ApplyPagination(query, pagination)
 	var domains []*pluginDb.PlatformDomain
-	if err := query.Find(&domains).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		query := tx.Model(&pluginDb.PlatformDomain{})
+		query = queryutil.ApplyFilters(query, filters, nil)
+		query = queryutil.ApplySort(query, sort)
+
+		if err := query.Count(&total).Error; err != nil {
+			_ = tx.AddError(err)
+			return tx
+		}
+
+		query = queryutil.ApplyPagination(query, pagination)
+		if err := query.Find(&domains).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, 0, err
 	}
 	return domains, total, nil
@@ -301,18 +338,24 @@ func (s *DelegatedDomainService) ListEnabledPlatformDomains(ctx context.Context,
 	if s.DB() == nil {
 		return nil, 0, nil
 	}
-	query := s.DB().WithContext(ctx).Model(&pluginDb.PlatformDomain{}).
-		Where("enabled = ?", true).
-		Order("domain ASC")
-
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	query = queryutil.ApplyPagination(query, pagination)
 	var domains []*pluginDb.PlatformDomain
-	if err := query.Find(&domains).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		query := tx.Model(&pluginDb.PlatformDomain{}).
+			Where("enabled = ?", true).
+			Order("domain ASC")
+
+		if err := query.Count(&total).Error; err != nil {
+			_ = tx.AddError(err)
+			return tx
+		}
+
+		query = queryutil.ApplyPagination(query, pagination)
+		if err := query.Find(&domains).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, 0, err
 	}
 	return domains, total, nil
@@ -324,11 +367,21 @@ func (s *DelegatedDomainService) UpdatePlatformDomain(ctx context.Context, id ui
 		return nil, fmt.Errorf("database not available")
 	}
 	var pd pluginDb.PlatformDomain
-	if err := s.DB().WithContext(ctx).First(&pd, id).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.First(&pd, id).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, err
 	}
 	pd.Enabled = enabled
-	if err := s.DB().WithContext(ctx).Model(&pd).Update("enabled", enabled).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Model(&pd).Update("enabled", enabled).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, fmt.Errorf("update platform domain: %w", err)
 	}
 	return &pd, nil
@@ -343,11 +396,19 @@ func (s *DelegatedDomainService) DeletePlatformDomain(ctx context.Context, id ui
 	if s.DB() == nil {
 		return fmt.Errorf("database not available")
 	}
-	res := s.DB().WithContext(ctx).Delete(&pluginDb.PlatformDomain{}, id)
-	if res.Error != nil {
-		return res.Error
+	var rowsAffected int64
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		res := tx.Delete(&pluginDb.PlatformDomain{}, id)
+		if res.Error != nil {
+			_ = tx.AddError(res.Error)
+			return tx
+		}
+		rowsAffected = res.RowsAffected
+		return tx
+	}); err != nil {
+		return err
 	}
-	if res.RowsAffected == 0 {
+	if rowsAffected == 0 {
 		return gorm.ErrRecordNotFound
 	}
 	return nil
@@ -365,7 +426,12 @@ func (s *DelegatedDomainService) BindPlatformRootApex(ctx context.Context, websi
 	}
 
 	var pd pluginDb.PlatformDomain
-	if err := s.DB().WithContext(ctx).First(&pd, platformDomainID).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.First(&pd, platformDomainID).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, fmt.Errorf("platform domain lookup failed: %w", err)
 	}
 	if !pd.Enabled {
@@ -395,7 +461,12 @@ func (s *DelegatedDomainService) CreatePlatformSubdomain(ctx context.Context, we
 	}
 
 	var pd pluginDb.PlatformDomain
-	if err := s.DB().WithContext(ctx).First(&pd, platformDomainID).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.First(&pd, platformDomainID).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, fmt.Errorf("platform domain lookup failed: %w", err)
 	}
 	if !pd.Enabled {
@@ -508,13 +579,18 @@ func (s *DelegatedDomainService) createPlatformBinding(ctx context.Context, webs
 	// operator zone is shared and left intact), and never touches the website.
 	wd.PlatformDomainID = &pd.ID
 	if err := s.ValidatePlatformBinding(ctx, wd); err != nil {
-		s.DB().WithContext(ctx).Unscoped().Delete(wd)
+		s.deleteBindingBestEffort(ctx, wd)
 		return nil, fmt.Errorf("platform binding trust check failed: %w", err)
 	}
 	// The platform controls both sides of the DNS check (see VerifyDomain's
 	// platform guard), so the binding is active as soon as it is created.
 	updates := map[string]any{"platform_domain_id": pd.ID, "status": pluginDb.DomainStatusActive}
-	if err := s.DB().WithContext(ctx).Model(wd).Updates(updates).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Model(wd).Updates(updates).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, fmt.Errorf("failed to mark platform subdomain: %w", err)
 	}
 	wd.Status = pluginDb.DomainStatusActive
@@ -540,10 +616,15 @@ func (s *DelegatedDomainService) createPlatformBinding(ctx context.Context, webs
 // live website_domains bindings in the given namespace.
 func (s *DelegatedDomainService) labelAvailable(ctx context.Context, fqdn string, namespace pluginDb.DomainNamespace) (bool, error) {
 	var count int64
-	err := s.DB().WithContext(ctx).
-		Model(&pluginDb.WebsiteDomain{}).
-		Where("domain = ? AND namespace = ? AND deleted_at IS NULL", fqdn, string(namespace)).
-		Count(&count).Error
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Model(&pluginDb.WebsiteDomain{}).
+			Where("domain = ? AND namespace = ? AND deleted_at IS NULL", fqdn, string(namespace)).
+			Count(&count).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
 	if err != nil {
 		return false, err
 	}

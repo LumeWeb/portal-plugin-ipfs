@@ -11,6 +11,7 @@ import (
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal/db"
 	"go.uber.org/zap"
 )
 
@@ -226,19 +227,20 @@ func (s *DNSServiceDefault) EnableDNSSEC(ctx context.Context, zoneID uint) (stri
 	// Short transaction: fetch + validate the zone row and its PowerDNS zone ID,
 	// then release before any external network I/O.
 	var pdnsZoneID string
-	txErr := s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		var zone pluginDb.DNSZone
 		if err := tx.First(&zone, zoneID).Error; err != nil {
-			return err // includes gorm.ErrRecordNotFound
+			_ = tx.AddError(err) // includes gorm.ErrRecordNotFound
+			return tx
 		}
 		if zone.PowerDNSZoneID == "" {
-			return fmt.Errorf("zone %d has no PowerDNS zone ID", zoneID)
+			_ = tx.AddError(fmt.Errorf("zone %d has no PowerDNS zone ID", zoneID))
+			return tx
 		}
 		pdnsZoneID = zone.PowerDNSZoneID
-		return nil
-	})
-	if txErr != nil {
-		return "", txErr
+		return tx
+	}); err != nil {
+		return "", err
 	}
 
 	dnskey, err := s.pdnsClient.EnableDNSSEC(ctx, pdnsZoneID)
@@ -268,19 +270,20 @@ func (s *DNSServiceDefault) GetActiveDNSSECDS(ctx context.Context, zoneID uint) 
 	}
 
 	var pdnsZoneID string
-	txErr := s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		var zone pluginDb.DNSZone
 		if err := tx.First(&zone, zoneID).Error; err != nil {
-			return err
+			_ = tx.AddError(err)
+			return tx
 		}
 		if zone.PowerDNSZoneID == "" {
-			return fmt.Errorf("zone %d has no PowerDNS zone ID", zoneID)
+			_ = tx.AddError(fmt.Errorf("zone %d has no PowerDNS zone ID", zoneID))
+			return tx
 		}
 		pdnsZoneID = zone.PowerDNSZoneID
-		return nil
-	})
-	if txErr != nil {
-		return "", txErr
+		return tx
+	}); err != nil {
+		return "", err
 	}
 
 	ds, err := s.pdnsClient.GetActiveDNSKEYDS(ctx, pdnsZoneID)
@@ -312,19 +315,20 @@ func (s *DNSServiceDefault) EnsureSOAMNAME(ctx context.Context, zoneID uint, dom
 	}
 
 	var pdnsZoneID string
-	txErr := s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		var zone pluginDb.DNSZone
 		if err := tx.First(&zone, zoneID).Error; err != nil {
-			return err
+			_ = tx.AddError(err)
+			return tx
 		}
 		if zone.PowerDNSZoneID == "" {
-			return fmt.Errorf("zone %d has no PowerDNS zone ID", zoneID)
+			_ = tx.AddError(fmt.Errorf("zone %d has no PowerDNS zone ID", zoneID))
+			return tx
 		}
 		pdnsZoneID = zone.PowerDNSZoneID
-		return nil
-	})
-	if txErr != nil {
-		return txErr
+		return tx
+	}); err != nil {
+		return err
 	}
 
 	if err := s.pdnsClient.EnsureSOAMNAME(ctx, pdnsZoneID, domain, nameservers); err != nil {

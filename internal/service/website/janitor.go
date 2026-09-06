@@ -14,6 +14,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal/db"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -66,10 +67,27 @@ func (j *WebsiteJanitorJob) primaryDomainName(ctx context.Context, website *plug
 		return ""
 	}
 	var wd pluginDb.WebsiteDomain
-	if err := j.db.WithContext(ctx).Where("id = ?", *website.PrimaryDomainID).First(&wd).Error; err != nil {
+	if err := db.RetryableTransaction(ctx, j.db, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Where("id = ?", *website.PrimaryDomainID).First(&wd).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return ""
 	}
 	return wd.Domain
+}
+
+// saveWebsite persists website changes through the retryable-transaction
+// wrapper so janitor status writes retry on lock contention instead of
+// failing the run on a transient lock error.
+func (j *WebsiteJanitorJob) saveWebsite(ctx context.Context, website *pluginDb.Website) error {
+	return db.RetryableTransaction(ctx, j.db, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Save(website).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
 }
 
 // Run executes the janitor job logic
@@ -96,11 +114,16 @@ func (j *WebsiteJanitorJob) Run(ctx core.Context, eventCtx context.Context) erro
 
 	// Query websites that need validation
 	var websites []*pluginDb.Website
-	err := j.db.WithContext(eventCtx).
-		Where("deleted_at IS NULL").
-		Where("status != ?", string(pluginDb.WebsiteStatusPendingValidation)).
-		Where("last_checked_at IS NULL OR last_checked_at < ?", time.Now().Add(-j.config.CheckInterval)).
-		Find(&websites).Error
+	err := db.RetryableTransaction(eventCtx, j.db, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Where("deleted_at IS NULL").
+			Where("status != ?", string(pluginDb.WebsiteStatusPendingValidation)).
+			Where("last_checked_at IS NULL OR last_checked_at < ?", time.Now().Add(-j.config.CheckInterval)).
+			Find(&websites).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
 
 	if err != nil {
 		j.logger.Error("Failed to query websites for validation", zap.Error(err))
@@ -179,7 +202,7 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 	// pending_validation.
 	if website.Status == string(pluginDb.WebsiteStatusPendingValidation) {
 		website.LastCheckedAt = new(time.Now())
-		return j.db.WithContext(ctx).Save(website).Error
+		return j.saveWebsite(ctx, website)
 	}
 
 	oldStatus := website.Status
@@ -216,7 +239,7 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 		}
 		// validateIPNSTarget handles status and LastCheckedAt updates internally.
 		// Save the changes immediately.
-		if err := j.db.WithContext(ctx).Save(website).Error; err != nil {
+		if err := j.saveWebsite(ctx, website); err != nil {
 			return fmt.Errorf("failed to update website: %w", err)
 		}
 		return nil
@@ -235,7 +258,7 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 			zap.Uint("website_id", website.ID),
 			zap.Time("created_at", website.CreatedAt))
 		website.LastCheckedAt = new(time.Now())
-		return j.db.WithContext(ctx).Save(website).Error
+		return j.saveWebsite(ctx, website)
 	}
 
 	// Fire the health-driven transition via the FSM (a no-op when the website
@@ -273,7 +296,7 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 	website.LastCheckedAt = new(time.Now())
 
 	// Save changes
-	if err := j.db.WithContext(ctx).Save(website).Error; err != nil {
+	if err := j.saveWebsite(ctx, website); err != nil {
 		return fmt.Errorf("failed to update website: %w", err)
 	}
 
@@ -293,13 +316,17 @@ func (j *WebsiteJanitorJob) validateCIDTarget(ctx context.Context, targetHash st
 	// Check if CID is pinned for any user
 	// We need to scan through pins since GetPinByCIDAndUser requires a userID
 	var pins []*pluginDb.IPFSPin
-	err = j.db.WithContext(ctx).
-		Where("cid = ?", normalizedCid.Bytes()).
-		Where("deleted_at IS NULL").
-		Where("status = ?", pluginDb.PinningStatusPinned).
-		Limit(1).
-		Find(&pins).Error
-
+	err = db.RetryableTransaction(ctx, j.db, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Where("cid = ?", normalizedCid.Bytes()).
+			Where("deleted_at IS NULL").
+			Where("status = ?", pluginDb.PinningStatusPinned).
+			Limit(1).
+			Find(&pins).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
 	if err != nil {
 		return false, fmt.Errorf("failed to query pins: %w", err)
 	}
@@ -345,7 +372,12 @@ func (j *WebsiteJanitorJob) validateIPNSTarget(ctx context.Context, website *plu
 	}
 
 	var key pluginDb.IPFSIPNSKey
-	if err := j.db.WithContext(ctx).Where("user_id = ? AND peer_id_multihash = ?", userID, []byte(website.TargetMultihash)).First(&key).Error; err != nil {
+	if err := db.RetryableTransaction(ctx, j.db, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Where("user_id = ? AND peer_id_multihash = ?", userID, []byte(website.TargetMultihash)).First(&key).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		j.logger.Error("Failed to look up IPNS key record",
 			zap.Error(err),
 			zap.Uint("website_id", website.ID),
@@ -457,10 +489,15 @@ func (j *WebsiteJanitorJob) validateDNSZones(ctx context.Context) error {
 
 	// Query DNS zones that are pending nameserver validation
 	var zones []*pluginDb.DNSZone
-	err := j.db.WithContext(ctx).
-		Where("status = ?", pluginDb.DNSZoneStatusPendingNameserver).
-		Where("last_nameserver_check_at IS NULL OR last_nameserver_check_at < ?", time.Now().Add(-5*time.Minute)).
-		Find(&zones).Error
+	err := db.RetryableTransaction(ctx, j.db, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Where("status = ?", pluginDb.DNSZoneStatusPendingNameserver).
+			Where("last_nameserver_check_at IS NULL OR last_nameserver_check_at < ?", time.Now().Add(-5*time.Minute)).
+			Find(&zones).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
 
 	if err != nil {
 		return fmt.Errorf("failed to query DNS zones: %w", err)
@@ -486,7 +523,12 @@ func (j *WebsiteJanitorJob) validateDNSZones(ctx context.Context) error {
 				zap.String("domain", zone.Domain))
 			// Still save the timestamp to prevent a fast retry loop
 			zone.LastNameserverCheckAt = new(time.Now())
-			if err := j.db.WithContext(ctx).Model(&zone).Select("LastNameserverCheckAt").Updates(&zone).Error; err != nil {
+			if err := db.RetryableTransaction(ctx, j.db, func(tx *gorm.DB) *gorm.DB {
+				if err := tx.Model(&zone).Select("LastNameserverCheckAt").Updates(&zone).Error; err != nil {
+					_ = tx.AddError(err)
+				}
+				return tx
+			}); err != nil {
 				j.logger.Error("Failed to update zone timestamp", zap.Error(err), zap.Uint("zone_id", zone.ID))
 			}
 			continue
@@ -503,7 +545,12 @@ func (j *WebsiteJanitorJob) validateDNSZones(ctx context.Context) error {
 			updateCols = append(updateCols, "Status")
 		}
 
-		if err := j.db.WithContext(ctx).Model(&zone).Select(updateCols).Updates(&zone).Error; err != nil {
+		if err := db.RetryableTransaction(ctx, j.db, func(tx *gorm.DB) *gorm.DB {
+			if err := tx.Model(&zone).Select(updateCols).Updates(&zone).Error; err != nil {
+				_ = tx.AddError(err)
+			}
+			return tx
+		}); err != nil {
 			j.logger.Error("Failed to update DNS zone", zap.Error(err), zap.Uint("zone_id", zone.ID))
 		}
 	}
