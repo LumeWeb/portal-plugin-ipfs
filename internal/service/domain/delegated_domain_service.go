@@ -855,7 +855,11 @@ func dnssecCheck(required bool, ds string) pluginCore.ValidationCheck {
 	}
 	return pluginCore.ValidationCheck{
 		Name:     pluginCore.ValidationCheckDNSSEC,
-		OK:       ds != "",
+		// A namespace that does not require DNSSEC satisfies the gate by
+		// definition, so a non-DNSSEC (e.g. ICANN) domain must report OK even
+		// with no DS — otherwise every validated ICANN delegation would show a
+		// red dnssec gate with the contradictory "not required" message.
+		OK:       ds != "" || !required,
 		Message:  msg,
 		Expected: ds,
 	}

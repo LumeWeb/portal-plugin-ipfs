@@ -261,3 +261,17 @@ func TestVerifyDomain_OnchainStrayZone_NotApplicableNoPortalDNS(t *testing.T) {
 		assert.Equal(t, pluginDb.DomainStatusOnchainManaged, persisted.Status)
 	}, TestOptions)
 }
+
+func TestDNSSECCheck_NotRequiredIsPass(t *testing.T) {
+	// Regression: a namespace that does not require DNSSEC (e.g. ICANN)
+	// satisfies the dnssec gate by definition, so a validated delegation with
+	// no DS must not report a red "dnssec" gate contradicting its own message.
+	c := dnssecCheck(false, "")
+	assert.True(t, c.OK, "non-DNSSEC namespace must pass the dnssec gate")
+	assert.Equal(t, msgDNSSECNotRequired, c.Message)
+
+	// DNSSEC-required namespace: OK only when a live DS is present.
+	require.True(t, dnssecCheck(true, "ds").OK)
+	assert.False(t, dnssecCheck(true, "").OK)
+	assert.Equal(t, msgDNSSECNoKey, dnssecCheck(true, "").Message)
+}
