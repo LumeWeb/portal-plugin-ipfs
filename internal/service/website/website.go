@@ -1841,7 +1841,17 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 					Checks:  checks,
 				}, nil
 			} else if tlsaErr != nil {
-				return pluginCore.ValidateDNSResult{}, tlsaErr
+				// Resolver not configured / unreachable: the on-chain TLSA
+				// cannot be confirmed. Degrade the TLSA gate to a distinct
+				// non-OK outcome (not a 500) so validation fails closed with
+				// a clear message rather than taking down the whole check.
+				addCheck(pluginCore.ValidationCheckTLSA, false, tlsaErr.Error(), "", "")
+				return pluginCore.ValidateDNSResult{
+					Valid:   false,
+					Message: tlsaErr.Error(),
+					Reason:  pluginCore.ValidationReasonTLSAUnavailable,
+					Checks:  checks,
+				}, nil
 			}
 
 			if err := s.activateValidatedWebsite(ctx, &website); err != nil {

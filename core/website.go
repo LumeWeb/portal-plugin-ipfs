@@ -25,6 +25,7 @@ const (
 	ValidationReasonDelegationPending ValidationReason = "delegation_pending"
 	ValidationReasonTLSAMissing       ValidationReason = "tlsa_missing"
 	ValidationReasonTLSAMismatch      ValidationReason = "tlsa_mismatch"
+	ValidationReasonTLSAUnavailable   ValidationReason = "tlsa_unavailable"
 )
 
 // ValidationCheck gate names. Shared by website DNS validation and domain
