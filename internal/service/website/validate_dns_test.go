@@ -1085,6 +1085,8 @@ func TestValidateDNS_OnchainManaged_TLSAGate(t *testing.T) {
 			require.NoError(t, err, "resolver failure must not produce a hard error")
 			assert.False(t, result.Valid)
 			assert.Equal(t, pluginCore.ValidationReasonTLSAUnavailable, result.Reason)
+			assert.NotContains(t, result.Message, "DnsConfig.HNSResolver", "raw resolver error must not leak into the response")
+			assert.Equal(t, tlsaUnavailableMsg, result.Message)
 			var tlsa *pluginCore.ValidationCheck
 			for i := range result.Checks {
 				if result.Checks[i].Name == pluginCore.ValidationCheckTLSA {
@@ -1094,6 +1096,7 @@ func TestValidateDNS_OnchainManaged_TLSAGate(t *testing.T) {
 			}
 			require.NotNil(t, tlsa, "tlsa check must be reported")
 			assert.False(t, tlsa.OK)
+			assert.Equal(t, tlsaUnavailableMsg, tlsa.Message)
 		}, TestOptions)
 	})
 

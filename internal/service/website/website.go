@@ -1709,6 +1709,12 @@ func onchainDNSHostingUnavailableError(domain string) error {
 	return fmt.Errorf("DNS hosting is not available for on-chain managed domain %q (HIP-5); its DNS is served by the external contract", domain)
 }
 
+// tlsaUnavailableMsg is the client-facing message shown when a chain-managed
+// binding's on-chain TLSA cannot be confirmed because the HNS resolver is
+// unconfigured or unreachable. Kept separate from the raw error, which embeds
+// internal resolver config and must never reach the HTTP response body.
+const tlsaUnavailableMsg = "on-chain TLSA cannot be confirmed: the DNS resolver is currently unavailable"
+
 func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, websiteID uint) (pluginCore.ValidateDNSResult, error) {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.ValidateDNS")
 	defer span.End()
@@ -1844,11 +1850,17 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				// Resolver not configured / unreachable: the on-chain TLSA
 				// cannot be confirmed. Degrade the TLSA gate to a distinct
 				// non-OK outcome (not a 500) so validation fails closed with
-				// a clear message rather than taking down the whole check.
-				addCheck(pluginCore.ValidationCheckTLSA, false, tlsaErr.Error(), "", "")
+				// a clear message rather than taking down the whole check. The
+				// client-facing message must be sanitized — the underlying
+				// error embeds internal resolver config (config key name,
+				// network address) — so echo a friendly message and log the
+				// raw error server-side.
+				s.Logger().Warn("on-chain TLSA resolver unavailable during validation",
+					zap.Error(tlsaErr), zap.String("domain", primaryDomain))
+				addCheck(pluginCore.ValidationCheckTLSA, false, tlsaUnavailableMsg, "", "")
 				return pluginCore.ValidateDNSResult{
 					Valid:   false,
-					Message: tlsaErr.Error(),
+					Message: tlsaUnavailableMsg,
 					Reason:  pluginCore.ValidationReasonTLSAUnavailable,
 					Checks:  checks,
 				}, nil
