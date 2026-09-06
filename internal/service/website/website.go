@@ -2413,6 +2413,175 @@ func (s *WebsiteServiceDefault) NotifyAdminWebsiteCreated(ctx context.Context, w
 	return s.notifyAdminWebsiteCreated(ctx, &website)
 }
 
+// NotifyAdminWebsiteBroken sends the admin "target invalid / broken" warning
+// email for the given website. Fired on every janitor run in warn-only mode
+// while the target is invalid — no deduplication, per explicit config intent:
+// the admin accepts the email volume in exchange for debuggability.
+func (s *WebsiteServiceDefault) NotifyAdminWebsiteBroken(ctx context.Context, websiteID uint) error {
+	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.NotifyAdminWebsiteBroken")
+	defer span.End()
+
+	if !s.config.NotificationsEnabled || s.mailerSvc == nil {
+		return nil
+	}
+
+	if s.config.AdminEmail == "" {
+		s.Logger().Debug("Admin email not configured, skipping broken-site warning")
+		return nil
+	}
+
+	var website pluginDb.Website
+	if err := s.DB().WithContext(ctx).First(&website, websiteID).Error; err != nil {
+		s.Logger().Warn("Failed to load website for broken-site warning",
+			zap.Error(err), zap.Uint("website_id", websiteID))
+		return err
+	}
+
+	primaryDomain := s.primaryDomainName(ctx, &website)
+
+	vars := map[string]interface{}{
+		"WebsiteID":  website.ID,
+		"Domain":     primaryDomain,
+		"UserEmail":  s.resolveUserEmail(ctx, website.UserID),
+		"TargetType": website.TargetType,
+		"TargetHash": website.TargetHash(),
+		"Status":     website.Status,
+		"CheckedAt":  time.Now().Format(time.RFC3339),
+	}
+
+	if err := s.mailerSvc.TemplateSend("website_broken_admin", vars, vars, s.config.AdminEmail); err != nil {
+		s.Logger().Error("Failed to send broken-site warning notification",
+			zap.Error(err),
+			zap.String("domain", primaryDomain),
+			zap.String("admin_email", s.config.AdminEmail))
+		return err
+	}
+
+	s.Logger().Debug("Broken-site warning notification sent",
+		zap.Uint("website_id", website.ID),
+		zap.String("domain", primaryDomain),
+		zap.String("admin_email", s.config.AdminEmail))
+	return nil
+}
+
+// NotifyOwnerCIDUnpinned emails the owners of active websites whose target was
+// backed by the given CID when it was unpinned: either the website targets the
+// CID directly, or it targets an IPNS key whose last published CID is that
+// CID. Individual email failures are logged and skipped so one bad address
+// never blocks the rest; a returned error means the affected-site lookup
+// failed.
+func (s *WebsiteServiceDefault) NotifyOwnerCIDUnpinned(ctx context.Context, cidStr string) error {
+	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.NotifyOwnerCIDUnpinned")
+	defer span.End()
+
+	if !s.config.NotificationsEnabled || s.mailerSvc == nil {
+		return nil
+	}
+
+	parsed, err := cid.Parse(cidStr)
+	if err != nil {
+		return fmt.Errorf("invalid CID %q: %w", cidStr, err)
+	}
+
+	// The website stores only the CID multihash, so the match holds regardless
+	// of CID version/codec drift between the pin record and the site target.
+	var websites []pluginDb.Website
+	if err := s.DB().WithContext(ctx).
+		Where("target_type = ? AND status = ? AND target_multihash = ?",
+			string(pluginDb.WebsiteTargetTypeIPFS),
+			string(pluginDb.WebsiteStatusActive),
+			parsed.Hash()).
+		Find(&websites).Error; err != nil {
+		return fmt.Errorf("failed to query websites for unpinned CID: %w", err)
+	}
+
+	// IPNS-published records are stored as normalized CIDv1 strings; build
+	// candidate string forms so both raw and normalized pins resolve.
+	candidates := []string{cidStr}
+	if normalized := encoding.NormalizeCid(parsed); normalized.String() != cidStr {
+		candidates = append(candidates, normalized.String())
+	}
+	var keys []pluginDb.IPFSIPNSKey
+	if err := s.DB().WithContext(ctx).
+		Where("last_published_cid IN ?", candidates).
+		Find(&keys).Error; err != nil {
+		return fmt.Errorf("failed to query IPNS keys for unpinned CID: %w", err)
+	}
+
+	// One query over the distinct peer multihashes instead of one per key,
+	// so an unpinned CID backing many IPNS keys costs a single lookup.
+	seenPeers := make(map[string]bool, len(keys))
+	peerHashes := make([][]byte, 0, len(keys))
+	for _, key := range keys {
+		peerKey := key.PeerIDMultihash.String()
+		if seenPeers[peerKey] {
+			continue
+		}
+		seenPeers[peerKey] = true
+		peerHashes = append(peerHashes, key.PeerIDMultihash)
+	}
+
+	if len(peerHashes) > 0 {
+		var ipnsWebsites []pluginDb.Website
+		if err := s.DB().WithContext(ctx).
+			Where("target_type = ? AND status = ? AND target_multihash IN ?",
+				string(pluginDb.WebsiteTargetTypeIPNS),
+				string(pluginDb.WebsiteStatusActive),
+				peerHashes).
+			Find(&ipnsWebsites).Error; err != nil {
+			return fmt.Errorf("failed to query IPNS-backed websites for unpinned CID: %w", err)
+		}
+		websites = append(websites, ipnsWebsites...)
+	}
+
+	for i := range websites {
+		if err := s.notifyOwnerCIDUnpinned(ctx, &websites[i], cidStr); err != nil {
+			s.Logger().Warn("Failed to send CID unpinned notification to website owner",
+				zap.Error(err),
+				zap.Uint("website_id", websites[i].ID),
+				zap.String("cid", cidStr))
+		}
+	}
+
+	return nil
+}
+
+// notifyOwnerCIDUnpinned sends the CID-unpinned email to a single website's
+// owner. No-op when the owner's email cannot be resolved.
+func (s *WebsiteServiceDefault) notifyOwnerCIDUnpinned(ctx context.Context, website *pluginDb.Website, cidStr string) error {
+	userEmail := s.resolveUserEmail(ctx, website.UserID)
+	if userEmail == "" {
+		s.Logger().Debug("User email not available, skipping CID unpinned notification",
+			zap.Uint("website_id", website.ID))
+		return nil
+	}
+
+	primaryDomain := s.primaryDomainName(ctx, website)
+
+	vars := map[string]interface{}{
+		"Domain":     primaryDomain,
+		"UserEmail":  userEmail,
+		"CID":        cidStr,
+		"TargetType": website.TargetType,
+		"TargetHash": website.TargetHash(),
+		"UnpinnedAt": time.Now().Format(time.RFC3339),
+	}
+
+	if err := s.mailerSvc.TemplateSend("website_cid_unpinned_user", vars, vars, userEmail); err != nil {
+		s.Logger().Error("Failed to send CID unpinned notification",
+			zap.Error(err),
+			zap.String("domain", primaryDomain),
+			zap.String("user_email", userEmail))
+		return err
+	}
+
+	s.Logger().Debug("CID unpinned notification sent",
+		zap.Uint("website_id", website.ID),
+		zap.String("domain", primaryDomain),
+		zap.String("user_email", userEmail))
+	return nil
+}
+
 // ActivatePlatformSubdomainWebsite activates a website whose primary domain
 // binding is a platform subdomain that has just been created. The platform
 // controls both ends of the DNS check for platform subdomains (no user

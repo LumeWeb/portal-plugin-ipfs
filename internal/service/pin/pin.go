@@ -30,6 +30,7 @@ type PinServiceDefault struct {
 	ipfs           protocol.ProtoNode
 	pinSvc         core.PinService
 	fileManagerSvc pluginCore.FileManagerService
+	websiteSvc     pluginCore.WebsiteService
 }
 
 // Ensure PinServiceDefault implements the interface
@@ -54,6 +55,12 @@ func NewPinService() (core.Service, []core.ContextBuilderOption, error) {
 			svc.fileManagerSvc = core.GetService[pluginCore.FileManagerService](ctx, pluginCore.FILE_MANAGER_SERVICE)
 			if svc.fileManagerSvc == nil {
 				return fmt.Errorf("file manager service (FILE_MANAGER_SERVICE) is not registered")
+			}
+
+			// Website service is optional: only used to email site owners when
+			// an unpin removes the CID backing an active website
+			if ws := core.GetServiceOptional[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE); ws != nil {
+				svc.websiteSvc = ws
 			}
 
 			return nil
@@ -332,6 +339,19 @@ func (s *PinServiceDefault) DeletePin(ctx context.Context, requestID types.Binar
 				if corePin != nil {
 					clientIP := pc.GetClientIP(ctx)
 					quota.EmitStorageObjectUnpinned(ctx, s.Context(), corePin, clientIP)
+				}
+
+				// Email owners of active websites backed by this CID (directly
+				// or through an IPNS key) that their content was just unpinned.
+				// Best effort only — the unpin result must never depend on the
+				// notification.
+				if s.websiteSvc != nil {
+					if err := s.websiteSvc.NotifyOwnerCIDUnpinned(ctx, c.String()); err != nil {
+						s.Logger().Warn("Failed to send CID unpinned owner notification",
+							zap.Error(err),
+							zap.Stringer("cid", c),
+							zap.Uint("user_id", pin.UserID))
+					}
 				}
 
 				// Clean up file paths when no other pins reference this CID

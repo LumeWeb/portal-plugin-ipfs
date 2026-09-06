@@ -9,11 +9,13 @@ import (
 	"github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
@@ -260,6 +262,65 @@ func TestWebsiteJanitorJob_validateWebsite_GracePeriodElapsedMarksBroken(t *test
 		require.NoError(tb, ctx.DB().First(&persisted, website.ID).Error)
 		assert.Equal(tb, string(pluginDb.WebsiteStatusBroken), persisted.Status)
 	}, JanitorTestOptions)
+}
+
+// TestWebsiteJanitorJob_validateWebsite_WarnOnlyKeepsActiveNoBrokenTransition
+// verifies janitor warn-only mode: a failing target must NOT transition the
+// website to broken (the site keeps serving); instead the website service is
+// asked to warn the admin, once per run while the target is invalid.
+func TestWebsiteJanitorJob_validateWebsite_WarnOnlyKeepsActiveNoBrokenTransition(t *testing.T) {
+	for _, initialStatus := range []pluginDb.WebsiteStatus{pluginDb.WebsiteStatusActive, pluginDb.WebsiteStatusBroken} {
+		t.Run(string(initialStatus), func(t *testing.T) {
+			coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+				job := NewWebsiteJanitorJob()
+
+				websiteConfig := &pluginConfig.WebsiteConfig{
+					JanitorEnabled:     true,
+					CheckInterval:      30 * time.Minute,
+					JanitorWorkerCount: 2,
+					JanitorBatchSize:   10,
+					JanitorGracePeriod: 0,
+					JanitorWarnOnly:    true,
+				}
+
+				janitorJob := job.(*WebsiteJanitorJob)
+				janitorJob.config = websiteConfig
+				janitorJob.db = ctx.DB()
+				janitorJob.logger = ctx.Logger()
+
+				mhBytes, err := mh.Sum([]byte("unpinned-warn-only"), mh.SHA2_256, -1)
+				require.NoError(tb, err)
+				cidVersion := uint8(1)
+				cidType := uint8(cid.Raw)
+
+				website := &pluginDb.Website{
+					TargetType:      string(pluginDb.WebsiteTargetTypeIPFS),
+					TargetMultihash: mhBytes,
+					CIDVersion:      &cidVersion,
+					CIDType:         &cidType,
+					Status:          string(initialStatus),
+					ValidationToken: "test-token",
+					CreatedAt:       time.Now().Add(-2 * time.Hour),
+				}
+				require.NoError(tb, ctx.DB().Create(website).Error)
+
+				websiteSvc := mocks.NewMockWebsiteService(t)
+				websiteSvc.EXPECT().
+					NotifyAdminWebsiteBroken(mock.Anything, website.ID).
+					Return(nil).Once()
+				janitorJob.websiteSvc = websiteSvc
+
+				// Act
+				require.NoError(tb, janitorJob.validateWebsite(context.Background(), website))
+
+				// Assert: status unchanged and last_checked_at refreshed.
+				var persisted pluginDb.Website
+				require.NoError(tb, ctx.DB().First(&persisted, website.ID).Error)
+				assert.Equal(tb, string(initialStatus), persisted.Status)
+				assert.NotNil(tb, persisted.LastCheckedAt)
+			}, JanitorTestOptions)
+		})
+	}
 }
 
 func TestWebsiteJanitorJob_ID(t *testing.T) {

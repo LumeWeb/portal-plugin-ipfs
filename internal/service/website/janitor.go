@@ -32,6 +32,7 @@ type WebsiteJanitorJob struct {
 	ipnsKeyService     pluginCore.IPNSKeyService
 	dnsService         pluginCore.DNSService
 	delegatedDomainSvc delegatedDomainService
+	websiteSvc         pluginCore.WebsiteService
 	db                 *gorm.DB
 	logger             *core.Logger
 }
@@ -76,6 +77,23 @@ func (j *WebsiteJanitorJob) primaryDomainName(ctx context.Context, website *plug
 		return ""
 	}
 	return wd.Domain
+}
+
+// warnAdminBroken fires the admin "target invalid" warning through the
+// website service (which owns mailer and notification config). It is fired
+// unconditionally on each failing check — warn-only mode intentionally emails
+// the admin on every run. Failure to send is logged, never fatal to the run.
+func (j *WebsiteJanitorJob) warnAdminBroken(ctx context.Context, website *pluginDb.Website) {
+	if j.websiteSvc == nil {
+		j.logger.Debug("Website service unavailable; skipping admin broken-site warning",
+			zap.Uint("website_id", website.ID))
+		return
+	}
+	if err := j.websiteSvc.NotifyAdminWebsiteBroken(ctx, website.ID); err != nil {
+		j.logger.Warn("Failed to send admin broken-site warning",
+			zap.Error(err),
+			zap.Uint("website_id", website.ID))
+	}
 }
 
 // saveWebsite persists website changes through the retryable-transaction
@@ -257,6 +275,19 @@ func (j *WebsiteJanitorJob) validateWebsite(ctx context.Context, website *plugin
 		j.logger.Debug("Website within creation grace period; deferring broken status",
 			zap.Uint("website_id", website.ID),
 			zap.Time("created_at", website.CreatedAt))
+		website.LastCheckedAt = new(time.Now())
+		return j.saveWebsite(ctx, website)
+	}
+
+	// Warn-only mode: never transition the website to broken — keep it served
+	// and report the failing target to the admin on every run until it is
+	// valid again (deliberate email spam as an admin debugging aid).
+	if targetStatus == pluginDb.WebsiteStatusBroken && j.config != nil && j.config.JanitorWarnOnly {
+		j.logger.Warn("Janitor in warn-only mode; failing target reported to admin without status change",
+			zap.Uint("website_id", website.ID),
+			zap.String("domain", j.primaryDomainName(ctx, website)),
+			zap.String("target", website.TargetHash()))
+		j.warnAdminBroken(ctx, website)
 		website.LastCheckedAt = new(time.Now())
 		return j.saveWebsite(ctx, website)
 	}
@@ -452,6 +483,17 @@ func (j *WebsiteJanitorJob) markBroken(ctx context.Context, sm *WebsiteStateMach
 		j.logger.Debug("Website within creation grace period; deferring broken status",
 			zap.Uint("website_id", website.ID),
 			zap.Time("created_at", website.CreatedAt))
+		website.LastCheckedAt = new(time.Now())
+		return
+	}
+	// Warn-only mode: no status change — keep the site serving and alert the
+	// admin (every run) that the IPNS target failed validation.
+	if j.config != nil && j.config.JanitorWarnOnly {
+		j.logger.Warn("Janitor in warn-only mode; failing target reported to admin without status change",
+			zap.Uint("website_id", website.ID),
+			zap.String("domain", j.primaryDomainName(ctx, website)),
+			zap.String("target", website.TargetHash()))
+		j.warnAdminBroken(ctx, website)
 		website.LastCheckedAt = new(time.Now())
 		return
 	}
@@ -654,6 +696,14 @@ func (j *WebsiteJanitorJob) initializeJob(ctx core.Context) error {
 		j.delegatedDomainSvc = dds
 	} else if j.logger != nil {
 		j.logger.Debug("Delegated domain service not available, skipping delegation verification")
+	}
+
+	// Get website service (optional — only needed to email broken-site
+	// warnings to the admin in warn-only mode)
+	if ws := core.GetServiceOptional[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE); ws != nil {
+		j.websiteSvc = ws
+	} else if j.logger != nil {
+		j.logger.Debug("Website service not available; admin broken-site warnings disabled")
 	}
 
 	// Get database

@@ -41,6 +41,11 @@ type WebsiteConfig struct {
 	// finish pinning / publishing the target so we don't flag freshly created
 	// sites as bad. A value <= 0 disables the grace period.
 	JanitorGracePeriod time.Duration `config:"janitor_grace_period"`
+	// JanitorWarnOnly makes the janitor report failing targets to the admin by
+	// email (on every run, until the target is valid again) instead of
+	// transitioning the website to broken. The site keeps serving; only the
+	// admin is warned.
+	JanitorWarnOnly bool `config:"janitor_warn_only"`
 
 	// Validation configuration
 	ValidationTokenTTL time.Duration `config:"validation_token_ttl"`
@@ -57,6 +62,7 @@ func (c WebsiteConfig) Defaults() map[string]any {
 		"JanitorWorkerCount":   10,
 		"JanitorBatchSize":     500,
 		"JanitorGracePeriod":   1 * time.Hour,
+		"JanitorWarnOnly":      false,
 		"ValidationTokenTTL":   24 * time.Hour,
 		"NotificationsEnabled": true,
 		"AdminEmail":           "",
