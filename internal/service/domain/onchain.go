@@ -198,11 +198,16 @@ func (s *DelegatedDomainService) bindingIsWebsitePrimary(ctx context.Context, we
 	if website.PrimaryDomainID != nil {
 		return &website, domainID == *website.PrimaryDomainID, nil
 	}
-	var count int64
+	// No explicit primary is designated: resolve the apex the same way
+	// WebsiteServiceDefault.primaryWebsiteDomain does — the oldest active
+	// (status=active) non-deleted binding. This keeps the conversion's
+	// primary determination consistent with website validation, so converting
+	// a legacy multi-binding website's apex still re-arms validation.
+	var apex pluginDb.WebsiteDomain
 	err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		if err := tx.Model(&pluginDb.WebsiteDomain{}).
-			Where("website_id = ? AND deleted_at IS NULL", websiteID).
-			Count(&count).Error; err != nil {
+		if err := tx.
+			Where("website_id = ? AND status = ? AND deleted_at IS NULL", websiteID, pluginDb.DomainStatusActive).
+			Order("id ASC").First(&apex).Error; err != nil {
 			_ = tx.AddError(err)
 		}
 		return tx
@@ -210,5 +215,5 @@ func (s *DelegatedDomainService) bindingIsWebsitePrimary(ctx context.Context, we
 	if err != nil {
 		return nil, false, err
 	}
-	return &website, count <= 1, nil
+	return &website, apex.ID == domainID, nil
 }

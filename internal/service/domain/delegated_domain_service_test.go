@@ -968,6 +968,68 @@ func TestDelegatedDomainService_ConvertToOnChain_SecondaryDoesNotResetWebsite(t 
 	}, keyTestOptions)
 }
 
+func TestDelegatedDomainService_ConvertToOnChain_NoPrimaryFallsBackToOldestActive(t *testing.T) {
+	// Regression (PR review): when Website.PrimaryDomainID is nil (legacy
+	// multi-binding website), primary resolution must match
+	// primaryWebsiteDomain's fallback — the OLDEST ACTIVE binding, not
+	// count<=1. Converting the apex (oldest active) re-arms the website to
+	// pending_validation; converting a same-status secondary does not.
+	var (
+		apexZone = uint(81)
+		secZone  = uint(82)
+	)
+	apexAddr, _ := startCustomPortDNSServer(t, "apex-convertme.", []string{"0xapex._eth."})
+	secAddr, _ := startCustomPortDNSServer(t, "sec-convertme.", []string{"0xsec._eth."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "apex.hns")
+		require.NoError(tb, db.Model(&website).Update("status", pluginDb.WebsiteStatusActive).Error)
+		// No PrimaryDomainID set, matching a legacy multi-binding website.
+
+		apex := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: "apex.hns",
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: apexZone,
+			Status: pluginDb.DomainStatusActive, DNSHostingEnabled: true,
+		}
+		require.NoError(tb, db.Create(apex).Error)
+		secondary := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: "sec-convertme.hns",
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: secZone,
+			Status: pluginDb.DomainStatusActive, DNSHostingEnabled: true,
+		}
+		require.NoError(tb, db.Create(secondary).Error)
+		// Both active, apex created first (lower id) — the primary by fallback.
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+
+		t.Run("converting the apex re-arms the website", func(t *testing.T) {
+			hnsProv.resolverAddr = apexAddr
+			mockDNS.EXPECT().DeleteZone(mock.Anything, apexZone).Return(nil).Once()
+			_, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, apex.ID)
+			require.NoError(tb, err)
+			var reloaded pluginDb.Website
+			require.NoError(tb, db.First(&reloaded, website.ID).Error)
+			assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), reloaded.Status,
+				"converting the apex (oldest active) must re-arm the website")
+		})
+
+		t.Run("converting the secondary does not re-arm (already pending)", func(t *testing.T) {
+			hnsProv.resolverAddr = secAddr
+			mockDNS.EXPECT().DeleteZone(mock.Anything, secZone).Return(nil).Once()
+			_, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, secondary.ID)
+			require.NoError(tb, err)
+			var reloaded pluginDb.Website
+			require.NoError(tb, db.First(&reloaded, website.ID).Error)
+			// Website is already pending from the apex conversion; the secondary
+			// conversion must not invent a new transition / knock state around it.
+			assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), reloaded.Status)
+		})
+	}, keyTestOptions)
+}
+
 func TestDelegatedDomainService_VerifyDomain_ReclassifiesExistingHIP5(t *testing.T) {
 	const domain = "verify-convertme"
 	const zoneID = uint(88)
