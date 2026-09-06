@@ -920,6 +920,156 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 	}, keyTestOptions)
 }
 
+func TestDelegatedDomainService_ConvertToOnChain_SecondaryDoesNotResetWebsite(t *testing.T) {
+	// Regression: converting a SECONDARY (non-apex) HNS binding to on-chain
+	// must not re-arm the whole website to pending_validation. Website
+	// validation keys on the primary domain, so a secondary's conversion must
+	// not knock the primary website back to pending — the reported knock-on
+	// effect where a failing HNS secondary blocked a healthy .com site.
+	const primary = "primary.hns"
+	const secondary = "secondary-convertme"
+	const zoneID = uint(79)
+	hip5Addr, _ := startCustomPortDNSServer(t, secondary+".", []string{"0xabc._eth."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, primary)
+		require.NoError(tb, db.Model(&website).Update("status", pluginDb.WebsiteStatusActive).Error)
+
+		primaryWD := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: primary,
+			Namespace: pluginDb.DomainNamespaceHNS, Status: pluginDb.DomainStatusActive,
+		}
+		require.NoError(tb, db.Create(primaryWD).Error)
+		require.NoError(tb, db.Model(&website).Update("primary_domain_id", primaryWD.ID).Error)
+
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: secondary,
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: zoneID,
+			Status: pluginDb.DomainStatusActive, DNSHostingEnabled: true,
+		}
+		require.NoError(tb, db.Create(wd).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		hnsProv.resolverAddr = hip5Addr
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().DeleteZone(mock.Anything, zoneID).Return(nil).Once()
+
+		converted, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, wd.ID)
+		require.NoError(tb, err)
+		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, converted.Status)
+
+		// The primary website must NOT be re-armed (stays active).
+		var reloaded pluginDb.Website
+		require.NoError(tb, db.First(&reloaded, website.ID).Error)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), reloaded.Status,
+			"converting a secondary domain must not knock the primary website to pending_validation")
+	}, keyTestOptions)
+}
+
+func TestDelegatedDomainService_ConvertToOnChain_NoPrimaryFallsBackToOldestActive(t *testing.T) {
+	// Regression (PR review): when Website.PrimaryDomainID is nil (legacy
+	// multi-binding website), primary resolution must match
+	// primaryWebsiteDomain's fallback — the OLDEST ACTIVE binding, not
+	// count<=1. Converting the apex (oldest active) re-arms the website to
+	// pending_validation; converting a same-status secondary does not.
+	var (
+		apexZone = uint(81)
+		secZone  = uint(82)
+	)
+	apexAddr, _ := startCustomPortDNSServer(t, "apex-convertme.", []string{"0xapex._eth."})
+	secAddr, _ := startCustomPortDNSServer(t, "sec-convertme.", []string{"0xsec._eth."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "apex.hns")
+		require.NoError(tb, db.Model(&website).Update("status", pluginDb.WebsiteStatusActive).Error)
+		// No PrimaryDomainID set, matching a legacy multi-binding website.
+
+		apex := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: "apex.hns",
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: apexZone,
+			Status: pluginDb.DomainStatusActive, DNSHostingEnabled: true,
+		}
+		require.NoError(tb, db.Create(apex).Error)
+		secondary := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: "sec-convertme.hns",
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: secZone,
+			Status: pluginDb.DomainStatusActive, DNSHostingEnabled: true,
+		}
+		require.NoError(tb, db.Create(secondary).Error)
+		// Both active, apex created first (lower id) — the primary by fallback.
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+
+		t.Run("converting the apex re-arms the website", func(t *testing.T) {
+			hnsProv.resolverAddr = apexAddr
+			mockDNS.EXPECT().DeleteZone(mock.Anything, apexZone).Return(nil).Once()
+			_, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, apex.ID)
+			require.NoError(tb, err)
+			var reloaded pluginDb.Website
+			require.NoError(tb, db.First(&reloaded, website.ID).Error)
+			assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), reloaded.Status,
+				"converting the apex (oldest active) must re-arm the website")
+		})
+
+		t.Run("converting the secondary does not re-arm (already pending)", func(t *testing.T) {
+			hnsProv.resolverAddr = secAddr
+			mockDNS.EXPECT().DeleteZone(mock.Anything, secZone).Return(nil).Once()
+			_, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, secondary.ID)
+			require.NoError(tb, err)
+			var reloaded pluginDb.Website
+			require.NoError(tb, db.First(&reloaded, website.ID).Error)
+			// Website is already pending from the apex conversion; the secondary
+			// conversion must not invent a new transition / knock state around it.
+			assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), reloaded.Status)
+		})
+	}, keyTestOptions)
+}
+
+func TestDelegatedDomainService_ConvertToOnChain_SoleNonActiveBindingStaysPrimary(t *testing.T) {
+	// Regression (PR review): a website with NO active binding — e.g. a sole
+	// HNS name in an error/waiting state being converted to on-chain to fix it
+	// — has no fallback apex. The conversion must still proceed (not abort
+	// with ErrRecordNotFound / 404) and treat the sole binding as primary so
+	// the website re-arms validation.
+	const zoneID = uint(83)
+	hip5Addr, _ := startCustomPortDNSServer(t, "err-convertme.", []string{"0xerr._eth."})
+
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		website := createTestWebsite(tb, db, 1, "err.hns")
+		require.NoError(tb, db.Model(&website).Update("status", pluginDb.WebsiteStatusActive).Error)
+
+		wd := &pluginDb.WebsiteDomain{
+			WebsiteID: website.ID, UserID: 1, Domain: "err-convertme.hns",
+			Namespace: pluginDb.DomainNamespaceHNS, ZoneID: zoneID,
+			// No active binding: error state mirrors an HNS name needing
+			// on-chain conversion to recover.
+			Status: pluginDb.DomainStatusError, DNSHostingEnabled: true,
+		}
+		require.NoError(tb, db.Create(wd).Error)
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		hnsProv := svc.registry.Get("hns").(*HNSProvider)
+		hnsProv.resolverAddr = hip5Addr
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().DeleteZone(mock.Anything, zoneID).Return(nil).Once()
+
+		converted, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, wd.ID)
+		require.NoError(tb, err, "sole non-active binding conversion must not abort")
+		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, converted.Status)
+
+		// Sole binding treated as primary: website re-arms to pending_validation.
+		var reloaded pluginDb.Website
+		require.NoError(tb, db.First(&reloaded, website.ID).Error)
+		assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), reloaded.Status)
+	}, keyTestOptions)
+}
+
 func TestDelegatedDomainService_VerifyDomain_ReclassifiesExistingHIP5(t *testing.T) {
 	const domain = "verify-convertme"
 	const zoneID = uint(88)

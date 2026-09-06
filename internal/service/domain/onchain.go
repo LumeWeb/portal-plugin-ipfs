@@ -6,7 +6,9 @@ import (
 	"fmt"
 
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal/db"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // Sentinel errors returned by ConvertToOnChain for user-correctable state
@@ -26,9 +28,14 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 	}
 
 	var wd pluginDb.WebsiteDomain
-	if err := s.DB().WithContext(ctx).
-		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
-		First(&wd).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+			First(&wd).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, err
 	}
 
@@ -76,10 +83,15 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 	if err := s.withZoneLifecycleLock(zoneLifecycleKey(wd.Domain), func() error {
 		if zoneID != 0 {
 			var sharers int64
-			if err := s.DB().WithContext(ctx).
-				Model(&pluginDb.WebsiteDomain{}).
-				Where("zone_id = ? AND id != ? AND deleted_at IS NULL", zoneID, wd.ID).
-				Count(&sharers).Error; err != nil {
+			if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				if err := tx.
+					Model(&pluginDb.WebsiteDomain{}).
+					Where("zone_id = ? AND id != ? AND deleted_at IS NULL", zoneID, wd.ID).
+					Count(&sharers).Error; err != nil {
+					_ = tx.AddError(err)
+				}
+				return tx
+			}); err != nil {
 				return fmt.Errorf("failed to count bindings sharing zone %d: %w", zoneID, err)
 			}
 			if sharers > 0 {
@@ -93,14 +105,21 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 		// would leave an already-converted domain reported as a 500 and make
 		// retry hit "already on-chain managed". A blocked website stays blocked
 		// (only an admin can lift an admin block); a pending one needs no
-		// change.
-		var website pluginDb.Website
-		if err := s.DB().WithContext(ctx).First(&website, wd.WebsiteID).Error; err != nil {
-			return fmt.Errorf("failed to load website %d for on-chain conversion: %w", wd.WebsiteID, err)
+		// change. Crucially, only re-arm when the converted binding is the
+		// website's PRIMARY (apex) domain — website validation keys on the
+		// primary, so converting a secondary must not knock the primary website
+		// back to pending_validation.
+		website, isPrimary, err := s.bindingIsWebsitePrimary(ctx, wd.WebsiteID, wd.ID)
+		if err != nil {
+			return fmt.Errorf("failed to resolve website primary for on-chain conversion: %w", err)
 		}
-		if website.Status != string(pluginDb.WebsiteStatusBlocked) &&
-			website.Status != string(pluginDb.WebsiteStatusPendingValidation) {
-			if err := s.DB().WithContext(ctx).Model(&website).Update("status", pluginDb.WebsiteStatusPendingValidation).Error; err != nil {
+		if isPrimary && website.Status != string(pluginDb.WebsiteStatusBlocked) && website.Status != string(pluginDb.WebsiteStatusPendingValidation) {
+			if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				if err := tx.Model(website).Update("status", pluginDb.WebsiteStatusPendingValidation).Error; err != nil {
+					_ = tx.AddError(err)
+				}
+				return tx
+			}); err != nil {
 				return fmt.Errorf("failed to reset website to pending_validation: %w", err)
 			}
 		}
@@ -113,7 +132,12 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 			"dns_hosting_enabled": false,
 			"status":              pluginDb.DomainStatusOnchainManaged,
 		}
-		if err := s.DB().WithContext(ctx).Model(wd).Updates(updates).Error; err != nil {
+		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			if err := tx.Model(wd).Updates(updates).Error; err != nil {
+				_ = tx.AddError(err)
+			}
+			return tx
+		}); err != nil {
 			return fmt.Errorf("failed to persist on-chain managed state: %w", err)
 		}
 		wd.ZoneID = 0
@@ -125,12 +149,18 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 
 		if zoneID != 0 && s.dnsSvc != nil {
 			var sharers int64
-			if err := s.DB().WithContext(ctx).
-				Model(&pluginDb.WebsiteDomain{}).
-				Where("zone_id = ? AND deleted_at IS NULL", zoneID).
-				Count(&sharers).Error; err != nil {
+			rcErr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				if err := tx.
+					Model(&pluginDb.WebsiteDomain{}).
+					Where("zone_id = ? AND deleted_at IS NULL", zoneID).
+					Count(&sharers).Error; err != nil {
+					_ = tx.AddError(err)
+				}
+				return tx
+			})
+			if rcErr != nil {
 				s.Logger().Warn("failed to re-count zone sharers before on-chain conversion zone delete",
-					zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain), zap.Error(err))
+					zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain), zap.Error(rcErr))
 			} else if sharers > 0 {
 				s.Logger().Info("on-chain conversion: zone picked up by another binding; leaving it intact",
 					zap.Uint("zone_id", zoneID), zap.String("domain", wd.Domain))
@@ -144,4 +174,65 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 		return err
 	}
 	return nil
+}
+
+// bindingIsWebsitePrimary reports whether the given domain is its website's
+// primary (apex) binding, returning the owning website for the caller to
+// branch on. Website validation keys on the primary, so domain-origin side
+// effects that reset validation state must fire only for the primary — never
+// for a secondary, which would knock the primary website back to
+// pending_validation. An explicit Website.PrimaryDomainID wins; when none is
+// designated, the binding is primary only if it is the website's sole binding
+// (a freshly bound apex).
+func (s *DelegatedDomainService) bindingIsWebsitePrimary(ctx context.Context, websiteID, domainID uint) (*pluginDb.Website, bool, error) {
+	var website pluginDb.Website
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.First(&website, websiteID).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if website.PrimaryDomainID != nil {
+		return &website, domainID == *website.PrimaryDomainID, nil
+	}
+	// No explicit primary is designated: resolve the apex the same way
+	// WebsiteServiceDefault.primaryWebsiteDomain does — the oldest active
+	// (status=active) non-deleted binding. This keeps the conversion's
+	// primary determination consistent with website validation, so converting
+	// a legacy multi-binding website's apex still re-arms validation.
+	var apex pluginDb.WebsiteDomain
+	err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Where("website_id = ? AND status = ? AND deleted_at IS NULL", websiteID, pluginDb.DomainStatusActive).
+			Order("id ASC").First(&apex).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, err
+		}
+		// No active binding exists (e.g. the apex is still in
+		// records_generated / waiting_delegation / error). Fall back to
+		// treating a sole non-deleted binding as the primary so converting it
+		// to on-chain still proceeds (and re-arms) instead of aborting with
+		// ErrRecordNotFound (which the API maps to a 404).
+		var count int64
+		if cerr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			if err := tx.Model(&pluginDb.WebsiteDomain{}).
+				Where("website_id = ? AND deleted_at IS NULL", websiteID).
+				Count(&count).Error; err != nil {
+				_ = tx.AddError(err)
+			}
+			return tx
+		}); cerr != nil {
+			return nil, false, cerr
+		}
+		return &website, count <= 1, nil
+	}
+	return &website, apex.ID == domainID, nil
 }
