@@ -234,6 +234,87 @@ func TestPinService_DeletePin(t *testing.T) {
 	}, TestOptions)
 }
 
+// TestPinService_DeletePin_NotifyOwnerCIDUnpinned verifies that when the last
+// pin for a CID is deleted (triggering the core unpin), the website service is
+// asked to notify owners of active websites backed by that CID.
+func TestPinService_DeletePin_NotifyOwnerCIDUnpinned(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		pinService := core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		corePinService := core.GetService[*coreMocks.MockPinService](ctx, core.PIN_SERVICE)
+		fileManagerService := core.GetService[*mocks.MockFileManagerService](ctx, pluginCore.FILE_MANAGER_SERVICE)
+		websiteSvc := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+		testString := "active website content"
+		testCID := util.GenerateTestCID(t, testString)
+
+		testPin := &pluginDb.IPFSPin{
+			CID:       testCID.Bytes(),
+			RequestID: types.NewBinUUID(),
+		}
+
+		// Setup mock expectations
+		hash := internal.NewIPFSHash(testCID)
+		corePinService.EXPECT().GetPinByHash(mock.Anything, hash, uint(0)).Return(nil, nil).Maybe()
+		corePinService.EXPECT().DeletePinByHash(mock.Anything, hash, uint(0)).Return(nil).Maybe()
+		fileManagerService.EXPECT().DeleteFilePathSmart(mock.Anything, uint(0), testCID.Bytes()).Return(nil).Maybe()
+		websiteSvc.EXPECT().
+			NotifyOwnerCIDUnpinned(mock.Anything, testCID.String()).
+			Return(nil).Once()
+
+		// Add the pin to the database
+		result := ctx.DB().Create(testPin)
+		require.NoError(tb, result.Error)
+
+		// Act
+		err := pinService.DeletePin(context.Background(), testPin.RequestID)
+
+		// Assert
+		require.NoError(tb, err)
+	}, coreTesting.CombineOptions(TestOptions, coreTesting.WithMockServiceFactory(pluginCore.WEBSITE_SERVICE, mocks.NewMockWebsiteService, &pluginConfig.WebsiteConfig{})))
+}
+
+// TestPinService_DeletePin_NotifyOwnerCIDUnpinned_OtherPinsRemain verifies the
+// owner notification only fires when the CID is actually unpinned — deleting
+// one of several pins for the same CID must not trigger it.
+func TestPinService_DeletePin_NotifyOwnerCIDUnpinned_OtherPinsRemain(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		pinService := core.GetService[pluginCore.IPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		corePinService := core.GetService[*coreMocks.MockPinService](ctx, core.PIN_SERVICE)
+		fileManagerService := core.GetService[*mocks.MockFileManagerService](ctx, pluginCore.FILE_MANAGER_SERVICE)
+		websiteSvc := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+
+		testCID := util.GenerateTestCID(t, "shared content")
+
+		pin1 := &pluginDb.IPFSPin{CID: testCID.Bytes(), RequestID: types.NewBinUUID()}
+		pin2 := &pluginDb.IPFSPin{CID: testCID.Bytes(), RequestID: types.NewBinUUID()}
+
+		hash := internal.NewIPFSHash(testCID)
+		corePinService.EXPECT().GetPinByHash(mock.Anything, hash, uint(0)).Return(nil, nil).Maybe()
+		fileManagerService.EXPECT().DeleteFilePathSmart(mock.Anything, uint(0), testCID.Bytes()).Return(nil).Maybe()
+		// websiteSvc is a strict mock with no NotifyOwnerCIDUnpinned
+		// expectation: any call would panic, proving it is not invoked.
+
+		require.NoError(tb, ctx.DB().Create(pin1).Error)
+		require.NoError(tb, ctx.DB().Create(pin2).Error)
+
+		// Act
+		err := pinService.DeletePin(context.Background(), pin1.RequestID)
+
+		// Assert
+		require.NoError(tb, err)
+
+		var remaining []pluginDb.IPFSPin
+		require.NoError(tb, ctx.DB().Unscoped().Find(&remaining).Error)
+		require.Len(tb, remaining, 2)
+
+		// Assert the owner notification was never fired for this unpin.
+		require.NotNil(tb, websiteSvc)
+		websiteSvc.AssertNotCalled(tb, "NotifyOwnerCIDUnpinned", mock.Anything, mock.Anything)
+	}, coreTesting.CombineOptions(TestOptions, coreTesting.WithMockServiceFactory(pluginCore.WEBSITE_SERVICE, mocks.NewMockWebsiteService, &pluginConfig.WebsiteConfig{})))
+}
+
 func TestPinService_UpdatePinStatus(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange

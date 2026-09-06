@@ -160,8 +160,8 @@ func (_c *MockDomainProvider_BuildDelegation_Call) Run(run func(ctx context.Cont
 	return _c
 }
 
-func (_c *MockDomainProvider_BuildDelegation_Call) Return(delegation json.RawMessage, err error) *MockDomainProvider_BuildDelegation_Call {
-	_c.Call.Return(delegation, err)
+func (_c *MockDomainProvider_BuildDelegation_Call) Return(rawMessage json.RawMessage, err error) *MockDomainProvider_BuildDelegation_Call {
+	_c.Call.Return(rawMessage, err)
 	return _c
 }
 
@@ -384,8 +384,8 @@ func (_c *MockDomainProvider_Policy_Call) Run(run func()) *MockDomainProvider_Po
 	return _c
 }
 
-func (_c *MockDomainProvider_Policy_Call) Return(policy core.ProviderPolicy) *MockDomainProvider_Policy_Call {
-	_c.Call.Return(policy)
+func (_c *MockDomainProvider_Policy_Call) Return(providerPolicy core.ProviderPolicy) *MockDomainProvider_Policy_Call {
+	_c.Call.Return(providerPolicy)
 	return _c
 }
 

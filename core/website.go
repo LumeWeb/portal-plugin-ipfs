@@ -139,6 +139,21 @@ type WebsiteService interface {
 	// loaded or its primary binding is not a platform subdomain.
 	ActivatePlatformSubdomainWebsite(ctx context.Context, websiteID uint) error
 
+	// NotifyAdminWebsiteBroken sends the admin "target invalid / broken"
+	// warning email for the given website. Intended for janitor warn-only
+	// mode, where it is fired on every run while the target is invalid; no
+	// deduplication is performed. No-op when notifications or the admin email
+	// are not configured.
+	NotifyAdminWebsiteBroken(ctx context.Context, websiteID uint) error
+
+	// NotifyOwnerCIDUnpinned emails the owners of active websites whose
+	// target was backed by the given CID at the time it was unpinned. A
+	// website is affected when it directly targets the CID (IPFS target) or
+	// when it targets an IPNS key whose last published CID is the unpinned
+	// CID. Errors from individual emails are logged, not returned; a returned
+	// error means the lookup itself failed.
+	NotifyOwnerCIDUnpinned(ctx context.Context, cidStr string) error
+
 	// WaitForPublishes blocks until all in-flight async publish operations complete
 	WaitForPublishes()
 

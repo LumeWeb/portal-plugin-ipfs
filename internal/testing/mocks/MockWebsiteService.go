@@ -947,6 +947,63 @@ func (_c *MockWebsiteService_Logger_Call) RunAndReturn(run func() *core.Logger) 
 	return _c
 }
 
+// NotifyAdminWebsiteBroken provides a mock function for the type MockWebsiteService
+func (_mock *MockWebsiteService) NotifyAdminWebsiteBroken(ctx context.Context, websiteID uint) error {
+	ret := _mock.Called(ctx, websiteID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for NotifyAdminWebsiteBroken")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint) error); ok {
+		r0 = returnFunc(ctx, websiteID)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockWebsiteService_NotifyAdminWebsiteBroken_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'NotifyAdminWebsiteBroken'
+type MockWebsiteService_NotifyAdminWebsiteBroken_Call struct {
+	*mock.Call
+}
+
+// NotifyAdminWebsiteBroken is a helper method to define mock.On call
+//   - ctx context.Context
+//   - websiteID uint
+func (_e *MockWebsiteService_Expecter) NotifyAdminWebsiteBroken(ctx any, websiteID any) *MockWebsiteService_NotifyAdminWebsiteBroken_Call {
+	return &MockWebsiteService_NotifyAdminWebsiteBroken_Call{Call: _e.mock.On("NotifyAdminWebsiteBroken", ctx, websiteID)}
+}
+
+func (_c *MockWebsiteService_NotifyAdminWebsiteBroken_Call) Run(run func(ctx context.Context, websiteID uint)) *MockWebsiteService_NotifyAdminWebsiteBroken_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockWebsiteService_NotifyAdminWebsiteBroken_Call) Return(err error) *MockWebsiteService_NotifyAdminWebsiteBroken_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockWebsiteService_NotifyAdminWebsiteBroken_Call) RunAndReturn(run func(ctx context.Context, websiteID uint) error) *MockWebsiteService_NotifyAdminWebsiteBroken_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NotifyAdminWebsiteCreated provides a mock function for the type MockWebsiteService
 func (_mock *MockWebsiteService) NotifyAdminWebsiteCreated(ctx context.Context, websiteID uint) error {
 	ret := _mock.Called(ctx, websiteID)
@@ -1000,6 +1057,63 @@ func (_c *MockWebsiteService_NotifyAdminWebsiteCreated_Call) Return(err error) *
 }
 
 func (_c *MockWebsiteService_NotifyAdminWebsiteCreated_Call) RunAndReturn(run func(ctx context.Context, websiteID uint) error) *MockWebsiteService_NotifyAdminWebsiteCreated_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// NotifyOwnerCIDUnpinned provides a mock function for the type MockWebsiteService
+func (_mock *MockWebsiteService) NotifyOwnerCIDUnpinned(ctx context.Context, cidStr string) error {
+	ret := _mock.Called(ctx, cidStr)
+
+	if len(ret) == 0 {
+		panic("no return value specified for NotifyOwnerCIDUnpinned")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) error); ok {
+		r0 = returnFunc(ctx, cidStr)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockWebsiteService_NotifyOwnerCIDUnpinned_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'NotifyOwnerCIDUnpinned'
+type MockWebsiteService_NotifyOwnerCIDUnpinned_Call struct {
+	*mock.Call
+}
+
+// NotifyOwnerCIDUnpinned is a helper method to define mock.On call
+//   - ctx context.Context
+//   - cidStr string
+func (_e *MockWebsiteService_Expecter) NotifyOwnerCIDUnpinned(ctx any, cidStr any) *MockWebsiteService_NotifyOwnerCIDUnpinned_Call {
+	return &MockWebsiteService_NotifyOwnerCIDUnpinned_Call{Call: _e.mock.On("NotifyOwnerCIDUnpinned", ctx, cidStr)}
+}
+
+func (_c *MockWebsiteService_NotifyOwnerCIDUnpinned_Call) Run(run func(ctx context.Context, cidStr string)) *MockWebsiteService_NotifyOwnerCIDUnpinned_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockWebsiteService_NotifyOwnerCIDUnpinned_Call) Return(err error) *MockWebsiteService_NotifyOwnerCIDUnpinned_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockWebsiteService_NotifyOwnerCIDUnpinned_Call) RunAndReturn(run func(ctx context.Context, cidStr string) error) *MockWebsiteService_NotifyOwnerCIDUnpinned_Call {
 	_c.Call.Return(run)
 	return _c
 }
