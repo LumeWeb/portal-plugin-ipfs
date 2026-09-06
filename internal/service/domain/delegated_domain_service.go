@@ -1407,6 +1407,13 @@ func (s *DelegatedDomainService) GetWebsiteDomainByName(ctx context.Context, dom
 }
 
 // GetWebsiteDomainByDomainAndNamespace looks up a domain by namespace.
+// GetWebsiteDomainByDomainAndNamespace returns the binding for a domain in a
+// namespace, or gorm.ErrRecordNotFound when absent (a normal business outcome
+// several API and DANE callers match on with errors.Is). The retry wrapper
+// preserves the sentinel: gorm's First() sets tx.Error to the sentinel itself
+// and AddError re-wraps with %w, so errors.Is keeps matching; the retry loop
+// only replays lock-class errors (deadlock, lock wait timeout, db locked),
+// never not-found.
 func (s *DelegatedDomainService) GetWebsiteDomainByDomainAndNamespace(ctx context.Context, domain string, ns pluginDb.DomainNamespace) (*pluginDb.WebsiteDomain, error) {
 	if s.DB() == nil {
 		return nil, gorm.ErrRecordNotFound
