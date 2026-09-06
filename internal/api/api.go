@@ -16,6 +16,7 @@ import (
 	"github.com/tus/tusd/v2/pkg/handler"
 	"go.lumeweb.com/portal-middleware/auth/jwt"
 	portalMw "go.lumeweb.com/portal-middleware/middleware"
+	dashboardCore "go.lumeweb.com/portal-plugin-dashboard/core"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
@@ -202,6 +203,7 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 			return err.HttpStatus(), err
 		}),
 		portalMw.WithAuthPurpose(jwt.PurposeLogin, jwt.PurposeAPI),
+		dashboardCore.WithAPIKeyUsageLogging(a.Context()),
 	)
 
 	pinRoutes := router.DefineRoutes(

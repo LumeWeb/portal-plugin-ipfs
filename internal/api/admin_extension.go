@@ -19,6 +19,7 @@ import (
 	"go.lumeweb.com/portal-middleware/auth/jwt"
 	mcontext "go.lumeweb.com/portal-middleware/context"
 	portalMw "go.lumeweb.com/portal-middleware/middleware"
+	dashboardCore "go.lumeweb.com/portal-plugin-dashboard/core"
 	"go.lumeweb.com/queryutil"
 	queryutilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
@@ -82,6 +83,7 @@ func (e *AdminExtension) Configure(gRouter router.Router, accessSvc core.AccessS
 	// not require a per-request identity.
 	authMw := portalMw.AuthMiddleware(e.Context(),
 		portalMw.WithAuthPurpose(jwt.PurposeLogin, jwt.PurposeAPI),
+		dashboardCore.WithAPIKeyUsageLogging(e.Context()),
 	)
 
 	if err := e.registerWebsiteHandlers(ipfsRouter, accessSvc); err != nil {

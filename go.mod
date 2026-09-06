@@ -48,9 +48,9 @@ require (
 	go.lumeweb.com/icann-tlds v0.1.0
 	go.lumeweb.com/ipfs-content v0.1.18
 	go.lumeweb.com/portal v0.5.2-0.20260905015449-23ea71e33def
-	go.lumeweb.com/portal-middleware v0.3.7
+	go.lumeweb.com/portal-middleware v0.3.8
 	go.lumeweb.com/portal-plugin-core v0.1.0
-	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260901083018-10a15e7bc5eb
+	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260906075737-08f26ff32313
 	go.lumeweb.com/portal-plugin-quota v0.1.0
 	go.lumeweb.com/portal-router v0.7.7
 	go.lumeweb.com/queryutil v0.3.19
@@ -67,11 +67,11 @@ require (
 	filippo.io/keygen v1.0.0 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5 // indirect
+	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/dchest/uniuri v1.2.0 // indirect
-	github.com/go-kiss/monkey v0.0.0-20240508030602-d03795257a64 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
+	github.com/go-test/deep v1.0.8 // indirect
 	github.com/h2non/filetype v1.1.3 // indirect
-	github.com/huandu/go-tls v1.0.1 // indirect
 	github.com/hyperledger-firefly/common v1.6.2 // indirect
 	github.com/hyperledger-firefly/signer v1.2.1 // indirect
 	github.com/ipfs/go-ipfs-ds-help v0.1.1 // indirect
@@ -88,7 +88,6 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/slok/go-http-metrics v0.13.0 // indirect
-	github.com/woodsbury/decimal128 v1.4.0 // indirect
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2 // indirect
 	go.lumeweb.com/oauth v0.1.8 // indirect
 	go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho v0.70.0 // indirect
@@ -98,12 +97,10 @@ require (
 	go.sia.tech/siastorage v0.2.1 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
-	golang.org/x/arch v0.24.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 )
 
 require (
-	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/AfterShip/email-verifier v1.4.2-0.20260825092651-bed8025cb56f // indirect
 	github.com/ClickHouse/ch-go v0.73.0 // indirect
@@ -150,7 +147,6 @@ require (
 	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
 	github.com/crackcomm/go-gitignore v0.0.0-20241020182519-7843d2ba8fdf // indirect
 	github.com/cskr/pubsub v1.0.2 // indirect
-	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
@@ -167,7 +163,6 @@ require (
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/glebarez/go-sqlite v1.22.0 // indirect
 	github.com/glebarez/sqlite v1.11.0 // indirect
-	github.com/go-chi/chi/v5 v5.2.2 // indirect
 	github.com/go-co-op/gocron/v2 v2.22.0 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
@@ -185,8 +180,6 @@ require (
 	github.com/google/gopacket v1.1.19 // indirect
 	github.com/google/pprof v0.0.0-20250607225305-033d6d78b36a // indirect
 	github.com/gorilla/mux v1.8.2-0.20240619235004-db9d1d0073d2 // indirect
-	github.com/gorilla/securecookie v1.1.2 // indirect
-	github.com/gorilla/sessions v1.4.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
@@ -212,7 +205,6 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/johannesboyne/gofakes3 v1.2.0 // indirect
 	github.com/jonboulle/clockwork v0.5.0 // indirect
-	github.com/josharian/intern v1.0.0 // indirect
 	github.com/julienschmidt/httprouter v1.3.0 // indirect
 	github.com/kenshaw/snaker v0.4.3 // indirect
 	github.com/klauspost/compress v1.19.1 // indirect
@@ -241,9 +233,6 @@ require (
 	github.com/libp2p/go-reuseport v0.4.0 // indirect
 	github.com/libp2p/go-yamux/v5 v5.1.0 // indirect
 	github.com/looplab/fsm v1.0.4
-	github.com/mailru/easyjson v0.9.1 // indirect
-	github.com/markbates/going v1.0.3 // indirect
-	github.com/markbates/goth v1.82.0 // indirect
 	github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
@@ -257,9 +246,7 @@ require (
 	github.com/minio/minlz v1.0.1 // indirect
 	github.com/minio/sha256-simd v1.0.1 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
-	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/mr-tron/base58 v1.3.0 // indirect
-	github.com/mrjones/oauth v0.0.0-20190623134757-126b35219450 // indirect
 	github.com/multiformats/go-base32 v0.1.0 // indirect
 	github.com/multiformats/go-base36 v0.2.0 // indirect
 	github.com/multiformats/go-multiaddr-dns v0.6.0 // indirect
@@ -275,7 +262,6 @@ require (
 	github.com/onsi/gomega v1.36.3 // indirect
 	github.com/paulmach/orb v0.13.0 // indirect
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 // indirect
-	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/petar/GoLLRB v0.0.0-20210522233825-ae3b015fd3e9 // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/pion/datachannel v1.5.10 // indirect
@@ -295,7 +281,6 @@ require (
 	github.com/pion/turn/v4 v4.0.2 // indirect
 	github.com/pion/webrtc/v4 v4.1.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/polydawn/refmt v0.90.0 // indirect
 	github.com/pquerna/otp v1.5.0 // indirect
 	github.com/pressly/goose/v3 v3.27.3 // indirect
@@ -311,7 +296,6 @@ require (
 	github.com/rs/cors v1.11.1 // indirect
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
-	github.com/sethvargo/go-password v0.3.1 // indirect
 	github.com/sethvargo/go-retry v0.4.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sorairolake/lzip-go v0.3.8 // indirect
