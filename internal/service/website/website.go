@@ -2492,20 +2492,26 @@ func (s *WebsiteServiceDefault) NotifyOwnerCIDUnpinned(ctx context.Context, cidS
 		return fmt.Errorf("failed to query IPNS keys for unpinned CID: %w", err)
 	}
 
+	// One query over the distinct peer multihashes instead of one per key,
+	// so an unpinned CID backing many IPNS keys costs a single lookup.
 	seenPeers := make(map[string]bool, len(keys))
+	peerHashes := make([][]byte, 0, len(keys))
 	for _, key := range keys {
 		peerKey := key.PeerIDMultihash.String()
 		if seenPeers[peerKey] {
 			continue
 		}
 		seenPeers[peerKey] = true
+		peerHashes = append(peerHashes, key.PeerIDMultihash)
+	}
 
+	if len(peerHashes) > 0 {
 		var ipnsWebsites []pluginDb.Website
 		if err := s.DB().WithContext(ctx).
-			Where("target_type = ? AND status = ? AND target_multihash = ?",
+			Where("target_type = ? AND status = ? AND target_multihash IN ?",
 				string(pluginDb.WebsiteTargetTypeIPNS),
 				string(pluginDb.WebsiteStatusActive),
-				key.PeerIDMultihash).
+				peerHashes).
 			Find(&ipnsWebsites).Error; err != nil {
 			return fmt.Errorf("failed to query IPNS-backed websites for unpinned CID: %w", err)
 		}
