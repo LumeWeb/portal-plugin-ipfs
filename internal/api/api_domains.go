@@ -564,7 +564,10 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 				zap.Uint("domain_id", wd.ID), zap.Uint("website_id", wd.WebsiteID), zap.Error(err))
 		} else if website.TargetType != "" {
 			resp.DNSLinkOwnerName = "_dnslink." + wd.Domain
-			resp.DNSLinkRdata = pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
+			// Full TXT value the owner installs — the dnslink= prefix comes
+			// from the helper, matching both the dnslink spec and the shape
+			// CreateDNSLinkRecord writes into portal-managed zones.
+			resp.DNSLinkRdata = website.DNSLinkRecord()
 		}
 	}
 

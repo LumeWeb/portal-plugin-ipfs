@@ -782,7 +782,7 @@ func TestAPI_DomainDNSRequirements_OnchainManaged(t *testing.T) {
 		// must surface the DNSLink content pointer the owner installs into
 		// the name's on-chain zone data, derived from the website's target.
 		assert.Equal(t, "_dnslink.onchain", resp.DNSLinkOwnerName)
-		assert.Equal(t, pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash()), resp.DNSLinkRdata)
+		assert.Equal(t, website.DNSLinkRecord(), resp.DNSLinkRdata)
 	}, TestOptions)
 }
 
@@ -822,7 +822,7 @@ func TestAPI_DomainDNSRequirements_OnchainManaged_ExposesDANERecord(t *testing.T
 		// The DNSLink pointer is always listed for zone-less bindings — the
 		// content pointer the website validation gate checks for.
 		assert.Equal(t, "_dnslink.dane-onchain.hns", resp.DNSLinkOwnerName)
-		assert.Equal(t, pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash()), resp.DNSLinkRdata)
+		assert.Equal(t, website.DNSLinkRecord(), resp.DNSLinkRdata)
 	}, TestOptions)
 }
 

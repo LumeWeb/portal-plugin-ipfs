@@ -47,6 +47,13 @@ func (t WebsiteTargetType) ToDNSLinkPath(hash string) string {
 	return IPFSPrefix + hash
 }
 
+// DNSLinkRecord returns the full DNSLink TXT record value for the website,
+// per the dnslink spec (https://dnslink.info/): "dnslink=<target path>",
+// the same shape CreateDNSLinkRecord writes into portal-managed zones.
+func (w *Website) DNSLinkRecord() string {
+	return "dnslink=" + WebsiteTargetType(w.TargetType).ToDNSLinkPath(w.TargetHash())
+}
+
 // IPFSPath creates a properly formatted IPFS path from a CID string
 func IPFSPath(cid string) string {
 	return IPFSPrefix + trimPath(cid)
