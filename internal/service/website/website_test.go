@@ -3063,6 +3063,15 @@ func TestWebsiteService_UpdateWebsite_NoOpEnableIPNS_ReconcilesDNSWithoutNotific
 		// Repeat enable-ipns: a no-op. The reconcile must still fire with the
 		// current target so a stale dnslink record converges.
 		peerID := testIPNSKey.PeerID().String()
+
+		// The live dnslink does not match the target (simulating the stale
+		// record the reconcile exists to repair), so the PowerDNS write runs.
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{},
+		}, nil)
+		setMockResolver(websiteService, mockResolver)
+
 		mockDNS.EXPECT().UpdateWebsiteDNSRecords(
 			mock.Anything,
 			testZoneID,
@@ -3086,6 +3095,72 @@ func TestWebsiteService_UpdateWebsite_NoOpEnableIPNS_ReconcilesDNSWithoutNotific
 		assert.Equal(tb, peerID, updatedWebsite.TargetHash())
 		mailer.AssertNotCalled(t, "TemplateSend", "website_updated_admin", mock.Anything, mock.Anything, mock.Anything)
 	}, notifyEnabledTestOptions)
+}
+
+// TestWebsiteService_UpdateWebsite_NoOpEnableIPNS_SkipsReconcileWhenRecordMatches
+// verifies that the no-op dnslink reconcile performs no external DNS write
+// when the live dnslink record already carries the current target — a
+// repeated enable-ipns issues zero PowerDNS calls.
+func TestWebsiteService_UpdateWebsite_NoOpEnableIPNS_SkipsReconcileWhenRecordMatches(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		mailer := coreTesting.GetMockMailerService(ctx)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "noop-enable-ipns-free-test.com"
+		testZoneID := uint(9005)
+
+		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
+		website.ID = 8018
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
+
+		testIPNSKey := setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
+
+		mailer.EXPECT().TemplateSend(
+			"website_created_admin",
+			mock.Anything, mock.Anything, mock.Anything,
+		).Return(nil).Maybe()
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(testZoneID, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			testZoneID,
+			mock.Anything,
+			mock.Anything,
+			pluginDb.WebsiteTargetTypeIPNS,
+			mock.Anything,
+		).Return(nil).Once()
+
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+		websiteService.WaitForPublishes()
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+
+		// The live dnslink already carries the current IPNS target: the
+		// reconcile must be skipped entirely (no UpdateWebsiteDNSRecords
+		// expectation — the mock fails on unexpected calls).
+		peerID := testIPNSKey.PeerID().String()
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipns": {{Identifier: peerID}},
+			},
+		}, nil)
+		setMockResolver(websiteService, mockResolver)
+
+		updatedWebsite, err := websiteService.UpdateWebsite(context.Background(), testUserID1, createdWebsite.ID, map[string]interface{}{
+			"target_type": string(pluginDb.WebsiteTargetTypeIPNS),
+		})
+		websiteService.WaitForPublishes()
+
+		// Assert
+		require.NoError(tb, err)
+		require.NotNil(tb, updatedWebsite)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), updatedWebsite.TargetType)
+	}, TestOptions)
 }
 
 func TestWebsiteService_UpdateWebsite_TargetTypeIPNSAlone(t *testing.T) {

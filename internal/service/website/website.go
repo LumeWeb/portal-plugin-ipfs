@@ -1000,6 +1000,32 @@ func (s *WebsiteServiceDefault) reconcileManagedDNSLink(ctx context.Context, web
 		return
 	}
 
+	// Skip the write when the live dnslink record already carries the target:
+	// an idempotent client retry then performs zero external DNS writes.
+	desired := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
+	if result, err := s.resolverForDomain(primaryWD.Domain).ResolveDNSLink(primaryWD.Domain); err == nil {
+		current := s.determineFoundDNSLink(result, website)
+		if current == desired {
+			s.Logger().Debug("dnslink record already matches website target; skipping reconcile",
+				zap.Uint("website_id", website.ID),
+				zap.String("domain", primaryWD.Domain),
+				zap.String("dnslink", current))
+			return
+		}
+		s.Logger().Debug("dnslink record does not match website target; reconciling",
+			zap.Uint("website_id", website.ID),
+			zap.String("domain", primaryWD.Domain),
+			zap.String("desired", desired),
+			zap.String("found", current))
+	} else {
+		// An unreadable record must not block the repair; fall through to the
+		// idempotent REPLACE.
+		s.Logger().Debug("Failed to resolve dnslink record before reconcile; writing unconditionally",
+			zap.Uint("website_id", website.ID),
+			zap.String("domain", primaryWD.Domain),
+			zap.Error(err))
+	}
+
 	if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, primaryWD.ZoneID, primaryWD.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType)); err != nil {
 		s.Logger().Warn("Failed to reconcile dnslink record for unchanged website target",
 			zap.Error(err),
