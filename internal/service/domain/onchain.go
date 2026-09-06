@@ -52,7 +52,7 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 		return nil, fmt.Errorf("domain inspection failed: %w", err)
 	}
 	if !onchain {
-		return nil, fmt.Errorf("%w: %q; handover did not select an authoritative response", ErrDomainNotOnChain, wd.Domain)
+		return nil, fmt.Errorf("%w: %q; the resolver reported the name is not served on-chain (HIP-5)", ErrDomainNotOnChain, wd.Domain)
 	}
 
 	// DANE still applies once the name is chain-managed (the TLSA is served

@@ -39,6 +39,20 @@ func startCustomPortDNSServer(t *testing.T, name string, nsRecords []string, dsR
 // startCustomPortDNSServerWithAuthority runs a test resolver with an explicit
 // AA flag so source-selection behavior can be tested independently of records.
 func startCustomPortDNSServerWithAuthority(t *testing.T, name string, nsRecords []string, authoritative bool, dsRecord ...string) (addr string, served *atomicCounter) {
+	return startCustomPortDNSServerFull(t, name, nsRecords, authoritative, "", dsRecord...)
+}
+
+// startSourceProbeDNSServer runs an authoritative test resolver that also
+// answers the handover resolution-source probe: TXT for resolver.<name> gets
+// a single TXT resolver=<source>. The NS records are still served so tests
+// exercising live-nameserver reporting keep working alongside the probe.
+func startSourceProbeDNSServer(t *testing.T, name string, probeSource string, nsRecords ...string) (addr string, served *atomicCounter) {
+	return startCustomPortDNSServerFull(t, name, nsRecords, true, probeSource)
+}
+
+// startCustomPortDNSServerFull runs the generic test resolver; probeSource
+// non-empty additionally serves the resolution-source probe.
+func startCustomPortDNSServerFull(t *testing.T, name string, nsRecords []string, authoritative bool, probeSource string, dsRecord ...string) (addr string, served *atomicCounter) {
 	t.Helper()
 
 	// The single DS record the server serves, if any.
@@ -61,6 +75,17 @@ func startCustomPortDNSServerWithAuthority(t *testing.T, name string, nsRecords 
 					rr := &dns.NS{
 						Hdr: dns.RR_Header{Name: name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 300},
 						Ns:  ns,
+					}
+					m.Answer = append(m.Answer, rr)
+				}
+			case dns.TypeTXT:
+				// Resolution-source probe (handover): resolver.<name> TXT --
+				// resolver=<source>, answered authoritatively like sendProbeTXT.
+				// An empty source serves NODATA, mirroring a probe-unaware node.
+				if probeSource != "" {
+					rr := &dns.TXT{
+						Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 300},
+						Txt: []string{"resolver=" + probeSource},
 					}
 					m.Answer = append(m.Answer, rr)
 				}

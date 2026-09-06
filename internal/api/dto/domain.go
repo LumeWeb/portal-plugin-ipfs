@@ -165,6 +165,16 @@ type DomainResponse struct {
 	OwnerName string `json:"owner_name,omitempty"` // "_443._tcp.<domain>"
 	TLSARData string `json:"tlsa_rdata,omitempty"` // "3 1 1 <hex>"
 
+	// DNSLink record the owner must publish when the portal does not host the
+	// zone (zone-less bindings: chain-managed/HIP-5 and self-hosted). It is
+	// the content pointer that website validation gates on, so the CLI can
+	// list exactly what the owner must install where the name's zone data
+	// lives — the on-chain zone data for HIP-5, the user's own DNS for
+	// self-hosted. Portal-managed bindings surface the record through
+	// their portal zone's dns records list instead.
+	DNSLinkOwnerName string `json:"dnslink_owner_name,omitempty"` // "_dnslink.<domain>"
+	DNSLinkRdata     string `json:"dnslink_rdata,omitempty"`      // "ipfs/<cid>" or "ipns/<peer>"
+
 	// Checks enumerates the delegation-verification gates and their outcome
 	// from the most recent domain verify, so a client can render per-gate
 	// fix-up guidance (which check failed, expected vs found).

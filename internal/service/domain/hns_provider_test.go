@@ -219,28 +219,49 @@ func TestHNSProvider_BuildDelegation_NoDSRecord(t *testing.T) {
 func TestHNSProvider_Inspect_HIP5Detection(t *testing.T) {
 	const domain = "myname."
 
-	// The HNS resolver serves a HIP-5 TX record for the name.
-	addr, served := startCustomPortDNSServer(t, domain,
-		[]string{"0x36fc69f0983e536d1787cc83f481581f22cca2a1._eth."})
+	// The node reports the name as served on-chain through HIP-5.
+	addr, served := startSourceProbeDNSServer(t, domain, "ens",
+		"0x36fc69f0983e536d1787cc83f481581f22cca2a1._eth.")
 
 	p := NewHNSProvider(addr, nil, TLSASource{})
 	before := served.value()
 	onchain, err := p.Inspect(context.Background(), "myname")
 	require.NoError(t, err)
-	assert.True(t, onchain, "HIP-5 TX record must be detected as on-chain managed")
+	assert.True(t, onchain, "resolver=ens probe must be detected as on-chain managed")
 	assert.Greater(t, served.value(), before, "Inspect must query the configured resolver")
 }
 
 func TestHNSProvider_Inspect_NativeHNS(t *testing.T) {
 	const domain = "myname."
 
-	// The HNS resolver serves ordinary nameservers (native delegation).
-	addr, _ := startCustomPortDNSServerWithAuthority(t, domain, []string{"ns1.lumeweb.", "ns2.lumeweb."}, false)
+	// The node reports Handshake root delegation (plain or minted-off-chain).
+	addr, _ := startSourceProbeDNSServer(t, domain, "hns", "ns1.lumeweb.", "ns2.lumeweb.")
 
 	p := NewHNSProvider(addr, nil, TLSASource{})
 	onchain, err := p.Inspect(context.Background(), "myname")
 	require.NoError(t, err)
-	assert.False(t, onchain, "ordinary nameservers must not be treated as on-chain managed")
+	assert.False(t, onchain, "resolver=hns must not be treated as on-chain managed")
+}
+
+func TestHNSProvider_Inspect_ICANNFallbackSource(t *testing.T) {
+	// The node reports the recursor's ICANN DNS fallback: never on-chain.
+	addr, _ := startSourceProbeDNSServer(t, "myname.", "dns")
+
+	p := NewHNSProvider(addr, nil, TLSASource{})
+	onchain, err := p.Inspect(context.Background(), "myname")
+	require.NoError(t, err)
+	assert.False(t, onchain, "resolver=dns must not be treated as on-chain managed")
+}
+
+func TestHNSProvider_Inspect_ProbeUnawareNodeFailsClosed(t *testing.T) {
+	// A node without the probe answers the resolver.<name> query with
+	// NODATA; the source decision is unknown and must fail closed.
+	addr, _ := startCustomPortDNSServerWithAuthority(t, "myname.", []string{"ns1.lumeweb."}, false)
+
+	p := NewHNSProvider(addr, nil, TLSASource{})
+	_, err := p.Inspect(context.Background(), "myname")
+	require.Error(t, err, "NODATA probe must fail closed")
+	assert.Contains(t, err.Error(), "no resolver=<ens|hns|dns> answer")
 }
 
 func TestHNSProvider_Inspect_NoResolverConfigured(t *testing.T) {
@@ -254,5 +275,5 @@ func TestHNSProvider_Inspect_ResolverUnreachable(t *testing.T) {
 	p := NewHNSProvider("127.0.0.1:1", nil, TLSASource{})
 	_, err := p.Inspect(context.Background(), "myname")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "handover query failed")
+	assert.Contains(t, err.Error(), "source probe query failed")
 }
