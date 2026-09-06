@@ -10,8 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/dane"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
+	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 )
 
@@ -24,11 +27,18 @@ func TestAPI_PushCert(t *testing.T) {
 			domainRec := &pluginDb.WebsiteDomain{
 				Domain:    "example",
 				Namespace: pluginDb.DomainNamespaceHNS,
-						}
+			}
 			require.NoError(t, ctx.DB().Create(domainRec).Error)
 
-			// Generate a real self-signed cert
-			certPEM, _, err := dane.GenerateSelfSignedECDSA([]string{"example"}, time.Now().AddDate(1, 0, 0))
+			// Bootstrap the stable DANE key first (bind-time ensureDANEIdentity);
+			// the gateway pushes cert-only, and the push must match that key.
+			dsvc := core.GetService[*domain.DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, dsvc)
+			storedKey, err := dsvc.EnsureCertificateKey(ctx, string(pluginDb.DomainNamespaceHNS), "example")
+			require.NoError(t, err)
+
+			// Issue the cert from the persisted stable key (gateway lifecycle).
+			certPEM, err := dane.IssueCertFromKey(storedKey.PrivateKeyPEM, []string{"example"}, time.Now().AddDate(1, 0, 0))
 			require.NoError(t, err)
 
 			reqBody := fmt.Sprintf(`{"domain":"example","namespace":"hns","cert_pem":%q}`, certPEM)
@@ -112,8 +122,15 @@ func TestAPI_UpdateTLSA(t *testing.T) {
 			}
 			require.NoError(t, ctx.DB().Create(domainRec).Error)
 
-			// Generate a real self-signed cert
-			certPEM, _, err := dane.GenerateSelfSignedECDSA([]string{"example"}, time.Now().AddDate(1, 0, 0))
+			// Bootstrap the stable DANE key first; the webhook pushes cert-only
+			// and the endpoint persists TLSA only once an identity exists.
+			dsvc := core.GetService[*domain.DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+			require.NotNil(tb, dsvc)
+			storedKey, err := dsvc.EnsureCertificateKey(ctx, string(pluginDb.DomainNamespaceHNS), "example")
+			require.NoError(t, err)
+
+			// Issue the cert from the persisted stable key (gateway lifecycle).
+			certPEM, err := dane.IssueCertFromKey(storedKey.PrivateKeyPEM, []string{"example"}, time.Now().AddDate(1, 0, 0))
 			require.NoError(t, err)
 
 			reqBody := fmt.Sprintf(`{"domain":"example","namespace":"hns","tlsa":"3 1 1 abc123","cert_pem":%q}`, certPEM)

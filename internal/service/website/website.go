@@ -97,6 +97,7 @@ type delegatedDomainService interface {
 	GetNamespaceForDomain(domain string) (string, bool)
 	GetWebsiteDomainByName(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error)
 	GetPendingWebsiteDomainsPaginated(ctx context.Context, status pluginDb.DomainStatus, limit, offset int) ([]pluginDb.WebsiteDomain, error)
+	ValidateOnChainTLSA(ctx context.Context, wd *pluginDb.WebsiteDomain) (ok bool, detail, expected, found string, err error)
 }
 
 // resolverForDomain returns the appropriate DNSResolver for the given domain.
@@ -1708,6 +1709,12 @@ func onchainDNSHostingUnavailableError(domain string) error {
 	return fmt.Errorf("DNS hosting is not available for on-chain managed domain %q (HIP-5); its DNS is served by the external contract", domain)
 }
 
+// tlsaUnavailableMsg is the client-facing message shown when a chain-managed
+// binding's on-chain TLSA cannot be confirmed because the HNS resolver is
+// unconfigured or unreachable. Kept separate from the raw error, which embeds
+// internal resolver config and must never reach the HTTP response body.
+const tlsaUnavailableMsg = "on-chain TLSA cannot be confirmed: the DNS resolver is currently unavailable"
+
 func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, websiteID uint) (pluginCore.ValidateDNSResult, error) {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.ValidateDNS")
 	defer span.End()
@@ -1814,6 +1821,49 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				}, nil
 			} else {
 				addCheck(pluginCore.ValidationCheckDelegation, true, "delegation ready", "", "")
+			}
+
+			// TLSA gate: only chain-managed (HIP-5) bindings carry owner-side
+			// DANE publication duty — their TLSA lives in the name's on-chain
+			// zone data, outside portal infrastructure. For every other locus
+			// the check is a no-op (portal-managed bindings publish TLSA into
+			// their own PowerDNS zone; self-hosted/ICANN carry no portal
+			// obligation), so it must not add a passing check for them.
+			if s.delegatedDomainSvc == nil {
+				// No domain service wired (minimal test/app contexts): no DANE
+				// gate to evaluate.
+			} else if ok, detail, expected, found, tlsaErr := s.delegatedDomainSvc.ValidateOnChainTLSA(ctx, primaryWD); tlsaErr == nil && ok && detail != "" {
+				addCheck(pluginCore.ValidationCheckTLSA, true, detail, expected, found)
+			} else if tlsaErr == nil && !ok {
+				reason := pluginCore.ValidationReasonTLSAMissing
+				if found != "" {
+					reason = pluginCore.ValidationReasonTLSAMismatch
+				}
+				addCheck(pluginCore.ValidationCheckTLSA, false, detail, expected, found)
+				return pluginCore.ValidateDNSResult{
+					Valid:   false,
+					Message: detail,
+					Reason:  reason,
+					Checks:  checks,
+				}, nil
+			} else if tlsaErr != nil {
+				// Resolver not configured / unreachable: the on-chain TLSA
+				// cannot be confirmed. Degrade the TLSA gate to a distinct
+				// non-OK outcome (not a 500) so validation fails closed with
+				// a clear message rather than taking down the whole check. The
+				// client-facing message must be sanitized — the underlying
+				// error embeds internal resolver config (config key name,
+				// network address) — so echo a friendly message and log the
+				// raw error server-side.
+				s.Logger().Warn("on-chain TLSA resolver unavailable during validation",
+					zap.Error(tlsaErr), zap.String("domain", primaryDomain))
+				addCheck(pluginCore.ValidationCheckTLSA, false, tlsaUnavailableMsg, "", "")
+				return pluginCore.ValidateDNSResult{
+					Valid:   false,
+					Message: tlsaUnavailableMsg,
+					Reason:  pluginCore.ValidationReasonTLSAUnavailable,
+					Checks:  checks,
+				}, nil
 			}
 
 			if err := s.activateValidatedWebsite(ctx, &website); err != nil {

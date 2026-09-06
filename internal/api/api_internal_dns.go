@@ -16,7 +16,6 @@ import (
 	"gorm.io/gorm"
 )
 
-
 func (a *API) updateTLSA(c echo.Context) error {
 	ctx := httputil.Context(c)
 
@@ -98,8 +97,10 @@ func (a *API) handleInternalTLSA(c echo.Context, namespace, domain, certPEM, pri
 
 	tlsa, ownerName, err := a.delegatedDomainSvc.UpdateTLSAFromCert(reqCtx, namespace, domain, certPEM, privateKeyPEM)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// Domain not bound yet: compute TLSA best-effort for Caddy.
+		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, danesvc.ErrDANENotBootstrapped) {
+			// Domain not bound yet, or bound without a bootstrapped stable key:
+			// compute TLSA best-effort for Caddy without persisting (a later
+			// stable-key bootstrap owns the authoritative identity).
 			hash, cerr := dane.ComputeTLSAFromCert(certPEM)
 			if cerr != nil {
 				return ctx.Error(cerr, http.StatusBadRequest)
@@ -121,5 +122,3 @@ func (a *API) handleInternalTLSA(c echo.Context, namespace, domain, certPEM, pri
 	}
 	return httputil.EncodeResponse(ctx, resp, &resp)
 }
-
-

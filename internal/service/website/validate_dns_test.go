@@ -2,6 +2,7 @@ package website
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -34,10 +35,11 @@ func setMockResolver(ws pluginCore.WebsiteService, r DNSResolver) {
 }
 
 type testDelegatedDomainService struct {
-	uses      func(string) bool
-	verify    func(context.Context, *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error)
-	getNs     func(string) (string, bool)
-	getByName func(context.Context, string) (*pluginDb.WebsiteDomain, error)
+	uses        func(string) bool
+	verify      func(context.Context, *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error)
+	getNs       func(string) (string, bool)
+	getByName   func(context.Context, string) (*pluginDb.WebsiteDomain, error)
+	onchainTLSA func(context.Context, *pluginDb.WebsiteDomain) (bool, string, string, string, error)
 }
 
 func (t *testDelegatedDomainService) UsesDelegationForOwnership(d string) bool {
@@ -74,6 +76,13 @@ func (t *testDelegatedDomainService) GetWebsiteDomainByName(ctx context.Context,
 
 func (t *testDelegatedDomainService) GetPendingWebsiteDomainsPaginated(ctx context.Context, status pluginDb.DomainStatus, limit, offset int) ([]pluginDb.WebsiteDomain, error) {
 	return nil, nil
+}
+
+func (t *testDelegatedDomainService) ValidateOnChainTLSA(ctx context.Context, wd *pluginDb.WebsiteDomain) (ok bool, detail, expected, found string, err error) {
+	if t.onchainTLSA != nil {
+		return t.onchainTLSA(ctx, wd)
+	}
+	return true, "", "", "", nil
 }
 
 func setMockDelegatedDomainSvc(ws pluginCore.WebsiteService, d delegatedDomainService) {
@@ -991,6 +1000,146 @@ func TestValidateDNS_OnchainManaged_ValidatesWithoutToken(t *testing.T) {
 		require.NoError(tb, err)
 		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), final.Status)
 	}, TestOptions)
+}
+
+func TestValidateDNS_OnchainManaged_TLSAGate(t *testing.T) {
+	t.Run("missing_tlsa_fails_validation_with_tlsa_reason", func(t *testing.T) {
+		// The TLSA gate owns the validity result for chain-managed primaries:
+		// an on-chain name whose TLSA is absent (or whose portal DANE identity
+		// is un-bootstrapped) must not validate, with the failing check and a
+		// machine-readable reason so clients can render targeted guidance.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+			require.NotNil(tb, ws)
+
+			testCID := util.GenerateTestCID(t, "onchain-tlsa-missing")
+			domain := "onchain-tlsa.hns"
+			website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+			stubPinnedCID(t, ctx, testUserID1, testCID.String())
+			created, err := ws.CreateWebsite(context.Background(), website)
+			require.NoError(tb, err)
+			onchainPrimaryDomain(tb, ctx, created, domain)
+
+			mockResolver := mocks.NewMockDNSResolver(t)
+			mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+				Links: map[string]dnslink.NamespaceEntries{
+					"ipfs": {{Identifier: created.TargetHash()}},
+				},
+			}, nil)
+			setMockResolver(ws, mockResolver)
+			mockDom := &testDelegatedDomainService{}
+			mockDom.onchainTLSA = func(_ context.Context, wd *pluginDb.WebsiteDomain) (bool, string, string, string, error) {
+				return false, "TLSA record _443._tcp." + wd.Domain + " is not published in the name's on-chain zone data", "3 1 1 abc", "", nil
+			}
+			setMockDelegatedDomainSvc(ws, mockDom)
+
+			result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+			require.NoError(tb, err)
+			assert.False(t, result.Valid)
+			assert.Equal(t, pluginCore.ValidationReasonTLSAMissing, result.Reason)
+			var tlsa *pluginCore.ValidationCheck
+			for i := range result.Checks {
+				if result.Checks[i].Name == pluginCore.ValidationCheckTLSA {
+					tlsa = &result.Checks[i]
+					break
+				}
+			}
+			require.NotNil(t, tlsa, "tlsa check must be reported")
+			assert.False(t, tlsa.OK)
+			assert.Equal(t, "3 1 1 abc", tlsa.Expected)
+			assert.Empty(t, tlsa.Found)
+		}, TestOptions)
+	})
+
+	t.Run("resolver_unavailable_degrades_to_unavailable_reason", func(t *testing.T) {
+		// A chain-managed binding whose on-chain TLSA cannot be confirmed (HNS
+		// resolver unconfigured/unreachable) must fail closed with a distinct
+		// tlsa_unavailable reason — NOT a hard 500 — so validation surfaces a
+		// clear message instead of crashing the whole check.
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+			require.NotNil(tb, ws)
+
+			testCID := util.GenerateTestCID(t, "onchain-tlsa-unavail")
+			domain := "onchain-tlsa-unavail.hns"
+			website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+			stubPinnedCID(t, ctx, testUserID1, testCID.String())
+			created, err := ws.CreateWebsite(context.Background(), website)
+			require.NoError(tb, err)
+			onchainPrimaryDomain(tb, ctx, created, domain)
+
+			mockResolver := mocks.NewMockDNSResolver(t)
+			mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+				Links: map[string]dnslink.NamespaceEntries{
+					"ipfs": {{Identifier: created.TargetHash()}},
+				},
+			}, nil)
+			setMockResolver(ws, mockResolver)
+			mockDom := &testDelegatedDomainService{}
+			mockDom.onchainTLSA = func(_ context.Context, _ *pluginDb.WebsiteDomain) (bool, string, string, string, error) {
+				return false, "", "", "", errors.New("HNS resolver not configured (DnsConfig.HNSResolver)")
+			}
+			setMockDelegatedDomainSvc(ws, mockDom)
+
+			result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+			require.NoError(t, err, "resolver failure must not produce a hard error")
+			assert.False(t, result.Valid)
+			assert.Equal(t, pluginCore.ValidationReasonTLSAUnavailable, result.Reason)
+			assert.NotContains(t, result.Message, "DnsConfig.HNSResolver", "raw resolver error must not leak into the response")
+			assert.Equal(t, tlsaUnavailableMsg, result.Message)
+			var tlsa *pluginCore.ValidationCheck
+			for i := range result.Checks {
+				if result.Checks[i].Name == pluginCore.ValidationCheckTLSA {
+					tlsa = &result.Checks[i]
+					break
+				}
+			}
+			require.NotNil(t, tlsa, "tlsa check must be reported")
+			assert.False(t, tlsa.OK)
+			assert.Equal(t, tlsaUnavailableMsg, tlsa.Message)
+		}, TestOptions)
+	})
+
+	t.Run("matching_tlsa_adds_passing_check", func(t *testing.T) {
+		coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+			ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+			require.NotNil(tb, ws)
+
+			testCID := util.GenerateTestCID(t, "onchain-tlsa-ok")
+			domain := "onchain-tlsa-ok.hns"
+			website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
+			stubPinnedCID(t, ctx, testUserID1, testCID.String())
+			created, err := ws.CreateWebsite(context.Background(), website)
+			require.NoError(tb, err)
+			onchainPrimaryDomain(tb, ctx, created, domain)
+
+			mockResolver := mocks.NewMockDNSResolver(t)
+			mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+				Links: map[string]dnslink.NamespaceEntries{
+					"ipfs": {{Identifier: created.TargetHash()}},
+				},
+			}, nil)
+			setMockResolver(ws, mockResolver)
+			mockDom := &testDelegatedDomainService{}
+			mockDom.onchainTLSA = func(_ context.Context, _ *pluginDb.WebsiteDomain) (bool, string, string, string, error) {
+				return true, "TLSA served from the name's on-chain zone data matches the stored DANE identity", "3 1 1 abc", "3 1 1 abc", nil
+			}
+			setMockDelegatedDomainSvc(ws, mockDom)
+
+			result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+			require.NoError(tb, err)
+			assert.True(t, result.Valid)
+			var tlsa *pluginCore.ValidationCheck
+			for i := range result.Checks {
+				if result.Checks[i].Name == pluginCore.ValidationCheckTLSA {
+					tlsa = &result.Checks[i]
+					break
+				}
+			}
+			require.NotNil(t, tlsa, "tlsa check must be reported")
+			assert.True(t, tlsa.OK)
+		}, TestOptions)
+	})
 }
 
 func TestValidateDNS_OnchainManaged_DoesNotConsultToken(t *testing.T) {
