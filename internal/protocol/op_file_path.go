@@ -13,8 +13,10 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
+	portalDb "go.lumeweb.com/portal/db"
 	"go.lumeweb.com/portal/db/models"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 const (
@@ -291,10 +293,15 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 		}
 
 		if len(expectedCIDs) > 0 {
-			err = h.Context().DB().WithContext(ctx).
-				Model(&db.FilePath{}).
-				Where("user_id = ? AND cid IN ?", userID, expectedCIDs).
-				Count(&filePathCount).Error
+			err = portalDb.RetryableTransaction(ctx, h.Context().DB(), func(tx *gorm.DB) *gorm.DB {
+				if err := tx.
+					Model(&db.FilePath{}).
+					Where("user_id = ? AND cid IN ?", userID, expectedCIDs).
+					Count(&filePathCount).Error; err != nil {
+					_ = tx.AddError(err)
+				}
+				return tx
+			})
 			if err != nil {
 				h.Logger().Error("Failed to validate file path results", zap.Error(err))
 				return fmt.Errorf("failed to validate file path results: %w", err)
@@ -309,10 +316,15 @@ func (h *FilePathOperationHandler) Execute(ctx context.Context, req *models.Requ
 			}
 		} else {
 			// If no CIDs were processed successfully, just count total paths for user
-			err = h.Context().DB().WithContext(ctx).
-				Model(&db.FilePath{}).
-				Where("user_id = ?", userID).
-				Count(&filePathCount).Error
+			err = portalDb.RetryableTransaction(ctx, h.Context().DB(), func(tx *gorm.DB) *gorm.DB {
+				if err := tx.
+					Model(&db.FilePath{}).
+					Where("user_id = ?", userID).
+					Count(&filePathCount).Error; err != nil {
+					_ = tx.AddError(err)
+				}
+				return tx
+			})
 			if err != nil {
 				h.Logger().Error("Failed to validate file path results", zap.Error(err))
 				return fmt.Errorf("failed to validate file path results: %w", err)

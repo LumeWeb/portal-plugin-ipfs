@@ -19,6 +19,7 @@ import (
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal/db"
 	"go.uber.org/zap"
 )
 
@@ -222,7 +223,12 @@ func (s *DelegatedDomainService) resolveManagedZone(ctx context.Context, domain 
 	// DeleteZone — callers must still guard cleanup with zoneCreated.
 	if platformRootID != nil {
 		var pd pluginDb.PlatformDomain
-		if err := s.DB().WithContext(ctx).First(&pd, *platformRootID).Error; err != nil {
+		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			if err := tx.First(&pd, *platformRootID).Error; err != nil {
+				_ = tx.AddError(err)
+			}
+			return tx
+		}); err != nil {
 			return nil, false, fmt.Errorf("load platform root %d: %w", *platformRootID, err)
 		}
 		if !pd.Enabled {
@@ -377,9 +383,14 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	}
 
 	var website pluginDb.Website
-	if err := s.DB().WithContext(ctx).
-		Where("user_id = ? AND id = ?", userID, websiteID).
-		First(&website).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Where("user_id = ? AND id = ?", userID, websiteID).
+			First(&website).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, fmt.Errorf("website lookup failed: %w", err)
 	}
 
@@ -405,13 +416,23 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	// freeing it for a fresh binding. Only tombstones (deleted_at IS NOT NULL)
 	// are removed; a live same-key binding is a genuine conflict and left to the
 	// unique key to reject.
-	if err := s.DB().WithContext(ctx).
-		Where("domain = ? AND namespace = ? AND deleted_at IS NOT NULL", domain, namespace).
-		Unscoped().Delete(&pluginDb.WebsiteDomain{}).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Where("domain = ? AND namespace = ? AND deleted_at IS NOT NULL", domain, namespace).
+			Unscoped().Delete(&pluginDb.WebsiteDomain{}).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, fmt.Errorf("failed to purge stale domain binding: %w", err)
 	}
 
-	if err := s.DB().WithContext(ctx).Create(wd).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Create(wd).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, fmt.Errorf("persist failed: %w", err)
 	}
 
@@ -431,18 +452,24 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	if onchainManaged {
 		wd.Status = pluginDb.DomainStatusOnchainManaged
 		wd.DNSHostingEnabled = false
-		if err := s.DB().WithContext(ctx).Model(wd).Updates(map[string]any{
-			"status":              pluginDb.DomainStatusOnchainManaged,
-			"dns_hosting_enabled": false,
-		}).Error; err != nil {
+		var finErr error
+		if finErr = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			if err := tx.Model(wd).Updates(map[string]any{
+				"status":              pluginDb.DomainStatusOnchainManaged,
+				"dns_hosting_enabled": false,
+			}).Error; err != nil {
+				_ = tx.AddError(err)
+			}
+			return tx
+		}); finErr != nil {
 			// The row was already inserted with dns_hosting_enabled from the
 			// request (true by default). A half-finalized onchain binding is the
 			// worst failure shape: it would look like an "enable-orphan" to
 			// SetDomainDNSEnabled and a retry could provision a PowerDNS zone
 			// for a genuinely HIP-5 name. Remove the row so the bind is cleanly
 			// rolled back and the name can be retried.
-			s.DB().WithContext(ctx).Unscoped().Delete(wd)
-			return nil, fmt.Errorf("failed to finalize domain record: %w", err)
+			s.deleteBindingBestEffort(ctx, wd)
+			return nil, fmt.Errorf("failed to finalize domain record: %w", finErr)
 		}
 		// DANE still applies to a chain-managed name (the TLSA is served from
 		// the name's on-chain zone data), so the stable DANE key must exist at
@@ -450,7 +477,7 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		// enforces. A failure rolls the just-inserted row back so the bind is
 		// cleanly retryable.
 		if err := s.ensureDANEIdentity(ctx, provider, namespace, domain); err != nil {
-			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			s.deleteBindingBestEffort(ctx, wd)
 			return nil, err
 		}
 		// This binding is the new website's first (primary) domain. Record it
@@ -458,7 +485,7 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		// rather than the status=active fallback. A failure rolls the just-
 		// inserted row back so the bind is cleanly retryable.
 		if err := s.assignPrimaryAndNotify(ctx, &website, wd, notifyCreated); err != nil {
-			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			s.deleteBindingBestEffort(ctx, wd)
 			return nil, err
 		}
 		return wd, nil
@@ -472,11 +499,16 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	// host.
 	if !dnsHostingEnabled {
 		wd.Status = pluginDb.DomainStatusSelfHosted
-		if err := s.DB().WithContext(ctx).Model(wd).Update("status", pluginDb.DomainStatusSelfHosted).Error; err != nil {
+		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			if err := tx.Model(wd).Update("status", pluginDb.DomainStatusSelfHosted).Error; err != nil {
+				_ = tx.AddError(err)
+			}
+			return tx
+		}); err != nil {
 			return nil, fmt.Errorf("failed to finalize domain record: %w", err)
 		}
 		if err := s.ensureDANEIdentity(ctx, provider, namespace, domain); err != nil {
-			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			s.deleteBindingBestEffort(ctx, wd)
 			return nil, err
 		}
 		// This binding is the new website's first (primary) domain. Record it
@@ -500,7 +532,7 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	if err := s.withZoneLifecycleLock(zoneLifecycleKey(domain), func() error {
 		zone, zoneCreated, err := s.resolveManagedZone(ctx, domain, userID, platformRootID)
 		if err != nil {
-			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			s.deleteBindingBestEffort(ctx, wd)
 			return fmt.Errorf("zone resolution failed: %w", err)
 		}
 
@@ -509,7 +541,7 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		// subdomain reusing a parent zone writes its own _dnslink.<subdomain>,
 		// not the parent's.
 		if err := s.dnsSvc.CreateDNSLinkRecord(ctx, zone.ID, domain, target); err != nil {
-			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			s.deleteBindingBestEffort(ctx, wd)
 			if zoneCreated {
 				_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
 			}
@@ -524,7 +556,7 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		if apexType == pluginCore.RecordTypeA {
 			apexContent = s.gatewayIP()
 			if apexContent == "" {
-				s.DB().WithContext(ctx).Unscoped().Delete(wd)
+				s.deleteBindingBestEffort(ctx, wd)
 				if zoneCreated {
 					_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
 				}
@@ -536,7 +568,7 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 
 		if apexContent != "" {
 			if err := s.dnsSvc.CreateApexRecord(ctx, zone.ID, domain, apexType, apexContent); err != nil {
-				s.DB().WithContext(ctx).Unscoped().Delete(wd)
+				s.deleteBindingBestEffort(ctx, wd)
 				if zoneCreated {
 					_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
 				}
@@ -550,7 +582,7 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		// no untyped any crosses the provider boundary here.
 		delegationBytes, err := provider.BuildDelegation(ctx, zone.ID, domain, &website, config)
 		if err != nil {
-			s.DB().WithContext(ctx).Unscoped().Delete(wd)
+			s.deleteBindingBestEffort(ctx, wd)
 			// Only tear down a zone this call created. For a platform claim the
 			// zone is the operator's shared platform-root zone (zoneCreated is
 			// false), which must never be deleted on a per-claim failure —
@@ -565,12 +597,17 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		wd.ZoneID = zone.ID
 		wd.Status = pluginDb.DomainStatusRecordsGenerated
 		wd.DelegationData = jsonToMap(delegationBytes)
-		if err := s.DB().WithContext(ctx).Model(wd).Updates(map[string]any{
-			"zone_id":             zone.ID,
-			"status":              pluginDb.DomainStatusRecordsGenerated,
-			"delegation_data":     wd.DelegationData,
-			"dns_hosting_enabled": wd.DNSHostingEnabled,
-		}).Error; err != nil {
+		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			if err := tx.Model(wd).Updates(map[string]any{
+				"zone_id":             zone.ID,
+				"status":              pluginDb.DomainStatusRecordsGenerated,
+				"delegation_data":     wd.DelegationData,
+				"dns_hosting_enabled": wd.DNSHostingEnabled,
+			}).Error; err != nil {
+				_ = tx.AddError(err)
+			}
+			return tx
+		}); err != nil {
 			return fmt.Errorf("failed to finalize domain record: %w", err)
 		}
 
@@ -590,6 +627,17 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	return wd, nil
 }
 
+// deleteBindingBestEffort hard-deletes a WebsiteDomain row as a cleanup /
+// compensation step. Matches the original fire-and-forget compensation
+// semantics: it now retries on lock contention via the retryable-transaction
+// wrapper, but errors are still swallowed (never propagated to the caller).
+func (s *DelegatedDomainService) deleteBindingBestEffort(ctx context.Context, wd *pluginDb.WebsiteDomain) {
+	_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		_ = tx.Unscoped().Delete(wd).Error
+		return tx
+	})
+}
+
 // assignPrimaryAndNotify records wd as the website's primary when the website
 // has none yet — so the website service resolves the apex domain via
 // PrimaryDomainID rather than the status=active fallback — and, when
@@ -599,7 +647,12 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 // best-effort.
 func (s *DelegatedDomainService) assignPrimaryAndNotify(ctx context.Context, website *pluginDb.Website, wd *pluginDb.WebsiteDomain, notifyCreated bool) error {
 	if website.PrimaryDomainID == nil {
-		if err := s.DB().WithContext(ctx).Model(website).Update("primary_domain_id", wd.ID).Error; err != nil {
+		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			if err := tx.Model(website).Update("primary_domain_id", wd.ID).Error; err != nil {
+				_ = tx.AddError(err)
+			}
+			return tx
+		}); err != nil {
 			return fmt.Errorf("failed to set primary domain: %w", err)
 		}
 		website.PrimaryDomainID = &wd.ID
@@ -663,7 +716,12 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		}
 		wd.Status = pluginDb.DomainStatusActive
 		if s.DB() != nil {
-			if err := s.DB().WithContext(ctx).Model(wd).Update("status", wd.Status).Error; err != nil {
+			if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				if err := tx.Model(wd).Update("status", wd.Status).Error; err != nil {
+					_ = tx.AddError(err)
+				}
+				return tx
+			}); err != nil {
 				return DelegationVerificationResult{}, fmt.Errorf("failed to persist domain status: %w", err)
 			}
 		}
@@ -790,7 +848,10 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 	if err != nil {
 		wd.Status = pluginDb.DomainStatusError
 		if s.DB() != nil {
-			_ = s.DB().WithContext(ctx).Model(wd).Update("status", wd.Status)
+			_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				_ = tx.Model(wd).Update("status", wd.Status).Error
+				return tx
+			})
 		}
 		return DelegationVerificationResult{}, err
 	}
@@ -826,7 +887,12 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 	}
 
 	if s.DB() != nil {
-		if err := s.DB().WithContext(ctx).Model(wd).Update("status", wd.Status).Error; err != nil {
+		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			if err := tx.Model(wd).Update("status", wd.Status).Error; err != nil {
+				_ = tx.AddError(err)
+			}
+			return tx
+		}); err != nil {
 			return DelegationVerificationResult{}, fmt.Errorf("failed to persist domain status: %w", err)
 		}
 	}
@@ -956,9 +1022,14 @@ func (s *DelegatedDomainService) DeleteDomain(ctx context.Context, domainID, web
 	// so the FK never dangles. Do this before the delete so we can read the
 	// remaining bindings accurately.
 	var wd pluginDb.WebsiteDomain
-	if err := s.DB().WithContext(ctx).
-		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
-		First(&wd).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+			First(&wd).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return gorm.ErrRecordNotFound
 		}
@@ -966,36 +1037,64 @@ func (s *DelegatedDomainService) DeleteDomain(ctx context.Context, domainID, web
 	}
 
 	var website pluginDb.Website
-	if err := s.DB().WithContext(ctx).Where("id = ?", websiteID).First(&website).Error; err == nil &&
+	if werr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Where("id = ?", websiteID).First(&website).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); werr == nil &&
 		website.PrimaryDomainID != nil && *website.PrimaryDomainID == wd.ID {
 
 		// Pick the next active (non-deleted) binding on this website.
 		var next pluginDb.WebsiteDomain
-		nextErr := s.DB().WithContext(ctx).
-			Where("website_id = ? AND id != ? AND deleted_at IS NULL", websiteID, wd.ID).
-			Order("id ASC").
-			First(&next).Error
+		nextErr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			if err := tx.
+				Where("website_id = ? AND id != ? AND deleted_at IS NULL", websiteID, wd.ID).
+				Order("id ASC").
+				First(&next).Error; err != nil {
+				_ = tx.AddError(err)
+			}
+			return tx
+		})
 		if errors.Is(nextErr, gorm.ErrRecordNotFound) {
 			// No other binding remains: clear the primary FK.
-			if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", nil).Error; err != nil {
+			if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				if err := tx.Model(&website).Update("primary_domain_id", nil).Error; err != nil {
+					_ = tx.AddError(err)
+				}
+				return tx
+			}); err != nil {
 				return fmt.Errorf("failed to clear primary domain: %w", err)
 			}
 		} else if nextErr != nil {
 			return nextErr
 		} else {
-			if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", next.ID).Error; err != nil {
+			if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				if err := tx.Model(&website).Update("primary_domain_id", next.ID).Error; err != nil {
+					_ = tx.AddError(err)
+				}
+				return tx
+			}); err != nil {
 				return fmt.Errorf("failed to repoint primary domain: %w", err)
 			}
 		}
 	}
 
-	res := s.DB().WithContext(ctx).
-		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
-		Delete(&pluginDb.WebsiteDomain{})
-	if res.Error != nil {
-		return res.Error
+	var rowsAffected int64
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		res := tx.
+			Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+			Delete(&pluginDb.WebsiteDomain{})
+		if res.Error != nil {
+			_ = tx.AddError(res.Error)
+			return tx
+		}
+		rowsAffected = res.RowsAffected
+		return tx
+	}); err != nil {
+		return err
 	}
-	if res.RowsAffected == 0 {
+	if rowsAffected == 0 {
 		return gorm.ErrRecordNotFound
 	}
 	return nil
@@ -1067,12 +1166,13 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 	// re-issued from the same key with an identical SPKI).
 	var zoneID uint
 	portalManaged := false
-	txErr := s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	txErr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		// Lock the target row so concurrent cert pushes serialize per-domain.
 		locked := tx.Clauses(clause.Locking{Strength: "UPDATE"})
 		var wd pluginDb.WebsiteDomain
 		if err := locked.Where("domain = ? AND namespace = ?", domain, ns).First(&wd).Error; err != nil {
-			return err // includes gorm.ErrRecordNotFound
+			_ = tx.AddError(err) // includes gorm.ErrRecordNotFound
+			return tx
 		}
 		zoneID = wd.ZoneID
 		portalManaged = wd.Class() == pluginDb.ClassPortalManaged
@@ -1132,13 +1232,16 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 		// Persist the updated JSON maps scoped by primary key (avoids the locked
 		// read's WHERE clause making the UPDATE column ambiguous). GORM's struct
 		// auto-update of UpdatedAt is bypassed by map updates, so set it explicitly.
-		return tx.Model(&pluginDb.WebsiteDomain{}).
+		if err := tx.Model(&pluginDb.WebsiteDomain{}).
 			Where("id = ?", wd.ID).
 			Updates(map[string]any{
 				"protocol_data":   wd.ProtocolData,
 				"delegation_data": wd.DelegationData,
 				"updated_at":      time.Now(),
-			}).Error
+			}).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
 	})
 	if txErr != nil {
 		return "", "", fmt.Errorf("save domain tlsa: %w", txErr)
@@ -1291,7 +1394,12 @@ func (s *DelegatedDomainService) getNamespaceForDomain(domain string) (string, b
 // GetWebsiteDomainByName looks up a domain across all namespaces.
 func (s *DelegatedDomainService) GetWebsiteDomainByName(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error) {
 	var wd pluginDb.WebsiteDomain
-	err := s.DB().WithContext(ctx).Where("domain = ?", domain).First(&wd).Error
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Where("domain = ?", domain).First(&wd).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1299,12 +1407,24 @@ func (s *DelegatedDomainService) GetWebsiteDomainByName(ctx context.Context, dom
 }
 
 // GetWebsiteDomainByDomainAndNamespace looks up a domain by namespace.
+// GetWebsiteDomainByDomainAndNamespace returns the binding for a domain in a
+// namespace, or gorm.ErrRecordNotFound when absent (a normal business outcome
+// several API and DANE callers match on with errors.Is). The retry wrapper
+// preserves the sentinel: gorm's First() sets tx.Error to the sentinel itself
+// and AddError re-wraps with %w, so errors.Is keeps matching; the retry loop
+// only replays lock-class errors (deadlock, lock wait timeout, db locked),
+// never not-found.
 func (s *DelegatedDomainService) GetWebsiteDomainByDomainAndNamespace(ctx context.Context, domain string, ns pluginDb.DomainNamespace) (*pluginDb.WebsiteDomain, error) {
 	if s.DB() == nil {
 		return nil, gorm.ErrRecordNotFound
 	}
 	var wd pluginDb.WebsiteDomain
-	err := s.DB().WithContext(ctx).Where("domain = ? AND namespace = ?", domain, ns).First(&wd).Error
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Where("domain = ? AND namespace = ?", domain, ns).First(&wd).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1340,30 +1460,34 @@ func (s *DelegatedDomainService) EnsureCertificateKey(ctx context.Context, names
 
 	ns := pluginDb.DomainNamespace(namespace)
 	var keyPEM string
-	if err := s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		var wd pluginDb.WebsiteDomain
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("domain = ? AND namespace = ?", domain, ns).First(&wd).Error; err != nil {
-			return err
+			_ = tx.AddError(err)
+			return tx
 		}
 		if wd.ProtocolData != nil {
 			if encrypted, ok := wd.ProtocolData[protocolDataPrivateKeyKey].(string); ok && encrypted != "" {
 				decrypted, err := s.decryptPrivateKey(ctx, encrypted)
 				if err != nil {
-					return err
+					_ = tx.AddError(err)
+					return tx
 				}
 				keyPEM = decrypted
-				return nil
+				return tx
 			}
 		}
 
 		generated, err := dane.GenerateKey()
 		if err != nil {
-			return fmt.Errorf("generate DANE key: %w", err)
+			_ = tx.AddError(fmt.Errorf("generate DANE key: %w", err))
+			return tx
 		}
 		encrypted, err := s.encryptPrivateKey(ctx, generated)
 		if err != nil {
-			return fmt.Errorf("encrypt DANE key: %w", err)
+			_ = tx.AddError(fmt.Errorf("encrypt DANE key: %w", err))
+			return tx
 		}
 		if wd.ProtocolData == nil {
 			wd.ProtocolData = make(datatypes.JSONMap)
@@ -1371,10 +1495,11 @@ func (s *DelegatedDomainService) EnsureCertificateKey(ctx context.Context, names
 		wd.ProtocolData[protocolDataPrivateKeyKey] = encrypted
 		if err := tx.Model(&pluginDb.WebsiteDomain{}).Where("id = ?", wd.ID).
 			Updates(map[string]any{"protocol_data": wd.ProtocolData, "updated_at": time.Now()}).Error; err != nil {
-			return err
+			_ = tx.AddError(err)
+			return tx
 		}
 		keyPEM = generated
-		return nil
+		return tx
 	}); err != nil {
 		return nil, err
 	}
@@ -1396,22 +1521,26 @@ func (s *DelegatedDomainService) EnsureCertificateKey(ctx context.Context, names
 
 func (s *DelegatedDomainService) persistTLSAKeyMetadata(ctx context.Context, namespace, domain, tlsa, ownerName string) error {
 	ns := pluginDb.DomainNamespace(namespace)
-	return s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		var wd pluginDb.WebsiteDomain
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("domain = ? AND namespace = ?", domain, ns).First(&wd).Error; err != nil {
-			return err
+			_ = tx.AddError(err)
+			return tx
 		}
 		if wd.ProtocolData == nil {
 			wd.ProtocolData = make(datatypes.JSONMap)
 		}
 		wd.ProtocolData[protocolDataTLSAKey] = tlsa
 		wd.ProtocolData[protocolDataOwnerKey] = ownerName
-		return tx.Model(&pluginDb.WebsiteDomain{}).Where("id = ?", wd.ID).
+		if err := tx.Model(&pluginDb.WebsiteDomain{}).Where("id = ?", wd.ID).
 			Updates(map[string]any{
 				"protocol_data": wd.ProtocolData,
 				"updated_at":    time.Now(),
-			}).Error
+			}).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
 	})
 }
 
@@ -1506,7 +1635,12 @@ func (s *DelegatedDomainService) RepublishChainDANERecord(ctx context.Context, n
 // GetActiveWebsiteDomainByDomain finds an active domain across all namespaces.
 func (s *DelegatedDomainService) GetActiveWebsiteDomainByDomain(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error) {
 	var wd pluginDb.WebsiteDomain
-	err := s.DB().WithContext(ctx).Where("domain = ? AND status = ?", domain, pluginDb.DomainStatusActive).First(&wd).Error
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Where("domain = ? AND status = ?", domain, pluginDb.DomainStatusActive).First(&wd).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1518,12 +1652,16 @@ func (s *DelegatedDomainService) GetActiveWebsiteDomainByDomain(ctx context.Cont
 // modified between pages.
 func (s *DelegatedDomainService) GetPendingWebsiteDomainsPaginated(ctx context.Context, status pluginDb.DomainStatus, limit, lastID int) ([]pluginDb.WebsiteDomain, error) {
 	var wds []pluginDb.WebsiteDomain
-	q := s.DB().WithContext(ctx).Where("status = ?", status)
-	if lastID > 0 {
-		q = q.Where("id > ?", lastID)
-	}
-	err := q.Order("id ASC").Limit(limit).Find(&wds).Error
-	if err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		q := tx.Where("status = ?", status)
+		if lastID > 0 {
+			q = q.Where("id > ?", lastID)
+		}
+		if err := q.Order("id ASC").Limit(limit).Find(&wds).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, err
 	}
 	return wds, nil

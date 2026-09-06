@@ -5,6 +5,7 @@ import (
 	"time"
 
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal/db"
 	"gorm.io/gorm"
 )
 
@@ -28,7 +29,12 @@ func NewStore(db *gorm.DB) *Store {
 // Append durably records ev and returns its assigned durable ID. The returned
 // ID is guaranteed to be greater than every previously appended event's ID.
 func (s *Store) Append(ctx context.Context, ev pluginDb.WebsiteEvent) (uint64, error) {
-	if err := s.db.WithContext(ctx).Create(&ev).Error; err != nil {
+	if err := db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Create(&ev).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return 0, err
 	}
 	return ev.ID, nil
@@ -43,13 +49,17 @@ func (s *Store) ListAfter(ctx context.Context, after uint64, limit int) ([]plugi
 		limit = 0
 	}
 
-	q := s.db.WithContext(ctx).Where("id > ?", after).Order("id ASC")
-	if limit > 0 {
-		q = q.Limit(limit)
-	}
-
 	var events []pluginDb.WebsiteEvent
-	if err := q.Find(&events).Error; err != nil {
+	if err := db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		q := tx.Where("id > ?", after).Order("id ASC")
+		if limit > 0 {
+			q = q.Limit(limit)
+		}
+		if err := q.Find(&events).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, err
 	}
 	return events, nil
@@ -60,8 +70,13 @@ func (s *Store) ListAfter(ctx context.Context, after uint64, limit int) ([]plugi
 // when catch-up reconciliation is complete. Returns 0 when no events exist.
 func (s *Store) HighWaterMark(ctx context.Context) (uint64, error) {
 	var maxID *uint64
-	err := s.db.WithContext(ctx).Model(&pluginDb.WebsiteEvent{}).
-		Select("MAX(id)").Scan(&maxID).Error
+	err := db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Model(&pluginDb.WebsiteEvent{}).
+			Select("MAX(id)").Scan(&maxID).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -87,14 +102,22 @@ func (s *Store) PurgeBefore(ctx context.Context, before time.Time) (int64, error
 		Select("MAX(id)").
 		Where("created_at < ?", before)
 
-	res := s.db.WithContext(ctx).
-		Where("id <= (?)", sub).
-		Where("created_at < ?", before).
-		Delete(&pluginDb.WebsiteEvent{})
-	if res.Error != nil {
-		return 0, res.Error
+	var rowsAffected int64
+	if err := db.RetryableTransaction(ctx, s.db, func(tx *gorm.DB) *gorm.DB {
+		res := tx.
+			Where("id <= (?)", sub).
+			Where("created_at < ?", before).
+			Delete(&pluginDb.WebsiteEvent{})
+		if res.Error != nil {
+			_ = tx.AddError(res.Error)
+			return tx
+		}
+		rowsAffected = res.RowsAffected
+		return tx
+	}); err != nil {
+		return 0, err
 	}
-	return res.RowsAffected, nil
+	return rowsAffected, nil
 }
 
 // ListSince returns events whose durable ID is greater than after, ordered

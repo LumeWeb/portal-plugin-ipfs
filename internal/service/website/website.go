@@ -129,14 +129,18 @@ func (s *WebsiteServiceDefault) resolverForDomain(domain string) DNSResolver {
 // gorm.ErrRecordNotFound when the website has no primary binding.
 func (s *WebsiteServiceDefault) primaryWebsiteDomain(ctx context.Context, website *pluginDb.Website) (*pluginDb.WebsiteDomain, error) {
 	var wd pluginDb.WebsiteDomain
-	q := s.DB().WithContext(ctx).Where("website_id = ?", website.ID)
-	if website.PrimaryDomainID != nil {
-		q = q.Where("id = ?", *website.PrimaryDomainID)
-	} else {
-		q = q.Where("status = ?", pluginDb.DomainStatusActive)
-	}
-	err := q.Order("id ASC").First(&wd).Error
-	if err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		q := tx.Where("website_id = ?", website.ID)
+		if website.PrimaryDomainID != nil {
+			q = q.Where("id = ?", *website.PrimaryDomainID)
+		} else {
+			q = q.Where("status = ?", pluginDb.DomainStatusActive)
+		}
+		if err := q.Order("id ASC").First(&wd).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, err
 	}
 	return &wd, nil
@@ -483,13 +487,19 @@ func (s *WebsiteServiceDefault) GetWebsiteByDomain(ctx context.Context, domain s
 				wd, err := s.delegatedDomainSvc.GetWebsiteDomainByName(ctx, domain)
 				if err == nil && wd != nil && !wd.DeletedAt.Valid {
 					var website pluginDb.Website
-					if err := s.DB().WithContext(ctx).
-						Where("id = ?", wd.WebsiteID).
-						First(&website).Error; err != nil {
-						if errors.Is(err, gorm.ErrRecordNotFound) {
+					werr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+						if err := tx.
+							Where("id = ?", wd.WebsiteID).
+							First(&website).Error; err != nil {
+							_ = tx.AddError(err)
+						}
+						return tx
+					})
+					if werr != nil {
+						if errors.Is(werr, gorm.ErrRecordNotFound) {
 							return nil, nil
 						}
-						return nil, fmt.Errorf("failed to get website by domain (join): %w", err)
+						return nil, fmt.Errorf("failed to get website by domain (join): %w", werr)
 					}
 					namespace = wd.Namespace
 					return &website, nil
@@ -899,7 +909,13 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				return nil, onchainDNSHostingUnavailableError(wd.Domain)
 			}
 			wd.DNSHostingEnabled = enableDNS
-			if uerr := s.DB().WithContext(ctx).Model(wd).Update("dns_hosting_enabled", enableDNS).Error; uerr != nil {
+			uerr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+				if err := tx.Model(wd).Update("dns_hosting_enabled", enableDNS).Error; err != nil {
+					_ = tx.AddError(err)
+				}
+				return tx
+			})
+			if uerr != nil {
 				s.Logger().Warn("Failed to persist dns_hosting_enabled on primary domain",
 					zap.Error(uerr),
 					zap.Uint("website_id", websiteID))
@@ -919,7 +935,12 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				}
 				if wd.WebsiteID != 0 {
 					var reloaded pluginDb.Website
-					if rerr := s.DB().WithContext(ctx).First(&reloaded, wd.WebsiteID).Error; rerr == nil {
+					if rerr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+						if err := tx.First(&reloaded, wd.WebsiteID).Error; err != nil {
+							_ = tx.AddError(err)
+						}
+						return tx
+					}); rerr == nil {
 						updatedWebsite = &reloaded
 					}
 				}
@@ -1058,7 +1079,12 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 
 	// Load the owning website for target and validation-token state.
 	var website pluginDb.Website
-	if err := s.DB().WithContext(ctx).Where("id = ?", wd.WebsiteID).First(&website).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Where("id = ?", wd.WebsiteID).First(&website).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return fmt.Errorf("failed to load website for DNS hosting transition: %w", err)
 	}
 
@@ -1235,7 +1261,12 @@ func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context,
 
 	// Load the owning website to reset its validation status.
 	var website pluginDb.Website
-	if err := s.DB().WithContext(ctx).Where("id = ?", wd.WebsiteID).First(&website).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Where("id = ?", wd.WebsiteID).First(&website).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return fmt.Errorf("failed to load website for DNS hosting disable transition: %w", err)
 	}
 
@@ -2356,7 +2387,12 @@ func (s *WebsiteServiceDefault) ActivatePlatformSubdomainWebsite(ctx context.Con
 	defer span.End()
 
 	var website pluginDb.Website
-	if err := s.DB().WithContext(ctx).First(&website, websiteID).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.First(&website, websiteID).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return fmt.Errorf("failed to load website %d: %w", websiteID, err)
 	}
 
@@ -2563,14 +2599,24 @@ func (s *WebsiteServiceDefault) UpdateSSLStatus(ctx context.Context, domain stri
 // matches, it returns gorm.ErrRecordNotFound.
 func (s *WebsiteServiceDefault) GetApexDomainBinding(ctx context.Context, websiteID uint) (*pluginDb.WebsiteDomain, error) {
 	var website pluginDb.Website
-	if err := s.DB().WithContext(ctx).Where("id = ?", websiteID).First(&website).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Where("id = ?", websiteID).First(&website).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, err
 	}
 	if website.PrimaryDomainID == nil {
 		return nil, gorm.ErrRecordNotFound
 	}
 	var apex pluginDb.WebsiteDomain
-	if err := s.DB().WithContext(ctx).Where("id = ?", *website.PrimaryDomainID).First(&apex).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Where("id = ?", *website.PrimaryDomainID).First(&apex).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, err
 	}
 	if apex.DeletedAt.Valid {
@@ -2589,9 +2635,14 @@ func (s *WebsiteServiceDefault) SetPrimaryDomain(ctx context.Context, userID, we
 	defer span.End()
 
 	var wd pluginDb.WebsiteDomain
-	if err := s.DB().WithContext(ctx).
-		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
-		First(&wd).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+			First(&wd).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, fmt.Errorf("domain lookup failed: %w", err)
 	}
 	if wd.DeletedAt.Valid {
@@ -2599,14 +2650,24 @@ func (s *WebsiteServiceDefault) SetPrimaryDomain(ctx context.Context, userID, we
 	}
 
 	var website pluginDb.Website
-	if err := s.DB().WithContext(ctx).Where("id = ? AND user_id = ?", websiteID, userID).First(&website).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Where("id = ? AND user_id = ?", websiteID, userID).First(&website).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, fmt.Errorf("website lookup failed: %w", err)
 	}
 	if website.PrimaryDomainID != nil && *website.PrimaryDomainID == wd.ID {
 		return &wd, nil
 	}
 
-	if err := s.DB().WithContext(ctx).Model(&website).Update("primary_domain_id", wd.ID).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Model(&website).Update("primary_domain_id", wd.ID).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, fmt.Errorf("failed to set primary domain: %w", err)
 	}
 	return &wd, nil
@@ -2621,9 +2682,14 @@ func (s *WebsiteServiceDefault) SetDomainDNSEnabled(ctx context.Context, userID,
 	defer span.End()
 
 	var wd pluginDb.WebsiteDomain
-	if err := s.DB().WithContext(ctx).
-		Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
-		First(&wd).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.
+			Where("id = ? AND website_id = ? AND user_id = ?", domainID, websiteID, userID).
+			First(&wd).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, fmt.Errorf("domain lookup failed: %w", err)
 	}
 
@@ -2677,12 +2743,22 @@ func (s *WebsiteServiceDefault) SetDomainDNSEnabled(ctx context.Context, userID,
 		}
 	}
 
-	if err := s.DB().WithContext(ctx).Model(&wd).Update("dns_hosting_enabled", enabled).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Model(&wd).Update("dns_hosting_enabled", enabled).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, fmt.Errorf("failed to set dns_hosting_enabled: %w", err)
 	}
 
 	// Reload to pick up any zone/IPNS mutations from the transition.
-	if err := s.DB().WithContext(ctx).Where("id = ?", wd.ID).First(&wd).Error; err != nil {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Where("id = ?", wd.ID).First(&wd).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
 		return nil, err
 	}
 	return &wd, nil
