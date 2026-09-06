@@ -616,6 +616,9 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 	var dnsEnabledChanged bool
 	var enableDNS bool
 	var targetHashChanged bool
+	// noopUpdate is true when nothing was left to persist after no-op
+	// handling (e.g. a repeated enable-ipns on an already-IPNS website).
+	var noopUpdate bool
 	var oldStatus pluginDb.WebsiteStatus
 
 	err := core.MetricTrack(
@@ -810,10 +813,18 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 					enableDNS = newDNSEnabled
 				}
 
+				// A request whose fields were all consumed as no-ops leaves the
+				// record untouched; skip the (signalling-empty) GORM write. A
+				// dns_enabled toggle without other fields empties updates too,
+				// but it drives a real transition below, so it is not a no-op.
+				noopUpdate = len(updates) == 0 && !dnsEnabledChanged
+
 				// Apply updates
-				if err := tx.Model(&website).Updates(updates).Error; err != nil {
-					_ = tx.AddError(fmt.Errorf("failed to update website: %w", err))
-					return tx
+				if len(updates) > 0 {
+					if err := tx.Model(&website).Updates(updates).Error; err != nil {
+						_ = tx.AddError(fmt.Errorf("failed to update website: %w", err))
+						return tx
+					}
 				}
 
 				updatedWebsite = &website
@@ -924,10 +935,23 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 		}
 	}
 
-	s.Logger().Info("Website updated",
-		zap.Uint("id", websiteID),
-		zap.Uint("user_id", userID),
-		zap.Any("updates", updates))
+	// No-op update: reconcile the portal-managed dnslink record with the
+	// current DB target so a previously failed or skipped record write (e.g.
+	// during an IPFS → IPNS conversion) can still converge. Best-effort.
+	if noopUpdate && updatedWebsite != nil {
+		s.reconcileManagedDNSLink(ctx, updatedWebsite)
+	}
+
+	if noopUpdate {
+		s.Logger().Info("Website update was a no-op",
+			zap.Uint("id", websiteID),
+			zap.Uint("user_id", userID))
+	} else {
+		s.Logger().Info("Website updated",
+			zap.Uint("id", websiteID),
+			zap.Uint("user_id", userID),
+			zap.Any("updates", updates))
+	}
 
 	// Emit website published event if target hash changed (content was republished)
 	if targetHashChanged && updatedWebsite != nil {
@@ -946,12 +970,75 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 		s.autoValidateBrokenWebsite(ctx, userID, websiteID)
 	}
 
-	// Send notification to admin
-	if err := s.notifyAdminWebsiteUpdated(ctx, updatedWebsite, updates); err != nil {
-		s.Logger().Warn("Failed to send website updated notification", zap.Error(err))
+	// Send notification to admin — skipped for no-op updates so a repeated
+	// enable-ipns does not emit a phantom "website updated" event with empty
+	// changes.
+	if !noopUpdate {
+		if err := s.notifyAdminWebsiteUpdated(ctx, updatedWebsite, updates); err != nil {
+			s.Logger().Warn("Failed to send website updated notification", zap.Error(err))
+		}
 	}
 
 	return updatedWebsite, nil
+}
+
+// reconcileManagedDNSLink rewrites the portal-managed dnslink TXT record to
+// match the website's current DB target. It backs the no-op update path, where
+// a previously failed or skipped record write (e.g. during an IPFS → IPNS
+// conversion) would otherwise never converge, leaving validation permanently
+// stuck on a stale /ipfs/ value. It is skipped for any binding without portal
+// DNS authority (no DNS hosting, no zone reference, or delegation-owned).
+func (s *WebsiteServiceDefault) reconcileManagedDNSLink(ctx context.Context, website *pluginDb.Website) {
+	primaryWD, err := s.primaryWebsiteDomain(ctx, website)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		s.Logger().Warn("Failed to resolve primary domain for dnslink reconcile",
+			zap.Error(err),
+			zap.Uint("website_id", website.ID))
+		return
+	}
+	if primaryWD == nil || s.dnsSvc == nil || !primaryWD.DNSHostingEnabled || primaryWD.ZoneID == 0 || primaryWD.DelegationRecordsOwned() {
+		return
+	}
+
+	// Skip the write when the live dnslink record already carries the target:
+	// an idempotent client retry then performs zero external DNS writes.
+	desired := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
+	if result, err := s.resolverForDomain(primaryWD.Domain).ResolveDNSLink(primaryWD.Domain); err == nil {
+		current := s.determineFoundDNSLink(result, website)
+		if current == desired {
+			s.Logger().Debug("dnslink record already matches website target; skipping reconcile",
+				zap.Uint("website_id", website.ID),
+				zap.String("domain", primaryWD.Domain),
+				zap.String("dnslink", current))
+			return
+		}
+		s.Logger().Debug("dnslink record does not match website target; reconciling",
+			zap.Uint("website_id", website.ID),
+			zap.String("domain", primaryWD.Domain),
+			zap.String("desired", desired),
+			zap.String("found", current))
+	} else {
+		// An unreadable record must not block the repair; fall through to the
+		// idempotent REPLACE.
+		s.Logger().Debug("Failed to resolve dnslink record before reconcile; writing unconditionally",
+			zap.Uint("website_id", website.ID),
+			zap.String("domain", primaryWD.Domain),
+			zap.Error(err))
+	}
+
+	if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, primaryWD.ZoneID, primaryWD.Domain, website.TargetHash(), pluginDb.WebsiteTargetType(website.TargetType)); err != nil {
+		s.Logger().Warn("Failed to reconcile dnslink record for unchanged website target",
+			zap.Error(err),
+			zap.Uint("website_id", website.ID),
+			zap.Uint("zone_id", primaryWD.ZoneID))
+		return
+	}
+
+	s.Logger().Debug("Reconciled dnslink record for unchanged website target",
+		zap.Uint("website_id", website.ID),
+		zap.Uint("zone_id", primaryWD.ZoneID),
+		zap.String("domain", primaryWD.Domain),
+		zap.String("target_type", website.TargetType))
 }
 
 // handleDNSEnabledTransition handles the transition when DNS hosting is enabled
