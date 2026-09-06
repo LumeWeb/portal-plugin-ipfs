@@ -353,6 +353,9 @@ func (r *recordingDelegatedDomainSvc) VerifyDomain(context.Context, *pluginDb.We
 	return domsvc.DelegationVerificationResult{State: domsvc.DelegationVerified}, nil
 }
 func (r *recordingDelegatedDomainSvc) GetNamespaceForDomain(string) (string, bool) { return "", false }
+func (r *recordingDelegatedDomainSvc) ValidateOnChainTLSA(context.Context, *pluginDb.WebsiteDomain) (bool, string, string, string, error) {
+	return true, "", "", "", nil
+}
 func (r *recordingDelegatedDomainSvc) GetWebsiteDomainByName(context.Context, string) (*pluginDb.WebsiteDomain, error) {
 	return nil, gorm.ErrRecordNotFound
 }

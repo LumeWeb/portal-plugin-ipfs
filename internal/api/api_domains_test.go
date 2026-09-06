@@ -443,7 +443,7 @@ func TestAPI_DANERepublish(t *testing.T) {
 			// four args must be matched, otherwise the calls register as a mismatch
 			// and only the expectation bookkeeping (not the real call) advances.
 			mockDNS.On("SetTLSARecord", mock.Anything, uint(42), mock.Anything, mock.Anything).Return(nil).Times(2)
-			_, _, err := svc.UpdateTLSAFromCert(ctx, "hns", wd.Domain, certPEM, keyPEM)
+			_, _, err := svc.UpdateTLSAFromCert(ctx, string(pluginDb.DomainNamespaceHNS), wd.Domain, certPEM, keyPEM)
 			require.NoError(t, err, "seeding stored cert via UpdateTLSAFromCert")
 
 			mockDNS.AssertCalled(tb, "SetTLSARecord", mock.Anything, uint(42), mock.Anything, mock.Anything)
@@ -462,7 +462,7 @@ func TestAPI_DANERepublish(t *testing.T) {
 
 			// The DNS publish must have happened for the managed zone.
 			mockDNS.AssertNumberOfCalls(tb, "SetTLSARecord", 2)
-		}, daneRepublishTestOptions)
+		}, TestOptions)
 	})
 
 	t.Run("onchain_hns_with_stored_cert_republishes_for_chain", func(t *testing.T) {
@@ -492,7 +492,7 @@ func TestAPI_DANERepublish(t *testing.T) {
 			require.NotNil(tb, svc)
 			keyPEM := mustGenerateTestKey(t)
 			certPEM := mustIssueTestCert(t, keyPEM, "onchain-repub.hns")
-			_, _, err := svc.UpdateTLSAFromCert(ctx, "hns", wd.Domain, certPEM, keyPEM)
+			_, _, err := svc.UpdateTLSAFromCert(ctx, string(pluginDb.DomainNamespaceHNS), wd.Domain, certPEM, keyPEM)
 			require.NoError(t, err, "seeding stored cert via UpdateTLSAFromCert")
 
 			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
@@ -512,7 +512,7 @@ func TestAPI_DANERepublish(t *testing.T) {
 			require.NotEmpty(t, resp.OwnerName)
 			assert.False(t, resp.PublishedToManagedZone,
 				"chain-managed binding has no portal zone; the TLSA must be installed on-chain")
-		}, daneRepublishTestOptions)
+		}, TestOptions)
 	})
 
 	t.Run("onchain_hns_with_stored_tlsa_but_no_private_key_republishes", func(t *testing.T) {
@@ -539,21 +539,23 @@ func TestAPI_DANERepublish(t *testing.T) {
 			}
 			require.NoError(t, ctx.DB().Create(wd).Error)
 
-			// Seed the TLSA/cert WITHOUT the DANE key-encryption key: the push
-			// stores tlsa/owner/cert but skips persisting the private key,
-			// reproducing the no-stored-certificate condition.
+			// Seed a legacy degenerate state directly in ProtocolData: a stored
+			// TLSA (installed on-chain) with no private key persisted — the
+			// shape pre-dating unconditional DANE key persistence. Republish
+			// must return that exact TLSA rather than erroring or rotating it.
 			svc := core.GetService[*domain.DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 			require.NotNil(tb, svc)
-			keyPEM := mustGenerateTestKey(t)
-			certPEM := mustIssueTestCert(t, keyPEM, "onchain-notlsa.hns")
-			_, _, err := svc.UpdateTLSAFromCert(ctx, "hns", wd.Domain, certPEM, keyPEM)
-			require.NoError(t, err, "seeding stored TLSA via UpdateTLSAFromCert")
+			wd.ProtocolData = datatypes.JSONMap{
+				"tlsa":       "3 1 1 aabbccdd",
+				"owner_name": "_443._tcp.onchain-notlsa.hns",
+			}
+			require.NoError(t, ctx.DB().Model(wd).Update("protocol_data", wd.ProtocolData).Error)
 
 			// Confirm the degenerate precondition: TLSA present, private key absent.
-			tlsa, _, dErr := svc.GetDANERecord(ctx, "hns", wd.Domain)
+			tlsa, _, dErr := svc.GetDANERecord(ctx, string(pluginDb.DomainNamespaceHNS), wd.Domain)
 			require.NoError(t, dErr)
 			require.NotEmpty(t, tlsa, "TLSA must be stored for the precondition")
-			_, gErr := svc.GetCertificateKey(ctx, "hns", wd.Domain)
+			_, gErr := svc.GetCertificateKey(ctx, string(pluginDb.DomainNamespaceHNS), wd.Domain)
 			require.ErrorIs(t, gErr, gorm.ErrRecordNotFound, "private key must be absent for the precondition")
 
 			rec := helper.makeAuthenticatedRequest(http.MethodPost, republishPath(int(websiteID), int(wd.ID)), token, nil)
@@ -714,18 +716,6 @@ func TestAPI_UpdateDomain(t *testing.T) {
 	})
 }
 
-// testDANEKey is the fixed 32-byte AES-256 key (base64) used to encrypt the DANE
-// private key at rest. It matches the domain package's testDANEKey and is an
-// at-rest encryption key, not a secret literal.
-const testDANEKey = "IUf7FMs69krvqJGFn7y8U2jfurNf8bxynXFQBGnP7cI="
-
-// daneRepublishTestOptions wires the DnsConfig DANE key-encryption key so the
-// republish handler's GetCertificateKey can decrypt the stored private key.
-var daneRepublishTestOptions = coreTesting.CombineOptions(
-	TestOptions,
-	coreTesting.WithConfig("plugin.ipfs.service.dns.dane_key_encryption_key", testDANEKey),
-)
-
 func mustGenerateTestKey(t testing.TB) string {
 	t.Helper()
 	_, keyPEM, err := dane.GenerateSelfSignedECDSA([]string{"example"}, time.Now().AddDate(1, 0, 0))
@@ -735,9 +725,11 @@ func mustGenerateTestKey(t testing.TB) string {
 	return keyPEM
 }
 
-func mustIssueTestCert(t testing.TB, _ string, domain string) string {
+func mustIssueTestCert(t testing.TB, keyPEM string, domain string) string {
 	t.Helper()
-	certPEM, _, err := dane.GenerateSelfSignedECDSA([]string{domain}, time.Now().AddDate(1, 0, 0))
+	// Issue from the SAME key the push carries: cert SPKI and persisted DANE
+	// key must agree, matching the gateway's issue-around-stable-key contract.
+	certPEM, err := dane.IssueCertFromKey(keyPEM, []string{domain}, time.Now().AddDate(1, 0, 0))
 	if err != nil {
 		t.Fatalf("issue cert: %v", err)
 	}

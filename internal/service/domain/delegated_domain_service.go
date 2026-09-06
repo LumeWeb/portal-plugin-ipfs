@@ -920,7 +920,7 @@ func dnssecCheck(required bool, ds string) pluginCore.ValidationCheck {
 		msg = msgDNSSECNoKey
 	}
 	return pluginCore.ValidationCheck{
-		Name:     pluginCore.ValidationCheckDNSSEC,
+		Name: pluginCore.ValidationCheckDNSSEC,
 		// A namespace that does not require DNSSEC satisfies the gate by
 		// definition, so a non-DNSSEC (e.g. ICANN) domain must report OK even
 		// with no DS — otherwise every validated ICANN delegation would show a
@@ -1124,9 +1124,9 @@ func jsonToMap(raw json.RawMessage) datatypes.JSONMap {
 
 // UpdateTLSAFromCert computes TLSA from a pushed cert and stores it. When
 // privateKeyPEM is non-empty and the domain has no persisted key yet, the
-// private key is encrypted at rest and stored so Caddy can later fetch the same
-// key (stable SPKI) and re-issue certs around it without touching DNS. The key
-// is only ever persisted when absent — it is never overwritten by a later push.
+// private key is stored so Caddy can later fetch the same key (stable SPKI)
+// and re-issue certs around it without touching DNS. The key is only ever
+// persisted when absent — it is never overwritten by a later push.
 func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespace, domain, certPEM, privateKeyPEM string) (tlsa, ownerName string, err error) {
 	provider := s.registry.Get(namespace)
 	if provider == nil {
@@ -1139,19 +1139,18 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 	}
 	tlsa = TLSAHashPrefix() + hash
 	ownerName = dane.TLSAOwnerName(domain, DaneTLSAPort, DaneTLSATransport)
-
-	// Notify DANE-capable providers that a cert is available. Certificate/DANE
-	// handling is an optional sub-interface: a provider without DANE (e.g.
-	// ICANN) simply does not implement CertificateProvider, so there is no
-	// mandatory no-op to call.
-	if certProvider, ok := provider.(CertificateProvider); ok {
-		if err := certProvider.OnCertAvailable(ctx, domain, certPEM); err != nil {
-			return "", "", fmt.Errorf("provider OnCertAvailable: %w", err)
-		}
-	}
+	// SPKI-drift is policed inside the row-locked transaction below (an
+	// out-of-transaction preflight cannot win the race between concurrent
+	// pushes); see the stored-key classification there.
 
 	if s.DB() == nil {
-		// test context
+		// test context (no persistence): compute the response and notify the
+		// provider; there is no identity to guard.
+		if certProvider, ok := provider.(CertificateProvider); ok {
+			if err := certProvider.OnCertAvailable(ctx, domain, certPEM); err != nil {
+				return "", "", fmt.Errorf("provider OnCertAvailable: %w", err)
+			}
+		}
 		return tlsa, ownerName, nil
 	}
 
@@ -1176,30 +1175,119 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 		}
 		zoneID = wd.ZoneID
 		portalManaged = wd.Class() == pluginDb.ClassPortalManaged
-		if wd.ProtocolData == nil {
-			wd.ProtocolData = make(datatypes.JSONMap)
-		}
 
-		// Always refresh the cert + TLSA + owner name on every push.
-		wd.ProtocolData[daneKeyField] = certPEM
-		wd.ProtocolData[protocolDataTLSAKey] = tlsa
-		wd.ProtocolData[protocolDataOwnerKey] = ownerName
-
-		// Persist the private key only when we don't already have one.
-		if privateKeyPEM != "" {
-			if _, exists := wd.ProtocolData[protocolDataPrivateKeyKey]; !exists {
-				enc, encErr := s.encryptPrivateKey(ctx, privateKeyPEM)
-				if encErr != nil {
-					s.Logger().Warn("dane key not persisted (encryption key not configured?)",
-						zap.String("domain", domain), zap.Error(encErr))
-				} else {
-					wd.ProtocolData[protocolDataPrivateKeyKey] = enc
+		// Identity classification (first-writer-wins, atomic under the row
+		// lock): the first usable persisted key becomes the immutable SPKI
+		// identity; pushes that disagree with it are rejected. A key push
+		// whose private key is genuinely garbage is rejected too — PKCS#8
+		// parse + SPKI derivation, not a shape guess, decides usability.
+		// DANE-identity classification applies only to DANE-capable providers
+		// (e.g. HNS). Non-DANE namespaces (ICANN) receive cert pushes for
+		// ordinary HTTPS with no stable-key concept, so they skip it entirely.
+		if provider.UsesManagedZoneTLSA() {
+			stored := wd.GetDANEPrivKeyPEM()
+			switch {
+			case stored == "":
+				if privateKeyPEM == "" {
+					// A bound domain with no stable key cannot adopt a
+					// certificate-only identity: the cert-derived TLSA would be
+					// overwritten (rotated) the next time a stable key is
+					// bootstrapped. Reject until the identity exists. Callers
+					// that only need a best-effort TLSA (cert webhook) match on
+					// ErrDANENotBootstrapped.
+					_ = tx.AddError(fmt.Errorf("%s: %w",
+						fmt.Sprintf("DANE key for %s is not bootstrapped and the cert push carried no private key; bootstrap a stable key (run dane republish) before cert issuance", domain),
+						ErrDANENotBootstrapped))
+					return tx
 				}
-			} else {
-				s.Logger().Warn("dane key push ignored: a key already exists for domain (not overwriting)",
-					zap.String("domain", domain))
+				keyHash, keyErr := dane.ComputeTLSAFromPrivateKey(privateKeyPEM)
+				if keyErr != nil {
+					_ = tx.AddError(fmt.Errorf("pushed private key for %s is not a parseable DANE key: %w", domain, keyErr))
+					return tx
+				}
+				// First bootstrap: the pushed cert's SPKI must belong to the
+				// key being persisted, or the identity is incoherent from day
+				// one.
+				if TLSAHashPrefix()+keyHash != tlsa {
+					_ = tx.AddError(fmt.Errorf(
+						"DANE key mismatch for %s: the pushed certificate's SPKI does not match the pushed private key",
+						domain))
+					return tx
+				}
+				// Stored as plaintext by design: the DANE key's value is SPKI
+				// stability, not secrecy — database access already implies
+				// control of portal-managed zones, and chain-managed name
+				// routing lives in the owner's HNS key, not this DB (audit
+				// finding 3, accepted threat model).
+				wd.SetDANEPrivKeyPEM(privateKeyPEM)
+			case !daneKeyUsable(stored):
+				// Legacy data integrity: pre-plaintext rows may carry AES-GCM
+				// ciphertext that no longer decrypts (the at-rest encryption and
+				// its config were removed). With an installed identity the stored
+				// (dead) key is authoritative — a fresh bootstrap would rotate the
+				// live pin; without an identity a usable pushed key replaces it.
+				if wd.GetDANETLSA() != "" {
+					_ = tx.AddError(fmt.Errorf(
+						"DANE key for %s is unreadable while a TLSA identity is installed (%s); this push would rotate the live SPKI pin — resolve manually",
+						domain, wd.GetDANETLSA()))
+					return tx
+				}
+				if privateKeyPEM == "" {
+					// No identity to preserve (no installed TLSA) and no
+					// replacement key: behave like a keyless row so cert-only
+					// renewals resolve best-effort instead of failing forever.
+					_ = tx.AddError(fmt.Errorf("stored DANE key for %s is unusable and this push carries no replacement private key: %w", domain, ErrDANENotBootstrapped))
+					return tx
+				}
+				replHash, keyErr := dane.ComputeTLSAFromPrivateKey(privateKeyPEM)
+				if keyErr != nil {
+					_ = tx.AddError(fmt.Errorf("stored DANE key for %s is unusable and this push supplies no usable replacement key: %w", domain, keyErr))
+					return tx
+				}
+				if TLSAHashPrefix()+replHash != tlsa {
+					_ = tx.AddError(fmt.Errorf(
+						"DANE key mismatch for %s: the pushed certificate's SPKI does not match the pushed private key",
+						domain))
+					return tx
+				}
+				wd.SetDANEPrivKeyPEM(privateKeyPEM)
+			default:
+				// A usable stable key exists: the identity is the stored key's
+				// SPKI. The persisted key is never overwritten; every push must
+				// match that SPKI — compared by imprint, never by raw PEM bytes
+				// (a re-serialized / line-normalized encoding of the same key
+				// is semantically identical and must not be rejected).
+				storedHash, hErr := dane.ComputeTLSAFromPrivateKey(stored)
+				if hErr != nil {
+					_ = tx.AddError(fmt.Errorf("derive SPKI from persisted DANE key for %s: %w", domain, hErr))
+					return tx
+				}
+				if privateKeyPEM != "" {
+					pushedHash, pErr := dane.ComputeTLSAFromPrivateKey(privateKeyPEM)
+					if pErr != nil {
+						_ = tx.AddError(fmt.Errorf("pushed private key for %s is not a parseable DANE key: %w", domain, pErr))
+						return tx
+					}
+					if pushedHash != storedHash {
+						_ = tx.AddError(fmt.Errorf(
+							"DANE key mismatch for %s: the pushed private key's SPKI does not match the persisted stable key",
+							domain))
+						return tx
+					}
+				}
+				if TLSAHashPrefix()+storedHash != tlsa {
+					_ = tx.AddError(fmt.Errorf(
+						"DANE key mismatch for %s: the pushed certificate's SPKI does not match the persisted stable key",
+						domain))
+					return tx
+				}
 			}
 		}
+		// Always refresh the cert + TLSA + owner name on every push — only
+		// reached when the identity is consistent with the pushed key.
+		wd.SetDANECertPEM(certPEM)
+		wd.SetDANETLSA(tlsa)
+		wd.SetDANETLSAOwner(ownerName)
 
 		// sync TLSA for HNS
 		if namespace == string(pluginDb.DomainNamespaceHNS) && wd.DelegationData != nil {
@@ -1245,6 +1333,15 @@ func (s *DelegatedDomainService) UpdateTLSAFromCert(ctx context.Context, namespa
 	})
 	if txErr != nil {
 		return "", "", fmt.Errorf("save domain tlsa: %w", txErr)
+	}
+
+	// Only after the identity was validated and persisted under the row lock
+	// do we notify the provider: a rejected push must not mutate the provider's
+	// in-memory cert cache, which BuildDelegation reads to derive TLSA.
+	if certProvider, ok := provider.(CertificateProvider); ok {
+		if err := certProvider.OnCertAvailable(ctx, domain, certPEM); err != nil {
+			return "", "", fmt.Errorf("provider OnCertAvailable: %w", err)
+		}
 	}
 
 	// Publish the TLSA to the portal-managed authoritative zone in PowerDNS.
@@ -1304,6 +1401,12 @@ const (
 	DANEPublishChain DANEPublicationTarget = "chain"
 )
 
+// ErrDANENotBootstrapped reports that a DANE-capable bound domain has no
+// stable key yet and the operation did not (and will not) establish one —
+// e.g. a certificate-only push from the cert webhook. Such callers that only
+// need a best-effort TLSA value may match on this sentinel and fall back.
+var ErrDANENotBootstrapped = errors.New("dane identity not bootstrapped")
+
 // DANEPublicationTargetFor resolves where a bound domain's DANE TLSA is served,
 // and whether the DANE republish flow applies to it at all. It is the single
 // source of truth for DANE publication eligibility: a DANE-capable namespace
@@ -1325,6 +1428,71 @@ func (s *DelegatedDomainService) DANEPublicationTargetFor(wd *pluginDb.WebsiteDo
 	}
 }
 
+// ValidateOnChainTLSA compares the TLSA a chain-managed (HIP-5) binding's
+// on-chain zone data actually serves against the portal-stored DANE record.
+// The gate applies ONLY to chain-managed bindings: they are the locus with
+// owner-side DANE publication duty. Portal-managed bindings publish TLSA into
+// their own PowerDNS zone (UpdateTLSAFromCert), and self-hosted/ICANN bindings
+// carry no portal DANE obligation — for both, the gate is not applicable and
+// reports OK. Missing/mismatched records and un-bootstrapped identities fail
+// the check (ok=false + expected/found); query transport failures return an
+// error so a broken resolver never reads as compliance.
+func (s *DelegatedDomainService) ValidateOnChainTLSA(ctx context.Context, wd *pluginDb.WebsiteDomain) (ok bool, detail, expected, found string, err error) {
+	locus, eligible := s.DANEPublicationTargetFor(wd)
+	if !eligible || locus != DANEPublishChain {
+		return true, "", "", "", nil
+	}
+
+	provider := s.registry.Get(string(wd.Namespace))
+	if provider == nil {
+		return false, "", "", "", fmt.Errorf("unsupported namespace: %s", wd.Namespace)
+	}
+	verifier, hasLiveQuery := provider.(DANEVerifier)
+	if !hasLiveQuery {
+		// No live surface to check for this namespace: not applicable.
+		return true, "", "", "", nil
+	}
+
+	stored, _, err := s.GetDANERecord(ctx, string(wd.Namespace), wd.Domain)
+	if err != nil {
+		return false, "", "", "", fmt.Errorf("load stored DANE record for %s: %w", wd.Domain, err)
+	}
+	if stored == "" {
+		return false,
+			fmt.Sprintf("no DANE identity stored for %s — bootstrap it with `dane republish`, then publish the returned record in the name's on-chain zone data", wd.Domain),
+			"", "", nil
+	}
+	expected = normalizeTLSARdata(stored)
+
+	live, err := verifier.QueryTLSARdata(ctx, wd.Domain)
+	if err != nil {
+		return false, "", "", "", err
+	}
+	if live == "" {
+		return false,
+			fmt.Sprintf("TLSA record _%d._%s.%s is not published in the name's on-chain zone data", DaneTLSAPort, DaneTLSATransport, wd.Domain),
+			expected, "", nil
+	}
+	found = live
+	if live != expected {
+		return false,
+			fmt.Sprintf("TLSA record served by %s does not match the portal-stored DANE identity", wd.Domain),
+			expected, live, nil
+	}
+	return true, fmt.Sprintf("TLSA served from %s's on-chain zone data matches the stored DANE identity", wd.Domain), expected, live, nil
+}
+
+// normalizeTLSARdata canonicalizes a stored TLSA rdata ("<usage> <selector>
+// <matching> <hash>") for comparison with a live query result: lowercased
+// hash, whitespace-collapsed.
+func normalizeTLSARdata(tlsa string) string {
+	fields := strings.Fields(tlsa)
+	if len(fields) != 4 {
+		return strings.ToLower(strings.Join(fields, " "))
+	}
+	return fmt.Sprintf("%s %s %s %s", fields[0], fields[1], fields[2], strings.ToLower(fields[3]))
+}
+
 // ensureDANEIdentity bootstraps the stable DANE key/identity for namespaces
 // whose provider translates certs into DANE TLSA. Binding paths (self-hosted
 // and on-chain managed) call it so the TLSA the owner must publish exists at
@@ -1336,17 +1504,6 @@ func (s *DelegatedDomainService) ensureDANEIdentity(ctx context.Context, provide
 		return nil
 	}
 	if _, err := s.EnsureCertificateKey(ctx, namespace, domain); err != nil {
-		// DANE persistence is best-effort at bind time: when the key-encryption
-		// key is empty, the contract (config/dns.go) skips persistence rather
-		// than failing, mirroring UpdateTLSAFromCert. Match the missing-key
-		// sentinel specifically (errors.Is) so a genuine failure that merely
-		// co-occurs with an absent key — DB error, AEAD decrypt failure, row
-		// not found — is still surfaced instead of silently skipped.
-		if errors.Is(err, errDANEKeyNotConfigured) {
-			s.Logger().Warn("DANE identity not persisted (encryption key not configured); skipping",
-				zap.String("domain", domain), zap.Error(err))
-			return nil
-		}
 		return fmt.Errorf("failed to bootstrap DANE identity: %w", err)
 	}
 	return nil
@@ -1431,23 +1588,25 @@ func (s *DelegatedDomainService) GetWebsiteDomainByDomainAndNamespace(ctx contex
 	return &wd, nil
 }
 
-// ProtocolData keys for DANE TLS identity. All DANE state for a domain lives in
-// the WebsiteDomain.ProtocolData JSON map (the per-protocol data store), keeping
-// the key, cert, TLSA, and owner name together as one per-protocol unit.
-const (
-	daneKeyField              = "dane_cert_pem"    // last pushed cert (not a source of truth)
-	protocolDataPrivateKeyKey = "dane_private_key" // encrypted at rest, written once
-	protocolDataTLSAKey       = "tlsa"
-	protocolDataOwnerKey      = "owner_name"
-)
-
-// StoredCert holds the decrypted DANE key material returned to a Caddy cert
+// StoredCert holds the DANE key material returned to a Caddy cert
 // getter so it can re-issue a certificate around the persisted key (stable SPKI).
 type StoredCert struct {
 	PrivateKeyPEM string
 	CertPEM       string
 	TLSA          string
 	OwnerName     string
+}
+
+// daneKeyUsable decides whether a persisted DANE private-key value is a real,
+// parseable key whose SPKI can be derived — PKCS#8 parse + SPKI computation,
+// never a shape guess. Legacy rows holding pre-plaintext AES ciphertext fail
+// this check.
+func daneKeyUsable(keyPEM string) bool {
+	if keyPEM == "" {
+		return false
+	}
+	hash, err := dane.ComputeTLSAFromPrivateKey(keyPEM)
+	return err == nil && hash != ""
 }
 
 // EnsureCertificateKey creates the stable DANE key for a domain if it does not
@@ -1467,14 +1626,24 @@ func (s *DelegatedDomainService) EnsureCertificateKey(ctx context.Context, names
 			_ = tx.AddError(err)
 			return tx
 		}
-		if wd.ProtocolData != nil {
-			if encrypted, ok := wd.ProtocolData[protocolDataPrivateKeyKey].(string); ok && encrypted != "" {
-				decrypted, err := s.decryptPrivateKey(ctx, encrypted)
-				if err != nil {
-					_ = tx.AddError(err)
+		key := wd.GetDANEPrivKeyPEM()
+		if key != "" {
+			// Data-integrity guard: pre-plaintext rows may carry AES-GCM
+			// ciphertext that no longer decrypts (the at-rest encryption and
+			// its config were removed). Usability is decided by real parse +
+			// SPKI derivation, not shape sniffing.
+			if !daneKeyUsable(key) {
+				if wd.GetDANETLSA() != "" {
+					_ = tx.AddError(fmt.Errorf(
+						"DANE key for %s is unreadable while a TLSA identity is installed (%s); bootstrapping a fresh key here would rotate the live SPKI pin — resolve manually",
+						domain, wd.GetDANETLSA()))
 					return tx
 				}
-				keyPEM = decrypted
+				// Unusable key with no installed identity: discard it and
+				// bootstrap a fresh one below.
+				wd.DeleteDANEPrivKey()
+			} else {
+				keyPEM = key
 				return tx
 			}
 		}
@@ -1484,15 +1653,7 @@ func (s *DelegatedDomainService) EnsureCertificateKey(ctx context.Context, names
 			_ = tx.AddError(fmt.Errorf("generate DANE key: %w", err))
 			return tx
 		}
-		encrypted, err := s.encryptPrivateKey(ctx, generated)
-		if err != nil {
-			_ = tx.AddError(fmt.Errorf("encrypt DANE key: %w", err))
-			return tx
-		}
-		if wd.ProtocolData == nil {
-			wd.ProtocolData = make(datatypes.JSONMap)
-		}
-		wd.ProtocolData[protocolDataPrivateKeyKey] = encrypted
+		wd.SetDANEPrivKeyPEM(generated)
 		if err := tx.Model(&pluginDb.WebsiteDomain{}).Where("id = ?", wd.ID).
 			Updates(map[string]any{"protocol_data": wd.ProtocolData, "updated_at": time.Now()}).Error; err != nil {
 			_ = tx.AddError(err)
@@ -1528,11 +1689,8 @@ func (s *DelegatedDomainService) persistTLSAKeyMetadata(ctx context.Context, nam
 			_ = tx.AddError(err)
 			return tx
 		}
-		if wd.ProtocolData == nil {
-			wd.ProtocolData = make(datatypes.JSONMap)
-		}
-		wd.ProtocolData[protocolDataTLSAKey] = tlsa
-		wd.ProtocolData[protocolDataOwnerKey] = ownerName
+		wd.SetDANETLSA(tlsa)
+		wd.SetDANETLSAOwner(ownerName)
 		if err := tx.Model(&pluginDb.WebsiteDomain{}).Where("id = ?", wd.ID).
 			Updates(map[string]any{
 				"protocol_data": wd.ProtocolData,
@@ -1544,43 +1702,31 @@ func (s *DelegatedDomainService) persistTLSAKeyMetadata(ctx context.Context, nam
 	})
 }
 
-// GetCertificateKey returns the stored DANE key material for a domain,
-// decrypting the private key at rest. Returns gorm.ErrRecordNotFound when the
-// domain has no persisted key yet (i.e. first bootstrap).
+// GetCertificateKey returns the stored DANE key material for a domain.
+// Returns gorm.ErrRecordNotFound when the domain has no persisted key yet
+// (i.e. first bootstrap) or when the stored value is not a usable key.
 func (s *DelegatedDomainService) GetCertificateKey(ctx context.Context, namespace, domain string) (*StoredCert, error) {
 	ns := pluginDb.DomainNamespace(namespace)
 	wd, err := s.GetWebsiteDomainByDomainAndNamespace(ctx, domain, ns)
 	if err != nil {
 		return nil, err // includes gorm.ErrRecordNotFound
 	}
-	if wd.ProtocolData == nil {
+	keyPEM := wd.GetDANEPrivKeyPEM()
+	// Same usability bar as EnsureCertificateKey: legacy ciphertext rows
+	// report NotFound rather than handing out garbage PEM.
+	if keyPEM == "" || !daneKeyUsable(keyPEM) {
 		return nil, gorm.ErrRecordNotFound
 	}
-	encKey, ok := wd.ProtocolData[protocolDataPrivateKeyKey].(string)
-	if !ok || encKey == "" {
-		return nil, gorm.ErrRecordNotFound
-	}
-	keyPEM, err := s.decryptPrivateKey(ctx, encKey)
-	if err != nil {
-		return nil, err
-	}
-	result := &StoredCert{
+	return &StoredCert{
 		PrivateKeyPEM: keyPEM,
-	}
-	if v, ok := wd.ProtocolData[daneKeyField].(string); ok {
-		result.CertPEM = v
-	}
-	if v, ok := wd.ProtocolData[protocolDataTLSAKey].(string); ok {
-		result.TLSA = v
-	}
-	if v, ok := wd.ProtocolData[protocolDataOwnerKey].(string); ok {
-		result.OwnerName = v
-	}
-	return result, nil
+		CertPEM:       wd.GetDANECertPEM(),
+		TLSA:          wd.GetDANETLSA(),
+		OwnerName:     wd.GetDANETLSAOwner(),
+	}, nil
 }
 
 // GetDANERecord returns the stored DANE TLSA rdata and owner name for a domain
-// without decrypting the private key — the lightweight read surface for
+// without returning the private key — the lightweight read surface for
 // consumers that only need the record to publish into the name's zone (e.g.
 // dns-requirements). Returns gorm.ErrRecordNotFound when the binding does not
 // exist and empty strings when no DANE identity has been computed yet.
@@ -1589,13 +1735,7 @@ func (s *DelegatedDomainService) GetDANERecord(ctx context.Context, namespace, d
 	if err != nil {
 		return "", "", err
 	}
-	if v, ok := wd.ProtocolData[protocolDataTLSAKey].(string); ok {
-		tlsa = v
-	}
-	if v, ok := wd.ProtocolData[protocolDataOwnerKey].(string); ok {
-		ownerName = v
-	}
-	return tlsa, ownerName, nil
+	return wd.GetDANETLSA(), wd.GetDANETLSAOwner(), nil
 }
 
 // RepublishChainDANERecord returns the DANE TLSA the owner must install in a
@@ -1604,9 +1744,8 @@ func (s *DelegatedDomainService) GetDANERecord(ctx context.Context, namespace, d
 // pin and invalidate the live on-chain record — so an existing stored TLSA is
 // returned unchanged. Only a binding with no on-chain identity yet is
 // bootstrapped from the stable DANE key (the source of truth for TLSA 3 1 1,
-// never a certificate), and no PowerDNS zone write occurs. If no identity
-// exists and a fresh key cannot be persisted (key-encryption key unset), it
-// returns gorm.ErrRecordNotFound.
+// never a certificate), and no PowerDNS zone write occurs. A bootstrap
+// failure always returns error — it can no longer be silently skipped.
 func (s *DelegatedDomainService) RepublishChainDANERecord(ctx context.Context, namespace, domain string) (tlsa, ownerName string, err error) {
 	// Preserve the already-installed on-chain identity instead of rotating the
 	// SPKI pin: a stored TLSA is authoritative for what is live on-chain. The
@@ -1623,13 +1762,10 @@ func (s *DelegatedDomainService) RepublishChainDANERecord(ctx context.Context, n
 	}
 
 	sc, err := s.EnsureCertificateKey(ctx, namespace, domain)
-	if err == nil {
-		return sc.TLSA, sc.OwnerName, nil
-	}
-	if !errors.Is(err, errDANEKeyNotConfigured) {
+	if err != nil {
 		return "", "", fmt.Errorf("refresh on-chain DANE identity: %w", err)
 	}
-	return "", "", gorm.ErrRecordNotFound
+	return sc.TLSA, sc.OwnerName, nil
 }
 
 // GetActiveWebsiteDomainByDomain finds an active domain across all namespaces.

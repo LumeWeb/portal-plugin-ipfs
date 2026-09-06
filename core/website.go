@@ -23,6 +23,8 @@ const (
 	ValidationReasonDNSMismatch       ValidationReason = "dns_mismatch"
 	ValidationReasonTokenMissing      ValidationReason = "token_missing"
 	ValidationReasonDelegationPending ValidationReason = "delegation_pending"
+	ValidationReasonTLSAMissing       ValidationReason = "tlsa_missing"
+	ValidationReasonTLSAMismatch      ValidationReason = "tlsa_mismatch"
 )
 
 // ValidationCheck gate names. Shared by website DNS validation and domain
@@ -35,6 +37,7 @@ const (
 	ValidationCheckDNSSEC     = "dnssec"
 	ValidationCheckOnChain    = "onchain"
 	ValidationCheckPlatform   = "platform"
+	ValidationCheckTLSA       = "tlsa"
 )
 
 // ValidationCheck reports the outcome of a single validation gate (website

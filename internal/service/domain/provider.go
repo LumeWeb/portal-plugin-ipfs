@@ -53,6 +53,21 @@ type CertificateProvider interface {
 	OnCertAvailable(ctx context.Context, domain string, certPEM string) error
 }
 
+// DANEVerifier is the optional capability for providers whose namespaces can
+// report the live TLSA record a served name presents (chain-managed DANE, e.g.
+// a HIP-5 name's on-chain zone data). Used by the TLSA validation gate to
+// compare what the name actually serves against the portal-stored record.
+// Providers without a live queryable TLSA surface (e.g. ICANN) do not
+// implement it.
+type DANEVerifier interface {
+	// QueryTLSARdata returns the rdata of the live TLSA record for `domain`'s
+	// DANE endpoint (_443._tcp.<domain>), normalized to "<usage> <selector>
+	// <matching> <hash>" (hash lowercased). An empty string with a nil error
+	// means the record is not published (NXDOMAIN/NODATA); transport failures
+	// return an error so callers can fail closed.
+	QueryTLSARdata(ctx context.Context, domain string) (string, error)
+}
+
 type DomainProvider interface {
 	Protocol() string
 	Validate(domain string) error

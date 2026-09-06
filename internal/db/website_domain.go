@@ -18,6 +18,88 @@ const (
 // DomainStatus represents the lifecycle state of a delegated domain.
 type DomainStatus string
 
+// ProtocolData keys used by the domain service for DANE state. Raw map access
+// from service code goes through the typed accessors on WebsiteDomain below —
+// never cast the JSON map directly.
+const (
+	ProtocolDataDANECertPEM = "dane_cert_pem"    // last pushed cert (not a source of truth)
+	ProtocolDataDANEPrivKey = "dane_private_key" // stable DANE private key, written once
+	ProtocolDataTLSA        = "tlsa"
+	ProtocolDataTLSAOwner   = "owner_name"
+)
+
+// daneString reads a string protocol-data field, "" when absent or non-string.
+func (w *WebsiteDomain) daneString(key string) string {
+	if w.ProtocolData == nil {
+		return ""
+	}
+	v, _ := w.ProtocolData[key].(string)
+	return v
+}
+
+// daneSet writes a string protocol-data field, initializing the map lazily.
+func (w *WebsiteDomain) daneSet(key, value string) {
+	if w.ProtocolData == nil {
+		w.ProtocolData = make(datatypes.JSONMap)
+	}
+	w.ProtocolData[key] = value
+}
+
+// GetDANEPrivKeyPEM returns the persisted stable DANE private key PEM, or ""
+// when absent. Written at most once per domain; never use it as a scratch
+// field.
+func (w *WebsiteDomain) GetDANEPrivKeyPEM() string {
+	return w.daneString(ProtocolDataDANEPrivKey)
+}
+
+// SetDANEPrivKeyPEM persists the stable DANE private key.
+func (w *WebsiteDomain) SetDANEPrivKeyPEM(pem string) {
+	w.daneSet(ProtocolDataDANEPrivKey, pem)
+}
+
+// DeleteDANEPrivKey removes the persisted DANE private key (used only when a
+// stored value is unusable and no TLSA identity depends on it).
+func (w *WebsiteDomain) DeleteDANEPrivKey() {
+	if w.ProtocolData != nil {
+		delete(w.ProtocolData, ProtocolDataDANEPrivKey)
+	}
+}
+
+// HasDANEPrivKey reports whether a private key value is persisted.
+func (w *WebsiteDomain) HasDANEPrivKey() bool {
+	return w.daneString(ProtocolDataDANEPrivKey) != ""
+}
+
+// GetDANECertPEM returns the last pushed certificate PEM (cache only), or "".
+func (w *WebsiteDomain) GetDANECertPEM() string {
+	return w.daneString(ProtocolDataDANECertPEM)
+}
+
+// SetDANECertPEM caches the latest pushed certificate PEM.
+func (w *WebsiteDomain) SetDANECertPEM(pem string) {
+	w.daneSet(ProtocolDataDANECertPEM, pem)
+}
+
+// GetDANETLSA returns the stored TLSA rdata, or "" when no identity exists.
+func (w *WebsiteDomain) GetDANETLSA() string {
+	return w.daneString(ProtocolDataTLSA)
+}
+
+// SetDANETLSA stores the TLSA rdata.
+func (w *WebsiteDomain) SetDANETLSA(tlsa string) {
+	w.daneSet(ProtocolDataTLSA, tlsa)
+}
+
+// GetDANETLSAOwner returns the stored TLSA owner name, or "".
+func (w *WebsiteDomain) GetDANETLSAOwner() string {
+	return w.daneString(ProtocolDataTLSAOwner)
+}
+
+// SetDANETLSAOwner stores the TLSA owner name.
+func (w *WebsiteDomain) SetDANETLSAOwner(owner string) {
+	w.daneSet(ProtocolDataTLSAOwner, owner)
+}
+
 const (
 	DomainStatusDraft             DomainStatus = "draft"
 	DomainStatusRecordsGenerated  DomainStatus = "records_generated"

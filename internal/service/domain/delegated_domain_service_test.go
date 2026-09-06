@@ -186,29 +186,6 @@ func TestDelegatedDomainService_CreateDomain_DuplicateKey(t *testing.T) {
 	}, TestOptions)
 }
 
-func TestDelegatedDomainService_CreateDomain_SelfHostedSkipsDANEPersistenceWithoutEncryptionKey(t *testing.T) {
-	// Without a configured DANE key-encryption key, DANE persistence is
-	// best-effort (config contract: "empty key skips persistence", mirroring
-	// UpdateTLSAFromCert). A self-hosted HNS bind must therefore STILL succeed —
-	// DANE identity is skipped, not fatal — rather than purging the binding.
-	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		db := ctx.DB()
-		website := createTestWebsite(tb, db, 1, "example")
-
-		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
-		require.NotNil(tb, svc)
-
-		wd, err := svc.CreateDomain(context.Background(), "hns", "example", website.ID, 1, false, false, nil, nil)
-		require.NoError(tb, err)
-		assert.Equal(tb, pluginDb.DomainStatusSelfHosted, wd.Status)
-		assert.Equal(tb, uint(0), wd.ZoneID)
-		assert.False(tb, wd.DNSHostingEnabled)
-		require.Nil(tb, wd.ProtocolData)
-		assert.Nil(tb, wd.ProtocolData[protocolDataPrivateKeyKey],
-			"DANE identity not persisted when the encryption key is unconfigured")
-	}, TestOptions)
-}
-
 func TestDelegatedDomainService_CreateDomain_SubdomainReusesParentZone(t *testing.T) {
 	// A managed subdomain lives inside its parent's zone; it must NOT create a
 	// new PowerDNS zone. resolveManagedZone should return the parent zone.
@@ -676,6 +653,13 @@ func TestDelegatedDomainService_UpdateTLSA_PublishesToManagedZone(t *testing.T) 
 			mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 			require.NotNil(tb, mockDNS)
 
+			// Bootstrap the stable DANE key first (as bind-time
+			// ensureDANEIdentity would), then push a cert issued from that key
+			// — the only accepted shape for a DANE-capable binding.
+			stored, err := svc.EnsureCertificateKey(ctx, "hns", "example")
+			require.NoError(tb, err)
+			keyPEM := stored.PrivateKeyPEM
+
 			// The TLSA must be pushed to the managed zone (zone 42) as
 			// "usage selector matching hash" rdata.
 			mockDNS.EXPECT().
@@ -687,12 +671,12 @@ func TestDelegatedDomainService_UpdateTLSA_PublishesToManagedZone(t *testing.T) 
 				Return(nil).
 				Once()
 
-			certPEM, _ := issueCertFromKey(t, mustGenerateKey(t), "example")
-			_, _, err := svc.UpdateTLSAFromCert(ctx, "hns", "example", certPEM, "")
+			certPEM, _ := issueCertFromKey(t, keyPEM, "example")
+			_, _, err = svc.UpdateTLSAFromCert(ctx, "hns", "example", certPEM, keyPEM)
 			require.NoError(tb, err)
 
 			mockDNS.AssertExpectations(tb)
-		}, keyTestOptions)
+		}, TestOptions)
 	})
 
 	// Regression: ICANN domains get a portal-managed ZoneID too, but they do
@@ -717,7 +701,7 @@ func TestDelegatedDomainService_UpdateTLSA_PublishesToManagedZone(t *testing.T) 
 			require.NoError(tb, err)
 
 			mockDNS.AssertNotCalled(tb, "SetTLSARecord")
-		}, keyTestOptions)
+		}, TestOptions)
 	})
 }
 
@@ -804,18 +788,15 @@ func TestDelegatedDomainService_CreateDomain_Hip5OnchainManaged(t *testing.T) {
 				// DANE still applies on-chain: a stable identity is bootstrapped
 				// at bind time (key + TLSA + owner) so the owner can install the
 				// TLSA in the name's on-chain zone data before any cert exists.
-				assert.NotEmpty(tb, persisted.ProtocolData[protocolDataPrivateKeyKey],
+				assert.NotEmpty(tb, persisted.ProtocolData[pluginDb.ProtocolDataDANEPrivKey],
 					"on-chain bind must bootstrap the DANE key")
-				assert.NotEmpty(tb, persisted.ProtocolData[protocolDataTLSAKey],
+				assert.NotEmpty(tb, persisted.ProtocolData[pluginDb.ProtocolDataTLSA],
 					"on-chain bind must compute the DANE TLSA")
-				assert.NotEmpty(tb, persisted.ProtocolData[protocolDataOwnerKey],
+				assert.NotEmpty(tb, persisted.ProtocolData[pluginDb.ProtocolDataTLSAOwner],
 					"on-chain bind must compute the TLSA owner")
 			})
 		}
-	}, coreTesting.CombineOptions(
-		testOptionsWithHNSResolver(addr),
-		coreTesting.WithConfig("plugin.ipfs.service.dns.dane_key_encryption_key", testDANEKey),
-	))
+	}, testOptionsWithHNSResolver(addr))
 }
 
 func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
@@ -842,11 +823,9 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 
 		// DANE state must survive the conversion (DANE/SSL still applies
 		// on-chain; only PowerDNS-served records go away). The private key is
-		// stored encrypted with the configured at-rest key so the conversion's
-		// DANE-identity bootstrap (which re-reads it) succeeds.
+		// stored in ProtocolData so the conversion's DANE-identity bootstrap
+		// (which re-reads it) succeeds.
 		keyPEM := mustGenerateKey(t)
-		encKey, err := svc.encryptPrivateKey(ctx, keyPEM)
-		require.NoError(tb, err)
 
 		wd := &pluginDb.WebsiteDomain{
 			WebsiteID:         website.ID,
@@ -868,7 +847,7 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 				"dane_cert_pem":    "CERT",
 				"tlsa":             "3 1 1 abc",
 				"owner_name":       "_443._tcp." + domain + ".",
-				"dane_private_key": encKey,
+				"dane_private_key": keyPEM,
 			},
 		}
 		require.NoError(tb, db.Create(wd).Error)
@@ -917,7 +896,7 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 		var reloaded pluginDb.Website
 		require.NoError(tb, db.First(&reloaded, website.ID).Error)
 		assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), reloaded.Status)
-	}, keyTestOptions)
+	}, TestOptions)
 }
 
 func TestDelegatedDomainService_ConvertToOnChain_SecondaryDoesNotResetWebsite(t *testing.T) {
@@ -965,7 +944,7 @@ func TestDelegatedDomainService_ConvertToOnChain_SecondaryDoesNotResetWebsite(t 
 		require.NoError(tb, db.First(&reloaded, website.ID).Error)
 		assert.Equal(tb, string(pluginDb.WebsiteStatusActive), reloaded.Status,
 			"converting a secondary domain must not knock the primary website to pending_validation")
-	}, keyTestOptions)
+	}, TestOptions)
 }
 
 func TestDelegatedDomainService_ConvertToOnChain_NoPrimaryFallsBackToOldestActive(t *testing.T) {
@@ -1027,7 +1006,7 @@ func TestDelegatedDomainService_ConvertToOnChain_NoPrimaryFallsBackToOldestActiv
 			// conversion must not invent a new transition / knock state around it.
 			assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), reloaded.Status)
 		})
-	}, keyTestOptions)
+	}, TestOptions)
 }
 
 func TestDelegatedDomainService_ConvertToOnChain_SoleNonActiveBindingStaysPrimary(t *testing.T) {
@@ -1067,7 +1046,7 @@ func TestDelegatedDomainService_ConvertToOnChain_SoleNonActiveBindingStaysPrimar
 		var reloaded pluginDb.Website
 		require.NoError(tb, db.First(&reloaded, website.ID).Error)
 		assert.Equal(tb, string(pluginDb.WebsiteStatusPendingValidation), reloaded.Status)
-	}, keyTestOptions)
+	}, TestOptions)
 }
 
 func TestDelegatedDomainService_VerifyDomain_ReclassifiesExistingHIP5(t *testing.T) {

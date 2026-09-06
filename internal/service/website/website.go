@@ -97,6 +97,7 @@ type delegatedDomainService interface {
 	GetNamespaceForDomain(domain string) (string, bool)
 	GetWebsiteDomainByName(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error)
 	GetPendingWebsiteDomainsPaginated(ctx context.Context, status pluginDb.DomainStatus, limit, offset int) ([]pluginDb.WebsiteDomain, error)
+	ValidateOnChainTLSA(ctx context.Context, wd *pluginDb.WebsiteDomain) (ok bool, detail, expected, found string, err error)
 }
 
 // resolverForDomain returns the appropriate DNSResolver for the given domain.
@@ -1814,6 +1815,33 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				}, nil
 			} else {
 				addCheck(pluginCore.ValidationCheckDelegation, true, "delegation ready", "", "")
+			}
+
+			// TLSA gate: only chain-managed (HIP-5) bindings carry owner-side
+			// DANE publication duty — their TLSA lives in the name's on-chain
+			// zone data, outside portal infrastructure. For every other locus
+			// the check is a no-op (portal-managed bindings publish TLSA into
+			// their own PowerDNS zone; self-hosted/ICANN carry no portal
+			// obligation), so it must not add a passing check for them.
+			if s.delegatedDomainSvc == nil {
+				// No domain service wired (minimal test/app contexts): no DANE
+				// gate to evaluate.
+			} else if ok, detail, expected, found, tlsaErr := s.delegatedDomainSvc.ValidateOnChainTLSA(ctx, primaryWD); tlsaErr == nil && ok && detail != "" {
+				addCheck(pluginCore.ValidationCheckTLSA, true, detail, expected, found)
+			} else if tlsaErr == nil && !ok {
+				reason := pluginCore.ValidationReasonTLSAMissing
+				if found != "" {
+					reason = pluginCore.ValidationReasonTLSAMismatch
+				}
+				addCheck(pluginCore.ValidationCheckTLSA, false, detail, expected, found)
+				return pluginCore.ValidateDNSResult{
+					Valid:   false,
+					Message: detail,
+					Reason:  reason,
+					Checks:  checks,
+				}, nil
+			} else if tlsaErr != nil {
+				return pluginCore.ValidateDNSResult{}, tlsaErr
 			}
 
 			if err := s.activateValidatedWebsite(ctx, &website); err != nil {

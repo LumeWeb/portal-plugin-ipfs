@@ -492,6 +492,38 @@ func (p *HNSProvider) Nameservers() []string {
 	return p.nsRecords
 }
 
+// QueryTLSARdata returns the live TLSA rdata the name's on-chain zone data
+// serves for DANE (_443._tcp.<domain>), normalized to
+// "<usage> <selector> <matching> <hash>" with the hash lowercased. An empty
+// string with a nil error means the record is not published; transport
+// failures return an error so callers can fail closed. Resolved through the
+// configured HNS-aware resolver using the same raw miekg/dns query path as
+// VerifyDelegation.
+func (p *HNSProvider) QueryTLSARdata(ctx context.Context, domain string) (string, error) {
+	if p.resolverAddr == "" {
+		return "", fmt.Errorf("HNS resolver not configured (DnsConfig.HNSResolver); standard resolvers cannot resolve HNS names")
+	}
+
+	owner := dane.TLSAOwnerName(domain, DaneTLSAPort, DaneTLSATransport)
+	reply, err := queryResolver(ctx, p.resolverAddr, dnsname.EnsureFQDN(owner), dns.TypeTLSA)
+	if err != nil {
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+			return "", nil
+		}
+		return "", fmt.Errorf("HNS TLSA query failed (resolver %q): %w", p.resolverAddr, err)
+	}
+
+	var rdata string
+	for _, rr := range append([]dns.RR{}, reply.Answer...) {
+		if tlsaRR, ok := rr.(*dns.TLSA); ok {
+			rdata = fmt.Sprintf("%d %d %d %s", tlsaRR.Usage, tlsaRR.Selector, tlsaRR.MatchingType, strings.ToLower(tlsaRR.Certificate))
+			break
+		}
+	}
+	return rdata, nil
+}
+
 // LiveNameservers returns the NS records currently served for the HNS
 // domain, resolved against the configured HNS-aware resolver. HNS names are
 // visible only to an HNS-aware resolver (e.g. an hsd instance), not the
