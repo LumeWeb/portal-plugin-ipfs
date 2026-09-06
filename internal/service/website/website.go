@@ -1530,14 +1530,15 @@ func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Websit
 		s.Logger().Debug("skipping TXT token (platform subdomain, operator-controlled DNS)", zap.String("domain", primaryWD.Domain))
 		return false
 	}
-	// An on-chain managed name (HIP-5) proves ownership with the TXT
-	// verification token, resolved through the namespace-appropriate resolver
-	// (HNS resolver → on-chain contract serves the PINNER-VERIFY TXT), exactly
-	// like ICANN. This must be checked before UsesDelegationForOwnership, which
-	// would otherwise treat the HNS name as delegation-owned and skip the token.
+	// An on-chain managed name (HIP-5) proved ownership at bind time (Inspect
+	// confirmed the name is held on-chain) and publishes a DANE TLSA pinned to
+	// the portal's stable key instead of a PINNER-VERIFY TXT token, so no
+	// user-side TXT token check applies — only the DNSLink (content pointer)
+	// gate remains. Checked before UsesDelegationForOwnership so the reasoning
+	// stays explicit rather than relying on the HNS name being delegation-owned.
 	if primaryWD.Status == pluginDb.DomainStatusOnchainManaged {
-		s.Logger().Debug("performing TXT token (on-chain managed HIP-5 domain)", zap.String("domain", primaryWD.Domain))
-		return true
+		s.Logger().Debug("skipping TXT token (on-chain managed HIP-5, ownership proven at bind)", zap.String("domain", primaryWD.Domain))
+		return false
 	}
 	if s.delegatedDomainSvc != nil && s.delegatedDomainSvc.UsesDelegationForOwnership(primaryWD.Domain) {
 		s.Logger().Debug("skipping TXT token (ownership proven via delegation verification)", zap.String("domain", primaryWD.Domain))
@@ -1576,6 +1577,16 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 			}
 			primaryDomain := primaryWD.Domain
 
+			var checks []pluginCore.ValidationCheck
+			// addCheck appends a per-gate outcome and is applied on every return
+			// path so the client receives the full validation picture — which
+			// record passed, which failed, and what was expected vs found.
+			addCheck := func(name string, ok bool, detail, expected, found string) {
+				checks = append(checks, pluginCore.ValidationCheck{
+					Name: name, OK: ok, Message: detail, Expected: expected, Found: found,
+				})
+			}
+
 			needsTokenCheck := s.shouldPerformTokenCheck(&website, primaryWD)
 
 			if needsTokenCheck && website.IsExpired() {
@@ -1586,6 +1597,7 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 					Valid:   false,
 					Message: fmt.Sprintf(msgTokenExpired, primaryDomain, s.verificationTokenKey(), primaryDomain),
 					Reason:  pluginCore.ValidationReasonTokenExpired,
+					Checks:  checks,
 				}, nil
 			}
 
@@ -1596,22 +1608,28 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 						zap.Error(err),
 						zap.String("domain", primaryDomain),
 						zap.Uint("website_id", website.ID))
+					addCheck(pluginCore.ValidationCheckDNSLink, false, fmt.Sprintf("no DNSLink record found at _dnslink.%s", primaryDomain), "", "")
 					return pluginCore.ValidateDNSResult{
 						Valid:   false,
 						Message: fmt.Sprintf(msgDNSMissing, primaryDomain),
 						Reason:  pluginCore.ValidationReasonDNSMissing,
+						Checks:  checks,
 					}, nil
 				}
 
 				return pluginCore.ValidateDNSResult{}, fmt.Errorf("DNS lookup failed for %s: %w", primaryDomain, err)
 			}
 
-			if ok, msg, reason := s.checkDNSLinkMatch(&website, primaryDomain, result); !ok {
+			if ok, expected, found, detail, reason := s.checkDNSLinkMatch(&website, primaryDomain, result); !ok {
+				addCheck(pluginCore.ValidationCheckDNSLink, false, detail, expected, found)
 				return pluginCore.ValidateDNSResult{
 					Valid:   false,
-					Message: msg,
+					Message: detail,
 					Reason:  reason,
+					Checks:  checks,
 				}, nil
+			} else {
+				addCheck(pluginCore.ValidationCheckDNSLink, true, "DNSLink matches the configured target", expected, found)
 			}
 
 			_ = s.determineFoundDNSLink(result, &website)
@@ -1620,22 +1638,30 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				if ok, msg, reason, err := s.checkValidationToken(ctx, &website, primaryDomain); err != nil {
 					return pluginCore.ValidateDNSResult{}, err
 				} else if !ok {
+					addCheck(pluginCore.ValidationCheckToken, false, msg, fmt.Sprintf("%s=%s", s.verificationTokenKey(), website.ValidationToken), "")
 					return pluginCore.ValidateDNSResult{
 						Valid:   false,
 						Message: msg,
 						Reason:  reason,
+						Checks:  checks,
 					}, nil
+				} else {
+					addCheck(pluginCore.ValidationCheckToken, true, "validation token present", "", "")
 				}
 			}
 
 			if ok, msg, reason, err := s.checkDelegation(ctx, primaryWD); err != nil {
 				return pluginCore.ValidateDNSResult{}, err
 			} else if !ok {
+				addCheck(pluginCore.ValidationCheckDelegation, false, msg, "", "")
 				return pluginCore.ValidateDNSResult{
 					Valid:   false,
 					Message: msg,
 					Reason:  reason,
+					Checks:  checks,
 				}, nil
+			} else {
+				addCheck(pluginCore.ValidationCheckDelegation, true, "delegation ready", "", "")
 			}
 
 			if err := s.activateValidatedWebsite(ctx, &website); err != nil {
@@ -1650,39 +1676,39 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				Valid:   true,
 				Message: fmt.Sprintf(msgValidated, primaryDomain),
 				Reason:  pluginCore.ValidationReasonValidated,
+				Checks:  checks,
 			}, nil
 		},
 	)
 }
 
-func (s *WebsiteServiceDefault) checkDNSLinkMatch(website *pluginDb.Website, primaryDomain string, result dnslink.Result) (bool, string, pluginCore.ValidationReason) {
-	expectedDNSlink := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
+func (s *WebsiteServiceDefault) checkDNSLinkMatch(website *pluginDb.Website, primaryDomain string, result dnslink.Result) (ok bool, expected, found, detail string, reason pluginCore.ValidationReason) {
+	expected = pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
 
-	var foundDNSlink string
 	if ipfsLinks, ok := result.Links["ipfs"]; ok && len(ipfsLinks) > 0 {
-		foundDNSlink = dto.IPFSPath(ipfsLinks[0].Identifier)
-		if foundDNSlink == expectedDNSlink {
+		found = dto.IPFSPath(ipfsLinks[0].Identifier)
+		if found == expected {
 			s.Logger().Debug("Found valid DNSlink record",
 				zap.String("domain", primaryDomain),
-				zap.String("dnslink", foundDNSlink))
-			return true, "", ""
+				zap.String("dnslink", found))
+			return true, expected, found, "", ""
 		}
 	}
 	if ipnsLinks, ok := result.Links["ipns"]; ok && len(ipnsLinks) > 0 {
-		foundDNSlink = dto.IPNSPath(ipnsLinks[0].Identifier)
-		if foundDNSlink == expectedDNSlink {
+		found = dto.IPNSPath(ipnsLinks[0].Identifier)
+		if found == expected {
 			s.Logger().Debug("Found valid DNSlink record",
 				zap.String("domain", primaryDomain),
-				zap.String("dnslink", foundDNSlink))
-			return true, "", ""
+				zap.String("dnslink", found))
+			return true, expected, found, "", ""
 		}
 	}
 
 	s.Logger().Warn("DNS validation failed: missing or incorrect dnslink record",
 		zap.String("domain", primaryDomain),
-		zap.String("expected", expectedDNSlink),
-		zap.String("found", foundDNSlink))
-	return false, fmt.Sprintf(msgDNSMismatch, expectedDNSlink, foundDNSlink), pluginCore.ValidationReasonDNSMismatch
+		zap.String("expected", expected),
+		zap.String("found", found))
+	return false, expected, found, fmt.Sprintf(msgDNSMismatch, expected, found), pluginCore.ValidationReasonDNSMismatch
 }
 
 func (s *WebsiteServiceDefault) determineFoundDNSLink(result dnslink.Result, website *pluginDb.Website) string {

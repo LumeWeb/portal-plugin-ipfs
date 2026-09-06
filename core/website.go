@@ -25,10 +25,47 @@ const (
 	ValidationReasonDelegationPending ValidationReason = "delegation_pending"
 )
 
+// ValidationCheck gate names. Shared by website DNS validation and domain
+// delegation verification so both surfaces report a stable, machine-readable
+// gate identifier.
+const (
+	ValidationCheckDNSLink    = "dnslink"
+	ValidationCheckToken      = "token"
+	ValidationCheckDelegation = "delegation"
+	ValidationCheckDNSSEC     = "dnssec"
+	ValidationCheckOnChain    = "onchain"
+	ValidationCheckPlatform   = "platform"
+)
+
+// ValidationCheck reports the outcome of a single validation gate (website
+// DNS validation or domain delegation verification) so a client can surface
+// exactly which record/step failed and how to fix it, rather than relying on a
+// single generic message. Name is one of the ValidationCheck* constants.
+type ValidationCheck struct {
+	// Name identifies the gate.
+	Name string `json:"name"`
+	// OK reports whether this gate passed. False gates carry the Message and,
+	// where applicable, Expected/Found so a client can render targeted guidance.
+	OK bool `json:"ok"`
+	// Message is a human-readable detail for this gate.
+	Message string `json:"message,omitempty"`
+	// Expected holds what the gate required (e.g. the DNSLink the site must
+	// serve). Multi-valued gates (e.g. nameserver sets) are comma-joined at the
+	// API boundary.
+	Expected string `json:"expected,omitempty"`
+	// Found holds what the gate actually observed (e.g. the served DNSLink).
+	// Multi-valued gates (e.g. nameserver sets) are comma-joined at the API
+	// boundary.
+	Found string `json:"found,omitempty"`
+}
+
 type ValidateDNSResult struct {
 	Valid   bool
 	Message string
 	Reason  ValidationReason // machine-readable: "validated", "token_expired", "dns_missing", "dns_mismatch", "token_missing", "delegation_pending"
+	// Checks enumerates each validation gate and its outcome, so clients can
+	// render per-gate fix-up guidance instead of a single generic message.
+	Checks []ValidationCheck
 }
 
 // WebsiteService defines the interface for managing website configurations

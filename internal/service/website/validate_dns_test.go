@@ -409,6 +409,14 @@ func TestValidateDNS_WrongDNSLink_ReturnsDNSMismatch(t *testing.T) {
 		assert.False(tb, result.Valid)
 		assert.Equal(tb, pluginCore.ValidationReasonDNSMismatch, result.Reason)
 		assert.Contains(tb, result.Message, "missing or incorrect dnslink record")
+		// Diagnostics expose expected vs found so a client can tell the user
+		// exactly which DNSLink is required and what is currently served.
+		require.NotEmpty(tb, result.Checks)
+		dnslinkCheck := result.Checks[0]
+		assert.Equal(tb, "dnslink", dnslinkCheck.Name)
+		assert.False(tb, dnslinkCheck.OK)
+		assert.Equal(tb, "/ipfs/"+created.TargetHash(), dnslinkCheck.Expected)
+		assert.Equal(tb, "/ipfs/"+wrongCID.String(), dnslinkCheck.Found)
 	}, TestOptions)
 }
 
@@ -942,11 +950,12 @@ func onchainPrimaryDomain(tb testing.TB, ctx coreTesting.TestContext, website *p
 	return wd
 }
 
-func TestValidateDNS_OnchainManaged_ValidTokenValidates(t *testing.T) {
-	// An on-chain managed (HIP-5) binding must run the full TXT-token
-	// verification flow through the resolver: it is neither delegation-owned
-	// (no zone to verify) nor blocked from the token check, so a matching
-	// DNSLink + pinner-verify TXT activates the site.
+func TestValidateDNS_OnchainManaged_ValidatesWithoutToken(t *testing.T) {
+	// An on-chain managed (HIP-5) binding proves ownership at bind time and
+	// publishes a DANE TLSA pinned to the portal's key instead of a
+	// PINNER-VERIFY TXT token, so validation completes on a matching DNSLink
+	// alone. The token lookup is intentionally never invoked (no LookupTXT
+	// expectation — an unexpected call would fail the mock).
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, ws)
@@ -965,15 +974,18 @@ func TestValidateDNS_OnchainManaged_ValidTokenValidates(t *testing.T) {
 				"ipfs": {{Identifier: created.TargetHash()}},
 			},
 		}, nil)
-		mockResolver.EXPECT().LookupTXT(mock.Anything, "lumeweb-verify."+domain).Return([]string{
-			fmt.Sprintf("lumeweb-verify=%s", created.ValidationToken),
-		}, nil)
 		setMockResolver(ws, mockResolver)
 
 		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
 		assert.True(tb, result.Valid)
 		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
+		// Diagnostics: the dnslink gate is reported OK with expected/found.
+		require.Len(tb, result.Checks, 2, "dnslink + delegation checks")
+		assert.Equal(tb, "dnslink", result.Checks[0].Name)
+		assert.True(tb, result.Checks[0].OK)
+		assert.Equal(tb, "/ipfs/"+created.TargetHash(), result.Checks[0].Expected)
+		assert.Equal(tb, "/ipfs/"+created.TargetHash(), result.Checks[0].Found)
 
 		final, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
@@ -981,16 +993,16 @@ func TestValidateDNS_OnchainManaged_ValidTokenValidates(t *testing.T) {
 	}, TestOptions)
 }
 
-func TestValidateDNS_OnchainManaged_MissingTokenTokenMissing(t *testing.T) {
-	// The TXT token check MUST run for an on-chain managed binding: a
-	// missing/stale pinner-verify TXT record must block activation
-	// (TokenMissing), proving the flow is not skipped as it is for native-HNS
-	// delegation.
+func TestValidateDNS_OnchainManaged_DoesNotConsultToken(t *testing.T) {
+	// The token gate must be skipped entirely for on-chain managed names. The
+	// resolver has a LookupTXT method, but ValidateDNS must never call it for
+	// an on-chain primary — an unexpected call fails the mock — so a stale or
+	// missing PINNER-VERIFY TXT cannot block activation.
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
 		require.NotNil(tb, ws)
 
-		testCID := util.GenerateTestCID(t, "onchain-missing-token")
+		testCID := util.GenerateTestCID(t, "onchain-no-token")
 		domain := "onchain-token.hns"
 		website := createTestIPFSWebsite(testUserID1, domain, testCID.String())
 		stubPinnedCID(t, ctx, testUserID1, testCID.String())
@@ -1004,16 +1016,12 @@ func TestValidateDNS_OnchainManaged_MissingTokenTokenMissing(t *testing.T) {
 				"ipfs": {{Identifier: created.TargetHash()}},
 			},
 		}, nil)
-		// The contract serves the token record but with a STALE token.
-		mockResolver.EXPECT().LookupTXT(mock.Anything, "lumeweb-verify."+domain).Return([]string{
-			"lumeweb-verify=wrong-token",
-		}, nil)
 		setMockResolver(ws, mockResolver)
 
 		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
 		require.NoError(tb, err)
-		assert.False(tb, result.Valid)
-		assert.Equal(tb, pluginCore.ValidationReasonTokenMissing, result.Reason)
+		assert.True(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
 	}, TestOptions)
 }
 
@@ -1139,9 +1147,8 @@ func TestValidateDNS_OnchainStrayZone_ValidTokenValidatesNoPortalDNS(t *testing.
 				"ipfs": {{Identifier: created.TargetHash()}},
 			},
 		}, nil)
-		mockResolver.EXPECT().LookupTXT(mock.Anything, "lumeweb-verify."+domain).Return([]string{
-			fmt.Sprintf("lumeweb-verify=%s", created.ValidationToken),
-		}, nil)
+		// On-chain managed names skip the TXT token (ownership proven at bind);
+		// no LookupTXT expectation — an unexpected call would fail the mock.
 		setMockResolver(ws, mockResolver)
 
 		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)

@@ -126,6 +126,10 @@ type DelegationVerificationResult struct {
 	// unless the state is pending.
 	ApprovedNS []string
 	LiveNS     []string
+	// Checks enumerates each delegation gate and its outcome, reusing the
+	// shared core.ValidationCheck type so clients render the same per-gate
+	// fix-up guidance as website DNS validation.
+	Checks []pluginCore.ValidationCheck
 }
 
 // NewDelegatedDomainService creates a DelegatedDomainService with the given
@@ -618,6 +622,20 @@ func (s *DelegatedDomainService) notifyAdminWebsiteCreated(ctx context.Context, 
 	}
 }
 
+// Human-readable messages reported on DelegationVerificationResult.Checks.
+// Package-level vars so verify messages are single-sourced and tests assert
+// them without restating inline literals.
+const (
+	msgPlatformBinding     = "operator-trusted platform binding"
+	msgOnChainNoDelegation = "name held on-chain (HIP-5); no portal delegation to verify"
+	msgNoPortalDelegation  = "no portal delegation to verify (self-hosted / on-chain managed / unresolved)"
+	msgDNSSECNotRequired   = "namespace does not require DNSSEC"
+	msgDNSSECNoKey         = "no active DNSSEC signing key"
+	msgDNSSECKeyPresent    = "DNSSEC signing key present"
+	msgDelegationLive      = "approved nameservers are live"
+	msgDelegationPending   = "nameservers not yet visible at the parent zone"
+)
+
 // VerifyDomain checks delegation and persists the result. It returns a typed
 // DelegationVerificationResult so callers can distinguish "not applicable"
 // (self-hosted / on-chain / unresolved bindings) from "pending" (portal
@@ -649,7 +667,12 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 				return DelegationVerificationResult{}, fmt.Errorf("failed to persist domain status: %w", err)
 			}
 		}
-		return DelegationVerificationResult{State: DelegationVerified}, nil
+		return DelegationVerificationResult{
+			State: DelegationVerified,
+			Checks: []pluginCore.ValidationCheck{
+				{Name: pluginCore.ValidationCheckPlatform, OK: true, Message: msgPlatformBinding},
+			},
+		}, nil
 	}
 
 	// A binding created before handover source detection may still carry a
@@ -673,7 +696,12 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 					return DelegationVerificationResult{}, fmt.Errorf("convert on-chain binding: %w", err)
 				}
 			} else {
-				return DelegationVerificationResult{State: DelegationNotApplicable}, nil
+				return DelegationVerificationResult{
+					State: DelegationNotApplicable,
+					Checks: []pluginCore.ValidationCheck{
+						{Name: pluginCore.ValidationCheckOnChain, OK: true, Message: msgOnChainNoDelegation},
+					},
+				}, nil
 			}
 		}
 	}
@@ -704,7 +732,12 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 			zap.String("namespace", string(wd.Namespace)),
 			zap.String("status", string(wd.Status)),
 			zap.Uint("zone_id", wd.ZoneID))
-		return DelegationVerificationResult{State: DelegationNotApplicable}, nil
+		return DelegationVerificationResult{
+			State: DelegationNotApplicable,
+			Checks: []pluginCore.ValidationCheck{
+				{Name: pluginCore.ValidationCheckDelegation, OK: true, Message: msgNoPortalDelegation},
+			},
+		}, nil
 	}
 
 	// Expected DS is computed live from PowerDNS's current active signing key
@@ -798,7 +831,51 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		}
 	}
 
-	return DelegationVerificationResult{State: state, ApprovedNS: approvedNS, LiveNS: liveNS}, nil
+	return DelegationVerificationResult{
+		State:      state,
+		ApprovedNS: approvedNS,
+		LiveNS:     liveNS,
+		Checks: []pluginCore.ValidationCheck{
+			dnssecCheck(provider.RequiresDNSSEC(), expectedDS),
+			delegationCheck(state == DelegationVerified, approvedNS, liveNS),
+		},
+	}, nil
+}
+
+// dnssecCheck builds the DNSSEC gate check, deriving the single-sourced
+// message (package-level const) from whether the namespace requires DNSSEC and
+// whether an active signing key (DS) is present.
+func dnssecCheck(required bool, ds string) pluginCore.ValidationCheck {
+	msg := msgDNSSECKeyPresent
+	switch {
+	case !required:
+		msg = msgDNSSECNotRequired
+	case ds == "":
+		msg = msgDNSSECNoKey
+	}
+	return pluginCore.ValidationCheck{
+		Name:     pluginCore.ValidationCheckDNSSEC,
+		OK:       ds != "",
+		Message:  msg,
+		Expected: ds,
+	}
+}
+
+// delegationCheck builds the delegation gate check, carrying the expected vs
+// discovered nameservers and a single-sourced message derived from whether the
+// approved NS set is live.
+func delegationCheck(verified bool, approvedNS, liveNS []string) pluginCore.ValidationCheck {
+	msg := msgDelegationLive
+	if !verified {
+		msg = msgDelegationPending
+	}
+	return pluginCore.ValidationCheck{
+		Name:     pluginCore.ValidationCheckDelegation,
+		OK:       verified,
+		Message:  msg,
+		Expected: strings.Join(approvedNS, ", "),
+		Found:    strings.Join(liveNS, ", "),
+	}
 }
 
 // selfHealZone re-ensures the portal-managed-zone invariants that are
