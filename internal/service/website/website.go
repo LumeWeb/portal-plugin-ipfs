@@ -1017,13 +1017,40 @@ func (s *WebsiteServiceDefault) reconcileManagedDNSLink(ctx context.Context, web
 			zap.Uint("website_id", website.ID))
 		return
 	}
-	if primaryWD == nil || s.dnsSvc == nil || !primaryWD.DNSHostingEnabled || primaryWD.ZoneID == 0 || primaryWD.DelegationRecordsOwned() {
+	if primaryWD == nil {
+		s.Logger().Debug("Skipping dnslink reconcile: website has no primary domain binding",
+			zap.Uint("website_id", website.ID))
+		return
+	}
+	s.Logger().Debug("Dnslink reconcile: resolved primary binding",
+		zap.Uint("website_id", website.ID),
+		zap.Uint("binding_id", primaryWD.ID),
+		zap.String("domain", primaryWD.Domain),
+		zap.String("namespace", string(primaryWD.Namespace)),
+		zap.String("status", string(primaryWD.Status)),
+		zap.Uint("zone_id", primaryWD.ZoneID),
+		zap.Bool("dns_hosting_enabled", primaryWD.DNSHostingEnabled),
+		zap.Bool("delegation_records_owned", primaryWD.DelegationRecordsOwned()))
+	if s.dnsSvc == nil || !primaryWD.DNSHostingEnabled || primaryWD.ZoneID == 0 || primaryWD.DelegationRecordsOwned() {
+		s.Logger().Debug("Skipping dnslink reconcile: binding lacks portal DNS authority",
+			zap.Uint("website_id", website.ID),
+			zap.Uint("binding_id", primaryWD.ID),
+			zap.String("domain", primaryWD.Domain),
+			zap.Bool("has_dns_service", s.dnsSvc != nil),
+			zap.Bool("dns_hosting_enabled", primaryWD.DNSHostingEnabled),
+			zap.Uint("zone_id", primaryWD.ZoneID),
+			zap.Bool("delegation_records_owned", primaryWD.DelegationRecordsOwned()))
 		return
 	}
 
 	// Skip the write when the live dnslink record already carries the target:
 	// an idempotent client retry then performs zero external DNS writes.
 	desired := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
+	s.Logger().Debug("Dnslink reconcile: comparing live record against website target",
+		zap.Uint("website_id", website.ID),
+		zap.String("domain", primaryWD.Domain),
+		zap.String("target_type", string(website.TargetType)),
+		zap.String("desired", desired))
 	if result, err := s.resolverForDomain(primaryWD.Domain).ResolveDNSLink(primaryWD.Domain); err == nil {
 		current := s.determineFoundDNSLink(result, website)
 		if current == desired {
