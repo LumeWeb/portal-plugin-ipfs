@@ -778,6 +778,11 @@ func TestAPI_DomainDNSRequirements_OnchainManaged(t *testing.T) {
 		// No DANE identity exists yet, so no TLSA record is surfaced.
 		assert.Empty(t, resp.OwnerName)
 		assert.Empty(t, resp.TLSARData)
+		// Zone-less bindings have no records list to query; dns-requirements
+		// must surface the DNSLink content pointer the owner installs into
+		// the name's on-chain zone data, derived from the website's target.
+		assert.Equal(t, "_dnslink.onchain", resp.DNSLinkOwnerName)
+		assert.Equal(t, website.DNSLinkRecord(), resp.DNSLinkRdata)
 	}, TestOptions)
 }
 
@@ -814,6 +819,10 @@ func TestAPI_DomainDNSRequirements_OnchainManaged_ExposesDANERecord(t *testing.T
 		assert.Nil(t, resp.Delegation)
 		assert.Equal(t, "3 1 1 aabbcc", resp.TLSARData)
 		assert.Equal(t, "_443._tcp.dane-onchain.hns", resp.OwnerName)
+		// The DNSLink pointer is always listed for zone-less bindings — the
+		// content pointer the website validation gate checks for.
+		assert.Equal(t, "_dnslink.dane-onchain.hns", resp.DNSLinkOwnerName)
+		assert.Equal(t, website.DNSLinkRecord(), resp.DNSLinkRdata)
 	}, TestOptions)
 }
 

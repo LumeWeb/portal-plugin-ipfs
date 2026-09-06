@@ -219,15 +219,19 @@ func (p *HNSProvider) Validate(domain string) error {
 	return nil
 }
 
-// Inspect reports the source selected by the configured HNS handover resolver.
-// Handover returns authoritative on-chain answers with AA set and relayed
-// off-chain answers without AA. The owner and record type are intentionally
-// opaque here: source detection must follow handover's decision, not infer
-// HIP-5 from an NS target or perform a second lookup.
+// Inspect reports which system the configured HNS resolver's routing would
+// serve the name from, using the reserved resolution-source probe: a TXT
+// query for the name prefixed with the "resolver" label. The node answers the
+// probe from the same classification its own routing performs (referral
+// marker legitimacy plus dual-mode mint probing), so source detection needs
+// no NS or referral parsing portal-side and stays correct however the
+// resolver hides HIP-5 markers from recursive queries. "ens" means the name
+// resolves on-chain through HIP-5; "hns" is Handshake root delegation and
+// "dns" the recursor's ICANN fallback.
 //
 // Unregistered names are treated as native HNS. Resolver configuration and
 // transport failures are returned so binding cannot create portal DNS state
-// while handover's source decision is unknown.
+// while the source decision is unknown.
 func (p *HNSProvider) Inspect(ctx context.Context, domain string) (bool, error) {
 	if p.resolverAddr == "" {
 		// Keep native HNS usable when handover integration is not configured;
@@ -236,15 +240,63 @@ func (p *HNSProvider) Inspect(ctx context.Context, domain string) (bool, error) 
 	}
 	inspectCtx, cancel := context.WithTimeout(ctx, hip5InspectTimeout)
 	defer cancel()
-	reply, err := queryResolver(inspectCtx, p.resolverAddr, dnsname.EnsureFQDN(domain), dns.TypeNS)
+	probeName := dnsname.EnsureFQDN(hip5ProbeLabel + "." + domain)
+	reply, err := queryResolver(inspectCtx, p.resolverAddr, probeName, dns.TypeTXT)
 	if err != nil {
 		var dnsErr *net.DNSError
 		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+			// NXDOMAIN on the probe name is a resolver without the probe
+			// (or an unregistered name): treat as native, mirroring the
+			// pre-probe behavior for unregistered names.
 			return false, nil
 		}
-		return false, fmt.Errorf("HNS handover query failed (resolver %q): %w", p.resolverAddr, err)
+		return false, fmt.Errorf("HNS source probe query failed (resolver %q): %w", p.resolverAddr, err)
 	}
-	return reply.Authoritative, nil
+
+	source, err := hip5ProbeSource(reply, probeName)
+	if err != nil {
+		return false, fmt.Errorf("HNS source probe failed (resolver %q): %w", p.resolverAddr, err)
+	}
+	switch source {
+	case hip5ProbeSourceENS:
+		return true, nil
+	case hip5ProbeSourceHNS, hip5ProbeSourceDNS:
+		return false, nil
+	default:
+		return false, fmt.Errorf("HNS source probe returned unknown source %q (resolver %q)", source, p.resolverAddr)
+	}
+}
+
+// Resolution-source probe answer values, mirroring the resolver's own
+// constants (handover HIP5_PROBE_SOURCE_*).
+const (
+	hip5ProbeLabel       = "resolver"
+	hip5ProbeSourceENS   = "ens"
+	hip5ProbeSourceHNS   = "hns"
+	hip5ProbeSourceDNS   = "dns"
+	hip5ProbeValuePrefix = "resolver="
+)
+
+// hip5ProbeSource extracts the reported resolution source from a probe reply:
+// the first TXT record on the probe qname whose payload is exactly
+// resolver=<source>. A reply without a recognizable probe answer is an error
+// so the caller fails closed instead of guessing the source.
+func hip5ProbeSource(reply *dns.Msg, probeName string) (string, error) {
+	want := strings.ToLower(probeName)
+	for _, rr := range reply.Answer {
+		txt, ok := rr.(*dns.TXT)
+		if !ok || strings.ToLower(txt.Hdr.Name) != want {
+			continue
+		}
+		value := strings.Join(txt.Txt, "")
+		switch strings.TrimPrefix(value, hip5ProbeValuePrefix) {
+		case hip5ProbeSourceENS, hip5ProbeSourceHNS, hip5ProbeSourceDNS:
+			if strings.HasPrefix(value, hip5ProbeValuePrefix) {
+				return strings.TrimPrefix(value, hip5ProbeValuePrefix), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no resolver=<ens|hns|dns> answer at %s", probeName)
 }
 
 const hip5InspectTimeout = 1500 * time.Millisecond

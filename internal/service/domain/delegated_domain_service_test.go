@@ -747,12 +747,12 @@ func TestDelegatedDomainService_CreateDomain_Hip5OnchainManaged(t *testing.T) {
 	// though no portal zone exists to publish the TLSA into.
 	const domain = "myname"
 
-	addr, _ := startCustomPortDNSServer(t, domain+".",
-		[]string{"0x36fc69f0983e536d1787cc83f481581f22cca2a1._eth."})
+	addr, _ := startSourceProbeDNSServer(t, domain+".", "ens",
+		"0x36fc69f0983e536d1787cc83f481581f22cca2a1._eth.")
 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
-		// The test DNS server answers NS queries with the HIP-5 record for any
+		// The test DNS server answers the source probe with ens for any
 		// name, so each subtest uses a distinct bound domain to avoid colliding
 		// on the (domain, namespace) unique key.
 		domains := []string{"myname", "myname2"}
@@ -827,8 +827,8 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 	const domain = "convertme"
 	const zoneID = uint(77)
 
-	hip5Addr, _ := startCustomPortDNSServer(t, domain+".",
-		[]string{"0x36fc69f0983e536d1787cc83f481581f22cca2a1._eth."})
+	hip5Addr, _ := startSourceProbeDNSServer(t, domain+".", "ens",
+		"0x36fc69f0983e536d1787cc83f481581f22cca2a1._eth.")
 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
@@ -929,7 +929,7 @@ func TestDelegatedDomainService_ConvertToOnChain_SecondaryDoesNotResetWebsite(t 
 	const primary = "primary.hns"
 	const secondary = "secondary-convertme"
 	const zoneID = uint(79)
-	hip5Addr, _ := startCustomPortDNSServer(t, secondary+".", []string{"0xabc._eth."})
+	hip5Addr, _ := startSourceProbeDNSServer(t, secondary+".", "ens", "0xabc._eth.")
 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
@@ -978,8 +978,8 @@ func TestDelegatedDomainService_ConvertToOnChain_NoPrimaryFallsBackToOldestActiv
 		apexZone = uint(81)
 		secZone  = uint(82)
 	)
-	apexAddr, _ := startCustomPortDNSServer(t, "apex-convertme.", []string{"0xapex._eth."})
-	secAddr, _ := startCustomPortDNSServer(t, "sec-convertme.", []string{"0xsec._eth."})
+	apexAddr, _ := startSourceProbeDNSServer(t, "apex-convertme.", "ens", "0xapex._eth.")
+	secAddr, _ := startSourceProbeDNSServer(t, "sec-convertme.", "ens", "0xsec._eth.")
 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
@@ -1037,7 +1037,7 @@ func TestDelegatedDomainService_ConvertToOnChain_SoleNonActiveBindingStaysPrimar
 	// with ErrRecordNotFound / 404) and treat the sole binding as primary so
 	// the website re-arms validation.
 	const zoneID = uint(83)
-	hip5Addr, _ := startCustomPortDNSServer(t, "err-convertme.", []string{"0xerr._eth."})
+	hip5Addr, _ := startSourceProbeDNSServer(t, "err-convertme.", "ens", "0xerr._eth.")
 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
@@ -1073,7 +1073,7 @@ func TestDelegatedDomainService_ConvertToOnChain_SoleNonActiveBindingStaysPrimar
 func TestDelegatedDomainService_VerifyDomain_ReclassifiesExistingHIP5(t *testing.T) {
 	const domain = "verify-convertme"
 	const zoneID = uint(88)
-	hip5Addr, _ := startCustomPortDNSServer(t, domain+".", []string{"ignored.target."})
+	hip5Addr, _ := startSourceProbeDNSServer(t, domain+".", "ens", "ignored.target.")
 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
@@ -1105,7 +1105,7 @@ func TestDelegatedDomainService_ConvertToOnChain_NotHIP5Refused(t *testing.T) {
 	// Conversion is refused until the name genuinely serves a HIP-5 record; it
 	// never tears down DNS on the caller's word alone.
 	const domain = "staysnative"
-	nativeAddr, _ := startCustomPortDNSServerWithAuthority(t, domain+".", []string{"ns1.lumeweb."}, false)
+	nativeAddr, _ := startSourceProbeDNSServer(t, domain+".", "hns", "ns1.lumeweb.")
 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
@@ -1155,8 +1155,7 @@ func TestDelegatedDomainService_ConvertToOnChain_SharedZoneRefused(t *testing.T)
 	// A zone shared with other live bindings (their parent/apex zone) must not
 	// be deleted; conversion is refused so the owner detaches them first.
 	const domain = "sharedzone"
-	hip5Addr, _ := startCustomPortDNSServer(t, domain+".",
-		[]string{"0xdeadbeef._eth."})
+	hip5Addr, _ := startSourceProbeDNSServer(t, domain+".", "ens", "0xdeadbeef._eth.")
 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
@@ -1197,7 +1196,7 @@ func TestDelegatedDomainService_ConvertToOnChain_SharedZoneRefused(t *testing.T)
 func TestDelegatedDomainService_VerifyDomain_SharedHIP5ZoneFallsThrough(t *testing.T) {
 	const domain = "verify-sharedzone"
 	const zoneID = uint(56)
-	hip5Addr, _ := startCustomPortDNSServer(t, domain+".", []string{"0xdeadbeef._eth."})
+	hip5Addr, _ := startSourceProbeDNSServer(t, domain+".", "ens", "0xdeadbeef._eth.")
 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()

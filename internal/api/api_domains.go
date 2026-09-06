@@ -549,6 +549,28 @@ func (a *API) domainDNSRequirements(c echo.Context) error {
 		}
 	}
 
+	// Zone-less bindings own no portal zone, so there is no records list the
+	// CLI can query; dns-requirements is the only channel through which the
+	// owner learns the records to install where the name's zone data lives
+	// (on-chain zone data for HIP-5, their own DNS for self-hosted). Surface
+	// the DNSLink content pointer here — the same value the website's
+	// validation gate checks for — so the CLI lists it alongside the TLSA.
+	// Portal-managed bindings own their dnslink in the portal zone and list
+	// it through the dns records endpoint, so it is not duplicated here.
+	if wd.ZoneID == 0 {
+		var website pluginDb.Website
+		if err := a.DB().WithContext(reqCtx).First(&website, wd.WebsiteID).Error; err != nil {
+			a.Logger().Warn("could not load owning website for dns-requirements dnslink",
+				zap.Uint("domain_id", wd.ID), zap.Uint("website_id", wd.WebsiteID), zap.Error(err))
+		} else if website.TargetType != "" {
+			resp.DNSLinkOwnerName = "_dnslink." + wd.Domain
+			// Full TXT value the owner installs — the dnslink= prefix comes
+			// from the helper, matching both the dnslink spec and the shape
+			// CreateDNSLinkRecord writes into portal-managed zones.
+			resp.DNSLinkRdata = website.DNSLinkRecord()
+		}
+	}
+
 	// Encode the DTO directly rather than via EncodeResponse(model, dto):
 	// EncodeResponse re-derives the DTO from the model (FromModel -> mapDNSDelegation
 	// -> removeStoredDS), which would discard the live DS injected into
