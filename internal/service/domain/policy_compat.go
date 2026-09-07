@@ -39,6 +39,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
@@ -338,7 +339,13 @@ func (s *DelegatedDomainService) legacyProfileFor(wd *pluginDb.WebsiteDomain, ro
 		if err != nil {
 			return domainpolicy.EmptyProfileID, err
 		}
+		// Platform bindings resolve through the operator's PowerDNS zone
+		// (the expectation legacyFacts already derives at this branch);
+		// overriding the namespace-derived expectation keeps a correct
+		// probe from being rejected as a route mismatch.
 		if wd.PlatformDomainID != nil {
+			expected = domainpolicy.ResolutionRouteStandardDNS
+			expectedBack = domainpolicy.BackendPowerDNS
 			switch namespace {
 			case domainpolicy.NamingSystemICANN:
 				id = domainpolicy.ProfileIDPlatformICANN
@@ -376,6 +383,10 @@ func (s *DelegatedDomainService) legacyProfileFor(wd *pluginDb.WebsiteDomain, ro
 	return id, nil
 }
 
+// legacyZoneSharersTimeout bounds the sibling-sharers count query in
+// legacyZoneAllocation.
+const legacyZoneSharersTimeout = 5 * time.Second
+
 // legacyZoneAllocation derives the observed zone allocation for a
 // non-platform portal-managed binding: an apex binding owns its entire zone
 // (dedicated); a subdomain sharing its zone with other live bindings shares
@@ -391,8 +402,13 @@ func (s *DelegatedDomainService) legacyZoneAllocation(wd *pluginDb.WebsiteDomain
 	if s.BaseComponent == nil || s.DB() == nil {
 		return domainpolicy.ZoneAllocationUnknown, newCompatError(CompatErrorZoneStateUnavailable, wd, "subdomain allocation requires database access to check zone sharing")
 	}
+	// The query runs under a bounded context (the package's bounded-context
+	// convention, cf. tldCheckCtx in provider.go): a wedged sharers count
+	// must never stall the mapper indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), legacyZoneSharersTimeout)
+	defer cancel()
 	var sharers int64
-	if err := db.RetryableComponentTransaction(s, context.Background(), func(tx *gorm.DB) *gorm.DB {
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		if err := tx.Model(&pluginDb.WebsiteDomain{}).
 			Where("zone_id = ? AND id != ? AND deleted_at IS NULL", wd.ZoneID, wd.ID).
 			Count(&sharers).Error; err != nil {

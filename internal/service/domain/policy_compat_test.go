@@ -345,6 +345,19 @@ func TestLegacyFacts_PlatformAndSharedZones(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, domainpolicy.ProfileIDPlatformICANN, profileID)
 
+			// A probed observation agreeing with the facts-derived route
+			// (standard DNS via the operator's PowerDNS zone) must NOT be
+			// rejected as a route mismatch; a disagreeing probe still is.
+			_, err = svc.legacyProfileFor(wd, domainpolicy.RouteObservation{
+				Route: domainpolicy.ResolutionRouteStandardDNS, Backend: domainpolicy.BackendPowerDNS,
+			})
+			require.NoError(t, err)
+			_, err = svc.legacyProfileFor(wd, domainpolicy.RouteObservation{
+				Route: domainpolicy.ResolutionRouteStandardDNS, Backend: domainpolicy.BackendSystemDNS,
+			})
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrCompatRouteMismatch)
+
 			// The generated plan must validate against the platform profile
 			// (shared operator zone, platform trust).
 			profile, ok := domainpolicy.DefaultRegistry().Lookup(profileID)
