@@ -56,7 +56,6 @@ type DnsConfig struct {
 	NameserverValidationInterval time.Duration `config:"nameserver_validation_interval"`
 
 	// DomainPolicyDNSLinkReconcilerEnabled routes DNSLink desired-state
-	// reconciliation through the plan-driven domain-policy reconciler.
 	// When false (the default), the legacy scattered DNSLink writers remain
 	// active and behavior is unchanged; when true, the internal/domainapp
 	// reconciler — driven by the binding's domainpolicy plan and Diff effect
@@ -70,6 +69,19 @@ type DnsConfig struct {
 	// by the `config` tag — a "dnslink" spelling made the flag silently read
 	// back FALSE even when set. The sibling repair flag already matched.
 	DomainPolicyDNSLinkReconcilerEnabled bool `config:"domain_policy_dns_link_reconciler_enabled"`
+
+	// DomainPolicyRepairReconcilerEnabled routes the remaining repair effect
+	// families — expired challenge-token rotation (website validation flow)
+	// and the DNSSEC ensure + SOA MNAME zone heal (domain verification flow)
+	// — through the plan-driven domain-policy repair reconciler. When false (the default), the
+	// legacy scattered repair paths (regenerateExpiredToken and
+	// selfHealZone) remain active and behavior is unchanged; when true, the
+	// internal/domainapp repair reconciler — driven by the binding's
+	// domainpolicy plan and Diff effect descriptors — owns those effects and
+	// the legacy paths defer to it for unrepresentable inputs. Sibling of
+	// DomainPolicyDNSLinkReconcilerEnabled: flipping it back to false
+	// restores the legacy path exactly.
+	DomainPolicyRepairReconcilerEnabled bool `config:"domain_policy_repair_reconciler_enabled"`
 }
 
 func (c DnsConfig) Defaults() map[string]any {
@@ -86,5 +98,6 @@ func (c DnsConfig) Defaults() map[string]any {
 		"NameserverValidationInterval": 5 * time.Minute,
 
 		"DomainPolicyDNSLinkReconcilerEnabled": false,
+		"DomainPolicyRepairReconcilerEnabled":  false,
 	}
 }

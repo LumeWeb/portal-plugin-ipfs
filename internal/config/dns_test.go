@@ -21,4 +21,11 @@ func TestDnsConfig_Defaults(t *testing.T) {
 	assert.Equal(t, false, defs["DomainPolicyDNSLinkReconcilerEnabled"],
 		"DnsConfig defaults must include DomainPolicyDNSLinkReconcilerEnabled=false")
 	assert.False(t, d.DomainPolicyDNSLinkReconcilerEnabled)
+
+	// The plan-driven repair reconciler (challenge rotation, DNSSEC
+	// ensure, SOA MNAME) defaults to OFF: the legacy repair paths remain the
+	// runtime behavior until the flag is enabled.
+	assert.Equal(t, false, defs["DomainPolicyRepairReconcilerEnabled"],
+		"DnsConfig defaults must include DomainPolicyRepairReconcilerEnabled=false")
+	assert.False(t, d.DomainPolicyRepairReconcilerEnabled)
 }

@@ -128,4 +128,12 @@ type DNSService interface {
 	// pointer; delegation is carried by the NS record), so callers must not
 	// treat an error here as a hard verification failure.
 	EnsureSOAMNAME(ctx context.Context, zoneID uint, domain string, nameservers []string) error
+
+	// GetZoneSOAMNAME returns the zone's current SOA MNAME (the first field
+	// of the apex SOA RRSet content). It is the observation read for the
+	// plan-driven zone heal: the self-heal
+	// represents SOA drift as a domainpolicy observation instead of writing
+	// blind. Errors are returned, not softened; callers treat them as
+	// observation transport failures.
+	GetZoneSOAMNAME(ctx context.Context, zoneID uint) (string, error)
 }
