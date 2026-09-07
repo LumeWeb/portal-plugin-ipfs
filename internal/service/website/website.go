@@ -2619,8 +2619,9 @@ func (e websiteRepairEffectExecutor) WriteChallengeRecord(ctx context.Context, z
 	if e.svc == nil {
 		return fmt.Errorf("no DNS service wired for the challenge write on %s", domain)
 	}
-	_, token, _ := strings.Cut(tokenRecord, "=")
-	return e.svc.CreateWebsiteValidationRecord(ctx, zoneID, domain, token)
+	// tokenRecord already carries the full "<key>=<token>" content the
+	// TokenTXTGate verifier matches against; forward it unchanged.
+	return e.svc.CreateWebsiteValidationRecord(ctx, zoneID, domain, tokenRecord)
 }
 
 func (e websiteRepairEffectExecutor) EnableZoneDNSSEC(_ context.Context, zoneID uint) error {

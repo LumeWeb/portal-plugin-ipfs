@@ -72,8 +72,8 @@ func TestWebsiteService_PlanRepairReconciler_ChallengeRotation(t *testing.T) {
 		assert.NotEqual(tb, oldToken, website.ValidationToken)
 		require.NotNil(tb, website.ValidationExpiresAt)
 		assert.True(tb, website.ValidationExpiresAt.After(time.Now()))
-		assert.Equal(tb, website.ValidationToken, writtenToken,
-			"the reconciled validation record must carry the persisted token")
+		assert.Equal(tb, svc.verificationTokenKey()+"="+website.ValidationToken, writtenToken,
+			"the reconciled validation record must carry the full <key>=<token> content the TokenTXTGate verifier matches")
 	}, dnsLinkReconcilerTestOptions)
 }
 
