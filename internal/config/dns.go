@@ -82,6 +82,18 @@ type DnsConfig struct {
 	// DomainPolicyDNSLinkReconcilerEnabled: flipping it back to false
 	// restores the legacy path exactly.
 	DomainPolicyRepairReconcilerEnabled bool `config:"domain_policy_repair_reconciler_enabled"`
+
+	// DomainPolicyAxesBackfillEnabled enables the bounded application backfill
+	// that derives and persists the independent policy-axis columns for
+	// legacy website_domains rows: it locks one row at a time, maps it
+	// through the legacy facts/profile mapper plus profile validation, writes
+	// the mapped axes, and records the persisted error reconciliation status
+	// (never guessed axis values) when the mapping fails. NOT auto-enabled:
+	// the registered cron job no-ops while this is false (the default).
+	// There is NO SQL backfill of ambiguous rows by design.
+	// The tag spells "axes_backfill" so CamelToSnake flattening of the field
+	// name matches the config pipeline read key.
+	DomainPolicyAxesBackfillEnabled bool `config:"domain_policy_axes_backfill_enabled"`
 }
 
 func (c DnsConfig) Defaults() map[string]any {
@@ -99,5 +111,6 @@ func (c DnsConfig) Defaults() map[string]any {
 
 		"DomainPolicyDNSLinkReconcilerEnabled": false,
 		"DomainPolicyRepairReconcilerEnabled":  false,
+		"DomainPolicyAxesBackfillEnabled":      false,
 	}
 }

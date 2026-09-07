@@ -147,6 +147,17 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 			}
 		}
 
+		// Derive the persisted axes from the post-conversion state before
+		// committing it (dual-write). The probe copy carries the exact
+		// post-conversion legacy state so the mapper sees the chain-authority
+		// binding, not the pre-conversion portal-zone one.
+		probe := *wd
+		probe.ZoneID = 0
+		probe.ZoneName = ""
+		probe.GatewayHost = ""
+		probe.DelegationData = nil
+		probe.DNSHostingEnabled = false
+		probe.Status = pluginDb.DomainStatusOnchainManaged
 		updates := map[string]any{
 			"zone_id":             0,
 			"zone_name":           "",
@@ -159,6 +170,9 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 			// the same atomic update — a converted binding must not carry a
 			// stale drift_detected_at into any later lifecycle state.
 			"drift_detected_at": nil,
+		}
+		for col, val := range s.DerivePolicyAxisColumns(ctx, &probe, nil) {
+			updates[col] = val
 		}
 		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 			if err := tx.Model(wd).Updates(updates).Error; err != nil {
@@ -175,6 +189,12 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 		wd.DNSHostingEnabled = false
 		wd.Status = pluginDb.DomainStatusOnchainManaged
 		wd.DriftDetectedAt = nil
+		// Mirror the persisted axes in memory (they equal the probe's state).
+		if axes, axesErr := s.derivePolicyAxes(&probe, nil); axesErr == nil {
+			_ = wd.ApplyAxes(axes)
+		} else {
+			wd.SetReconciliationStatus(pluginDb.PolicyReconciliationError)
+		}
 
 		if zoneID != 0 && s.dnsSvc != nil {
 			var sharers int64

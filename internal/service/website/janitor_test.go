@@ -361,6 +361,10 @@ func (r *recordingDelegatedDomainSvc) ValidateOnChainTLSA(context.Context, *plug
 func (r *recordingDelegatedDomainSvc) GetWebsiteDomainByName(context.Context, string) (*pluginDb.WebsiteDomain, error) {
 	return nil, gorm.ErrRecordNotFound
 }
+func (r *recordingDelegatedDomainSvc) DerivePolicyAxisColumns(context.Context, *pluginDb.WebsiteDomain, *pluginDb.Website) map[string]any {
+	return nil
+}
+
 func (r *recordingDelegatedDomainSvc) DANEPublicationTargetFor(*pluginDb.WebsiteDomain) (domsvc.DANEPublicationTarget, bool) {
 	return "", false
 }

@@ -583,6 +583,13 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		return nil, fmt.Errorf("failed to purge stale domain binding: %w", err)
 	}
 
+	// Dual-write: map the fresh binding's policy
+	// axes from its draft state and persist them with the row. A draft row
+	// has no mapping-worthy hosting locus yet (an axis value here would be a
+	// guess), so it is marked with the persisted error reconciliation status;
+	// the finalize updates below record the complete mapped axes once the
+	// locus resolves.
+	applyDualWriteAxes(s, wd, &website)
 	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		if err := tx.Create(wd).Error; err != nil {
 			_ = tx.AddError(err)
@@ -610,10 +617,10 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		wd.DNSHostingEnabled = false
 		var finErr error
 		if finErr = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-			if err := tx.Model(wd).Updates(map[string]any{
+			if err := tx.Model(wd).Updates(mergePolicyAxisColumns(s, ctx, wd, &website, false, map[string]any{
 				"status":              pluginDb.DomainStatusOnchainManaged,
 				"dns_hosting_enabled": false,
-			}).Error; err != nil {
+			})).Error; err != nil {
 				_ = tx.AddError(err)
 			}
 			return tx
@@ -656,7 +663,9 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 	if !dnsHostingEnabled {
 		wd.Status = pluginDb.DomainStatusSelfHosted
 		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-			if err := tx.Model(wd).Update("status", pluginDb.DomainStatusSelfHosted).Error; err != nil {
+			if err := tx.Model(wd).Updates(mergePolicyAxisColumns(s, ctx, wd, &website, false, map[string]any{
+				"status": pluginDb.DomainStatusSelfHosted,
+			})).Error; err != nil {
 				_ = tx.AddError(err)
 			}
 			return tx
@@ -764,12 +773,12 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		wd.Status = pluginDb.DomainStatusRecordsGenerated
 		wd.DelegationData = jsonToMap(delegationBytes)
 		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-			if err := tx.Model(wd).Updates(map[string]any{
+			if err := tx.Model(wd).Updates(mergePolicyAxisColumns(s, ctx, wd, &website, false, map[string]any{
 				"zone_id":             zone.ID,
 				"status":              pluginDb.DomainStatusRecordsGenerated,
 				"delegation_data":     wd.DelegationData,
 				"dns_hosting_enabled": wd.DNSHostingEnabled,
-			}).Error; err != nil {
+			})).Error; err != nil {
 				_ = tx.AddError(err)
 			}
 			return tx
@@ -921,8 +930,16 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		}
 		wd.Status = pluginDb.DomainStatusActive
 		if s.DB() != nil {
+			// Dual-write the persisted axes for the just-validated
+			// platform-trust state. This pass already ran the shared
+			// platform-trust validator on this exact row (directly above, or
+			// via WithPrevalidatedPlatformTrust), so the derivation skips the
+			// duplicate trust DB read (see
+			// derivePolicyAxisColumnsValidatedTrust).
 			if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				if err := tx.Model(wd).Update("status", wd.Status).Error; err != nil {
+				if err := tx.Model(wd).Updates(mergePolicyAxisColumns(s, ctx, wd, nil, true, map[string]any{
+					"status": wd.Status,
+				})).Error; err != nil {
 					_ = tx.AddError(err)
 				}
 				return tx
@@ -1085,7 +1102,9 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		wd.Status = pluginDb.DomainStatusError
 		if s.DB() != nil {
 			_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				_ = tx.Model(wd).Update("status", wd.Status).Error
+				_ = tx.Model(wd).Updates(mergePolicyAxisColumns(s, ctx, wd, nil, false, map[string]any{
+					"status": wd.Status,
+				})).Error
 				return tx
 			})
 		}
@@ -1139,7 +1158,9 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 
 	if s.DB() != nil {
 		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-			if err := tx.Model(wd).Update("status", wd.Status).Error; err != nil {
+			if err := tx.Model(wd).Updates(mergePolicyAxisColumns(s, ctx, wd, nil, false, map[string]any{
+				"status": wd.Status,
+			})).Error; err != nil {
 				_ = tx.AddError(err)
 			}
 			return tx
@@ -1856,6 +1877,19 @@ func (s *DelegatedDomainService) UsesDelegationForOwnership(domain string) bool 
 // remain authoritative at runtime for current fixtures — while reporting the
 // unavailability/d divergence loudly (the website service does both).
 func (s *DelegatedDomainService) CurrentBindingPlan(wd *pluginDb.WebsiteDomain, website *pluginDb.Website) (domainpolicy.Plan, error) {
+	// Dual-read: prefer a complete, valid
+	// persisted axis set; fall back to the legacy mapper otherwise. The axes
+	// gate is reconciliation_status=mapped; unmapped and error rows keep the
+	// exact pre-axes legacy behavior. A mapped-but-corrupt axis set fails
+	// closed (the error is returned, never a fallback onward).
+	if plan, ok, axesErr := s.planFromPersistedAxes(wd, website); ok {
+		return plan, axesErr
+	} else if axesErr != nil {
+		// The row claims a complete axis set (reconciliation_status=mapped)
+		// that failed validation: storage corruption fails closed. It must
+		// not silently authorize the legacy mapper to proceed.
+		return domainpolicy.Plan{}, axesErr
+	}
 	facts, err := s.legacyFacts(wd, website)
 	if err != nil {
 		return domainpolicy.Plan{}, err

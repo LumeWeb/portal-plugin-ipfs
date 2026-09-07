@@ -109,6 +109,13 @@ func (t *testDelegatedDomainService) CurrentBindingPlan(wd *pluginDb.WebsiteDoma
 	return domainpolicy.Plan{}, errors.New("testDelegatedDomainService supplies no current-behavior plan")
 }
 
+// DerivePolicyAxisColumns: the double never dual-writes policy axes — the
+// website-service write sites skip the merge for test fixtures (legacy-only
+// rows), which is exactly the no-mapper behavior.
+func (t *testDelegatedDomainService) DerivePolicyAxisColumns(context.Context, *pluginDb.WebsiteDomain, *pluginDb.Website) map[string]any {
+	return nil
+}
+
 func setMockDelegatedDomainSvc(ws pluginCore.WebsiteService, d delegatedDomainService) {
 	svc, ok := ws.(*WebsiteServiceDefault)
 	if !ok {

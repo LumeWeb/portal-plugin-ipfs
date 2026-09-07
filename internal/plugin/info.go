@@ -12,12 +12,12 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/ipfs"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/block"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/dns"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	filemanager "go.lumeweb.com/portal-plugin-ipfs/internal/service/file_manager"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/ipns_key"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/upload"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/website"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/portal/core"
 	portal_plugin_ipfs "go.lumeweb.com/web/go/portal-plugin-ipfs"
 )
@@ -93,6 +93,16 @@ func getPluginInfoWithoutTemplates() core.PluginInfo {
 				Factory: func() (core.CronJob, error) { return website.NewWebsiteJanitorJob(), nil },
 				Schedule: core.NewCronScheduleDefinition(core.CronScheduleTypeCron).
 					WithCronExpression("* * * * *"),
+			},
+			// Bounded policy-axis backfill. Registered per the cron pattern
+			// but NOT auto-enabled — the job
+			// no-ops unless dns.domain_policy_axes_backfill_enabled is true
+			// (default false). There is no SQL backfill of ambiguous rows.
+			{
+				Name:    "domain_policy_axes_backfill",
+				Factory: func() (core.CronJob, error) { return domain.NewDomainPolicyAxesBackfillJob(), nil },
+				Schedule: core.NewCronScheduleDefinition(core.CronScheduleTypeCron).
+					WithCronExpression("*/5 * * * *"),
 			},
 		},
 		Models: []any{

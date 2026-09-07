@@ -584,7 +584,15 @@ func (s *DelegatedDomainService) createPlatformBinding(ctx context.Context, webs
 	}
 	// The platform controls both sides of the DNS check (see VerifyDomain's
 	// platform guard), so the binding is active as soon as it is created.
+	wd.Status = pluginDb.DomainStatusActive
+	// The dual-write derivation below prevalidates platform trust: this pass
+	// just ran the shared validator on this exact row (the check above), so
+	// the derivation skips the duplicate trust DB read (see
+	// derivePolicyAxisColumnsValidatedTrust).
 	updates := map[string]any{"platform_domain_id": pd.ID, "status": pluginDb.DomainStatusActive}
+	for col, val := range s.derivePolicyAxisColumnsValidatedTrust(ctx, wd, nil, true) {
+		updates[col] = val
+	}
 	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		if err := tx.Model(wd).Updates(updates).Error; err != nil {
 			_ = tx.AddError(err)
@@ -593,7 +601,6 @@ func (s *DelegatedDomainService) createPlatformBinding(ctx context.Context, webs
 	}); err != nil {
 		return nil, fmt.Errorf("failed to mark platform subdomain: %w", err)
 	}
-	wd.Status = pluginDb.DomainStatusActive
 
 	// The website itself must follow the binding to active. Platform subdomains
 	// are operator-controlled on both ends of the DNS check, so awaiting DNS
