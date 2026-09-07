@@ -190,10 +190,24 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 		wd.Status = pluginDb.DomainStatusOnchainManaged
 		wd.DriftDetectedAt = nil
 		// Mirror the persisted axes in memory (they equal the probe's state).
-		if axes, axesErr := s.derivePolicyAxes(&probe, nil); axesErr == nil {
-			_ = wd.ApplyAxes(axes)
+		// derivePolicyAxes does not resolve the owning website itself (unlike
+		// DerivePolicyAxisColumns above, which loads it when passed nil), so
+		// the site is loaded explicitly here: without it the mapper's target
+		// facts always fail and every conversion would mirror an ERROR
+		// reconciliation status despite valid persisted axes.
+		site, siteErr := s.loadBackfillWebsite(ctx, probe.WebsiteID)
+		if siteErr == nil {
+			if axes, axesErr := s.derivePolicyAxes(&probe, site); axesErr == nil {
+				_ = wd.ApplyAxes(axes)
+			} else {
+				wd.SetReconciliationStatus(pluginDb.PolicyReconciliationError)
+				s.Logger().Warn("on-chain conversion: failed to mirror policy axes (non-fatal)",
+					zap.Uint("id", wd.ID), zap.String("domain", wd.Domain), zap.Error(axesErr))
+			}
 		} else {
 			wd.SetReconciliationStatus(pluginDb.PolicyReconciliationError)
+			s.Logger().Warn("on-chain conversion: failed to load owning website for the policy axes mirror (non-fatal)",
+				zap.Uint("id", wd.ID), zap.String("domain", wd.Domain), zap.Error(siteErr))
 		}
 
 		if zoneID != 0 && s.dnsSvc != nil {
