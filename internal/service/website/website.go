@@ -94,7 +94,7 @@ var _ pluginCore.WebsiteService = (*WebsiteServiceDefault)(nil)
 // used by WebsiteServiceDefault for delegation-aware validation.
 type delegatedDomainService interface {
 	UsesDelegationForOwnership(domain string) bool
-	VerifyDomain(ctx context.Context, wd *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error)
+	VerifyDomain(ctx context.Context, wd *pluginDb.WebsiteDomain, opts ...domsvc.VerifyDomainOption) (domsvc.DelegationVerificationResult, error)
 	GetNamespaceForDomain(domain string) (string, bool)
 	GetWebsiteDomainByName(ctx context.Context, domain string) (*pluginDb.WebsiteDomain, error)
 	GetPendingWebsiteDomainsPaginated(ctx context.Context, status pluginDb.DomainStatus, limit, offset int) ([]pluginDb.WebsiteDomain, error)
@@ -2097,10 +2097,25 @@ func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *
 		return true, "", "", nil
 	}
 
+	// Platform-trust dedupe within this validation pass: when the binding's
+	// plan was derived successfully, plan derivation (CurrentBindingPlan →
+	// legacyFacts) already ran the shared platform-trust validator
+	// (ValidatePlatformBinding) fail-closed for this exact portal-managed
+	// platform binding, in this same call. Passing
+	// WithPrevalidatedPlatformTrust skips VerifyDomain's duplicate DB
+	// revalidation while keeping every other VerifyDomain effect unchanged.
+	// Without a plan (or for any other binding shape) VerifyDomain must keep
+	// doing its own trust validation — the legacy fallback path relies on it
+	// to reject corrupted platform relations fail-closed.
+	var verifyOpts []domsvc.VerifyDomainOption
+	if havePlan && primaryWD.PlatformDomainID != nil && primaryWD.Class() == pluginDb.ClassPortalManaged {
+		verifyOpts = append(verifyOpts, domsvc.WithPrevalidatedPlatformTrust())
+	}
+
 	verifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	res, verr := s.delegatedDomainSvc.VerifyDomain(verifyCtx, primaryWD)
+	res, verr := s.delegatedDomainSvc.VerifyDomain(verifyCtx, primaryWD, verifyOpts...)
 	if verr != nil {
 		s.Logger().Info("delegation not verified for primary domain",
 			zap.String("domain", primaryWD.Domain), zap.Error(verr))

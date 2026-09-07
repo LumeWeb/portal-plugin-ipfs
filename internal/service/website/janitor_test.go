@@ -351,7 +351,7 @@ type recordingDelegatedDomainSvc struct {
 }
 
 func (r *recordingDelegatedDomainSvc) UsesDelegationForOwnership(string) bool { return false }
-func (r *recordingDelegatedDomainSvc) VerifyDomain(context.Context, *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error) {
+func (r *recordingDelegatedDomainSvc) VerifyDomain(context.Context, *pluginDb.WebsiteDomain, ...domsvc.VerifyDomainOption) (domsvc.DelegationVerificationResult, error) {
 	return domsvc.DelegationVerificationResult{State: domsvc.DelegationVerified}, nil
 }
 func (r *recordingDelegatedDomainSvc) GetNamespaceForDomain(string) (string, bool) { return "", false }

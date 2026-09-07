@@ -690,12 +690,47 @@ const (
 	msgDelegationPending   = "nameservers not yet visible at the parent zone"
 )
 
+// verifyDomainOptions carries the internal switches set through
+// VerifyDomainOption; the zero value preserves the historical behavior.
+type verifyDomainOptions struct {
+	// skipPlatformTrustValidation suppresses the ValidatePlatformBinding DB
+	// revalidation for bindings whose platform trust was already validated
+	// earlier in the same validation pass (see WithPrevalidatedPlatformTrust).
+	skipPlatformTrustValidation bool
+}
+
+// VerifyDomainOption adjusts VerifyDomain's internal work for callers that
+// already performed part of the verification flow in the same validation
+// pass. No option changes VerifyDomain's output contract: the returned
+// states, typed errors, and persisted effects stay identical.
+type VerifyDomainOption func(*verifyDomainOptions)
+
+// WithPrevalidatedPlatformTrust tells VerifyDomain that the binding's
+// platform-trust relation (ValidatePlatformBinding) already succeeded in the
+// same validation pass, so the duplicate DB revalidation is skipped. Callers
+// must only pass this when the shared validator ran on this exact binding row
+// and succeeded — in the ValidateDNS flow, plan derivation
+// (CurrentBindingPlan) runs ValidatePlatformBinding fail-closed for every
+// portal-managed platform binding before the delegation gate is reached, so a
+// trust failure aborts validation before this point. VerifyDomain's remaining
+// platform work (auto-activation status write and result shape) is unchanged.
+func WithPrevalidatedPlatformTrust() VerifyDomainOption {
+	return func(o *verifyDomainOptions) { o.skipPlatformTrustValidation = true }
+}
+
 // VerifyDomain checks delegation and persists the result. It returns a typed
 // DelegationVerificationResult so callers can distinguish "not applicable"
 // (self-hosted / on-chain / unresolved bindings) from "pending" (portal
 // delegation not yet live) from "verified" without re-deriving hosting rules.
 func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
-	wd *pluginDb.WebsiteDomain) (DelegationVerificationResult, error) {
+	wd *pluginDb.WebsiteDomain, opts ...VerifyDomainOption) (DelegationVerificationResult, error) {
+
+	var vopts verifyDomainOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&vopts)
+		}
+	}
 
 	provider := s.registry.Get(string(wd.Namespace))
 	if provider == nil {
@@ -712,8 +747,13 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 	// A mismatch is data-integrity corruption and must NOT auto-activate the
 	// binding or mutate any status.
 	if wd.PlatformDomainID != nil {
-		if err := s.ValidatePlatformBinding(ctx, wd); err != nil {
-			return DelegationVerificationResult{}, err
+		// The trust revalidation can be skipped only when the caller
+		// guarantees it already ran on this row in the same pass; every other
+		// caller still gets the full shared-validator check.
+		if !vopts.skipPlatformTrustValidation {
+			if err := s.ValidatePlatformBinding(ctx, wd); err != nil {
+				return DelegationVerificationResult{}, err
+			}
 		}
 		wd.Status = pluginDb.DomainStatusActive
 		if s.DB() != nil {

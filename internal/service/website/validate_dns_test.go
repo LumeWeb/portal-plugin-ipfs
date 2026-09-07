@@ -52,7 +52,7 @@ func (t *testDelegatedDomainService) UsesDelegationForOwnership(d string) bool {
 	return false
 }
 
-func (t *testDelegatedDomainService) VerifyDomain(ctx context.Context, wd *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error) {
+func (t *testDelegatedDomainService) VerifyDomain(ctx context.Context, wd *pluginDb.WebsiteDomain, _ ...domsvc.VerifyDomainOption) (domsvc.DelegationVerificationResult, error) {
 	if t.verify != nil {
 		return t.verify(ctx, wd)
 	}
