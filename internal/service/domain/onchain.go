@@ -171,8 +171,29 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 			// stale drift_detected_at into any later lifecycle state.
 			"drift_detected_at": nil,
 		}
-		for col, val := range s.DerivePolicyAxisColumns(ctx, &probe, nil) {
-			updates[col] = val
+		// Derive the persisted axes once and reuse the value for both the DB
+		// dual-write columns and the in-memory mirror below, so the two
+		// representations match by construction instead of by a second
+		// (failable) re-derivation. The site load mirrors DerivePolicyAxisColumns
+		// exactly (both are a plain First on the owning website) and a load or
+		// mapping failure fails closed: only the error reconciliation status is
+		// persisted, axis values are never guessed.
+		var axes pluginDb.DomainPolicyAxes
+		var axesErr error
+		site, siteErr := s.loadBackfillWebsite(ctx, probe.WebsiteID)
+		if siteErr != nil {
+			axesErr = siteErr
+		} else {
+			axes, axesErr = s.derivePolicyAxes(&probe, site)
+		}
+		if axesErr != nil {
+			for col, val := range pluginDb.PolicyAxesErrorColumns() {
+				updates[col] = val
+			}
+		} else {
+			for col, val := range axes.Columns() {
+				updates[col] = val
+			}
 		}
 		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 			if err := tx.Model(wd).Updates(updates).Error; err != nil {
@@ -189,25 +210,18 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 		wd.DNSHostingEnabled = false
 		wd.Status = pluginDb.DomainStatusOnchainManaged
 		wd.DriftDetectedAt = nil
-		// Mirror the persisted axes in memory (they equal the probe's state).
-		// derivePolicyAxes does not resolve the owning website itself (unlike
-		// DerivePolicyAxisColumns above, which loads it when passed nil), so
-		// the site is loaded explicitly here: without it the mapper's target
-		// facts always fail and every conversion would mirror an ERROR
-		// reconciliation status despite valid persisted axes.
-		site, siteErr := s.loadBackfillWebsite(ctx, probe.WebsiteID)
-		if siteErr == nil {
-			if axes, axesErr := s.derivePolicyAxes(&probe, site); axesErr == nil {
-				_ = wd.ApplyAxes(axes)
-			} else {
-				wd.SetReconciliationStatus(pluginDb.PolicyReconciliationError)
-				s.Logger().Warn("on-chain conversion: failed to mirror policy axes (non-fatal)",
-					zap.Uint("id", wd.ID), zap.String("domain", wd.Domain), zap.Error(axesErr))
-			}
-		} else {
+		// Mirror the persisted axes in memory from the SAME derived value the
+		// columns above were built from — no re-derivation, no site re-load.
+		// The DB (not the in-memory mirror) remains the source of truth, but a
+		// failure here is never swallowed silently.
+		if axesErr != nil {
+			s.Logger().Warn("on-chain conversion: failed to derive policy axes; persisted error reconciliation status (non-fatal)",
+				zap.Uint("id", wd.ID), zap.String("domain", wd.Domain), zap.Error(axesErr))
 			wd.SetReconciliationStatus(pluginDb.PolicyReconciliationError)
-			s.Logger().Warn("on-chain conversion: failed to load owning website for the policy axes mirror (non-fatal)",
-				zap.Uint("id", wd.ID), zap.String("domain", wd.Domain), zap.Error(siteErr))
+		} else if applyErr := wd.ApplyAxes(axes); applyErr != nil {
+			wd.SetReconciliationStatus(pluginDb.PolicyReconciliationError)
+			s.Logger().Warn("on-chain conversion: failed to mirror policy axes (non-fatal)",
+				zap.Uint("id", wd.ID), zap.String("domain", wd.Domain), zap.Error(applyErr))
 		}
 
 		if zoneID != 0 && s.dnsSvc != nil {

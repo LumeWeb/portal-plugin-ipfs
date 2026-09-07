@@ -1201,6 +1201,35 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 		assert.False(tb, persisted.DNSHostingEnabled)
 		assert.Equal(tb, "CERT", persisted.ProtocolData["dane_cert_pem"])
 
+		// Policy axes: the dual-write columns and the in-memory mirror must be
+		// built from the same derivation, so the reloaded row and the returned
+		// binding agree on every axis column and both read as MAPPED (it is a
+		// chain-authority binding, never the error reconciliation status).
+		assert.True(tb, converted.PolicyAxesMapped(), "returned binding must carry a mapped in-memory axis set")
+		locus, err := converted.GetAuthorityLocus()
+		require.NoError(tb, err)
+		assert.Equal(tb, domainpolicy.AuthorityLocusChain, locus)
+		assert.True(tb, persisted.PolicyAxesMapped(), "persisted row must be dual-written as mapped")
+		locus, err = persisted.GetAuthorityLocus()
+		require.NoError(tb, err)
+		assert.Equal(tb, domainpolicy.AuthorityLocusChain, locus)
+		for _, axis := range []struct{ name string; inMemory, persisted *string }{
+			{"lifecycle_status", converted.LifecycleStatus, persisted.LifecycleStatus},
+			{"authority_locus", converted.AuthorityLocus, persisted.AuthorityLocus},
+			{"resolution_route", converted.ResolutionRoute, persisted.ResolutionRoute},
+			{"resolution_backend", converted.ResolutionBackend, persisted.ResolutionBackend},
+			{"hosting_request", converted.HostingRequest, persisted.HostingRequest},
+			{"policy_id", converted.PolicyID, persisted.PolicyID},
+		} {
+			require.NotNil(tb, axis.inMemory, "axis column %q", axis.name)
+			require.NotNil(tb, axis.persisted, "axis column %q", axis.name)
+			assert.Equal(tb, *axis.persisted, *axis.inMemory,
+				"in-memory mirror must match persisted column %q", axis.name)
+		}
+		require.NotNil(tb, converted.PolicyVersion)
+		require.NotNil(tb, persisted.PolicyVersion)
+		assert.Equal(tb, *persisted.PolicyVersion, *converted.PolicyVersion, "policy_version must match")
+
 		// The website re-armed validation (active -> pending_validation).
 		var reloaded pluginDb.Website
 		require.NoError(tb, db.First(&reloaded, website.ID).Error)
