@@ -17,6 +17,7 @@ import (
 	"go.lumeweb.com/ipfs-sdk/dnsname"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 
 	"github.com/miekg/dns"
 	"go.lumeweb.com/icann-tlds"
@@ -219,24 +220,42 @@ func (p *HNSProvider) Validate(domain string) error {
 	return nil
 }
 
-// Inspect reports which system the configured HNS resolver's routing would
-// serve the name from, using the reserved resolution-source probe: a TXT
-// query for the name prefixed with the "resolver" label. The node answers the
-// probe from the same classification its own routing performs (referral
+// InspectRoute reports which system the configured HNS resolver's routing
+// would serve the name from, using the reserved resolution-source probe: a
+// TXT query for the name prefixed with the "resolver" label. The node answers
+// the probe from the same classification its own routing performs (referral
 // marker legitimacy plus dual-mode mint probing), so source detection needs
 // no NS or referral parsing portal-side and stays correct however the
-// resolver hides HIP-5 markers from recursive queries. "ens" means the name
-// resolves on-chain through HIP-5; "hns" is Handshake root delegation and
-// "dns" the recursor's ICANN fallback.
+// resolver hides HIP-5 markers from recursive queries. The probe answer maps
+// to the typed route observation as:
 //
-// Unregistered names are treated as native HNS. Resolver configuration and
-// transport failures are returned so binding cannot create portal DNS state
-// while the source decision is unknown.
-func (p *HNSProvider) Inspect(ctx context.Context, domain string) (bool, error) {
+//   - "ens": the name resolves on-chain through HIP-5 — reported as the
+//     cross-chain route over the "ethereum" backend. The backend identity
+//     covers HIP-5 chain-backed resolution reached through the HNS resolver
+//     (including ENS names served via the handover's HIP-5 zone); it does NOT
+//     create direct-ENS website support.
+//   - "hns": Handshake root delegation — the HNS-root route over the
+//     "hns-root" backend.
+//   - "dns": the recursor's ICANN fallback — the standard-DNS route explicitly
+//     (the compatibility Inspect below still reports false, as always).
+//
+// Without a configured HNS resolver the route source cannot be measured, so
+// the observation reports the ASSUMED HNS-root route (AssumedSource set): the
+// existing early return survives so native HNS remains usable without
+// handover configuration, while the typed observation still says the source
+// was assumed, not measured. Unregistered names are treated as native for the
+// same reason. Resolver configuration and transport/malformed-probe failures
+// are returned so binding cannot create portal DNS state while the source
+// decision is unknown.
+func (p *HNSProvider) InspectRoute(ctx context.Context, domain string) (domainpolicy.RouteObservation, error) {
 	if p.resolverAddr == "" {
 		// Keep native HNS usable when handover integration is not configured;
 		// configured resolver failures still fail closed below.
-		return false, nil
+		return domainpolicy.RouteObservation{
+			Route:         domainpolicy.ResolutionRouteHNSRoot,
+			Backend:       domainpolicy.BackendHNSRoot,
+			AssumedSource: true,
+		}, nil
 	}
 	inspectCtx, cancel := context.WithTimeout(ctx, hip5InspectTimeout)
 	defer cancel()
@@ -247,24 +266,49 @@ func (p *HNSProvider) Inspect(ctx context.Context, domain string) (bool, error) 
 		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
 			// NXDOMAIN on the probe name is a resolver without the probe
 			// (or an unregistered name): treat as native, mirroring the
-			// pre-probe behavior for unregistered names.
-			return false, nil
+			// pre-probe behavior for unregistered names. The source is
+			// assumed, not measured, so the observation carries the marker.
+			return domainpolicy.RouteObservation{
+				Route:         domainpolicy.ResolutionRouteHNSRoot,
+				Backend:       domainpolicy.BackendHNSRoot,
+				AssumedSource: true,
+			}, nil
 		}
-		return false, fmt.Errorf("HNS source probe query failed (resolver %q): %w", p.resolverAddr, err)
+		return domainpolicy.RouteObservation{}, fmt.Errorf("HNS source probe query failed (resolver %q): %w", p.resolverAddr, err)
 	}
 
 	source, err := hip5ProbeSource(reply, probeName)
 	if err != nil {
-		return false, fmt.Errorf("HNS source probe failed (resolver %q): %w", p.resolverAddr, err)
+		return domainpolicy.RouteObservation{}, fmt.Errorf("HNS source probe failed (resolver %q): %w", p.resolverAddr, err)
 	}
 	switch source {
 	case hip5ProbeSourceENS:
-		return true, nil
-	case hip5ProbeSourceHNS, hip5ProbeSourceDNS:
-		return false, nil
+		// HIP-5 chain-backed resolution via the HNS resolver. "ethereum" is
+		// the backend of this cross-chain route; it is not direct-ENS
+		// website support.
+		return domainpolicy.RouteObservation{
+			Route:   domainpolicy.ResolutionRouteCrossChain,
+			Backend: domainpolicy.BackendEthereum,
+		}, nil
+	case hip5ProbeSourceHNS:
+		return domainpolicy.RouteObservation{
+			Route:   domainpolicy.ResolutionRouteHNSRoot,
+			Backend: domainpolicy.BackendHNSRoot,
+		}, nil
+	case hip5ProbeSourceDNS:
+		return domainpolicy.RouteObservation{
+			Route:   domainpolicy.ResolutionRouteStandardDNS,
+			Backend: domainpolicy.BackendSystemDNS,
+		}, nil
 	default:
-		return false, fmt.Errorf("HNS source probe returned unknown source %q (resolver %q)", source, p.resolverAddr)
+		return domainpolicy.RouteObservation{}, fmt.Errorf("HNS source probe returned unknown source %q (resolver %q)", source, p.resolverAddr)
 	}
+}
+
+// Inspect is the compatibility adapter over InspectRoute: a name is
+// on-chain managed exactly when its route observation is cross-chain.
+func (p *HNSProvider) Inspect(ctx context.Context, domain string) (bool, error) {
+	return OnChainManagedFromRoute(p.InspectRoute(ctx, domain))
 }
 
 // Resolution-source probe answer values, mirroring the resolver's own
