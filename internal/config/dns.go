@@ -54,6 +54,22 @@ type DnsConfig struct {
 
 	// Nameserver validation job configuration
 	NameserverValidationInterval time.Duration `config:"nameserver_validation_interval"`
+
+	// DomainPolicyDNSLinkReconcilerEnabled routes DNSLink desired-state
+	// reconciliation through the plan-driven domain-policy reconciler.
+	// When false (the default), the legacy scattered DNSLink writers remain
+	// active and behavior is unchanged; when true, the internal/domainapp
+	// reconciler — driven by the binding's domainpolicy plan and Diff effect
+	// descriptors — is the single owner of DNSLink record writes and the
+	// legacy writers defer to it. Feature flag for rollout/rollback only:
+	// flipping it back to false restores the legacy path exactly.
+	// NOTE: the key spells "dns_link" (not "dnslink") because the test and
+	// platform config pipelines flatten the field name with CamelToSnake
+	// ("DomainPolicyDNSLinkReconcilerEnabled" ->
+	// "domain_policy_dns_link_reconciler_enabled") and then read values back
+	// by the `config` tag — a "dnslink" spelling made the flag silently read
+	// back FALSE even when set. The sibling repair flag already matched.
+	DomainPolicyDNSLinkReconcilerEnabled bool `config:"domain_policy_dns_link_reconciler_enabled"`
 }
 
 func (c DnsConfig) Defaults() map[string]any {
@@ -68,5 +84,7 @@ func (c DnsConfig) Defaults() map[string]any {
 		"GatewayIP":                    "",
 		"VerificationTokenKey":         "lumeweb-verify",
 		"NameserverValidationInterval": 5 * time.Minute,
+
+		"DomainPolicyDNSLinkReconcilerEnabled": false,
 	}
 }

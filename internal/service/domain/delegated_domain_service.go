@@ -18,6 +18,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainapp"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
@@ -180,6 +181,108 @@ func (s *DelegatedDomainService) gatewayIP() string {
 		return ""
 	}
 	return dnsCfg.GatewayIP
+}
+
+// dnsLinkReconcilerEnabled reports whether the plan-driven DNSLink reconciler
+// owns DNSLink desired-state application.
+// The flag defaults to FALSE: with it off, the legacy bind-time DNSLink
+// writer remains the exact current behavior. The flag is read from the DNS
+// service config at call time (same pattern as gatewayHost/gatewayIP).
+func (s *DelegatedDomainService) dnsLinkReconcilerEnabled() bool {
+	if s.BaseComponent == nil {
+		return false
+	}
+	dnsCfg := core.GetServiceConfig[*pluginConfig.DnsConfig](s.Context(), pluginCore.DNS_SERVICE)
+	if dnsCfg == nil {
+		return false
+	}
+	return dnsCfg.DomainPolicyDNSLinkReconcilerEnabled
+}
+
+// reconcileBindDNSLink runs the plan-driven DNSLink reconciliation for the
+// bind-time first-publication write. The zone-id commit happens later in the
+// bind flow, so the resolved zone reference is set on the in-memory row
+// before mapping facts (mirroring the final assignment below) — otherwise the
+// persisted-class mapper would see an unresolved binding and reject the plan.
+//
+// The legacy bind path wrote the record unconditionally; no live DNSLink
+// observation is performed here (there is no observation collector on the
+// bind path), so the reconciler derives its effects from the unobserved
+// record and deterministically yields the same idempotent write the legacy
+// path performed. It reports whether the reconciler HANDLED the write;
+// false leaves the operation untouched for the legacy fallback. Any
+// reconcile failure — including a DNS write error from the effect
+// executor — reports false so the caller runs the legacy fallback write
+// (and its documented rollback) rather than silently treating the
+// operation as handled-on-success.
+func (s *DelegatedDomainService) reconcileBindDNSLink(ctx context.Context, wd *pluginDb.WebsiteDomain, website *pluginDb.Website, zoneID uint, domain string, target string) bool {
+	logger := s.Logger()
+	if s.dnsSvc == nil || wd == nil || website == nil {
+		return false
+	}
+	wd.ZoneID = zoneID
+	plan, err := s.CurrentBindingPlan(wd, website)
+	if err != nil {
+		logger.Warn("plan-driven DNSLink reconciler unavailable at bind: no current-behavior plan for binding; deferring to the legacy DNSLink writer",
+			zap.String("domain", domain),
+			zap.Uint("domain_id", wd.ID),
+			zap.Error(err))
+		return false
+	}
+	result, err := domainapp.ReconcileDNSLink(ctx, domainapp.DNSLinkReconcileInput{
+		Plan:          &plan,
+		Domain:        domain,
+		ZoneID:        zoneID,
+		DesiredTarget: target,
+	},
+		nil, // first-publication write: the legacy bind wrote unconditionally
+		bindDNSLinkEffectExecutor{svc: s.dnsSvc},
+		logger.Logger)
+	if err != nil {
+		if errors.Is(err, domainapp.ErrDNSLinkNotReconciled) {
+			logger.Warn("plan-driven DNSLink reconciler could not represent the bind-time write; deferring to the legacy DNSLink writer",
+				zap.String("domain", domain),
+				zap.Uint("domain_id", wd.ID),
+				zap.String("profile", plan.ProfileID.String()),
+				zap.Error(err))
+			return false
+		}
+		logger.Warn("plan-driven DNSLink bind write failed",
+			zap.String("domain", domain),
+			zap.Uint("domain_id", wd.ID),
+			zap.Uint("zone_id", zoneID),
+			zap.Error(err))
+		// A failed write was not handled: report false so the caller runs the
+		// legacy fallback write and its rollback instead of proceeding as if
+		// the DNSLink record is in place.
+		return false
+	}
+	if len(result.Deferred) > 0 {
+		logger.Debug("plan-driven DNSLink bind reconcile deferred non-DNSLink effects",
+			zap.String("domain", domain),
+			zap.String("profile", plan.ProfileID.String()),
+			zap.Strings("deferred", result.Deferred))
+	}
+	return true
+}
+
+// bindDNSLinkEffectExecutor adapts the domain-side DNSZoneService into the
+// domainapp EffectExecutor port for the bind path. The bind path only ever
+// creates (first publication), so no delete executor is wired: a delete
+// effect (unreachable at bind — no observations) fails closed.
+type bindDNSLinkEffectExecutor struct {
+	svc DNSZoneService
+}
+
+func (e bindDNSLinkEffectExecutor) WriteDNSLinkRecord(ctx context.Context, zoneID uint, domain string, target string) error {
+	if e.svc == nil {
+		return fmt.Errorf("no DNS zone service wired for the DNSLink write on %s", domain)
+	}
+	return e.svc.CreateDNSLinkRecord(ctx, zoneID, domain, target)
+}
+
+func (e bindDNSLinkEffectExecutor) DeleteDNSLinkRecord(_ context.Context, zoneID uint, domain string) error {
+	return fmt.Errorf("DNSLink record deletion is not supported on the bind path (zone %d, domain %s)", zoneID, domain)
 }
 
 // resolveManagedZone returns the PowerDNS zone a managed binding's authoritative
@@ -541,12 +644,22 @@ func (s *DelegatedDomainService) CreateDomain(ctx context.Context,
 		// Name the record after the binding's domain (not the zone apex) so a
 		// subdomain reusing a parent zone writes its own _dnslink.<subdomain>,
 		// not the parent's.
-		if err := s.dnsSvc.CreateDNSLinkRecord(ctx, zone.ID, domain, target); err != nil {
-			s.deleteBindingBestEffort(ctx, wd)
-			if zoneCreated {
-				_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+		//
+		// With the DNSLink reconciler feature
+		// flag enabled, this bind-time creation goes through the plan-driven
+		// reconciler — the binding plan (already from this service's own
+		// CurrentBindingPlan) derives the write effect. The legacy
+		// unconditional CreateDNSLinkRecord below is the fallback for anything
+		// the flagged path cannot represent (mapper rejection, fail-closed
+		// diff): same write, same rollback, same error semantics.
+		if !(s.dnsLinkReconcilerEnabled() && s.reconcileBindDNSLink(ctx, wd, &website, zone.ID, domain, target)) {
+			if err := s.dnsSvc.CreateDNSLinkRecord(ctx, zone.ID, domain, target); err != nil {
+				s.deleteBindingBestEffort(ctx, wd)
+				if zoneCreated {
+					_ = s.dnsSvc.DeleteZone(ctx, zone.ID)
+				}
+				return fmt.Errorf("dnslink creation failed: %w", err)
 			}
-			return fmt.Errorf("dnslink creation failed: %w", err)
 		}
 
 		// Create apex record pointing to the gateway. DNSSEC-signed alt-root
