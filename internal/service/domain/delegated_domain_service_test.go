@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -1128,6 +1129,7 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 		// stored in ProtocolData so the conversion's DANE-identity bootstrap
 		// (which re-reads it) succeeds.
 		keyPEM := mustGenerateKey(t)
+		driftAt := time.Now().Add(-time.Hour)
 
 		wd := &pluginDb.WebsiteDomain{
 			WebsiteID:         website.ID,
@@ -1151,6 +1153,9 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 				"owner_name":       "_443._tcp." + domain + ".",
 				"dane_private_key": keyPEM,
 			},
+			// Conversion is also where the janitor's route-drift backoff is
+			// retired: the marker must not survive the status handover.
+			DriftDetectedAt: &driftAt,
 		}
 		require.NoError(tb, db.Create(wd).Error)
 		hnsProv := svc.registry.Get("hns").(*HNSProvider)
@@ -1179,6 +1184,7 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, converted.Status)
 		assert.Equal(tb, uint(0), converted.ZoneID)
 		assert.False(tb, converted.DNSHostingEnabled)
+		assert.Nil(tb, converted.DriftDetectedAt)
 		assert.Nil(tb, converted.DelegationData)
 		// DANE/SSL ProtocolData is retained.
 		require.NotNil(tb, converted.ProtocolData)
@@ -1190,6 +1196,7 @@ func TestDelegatedDomainService_ConvertToOnChain_HappyPath(t *testing.T) {
 		require.NoError(tb, db.First(&persisted, wd.ID).Error)
 		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, persisted.Status)
 		assert.Equal(tb, uint(0), persisted.ZoneID)
+		assert.Nil(tb, persisted.DriftDetectedAt)
 		assert.Nil(tb, persisted.DelegationData)
 		assert.False(tb, persisted.DNSHostingEnabled)
 		assert.Equal(tb, "CERT", persisted.ProtocolData["dane_cert_pem"])
@@ -1409,7 +1416,9 @@ func TestDelegatedDomainService_VerifyDomain_RouteDriftReportedWithoutMutation(t
 		assert.Equal(tb, zoneID, wd.ZoneID)
 		assert.True(tb, wd.DNSHostingEnabled)
 		var persisted pluginDb.WebsiteDomain
-		require.NoError(tb, db.First(&persisted, wd.ID).Error)
+		require.NoError(tb, portaldb.RetryableTransaction(context.Background(), ctx.DB(), func(tx *gorm.DB) *gorm.DB {
+			return tx.Where("id = ?", wd.ID).First(&persisted)
+		}))
 		assert.Equal(tb, pluginDb.DomainStatusWaitingDelegation, persisted.Status)
 		assert.Equal(tb, zoneID, persisted.ZoneID)
 		assert.True(tb, persisted.DNSHostingEnabled)

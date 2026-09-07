@@ -154,6 +154,11 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 			"delegation_data":     nil,
 			"dns_hosting_enabled": false,
 			"status":              pluginDb.DomainStatusOnchainManaged,
+			// The row survives conversion (status flips, not deletion), so
+			// the janitor's route-drift backoff marker must be cleared with
+			// the same atomic update — a converted binding must not carry a
+			// stale drift_detected_at into any later lifecycle state.
+			"drift_detected_at": nil,
 		}
 		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 			if err := tx.Model(wd).Updates(updates).Error; err != nil {
@@ -169,6 +174,7 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 		wd.DelegationData = nil
 		wd.DNSHostingEnabled = false
 		wd.Status = pluginDb.DomainStatusOnchainManaged
+		wd.DriftDetectedAt = nil
 
 		if zoneID != 0 && s.dnsSvc != nil {
 			var sharers int64

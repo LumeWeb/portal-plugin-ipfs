@@ -228,6 +228,15 @@ type WebsiteDomain struct {
 	// operator rather than the binding's UserID.
 	PlatformDomainID *uint `gorm:"column:platform_domain_id;index:idx_website_domains_platform_domain_id"`
 
+	// DriftDetectedAt records when the janitor last observed route drift on
+	// this binding (live resolution route disagreeing with persisted state).
+	// It throttles the janitor's re-probing of a permanently-drifted binding:
+	// while set, verification is skipped until the janitor's backoff window
+	// elapses, and it is cleared by the janitor once a re-probe shows the
+	// drift resolved. It carries no lifecycle meaning outside the janitor —
+	// conversion remains an explicit operator command.
+	DriftDetectedAt *time.Time `gorm:"column:drift_detected_at;index:idx_website_domains_drift_detected_at"`
+
 	// DNS hosting is a per-domain property, owning the PowerDNS hosting
 	// lifecycle for this binding (having moved off the owning Website, which
 	// now only references this domain via Website.PrimaryDomainID). The IPNS
