@@ -10,7 +10,9 @@ import (
 	"time"
 
 	dnslink "github.com/dnslink-std/go"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/miekg/dns"
+	mh "github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -361,6 +363,214 @@ func TestValidateDNS_NXDOMAIN_ReturnsDNSMissing(t *testing.T) {
 		assert.Equal(tb, pluginCore.ValidationReasonDNSMissing, result.Reason)
 		assert.Contains(tb, result.Message, "No DNS records found")
 	}, TestOptions)
+}
+
+// TestLegacyDNSLinkMatched_PassOnEither pins the gate matching against the
+// former checkDNSLinkMatch: the gate passes when the FIRST ipfs link or the
+// FIRST ipns link equals the expected target, and the reported "found"
+// candidate follows the legacy variable-overwrite order (first ipns wins the
+// diagnostic when both families are present and neither matches).
+func TestLegacyDNSLinkMatched_PassOnEither(t *testing.T) {
+	ipfsExpected := pluginDb.IPFSPath("bafk-expected")
+	ipfsStale := pluginDb.IPFSPath("bafk-stale")
+	ipnsExpected := pluginDb.IPNSPath("peer-expected")
+	ipnsStale := pluginDb.IPNSPath("peer-stale")
+
+	tests := []struct {
+		name          string
+		links         dnslink.Result
+		expected      string
+		wantCandidate string
+		wantMatched   bool
+	}{
+		{
+			name: "first_ipfs_link_matches",
+			links: dnslink.Result{Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: "bafk-expected"}, {Identifier: "bafk-other"}},
+			}},
+			expected:      ipfsExpected,
+			wantCandidate: ipfsExpected,
+			wantMatched:   true,
+		},
+		{
+			name: "stale_ipfs_then_matching_ipns_passes",
+			links: dnslink.Result{Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: "bafk-stale"}},
+				"ipns": {{Identifier: "peer-expected"}},
+			}},
+			// An ipns link can only match an /ipns/ expectation — the
+			// regression scenario is an ipns-backed target whose TXT still
+			// carries the stale ipfs link from the prior target.
+			expected:      ipnsExpected,
+			wantCandidate: ipnsExpected,
+			wantMatched:   true,
+		},
+		{
+			name: "both_families_stale_reports_first_ipns_as_found",
+			links: dnslink.Result{Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: "bafk-stale"}},
+				"ipns": {{Identifier: "peer-stale"}},
+			}},
+			expected:      ipnsExpected,
+			wantCandidate: ipnsStale,
+			wantMatched:   false,
+		},
+		{
+			name: "only_stale_ipfs_reports_first_ipfs_as_found",
+			links: dnslink.Result{Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: "bafk-stale"}},
+			}},
+			expected:      ipfsExpected,
+			wantCandidate: ipfsStale,
+			wantMatched:   false,
+		},
+		{
+			name: "only_matching_ipns_passes",
+			links: dnslink.Result{Links: map[string]dnslink.NamespaceEntries{
+				"ipns": {{Identifier: "peer-expected"}},
+			}},
+			expected:      ipnsExpected,
+			wantCandidate: ipnsExpected,
+			wantMatched:   true,
+		},
+		{
+			name:          "no_links_reports_no_candidate",
+			links:         dnslink.Result{Links: map[string]dnslink.NamespaceEntries{}},
+			expected:      ipfsExpected,
+			wantCandidate: "",
+			wantMatched:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			candidate, matched := legacyDNSLinkMatched(tt.links, tt.expected)
+			assert.Equal(t, tt.wantMatched, matched)
+			assert.Equal(t, tt.wantCandidate, candidate)
+		})
+	}
+}
+
+// TestValidateDNS_PendingValidation_StaleIPFSWithMatchingIPNS_PassesOnEither
+// pins the regression the centralized evaluation introduced: a TXT with a
+// stale ipfs link plus an ipns link equal to the target used to PASS under
+// the legacy checkDNSLinkMatch (pass-on-either) and must keep passing with
+// the DNSLink observation reported as the matching ipns candidate.
+func TestValidateDNS_PendingValidation_StaleIPFSWithMatchingIPNS_PassesOnEither(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "gate-parity")
+		website := createTestIPFSWebsite(testUserID1, "gate-parity.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "gate-parity.com", false)
+
+		// Bind the website to an IPNS target the way an ipns-backed binding
+		// persists it (the ipfs TXT link below is then stale by definition).
+		// UpdateColumns, like bindPrimaryDomain, so the bare Website's target
+		// validation hook does not run on the partial update.
+		require.NoError(tb, ctx.DB().Model(&pluginDb.Website{ID: created.ID}).UpdateColumns(map[string]interface{}{
+			"target_type":      string(pluginDb.WebsiteTargetTypeIPNS),
+			"target_multihash": ipnsBackedPeerMultihash,
+			"cid_version":      nil,
+			"cid_type":         nil,
+		}).Error)
+		ipnsBacked, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+
+		staleCID := util.GenerateTestCID(t, "gate-parity-stale")
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("gate-parity.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: staleCID.String()}},
+				"ipns": {{Identifier: ipnsBacked.TargetHash()}},
+			},
+		}, nil)
+		mockResolver.EXPECT().LookupTXT(mock.Anything, "lumeweb-verify.gate-parity.com").Return([]string{
+			fmt.Sprintf("lumeweb-verify=%s", created.ValidationToken),
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.True(tb, result.Valid, "stale ipfs + matching ipns TXT must pass, as legacy checkDNSLinkMatch did")
+		assert.Equal(tb, pluginCore.ValidationReasonValidated, result.Reason)
+
+		dnsCheck := dnsLinkCheck(t, result.Checks)
+		require.NotNil(tb, dnsCheck)
+		assert.True(tb, dnsCheck.OK)
+		assert.Equal(tb, pluginDb.IPNSPrefix+ipnsBacked.TargetHash(), dnsCheck.Found)
+	}, TestOptions)
+}
+
+// TestValidateDNS_BothLinkFamiliesStale_ReportsLegacyFound pins the failure
+// diagnostic parity: when both families are present and neither matches, the
+// mismatch reports the FIRST IPNS link as found — the legacy checkDNSLinkMatch
+// overwrote its found variable in the ipns block.
+func TestValidateDNS_BothLinkFamiliesStale_ReportsLegacyFound(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "both-stale")
+		website := createTestIPFSWebsite(testUserID1, "both-stale.com", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "both-stale.com", false)
+
+		require.NoError(tb, ctx.DB().Model(&pluginDb.Website{ID: created.ID}).UpdateColumns(map[string]interface{}{
+			"target_type":      string(pluginDb.WebsiteTargetTypeIPNS),
+			"target_multihash": ipnsBackedPeerMultihash,
+			"cid_version":      nil,
+			"cid_type":         nil,
+		}).Error)
+		ipnsBacked, err := ws.GetWebsite(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+
+		staleCID := util.GenerateTestCID(t, "both-stale-cid")
+		stalePeerMH, err := mh.Sum([]byte("both-stale-peer"), mh.SHA2_256, -1)
+		require.NoError(tb, err)
+		stalePeer := peer.ID(stalePeerMH).String()
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("both-stale.com").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: staleCID.String()}},
+				"ipns": {{Identifier: stalePeer}},
+			},
+		}, nil)
+		// No LookupTXT expectation: the failed DNSLink gate short-circuits
+		// the stage before the challenge-TXT lookup (legacy flow behavior).
+		setMockResolver(ws, mockResolver)
+
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.False(tb, result.Valid)
+		assert.Equal(tb, pluginCore.ValidationReasonDNSMismatch, result.Reason)
+
+		dnsCheck := dnsLinkCheck(t, result.Checks)
+		require.NotNil(tb, dnsCheck)
+		assert.False(tb, dnsCheck.OK)
+		assert.Equal(tb, pluginDb.IPNSPrefix+ipnsBacked.TargetHash(), dnsCheck.Expected)
+		assert.Equal(tb, pluginDb.IPNSPrefix+stalePeer, dnsCheck.Found,
+			"mismatch diagnostics must report the first ipns link, as the legacy found variable did")
+		assert.Contains(tb, dnsCheck.Message, pluginDb.IPNSPrefix+stalePeer)
+	}, TestOptions)
+}
+
+// dnsLinkCheck locates the DNSLink check in a validation result.
+func dnsLinkCheck(tb coreTesting.TB, checks []pluginCore.ValidationCheck) *pluginCore.ValidationCheck {
+	tb.Helper()
+	for i := range checks {
+		if checks[i].Name == pluginCore.ValidationCheckDNSLink {
+			return &checks[i]
+		}
+	}
+	return nil
 }
 
 func TestValidateDNS_DNSLinkLookupFailure_ReturnsError(t *testing.T) {

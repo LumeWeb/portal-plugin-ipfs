@@ -18,6 +18,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	domapp "go.lumeweb.com/portal-plugin-ipfs/internal/domainapp"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 	pluginEvent "go.lumeweb.com/portal-plugin-ipfs/internal/event"
 	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
@@ -46,11 +47,20 @@ func (s *WebsiteServiceDefault) verificationTokenKey() string {
 
 const (
 	msgTokenExpired      = "Validation token expired for %s — a new token has been generated. Please add the updated TXT record at %s.%s to your DNS configuration"
-	msgDNSMissing        = "No DNS records found for %s. Please add the required TXT records to your DNS configuration"
-	msgDNSMismatch       = "DNS validation failed: missing or incorrect dnslink record (expected: %s, found: %s)"
-	msgTokenMissing      = "DNS validation failed: missing validation token at %s.%s for %s"
 	msgValidated         = "DNS validation successful for %s"
 	msgDelegationPending = "Domain delegation not yet published"
+)
+
+// Passive-gate diagnostics are single-sourced in internal/domainapp since
+// gate evaluation was centralized there; the package owns the conversion of
+// domainpolicy gate outcomes into the client-facing checks and
+// reason codes. The aliases keep the historical package-local names for the
+// tests and callers that reference them today; the strings are unchanged.
+const (
+	msgDNSMissing      = domapp.MsgWebsiteDNSMissing
+	msgDNSMismatch     = domapp.MsgWebsiteDNSMismatch
+	msgTokenMissing    = domapp.MsgWebsiteTokenMissing
+	tlsaUnavailableMsg = domapp.MsgWebsiteTLSAUnavailable
 )
 
 func extractParentDomain(domain string) string {
@@ -107,7 +117,7 @@ type delegatedDomainService interface {
 	CurrentBindingPlan(wd *pluginDb.WebsiteDomain, website *pluginDb.Website) (domainpolicy.Plan, error)
 	// DANEPublicationTargetFor reports where the binding's DANE TLSA is served
 	// and whether it carries a publication duty at all. Used only as the
-	// legacy shadow oracle for the plan-driven on-chain TLSA call selection.
+	// legacy fallback predicate for the plan-driven on-chain TLSA call selection.
 	DANEPublicationTargetFor(wd *pluginDb.WebsiteDomain) (domsvc.DANEPublicationTarget, bool)
 }
 
@@ -1710,7 +1720,7 @@ func (s *WebsiteServiceDefault) validationBindingPlan(primaryWD *pluginDb.Websit
 // for the bindings whose ownership rule requires the TXT token (ICANN, any
 // hosting locus) and omit it for platform subdomains, on-chain managed HIP-5
 // bindings, and delegation-owned namespaces (HNS). The legacy predicate below
-// is kept as the runtime shadow oracle: on any disagreement the legacy answer
+// is kept as the runtime fallback predicate: on any disagreement the legacy answer
 // wins and the divergence is logged loudly, so current fixtures keep
 // byte-equivalent responses. Once parity holds, callers go through the plan
 // gates directly.
@@ -1727,7 +1737,7 @@ func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Websit
 	}
 	planGate := bindingPlan.HasWebsiteGate(domainpolicy.GateChallengeTXT)
 	if planGate != legacy {
-		s.Logger().Warn("plan/legacy divergence (challenge TXT gate): legacy predicate wins at runtime — report this to the domain-hosting work",
+		s.Logger().Warn("plan/legacy divergence (challenge TXT gate): legacy predicate wins at runtime",
 			zap.String("domain", primaryWD.Domain),
 			zap.String("profile", bindingPlan.ProfileID.String()),
 			zap.Bool("legacy", legacy),
@@ -1739,7 +1749,7 @@ func (s *WebsiteServiceDefault) shouldPerformTokenCheck(website *pluginDb.Websit
 
 // legacyShouldPerformTokenCheck is the original shouldPerformTokenCheck body
 // (minus the pending-status precondition, which the wrapper owns). It is the
-// shadow oracle for the plan's challenge-TXT gate.
+// legacy predicate for the plan's challenge-TXT gate.
 func (s *WebsiteServiceDefault) legacyShouldPerformTokenCheck(website *pluginDb.Website, primaryWD *pluginDb.WebsiteDomain) bool {
 	if primaryWD.PlatformDomainID != nil {
 		s.Logger().Debug("skipping TXT token (platform subdomain, operator-controlled DNS)", zap.String("domain", primaryWD.Domain))
@@ -1781,7 +1791,7 @@ func (s *WebsiteServiceDefault) onchainTLSAGateSelected(primaryWD *pluginDb.Webs
 		legacyGate = true
 	}
 	if planGate != legacyGate {
-		s.Logger().Warn("plan/legacy divergence (on-chain TLSA gate): legacy locus check wins at runtime — report this to the domain-hosting work",
+		s.Logger().Warn("plan/legacy divergence (on-chain TLSA gate): legacy locus check wins at runtime",
 			zap.String("domain", primaryWD.Domain),
 			zap.String("profile", bindingPlan.ProfileID.String()),
 			zap.Bool("legacy", legacyGate),
@@ -1799,12 +1809,6 @@ func (s *WebsiteServiceDefault) onchainTLSAGateSelected(primaryWD *pluginDb.Webs
 func onchainDNSHostingUnavailableError(domain string) error {
 	return fmt.Errorf("DNS hosting is not available for on-chain managed domain %q (HIP-5); its DNS is served by the external contract", domain)
 }
-
-// tlsaUnavailableMsg is the client-facing message shown when a chain-managed
-// binding's on-chain TLSA cannot be confirmed because the HNS resolver is
-// unconfigured or unreachable. Kept separate from the raw error, which embeds
-// internal resolver config and must never reach the HTTP response body.
-const tlsaUnavailableMsg = "on-chain TLSA cannot be confirmed: the DNS resolver is currently unavailable"
 
 func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, websiteID uint) (pluginCore.ValidateDNSResult, error) {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.ValidateDNS")
@@ -1862,53 +1866,61 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 				}, nil
 			}
 
-			result, err := s.resolverForDomain(primaryDomain).ResolveDNSLink(primaryDomain)
-			if err != nil {
-				if dnsErr, ok := errors.AsType[dnslink.DNSRCodeError](err); ok && dnsErr.DNSRCode == 3 {
-					s.Logger().Debug("DNS validation failed: no DNS records found (NXDOMAIN)",
-						zap.Error(err),
-						zap.String("domain", primaryDomain),
-						zap.Uint("website_id", website.ID))
-					addCheck(pluginCore.ValidationCheckDNSLink, false, fmt.Sprintf("no DNSLink record found at _dnslink.%s", primaryDomain), "", "")
-					return pluginCore.ValidateDNSResult{
-						Valid:   false,
-						Message: fmt.Sprintf(msgDNSMissing, primaryDomain),
-						Reason:  pluginCore.ValidationReasonDNSMissing,
-						Checks:  checks,
-					}, nil
-				}
-
-				return pluginCore.ValidateDNSResult{}, fmt.Errorf("DNS lookup failed for %s: %w", primaryDomain, err)
+			// Centralized evaluation: the passive gate outcomes — DNSLink,
+			// the challenge TXT (when the token gate is selected), and the
+			// on-chain TLSA later in this flow — are evaluated by
+			// internal/domainapp on top of the binding plan: with a plan,
+			// domainpolicy.Evaluate owns the outcome; without one (the mapper
+			// rejected the persisted state, or no domain service is wired),
+			// the mirrored legacy decisions run, byte-identical to this flow's
+			// prior behavior and parity-tested against Evaluate (the same
+			// plan/legacy fallback doctrine as the other gate selections). The
+			// observation collectors below keep today's NXDOMAIN
+			// classification, candidate normalization, and error wrapping at
+			// the service boundary. The effectful steps — the expired-token
+			// rotation above and the delegation check below (VerifyDomain's
+			// status writes and DNSSEC/SOA self-heal) — remain on the legacy
+			// service paths.
+			expectedDNSLink := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
+			evalInput := domapp.WebsiteValidationInput{
+				Domain:          primaryDomain,
+				ExpectedDNSLink: expectedDNSLink,
+				Collectors: domapp.Collectors{
+					DNSLink: dnsLinkObservationCollector{
+						resolver:  s.resolverForDomain(primaryDomain),
+						logger:    s.Logger().Logger,
+						websiteID: website.ID,
+						expected:  expectedDNSLink,
+					},
+					TokenTXT: tokenTXTObservationCollector{resolver: s.resolverForDomain(primaryDomain)},
+				},
+				Logger: s.Logger().Logger,
 			}
-
-			if ok, expected, found, detail, reason := s.checkDNSLinkMatch(&website, primaryDomain, result); !ok {
-				addCheck(pluginCore.ValidationCheckDNSLink, false, detail, expected, found)
+			if havePlan {
+				planRef := bindingPlan
+				evalInput.Plan = &planRef
+			}
+			stages := domapp.WebsiteStages{DNSLink: &domapp.DNSLinkGate{}}
+			if needsTokenCheck {
+				stages.TokenTXT = &domapp.TokenTXTGate{
+					TokenKey: s.verificationTokenKey(),
+					Token:    website.ValidationToken,
+				}
+			}
+			stageRes, stageErr := domapp.EvaluateWebsiteStage(ctx, evalInput, stages)
+			if stageErr != nil {
+				return pluginCore.ValidateDNSResult{}, stageErr
+			}
+			// addCheck preserves the legacy per-gate order for the checks the
+			// centralized evaluation and the delegation step append below.
+			checks = append(checks, stageRes.Checks...)
+			if stageRes.Failure != nil {
 				return pluginCore.ValidateDNSResult{
 					Valid:   false,
-					Message: detail,
-					Reason:  reason,
+					Message: stageRes.Failure.Message,
+					Reason:  stageRes.Failure.Reason,
 					Checks:  checks,
 				}, nil
-			} else {
-				addCheck(pluginCore.ValidationCheckDNSLink, true, "DNSLink matches the configured target", expected, found)
-			}
-
-			_ = s.determineFoundDNSLink(result, &website)
-
-			if needsTokenCheck {
-				if ok, msg, reason, err := s.checkValidationToken(ctx, &website, primaryDomain); err != nil {
-					return pluginCore.ValidateDNSResult{}, err
-				} else if !ok {
-					addCheck(pluginCore.ValidationCheckToken, false, msg, fmt.Sprintf("%s=%s", s.verificationTokenKey(), website.ValidationToken), "")
-					return pluginCore.ValidateDNSResult{
-						Valid:   false,
-						Message: msg,
-						Reason:  reason,
-						Checks:  checks,
-					}, nil
-				} else {
-					addCheck(pluginCore.ValidationCheckToken, true, "validation token present", "", "")
-				}
 			}
 
 			if ok, msg, reason, err := s.checkDelegation(ctx, primaryWD, bindingPlan, havePlan); err != nil {
@@ -1939,44 +1951,33 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 			// carries no gate is behavior-preserving: ValidateOnChainTLSA
 			// would return OK with no detail and add no check. When no plan
 			// is available, the legacy self-guarded call runs unchanged.
-			if s.delegatedDomainSvc == nil {
-				// No domain service wired (minimal test/app contexts): no DANE
-				// gate to evaluate.
-			} else if !s.onchainTLSAGateSelected(primaryWD, bindingPlan, havePlan) {
-				// Plan carries no chain-locus TLSA gate for this locus: the
-				// gated call would pass through as OK without adding a check.
-			} else if ok, detail, expected, found, tlsaErr := s.delegatedDomainSvc.ValidateOnChainTLSA(ctx, primaryWD); tlsaErr == nil && ok && detail != "" {
-				addCheck(pluginCore.ValidationCheckTLSA, true, detail, expected, found)
-			} else if tlsaErr == nil && !ok {
-				reason := pluginCore.ValidationReasonTLSAMissing
-				if found != "" {
-					reason = pluginCore.ValidationReasonTLSAMismatch
+			// The on-chain TLSA outcome is produced by internal/domainapp
+			// from the plan's website-flow TLSA gate plus the chain publication
+			// locus (GateTLSA + DANE.Publication == chain, via
+			// onchainTLSAGateSelected) instead of the runtime status check
+			// inside ValidateOnChainTLSA. Skipping the stage when the plan
+			// carries no gate is behavior-preserving: the gated call would
+			// return OK with no detail and add no check. When no plan is
+			// available, the legacy self-guarded call still selects the stage.
+			if s.delegatedDomainSvc != nil && s.onchainTLSAGateSelected(primaryWD, bindingPlan, havePlan) {
+				tlsaInput := evalInput
+				tlsaInput.Collectors.ChainTLSA = chainTLSAObservationCollector{
+					svc: s.delegatedDomainSvc,
+					wd:  primaryWD,
 				}
-				addCheck(pluginCore.ValidationCheckTLSA, false, detail, expected, found)
-				return pluginCore.ValidateDNSResult{
-					Valid:   false,
-					Message: detail,
-					Reason:  reason,
-					Checks:  checks,
-				}, nil
-			} else if tlsaErr != nil {
-				// Resolver not configured / unreachable: the on-chain TLSA
-				// cannot be confirmed. Degrade the TLSA gate to a distinct
-				// non-OK outcome (not a 500) so validation fails closed with
-				// a clear message rather than taking down the whole check. The
-				// client-facing message must be sanitized — the underlying
-				// error embeds internal resolver config (config key name,
-				// network address) — so echo a friendly message and log the
-				// raw error server-side.
-				s.Logger().Warn("on-chain TLSA resolver unavailable during validation",
-					zap.Error(tlsaErr), zap.String("domain", primaryDomain))
-				addCheck(pluginCore.ValidationCheckTLSA, false, tlsaUnavailableMsg, "", "")
-				return pluginCore.ValidateDNSResult{
-					Valid:   false,
-					Message: tlsaUnavailableMsg,
-					Reason:  pluginCore.ValidationReasonTLSAUnavailable,
-					Checks:  checks,
-				}, nil
+				tlsaRes, tlsaErr := domapp.EvaluateWebsiteStage(ctx, tlsaInput, domapp.WebsiteStages{ChainTLSA: &domapp.ChainTLSAGate{}})
+				if tlsaErr != nil {
+					return pluginCore.ValidateDNSResult{}, tlsaErr
+				}
+				checks = append(checks, tlsaRes.Checks...)
+				if tlsaRes.Failure != nil {
+					return pluginCore.ValidateDNSResult{
+						Valid:   false,
+						Message: tlsaRes.Failure.Message,
+						Reason:  tlsaRes.Failure.Reason,
+						Checks:  checks,
+					}, nil
+				}
 			}
 
 			if err := s.activateValidatedWebsite(ctx, &website); err != nil {
@@ -1997,36 +1998,65 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 	)
 }
 
-func (s *WebsiteServiceDefault) checkDNSLinkMatch(website *pluginDb.Website, primaryDomain string, result dnslink.Result) (ok bool, expected, found, detail string, reason pluginCore.ValidationReason) {
-	expected = pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
-
-	if ipfsLinks, ok := result.Links["ipfs"]; ok && len(ipfsLinks) > 0 {
-		found = dto.IPFSPath(ipfsLinks[0].Identifier)
-		if found == expected {
-			s.Logger().Debug("Found valid DNSlink record",
-				zap.String("domain", primaryDomain),
-				zap.String("dnslink", found))
-			return true, expected, found, "", ""
-		}
-	}
-	if ipnsLinks, ok := result.Links["ipns"]; ok && len(ipnsLinks) > 0 {
-		found = dto.IPNSPath(ipnsLinks[0].Identifier)
-		if found == expected {
-			s.Logger().Debug("Found valid DNSlink record",
-				zap.String("domain", primaryDomain),
-				zap.String("dnslink", found))
-			return true, expected, found, "", ""
-		}
-	}
-
-	s.Logger().Warn("DNS validation failed: missing or incorrect dnslink record",
-		zap.String("domain", primaryDomain),
-		zap.String("expected", expected),
-		zap.String("found", found))
-	return false, expected, found, fmt.Sprintf(msgDNSMismatch, expected, found), pluginCore.ValidationReasonDNSMismatch
+// dnsLinkObservationCollector adapts the flow's DNS resolver into the
+// domainapp DNSLink observation port. It preserves today's behavior at
+// the service boundary: the NXDOMAIN classification (record-class absence vs
+// a mismatching record), the candidate normalization (dto.IPFSPath /
+// dto.IPNSPath with the pass-on-either matching legacyDNSLinkMatched
+// reproduces from the former checkDNSLinkMatch — the observed value is both
+// what the gate compares and what it reports as "found"), the wrapped
+// transport error, and the server-side lookup log.
+type dnsLinkObservationCollector struct {
+	resolver  DNSResolver
+	logger    *zap.Logger
+	websiteID uint
+	// expected is the target path the DNSLink gate compares against, derived
+	// from the website's persisted target like ExpectedDNSLink. Gate matching
+	// (legacy pass-on-either semantics) happens at collection time via
+	// legacyDNSLinkMatched because the observation collapses the resolver
+	// result into the single candidate the evaluator's equality check
+	// consumes.
+	expected string
 }
 
-func (s *WebsiteServiceDefault) determineFoundDNSLink(result dnslink.Result, website *pluginDb.Website) string {
+func (c dnsLinkObservationCollector) CollectDNSLink(_ context.Context, domain string) (domapp.DNSLinkObserved, error) {
+	result, err := c.resolver.ResolveDNSLink(domain)
+	if err != nil {
+		if dnsErr, ok := errors.AsType[dnslink.DNSRCodeError](err); ok && dnsErr.DNSRCode == 3 {
+			c.logger.Debug("DNS validation failed: no DNS records found (NXDOMAIN)",
+				zap.Error(err),
+				zap.String("domain", domain),
+				zap.Uint("website_id", c.websiteID))
+			return domapp.DNSLinkObserved{NXDOMAIN: true}, nil
+		}
+		return domapp.DNSLinkObserved{}, fmt.Errorf("DNS lookup failed for %s: %w", domain, err)
+	}
+	// Gate matching is legacy pass-on-either (checkDNSLinkMatch): the
+	// observation carries the candidate the gate compares — the matched link
+	// on pass, the legacy "found" diagnostic on failure — so the evaluating
+	// side's single equality check against expected reproduces both.
+	legacyCandidate, _ := legacyDNSLinkMatched(result, c.expected)
+	return domapp.DNSLinkObserved{
+		Observation: domainpolicy.DNSLinkObservation{Value: legacyCandidate},
+	}, nil
+}
+
+// determineFoundDNSLink returns the candidate the legacy matching logic
+// reports as "found" (see legacyDNSLinkCandidate). The website argument is
+// ignored (historical signature); the DNSLink reconcile path
+// (reconcileManagedDNSLink) still uses it until the DNSLink reconciler owns
+// DNSLink writes.
+func (s *WebsiteServiceDefault) determineFoundDNSLink(result dnslink.Result, _ *pluginDb.Website) string {
+	return legacyDNSLinkCandidate(result)
+}
+
+// legacyDNSLinkCandidate returns the ipfs-preferred candidate: the first
+// ipfs link (normalized), else the first ipns link. This is only the single
+// fallback candidate — gate matching (legacy pass-on-either) lives in
+// legacyDNSLinkMatched. Single-sourced with the DNSLink reconcile path
+// (determineFoundDNSLink / reconcileManagedDNSLink) until the DNSLink
+// reconciler owns DNSLink writes.
+func legacyDNSLinkCandidate(result dnslink.Result) string {
 	if ipfsLinks, ok := result.Links["ipfs"]; ok && len(ipfsLinks) > 0 {
 		return dto.IPFSPath(ipfsLinks[0].Identifier)
 	}
@@ -2036,26 +2066,64 @@ func (s *WebsiteServiceDefault) determineFoundDNSLink(result dnslink.Result, web
 	return ""
 }
 
-func (s *WebsiteServiceDefault) checkValidationToken(ctx context.Context, website *pluginDb.Website, primaryDomain string) (bool, string, pluginCore.ValidationReason, error) {
-	expectedTokenRecord := fmt.Sprintf("%s=%s", s.verificationTokenKey(), website.ValidationToken)
-	txtRecords, err := s.resolverForDomain(primaryDomain).LookupTXT(ctx, s.verificationTokenKey()+"."+primaryDomain)
-	if err != nil {
-		return false, "", "", fmt.Errorf("DNS TXT lookup failed for %s.%s: %w", s.verificationTokenKey(), primaryDomain, err)
-	}
-
-	for _, txtRecord := range txtRecords {
-		if strings.Contains(txtRecord, expectedTokenRecord) {
-			s.Logger().Debug("Found valid validation token",
-				zap.String("domain", primaryDomain),
-				zap.String("token", website.ValidationToken))
-			return true, "", "", nil
+// legacyDNSLinkMatched reproduces the pass-on-either semantics of the former
+// checkDNSLinkMatch: the gate passes when the first ipfs link or the first
+// ipns link equals the expected target. It returns the candidate legacy code
+// reports as "found" — the matching link on pass; on failure the first ipns
+// link when present, else the first ipfs link — so a mismatch diagnostic
+// matches the legacy one (legacy overwrote its found variable in the ipns
+// block).
+func legacyDNSLinkMatched(result dnslink.Result, expected string) (candidate string, matched bool) {
+	if ipfsLinks, ok := result.Links["ipfs"]; ok && len(ipfsLinks) > 0 {
+		candidate = dto.IPFSPath(ipfsLinks[0].Identifier)
+		if candidate == expected {
+			return candidate, true
 		}
 	}
+	if ipnsLinks, ok := result.Links["ipns"]; ok && len(ipnsLinks) > 0 {
+		candidate = dto.IPNSPath(ipnsLinks[0].Identifier)
+		if candidate == expected {
+			return candidate, true
+		}
+	}
+	return candidate, false
+}
 
-	s.Logger().Warn("DNS validation failed: missing validation token",
-		zap.String("domain", primaryDomain),
-		zap.String("expected_token", website.ValidationToken))
-	return false, fmt.Sprintf(msgTokenMissing, s.verificationTokenKey(), primaryDomain, primaryDomain), pluginCore.ValidationReasonTokenMissing, nil
+// tokenTXTObservationCollector adapts the flow's DNS resolver into the
+// domainapp challenge-TXT observation port.
+type tokenTXTObservationCollector struct {
+	resolver DNSResolver
+}
+
+func (c tokenTXTObservationCollector) CollectTokenTXT(ctx context.Context, fqdn string) ([]string, error) {
+	records, err := c.resolver.LookupTXT(ctx, fqdn)
+	if err != nil {
+		// The wrapper keeps today's client-visible error wrapping; the token
+		// match itself ("contains the expected record") is domainapp's.
+		return nil, fmt.Errorf("DNS TXT lookup failed for %s: %w", fqdn, err)
+	}
+	return records, nil
+}
+
+// chainTLSAObservationCollector adapts the delegated-domain service's
+// stored-DANE vs live-TLSA comparison into the domainapp TLSA observation
+// port. The comparison (including its legacy detail/expected/found messages)
+// stays where it lives today; only the observation crosses the boundary.
+type chainTLSAObservationCollector struct {
+	svc delegatedDomainService
+	wd  *pluginDb.WebsiteDomain
+}
+
+func (c chainTLSAObservationCollector) CollectChainTLSA(ctx context.Context, _ string) (domapp.ChainTLSAObserved, error) {
+	ok, detail, expected, found, err := c.svc.ValidateOnChainTLSA(ctx, c.wd)
+	if err != nil {
+		return domapp.ChainTLSAObserved{}, err
+	}
+	return domapp.ChainTLSAObserved{
+		Observation: domainpolicy.TLSAObservation{Found: ok, Value: found},
+		Detail:      detail,
+		Expected:    expected,
+	}, nil
 }
 
 // checkDelegation verifies the website's primary domain delegation. Only the
@@ -2091,7 +2159,7 @@ func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *
 	// the plan's website flow carries the NS delegation gate (portal-managed
 	// bindings) or the platform-trust gate (operator-minted subdomains, which
 	// route through VerifyDomain's operator validation). The legacy class
-	// predicate (NeedsDelegationVerification) shadows it; legacy wins on
+	// predicate (NeedsDelegationVerification) is the fallback; legacy wins on
 	// divergence, and replaces it entirely when no plan is available.
 	if !s.delegationGateRequired(primaryWD, bindingPlan, havePlan) {
 		return true, "", "", nil
@@ -2134,11 +2202,11 @@ func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *
 }
 
 // delegationGateRequired reports whether the website delegation gate applies
-// to the binding. TRANSITIONAL shadow: the plan-side predicate is website
-// NS-delegation gate OR platform-trust gate presence; the legacy oracle is
-// NeedsDelegationVerification (the derived hosting class). On divergence the
-// legacy answer wins and the disagreement is logged loudly; without a plan
-// the legacy predicate decides.
+// to the binding. Transitional dual predicate: the plan-side predicate is the
+// website NS-delegation gate OR platform-trust gate presence; the legacy
+// predicate is NeedsDelegationVerification (the derived hosting class). On
+// divergence the legacy answer wins and the disagreement is logged loudly;
+// without a plan the legacy predicate decides.
 func (s *WebsiteServiceDefault) delegationGateRequired(primaryWD *pluginDb.WebsiteDomain, bindingPlan domainpolicy.Plan, havePlan bool) bool {
 	legacy := primaryWD.NeedsDelegationVerification()
 	if !havePlan {
@@ -2147,7 +2215,7 @@ func (s *WebsiteServiceDefault) delegationGateRequired(primaryWD *pluginDb.Websi
 	planGate := bindingPlan.HasWebsiteGate(domainpolicy.GateNSDelegation) ||
 		bindingPlan.HasWebsiteGate(domainpolicy.GatePlatformTrust)
 	if planGate != legacy {
-		s.Logger().Warn("plan/legacy divergence (website delegation gate): legacy class check wins at runtime — report this to the domain-hosting work",
+		s.Logger().Warn("plan/legacy divergence (website delegation gate): legacy class check wins at runtime",
 			zap.String("domain", primaryWD.Domain),
 			zap.String("profile", bindingPlan.ProfileID.String()),
 			zap.Bool("legacy", legacy),
