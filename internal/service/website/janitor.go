@@ -639,6 +639,24 @@ func (j *WebsiteJanitorJob) verifyPendingDelegations(ctx context.Context) error 
 						zap.Error(err))
 					continue
 				}
+				// The janitor is REPORT-ONLY
+				// for route drift — a binding whose live resolution route
+				// disagrees with its persisted state. It must NOT enqueue,
+				// schedule, or perform conversion: the explicit
+				// ConvertToOnChain command is the only conversion path in the
+				// product. VerifyDomain has performed no mutation on the
+				// drift's behalf; report loudly so an operator can convert the
+				// binding manually.
+				if res.RouteDrift != nil {
+					j.logger.Warn("route drift reported during janitor delegation verification; manual on-chain conversion required (janitor is report-only and does not convert)",
+						zap.String("domain", wd.Domain),
+						zap.String("namespace", string(wd.Namespace)),
+						zap.Uint("id", wd.ID),
+						zap.String("persisted_route", res.RouteDrift.From.String()),
+						zap.String("observed_route", res.RouteDrift.To.String()),
+						zap.String("observed_backend", res.RouteDrift.Backend.String()))
+					continue
+				}
 				if res.State != domsvc.DelegationVerified {
 					// Still pending (or not applicable): leave it for a later
 					// run — the status was left as-is by VerifyDomain.

@@ -124,12 +124,40 @@ const (
 	DelegationVerified
 )
 
+// RouteDriftFinding is the typed report that a binding's live resolution
+// route no longer agrees with its persisted state (e.g. an HNS name has been
+// handed over to an on-chain HIP-5 contract while the binding still holds a
+// portal-managed zone). VerifyDomain only REPORTS drift — route conversion
+// is an explicit command, so verification
+// performs no conversion, no zone teardown, and no authority/status change
+// on its behalf; the explicit ConvertToOnChain command remains the only
+// conversion path.
+type RouteDriftFinding struct {
+	// From is the route the binding's persisted state implies (HNS root
+	// resolution for a portal-managed HNS binding).
+	From domainpolicy.ResolutionRoute
+	// To is the route the provider's live inspection observed.
+	To domainpolicy.ResolutionRoute
+	// Backend is the resolution backend the live inspection observed (e.g.
+	// the HIP-5 ethereum backend).
+	Backend domainpolicy.BackendID
+}
+
 // DelegationVerificationResult is the typed outcome of VerifyDomain. Callers
 // must switch on State rather than interpreting a bare boolean, which cannot
 // distinguish "not applicable" from "pending" and would deadlock valid
 // on-chain/self-hosted bindings.
 type DelegationVerificationResult struct {
 	State DelegationVerificationState
+	// RouteDrift is non-nil when verification observed a live resolution
+	// route that disagrees with the binding's persisted state. Presence of a
+	// finding implies NO mutation: no conversion, no zone deletion, no
+	// authority change of any kind. Callers must handle drift explicitly
+	// (WebsiteService.checkDelegation reports it with the route_drift reason;
+	// the janitor only reports it) — it must never be folded into generic
+	// delegation-pending, because the fix-up for a drifted name is the
+	// explicit convert-to-on-chain command, not more delegation publishing.
+	RouteDrift *RouteDriftFinding
 	// ApprovedNS / LiveNS carry the expected vs discovered nameservers for
 	// pending delegations (mirroring the janitor's zone NS validation) so a
 	// stuck waiting_delegation is diagnosable from logs alone. Both are empty
@@ -817,14 +845,13 @@ func (s *DelegatedDomainService) notifyAdminWebsiteCreated(ctx context.Context, 
 // Package-level vars so verify messages are single-sourced and tests assert
 // them without restating inline literals.
 const (
-	msgPlatformBinding     = "operator-trusted platform binding"
-	msgOnChainNoDelegation = "name held on-chain (HIP-5); no portal delegation to verify"
-	msgNoPortalDelegation  = "no portal delegation to verify (self-hosted / on-chain managed / unresolved)"
-	msgDNSSECNotRequired   = "namespace does not require DNSSEC"
-	msgDNSSECNoKey         = "no active DNSSEC signing key"
-	msgDNSSECKeyPresent    = "DNSSEC signing key present"
-	msgDelegationLive      = "approved nameservers are live"
-	msgDelegationPending   = "nameservers not yet visible at the parent zone"
+	msgPlatformBinding    = "operator-trusted platform binding"
+	msgNoPortalDelegation = "no portal delegation to verify (self-hosted / on-chain managed / unresolved)"
+	msgDNSSECNotRequired  = "namespace does not require DNSSEC"
+	msgDNSSECNoKey        = "no active DNSSEC signing key"
+	msgDNSSECKeyPresent   = "DNSSEC signing key present"
+	msgDelegationLive     = "approved nameservers are live"
+	msgDelegationPending  = "nameservers not yet visible at the parent zone"
 )
 
 // verifyDomainOptions carries the internal switches set through
@@ -913,15 +940,20 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 
 	// A binding created before handover source detection may still carry a
 	// portal-managed zone even though the name has since become HIP-5. Inspect
-	// that source before touching DNSSEC or portal delegation; the same response
-	// is then passed to the conversion helper so verification performs one query.
-	// The inspection is consumed as the typed route observation; the
-	// legacy Inspect bool is exactly "the observed route is cross-chain"
-	// (OnChainManagedFromRoute), so this decision is unchanged. VerifyDomain
-	// is the only sanctioned inspection point: the website-validation hot
-	// path (ValidateDNS/shouldPerformTokenCheck/checkDelegation) must never
-	// probe the namespace — gate selection is done from the
-	// persisted-facts plan instead.
+	// that source before touching DNSSEC or portal delegation so route drift is
+	// discovered at the same point it always was.
+	//
+	// Verification is READ-ONLY for the route dimension: a drift is reported
+	// as a typed finding and the flow falls through to ordinary
+	// portal-delegation verification — the long-standing shared-zone fallback
+	// behavior. Verifying is therefore repeatable, and the destructive
+	// transition happens only via the explicit ConvertToOnChain command on
+	// internal/service/domain/onchain.go.
+	// VerifyDomain remains the only sanctioned inspection point: the
+	// website-validation hot path (ValidateDNS/shouldPerformTokenCheck/
+	// checkDelegation) must never probe the namespace for gate selection —
+	// it selects gates from the persisted-facts plan instead.
+	var routeDrift *RouteDriftFinding
 	if wd.Namespace == pluginDb.DomainNamespaceHNS && wd.ZoneID != 0 &&
 		wd.Status != pluginDb.DomainStatusOnchainManaged {
 		route, inspectErr := provider.InspectRoute(ctx, wd.Domain)
@@ -929,22 +961,20 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 			return DelegationVerificationResult{}, fmt.Errorf("domain inspection failed: %w", inspectErr)
 		}
 		if route.Route == domainpolicy.ResolutionRouteCrossChain {
-			if err := s.convertInspectedBindingToOnChain(ctx, wd); err != nil {
-				if errors.Is(err, ErrDomainZoneShared) {
-					s.Logger().Info("HIP-5 binding shares its zone; skipping reclassification",
-						zap.Uint("id", wd.ID),
-						zap.String("domain", wd.Domain),
-						zap.Error(err))
-				} else {
-					return DelegationVerificationResult{}, fmt.Errorf("convert on-chain binding: %w", err)
-				}
-			} else {
-				return DelegationVerificationResult{
-					State: DelegationNotApplicable,
-					Checks: []pluginCore.ValidationCheck{
-						{Name: pluginCore.ValidationCheckOnChain, OK: true, Message: msgOnChainNoDelegation},
-					},
-				}, nil
+			// The persisted state implies the HNS-root route (a portal-managed
+			// HNS binding is planned over the HNS root); the observation is the
+			// measured cross-chain/ethereum route.
+			s.Logger().Info("route drift detected: HNS binding now resolves on-chain; manual conversion to on-chain managed is required (verification no longer converts)",
+				zap.Uint("id", wd.ID),
+				zap.String("domain", wd.Domain),
+				zap.Uint("zone_id", wd.ZoneID),
+				zap.String("persisted_route", domainpolicy.ResolutionRouteHNSRoot.String()),
+				zap.String("observed_route", route.Route.String()),
+				zap.String("observed_backend", route.Backend.String()))
+			routeDrift = &RouteDriftFinding{
+				From:    domainpolicy.ResolutionRouteHNSRoot,
+				To:      route.Route,
+				Backend: route.Backend,
 			}
 		}
 	}
@@ -976,7 +1006,8 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 			zap.String("status", string(wd.Status)),
 			zap.Uint("zone_id", wd.ZoneID))
 		return DelegationVerificationResult{
-			State: DelegationNotApplicable,
+			State:      DelegationNotApplicable,
+			RouteDrift: routeDrift,
 			Checks: []pluginCore.ValidationCheck{
 				{Name: pluginCore.ValidationCheckDelegation, OK: true, Message: msgNoPortalDelegation},
 			},
@@ -1119,6 +1150,7 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 
 	return DelegationVerificationResult{
 		State:      state,
+		RouteDrift: routeDrift,
 		ApprovedNS: approvedNS,
 		LiveNS:     liveNS,
 		Checks: []pluginCore.ValidationCheck{

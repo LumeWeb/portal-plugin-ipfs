@@ -372,6 +372,82 @@ func (r *recordingDelegatedDomainSvc) GetPendingWebsiteDomainsPaginated(_ contex
 	return nil, nil
 }
 
+// driftReportingDelegatedDomainSvc yields a binding whose VerifyDomain
+// reports a typed route-drift finding (HNS root persisted state vs. observed
+// on-chain/eula.cross-chain route) — the janitor reconcile loop's
+// worst case for the report-only guarantee.
+type driftReportingDelegatedDomainSvc struct {
+	recordingDelegatedDomainSvc
+	wd        pluginDb.WebsiteDomain
+	verified  int
+	verifyArg *pluginDb.WebsiteDomain
+}
+
+func (r *driftReportingDelegatedDomainSvc) GetPendingWebsiteDomainsPaginated(_ context.Context, status pluginDb.DomainStatus, _, _ int) ([]pluginDb.WebsiteDomain, error) {
+	// The drifted binding lives in exactly one lifecycle pool; other polls
+	// (records_generated) see nothing so VerifyDomain runs once.
+	r.statuses = append(r.statuses, status)
+	if status != pluginDb.DomainStatusWaitingDelegation {
+		return nil, nil
+	}
+	return []pluginDb.WebsiteDomain{r.wd}, nil
+}
+
+func (r *driftReportingDelegatedDomainSvc) VerifyDomain(_ context.Context, wd *pluginDb.WebsiteDomain, _ ...domsvc.VerifyDomainOption) (domsvc.DelegationVerificationResult, error) {
+	r.verified++
+	r.verifyArg = wd
+	return domsvc.DelegationVerificationResult{
+		State: domsvc.DelegationPending,
+		RouteDrift: &domsvc.RouteDriftFinding{
+			From:    domainpolicy.ResolutionRouteHNSRoot,
+			To:      domainpolicy.ResolutionRouteCrossChain,
+			Backend: domainpolicy.BackendEthereum,
+		},
+	}, nil
+}
+
+func TestWebsiteJanitorJob_verifyPendingDelegations_RouteDriftIsReportOnly(t *testing.T) {
+	// The janitor is REPORT-ONLY for route
+	// drift. Historically, this loop converted bindings as a side effect of
+	// VerifyDomain; since VerifyDomain no longer converts, the janitor wiring
+	// must also never enqueue, schedule, or perform conversion on its own. The
+	// drift binding stays in the pending lifecycle pool (it is re-verified on
+	// later runs) and the conversion decision is left entirely to the explicit
+	// ConvertToOnChain command.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		job := NewWebsiteJanitorJob()
+		janitorJob := job.(*WebsiteJanitorJob)
+		janitorJob.db = ctx.DB()
+		janitorJob.logger = ctx.Logger()
+		fake := &driftReportingDelegatedDomainSvc{
+			wd: pluginDb.WebsiteDomain{
+				ID:        77,
+				WebsiteID: 1,
+				UserID:    1,
+				Domain:    "janitor-drift.hns",
+				Namespace: pluginDb.DomainNamespaceHNS,
+				Status:    pluginDb.DomainStatusWaitingDelegation,
+				ZoneID:    42,
+			},
+		}
+		janitorJob.delegatedDomainSvc = fake
+
+		require.NoError(tb, janitorJob.verifyPendingDelegations(context.Background()))
+
+		// The drift binding was examined exactly once per polling pass — it
+		// was neither dropped from the pool nor churned through retries.
+		assert.Equal(tb, 1, fake.verified)
+		require.NotNil(tb, fake.verifyArg)
+		assert.Equal(tb, "janitor-drift.hns", fake.verifyArg.Domain)
+		// The pending lifecycle pool is unchanged: a drifted binding remains
+		// a waiting_delegation record that later runs may re-observe.
+		assert.ElementsMatch(tb, []pluginDb.DomainStatus{
+			pluginDb.DomainStatusWaitingDelegation,
+			pluginDb.DomainStatusRecordsGenerated,
+		}, fake.statuses)
+	}, JanitorTestOptions)
+}
+
 func TestWebsiteJanitorJob_verifyPendingDelegations_IgnoresOnchainManaged(t *testing.T) {
 	// The janitor's delegation verification must only ever poll the delegation
 	// lifecycle statuses (records_generated, waiting_delegation). On-chain

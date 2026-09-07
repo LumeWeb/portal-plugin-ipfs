@@ -1173,6 +1173,104 @@ func TestValidateDNS_DelegatedAttached_VerifyError_Fails(t *testing.T) {
 	}, TestOptions)
 }
 
+// TestValidateDNS_PrimaryRouteDrift_ReportsDriftWithoutMutation is the
+// counterpart of the earlier flow in which
+// ValidateDNS → checkDelegation → VerifyDomain reached automatic route
+// conversion as a side effect of validation. Historically, a drifted primary
+// (portal-managed zone, name now served on-chain) silently converted HERE:
+// the status flipped to onchain_managed and the portal zone was deleted
+// during a routine ValidateDNS call. Verification is read-only for
+// the route dimension: the typed drift finding surfaces as a validation
+// failure with the dedicated route_drift reason code and client-facing
+// message — it never falls through to generic delegation-pending (publishing
+// more delegation records cannot fix a name an external contract already
+// serves) and NO state is mutated: the binding keeps its zone, status, and
+// hosting flag, and the explicit ConvertToOnChain command remains the only
+// conversion path.
+func TestValidateDNS_PrimaryRouteDrift_ReportsDriftWithoutMutation(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		ws := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, ws)
+
+		testCID := util.GenerateTestCID(t, "route-drift")
+		website := createTestIPFSWebsite(testUserID1, "drifted.hns", testCID.String())
+		stubPinnedCID(t, ctx, testUserID1, testCID.String())
+		created, err := ws.CreateWebsite(context.Background(), website)
+		require.NoError(tb, err)
+		_ = bindPrimaryDomain(tb, ctx, created.ID, "drifted.hns", false)
+
+		svc := ws.(*WebsiteServiceDefault)
+		bindingID := uint(0)
+		if db := svc.DB(); db != nil {
+			row := &pluginDb.WebsiteDomain{
+				WebsiteID:      created.ID,
+				UserID:         testUserID1,
+				Domain:         "drifted.hns",
+				Namespace:      pluginDb.DomainNamespaceHNS,
+				DelegationData: datatypes.JSONMap{},
+			}
+			require.NoError(tb, db.Create(row).Error)
+			bindingID = row.ID
+		}
+		// Give the primary a portal-managed zone so checkDelegation actually
+		// invokes VerifyDomain (a zone-less/self-hosted primary does not
+		// require delegation and would pass the gate). The update runs AFTER
+		// the HNS row exists so the asserted row actually carries the zone.
+		require.NoError(tb, ctx.DB().Model(&pluginDb.WebsiteDomain{}).
+			Where("website_id = ? AND domain = ?", created.ID, "drifted.hns").
+			Update("zone_id", uint(42)).Error)
+
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink("drifted.hns").Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{
+				"ipfs": {{Identifier: created.TargetHash()}},
+			},
+		}, nil)
+		setMockResolver(ws, mockResolver)
+
+		mockDelegated := &testDelegatedDomainService{
+			uses: func(d string) bool { return true },
+			// Mirror the current VerifyDomain on a drifted HNS binding: a
+			// typed drift finding rides along with the fall-through state —
+			// exactly what the shared-zone fallback produces (no conversion,
+			// and consequently no mutation of any persisted state).
+			verify: func(ctx context.Context, wd *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error) {
+				return domsvc.DelegationVerificationResult{
+					State: domsvc.DelegationPending,
+					RouteDrift: &domsvc.RouteDriftFinding{
+						From:    domainpolicy.ResolutionRouteHNSRoot,
+						To:      domainpolicy.ResolutionRouteCrossChain,
+						Backend: domainpolicy.BackendEthereum,
+					},
+				}, nil
+			},
+		}
+		setMockDelegatedDomainSvc(ws, mockDelegated)
+
+		result, err := ws.ValidateDNS(context.Background(), testUserID1, created.ID)
+		require.NoError(tb, err)
+		assert.False(tb, result.Valid, "a drifted binding must not validate as healthy")
+		// The dedicated route_drift reason code + message: NOT generic
+		// delegation-pending — its fix-up is explicit conversion, not more
+		// delegation publishing.
+		assert.Equal(tb, pluginCore.ValidationReasonRouteDrift, result.Reason)
+		assert.NotEqual(tb, pluginCore.ValidationReasonDelegationPending, result.Reason)
+		assert.Contains(tb, result.Message, "Chain route drift")
+		assert.Contains(tb, result.Message, "manual conversion to on-chain managed required")
+
+		// No mutation of any kind: the binding keeps its portal zone, its
+		// pre-observation status, and its hosting flag — nothing was
+		// reclassified or cleared on the drift's behalf.
+		require.NotZero(tb, bindingID)
+		var persisted pluginDb.WebsiteDomain
+		require.NoError(tb, ctx.DB().First(&persisted, bindingID).Error)
+		assert.Equal(tb, uint(42), persisted.ZoneID, "portal zone reference must survive a drift report")
+		assert.NotEqual(tb, pluginDb.DomainStatusOnchainManaged, persisted.Status,
+			"a routine ValidateDNS call must never reclassify the binding")
+		assert.False(tb, persisted.DNSHostingEnabled, "hosting flag bound as false must stay false through a drift report")
+	}, TestOptions)
+}
+
 // onchainPrimaryDomain binds `domain` to `website` as an on-chain managed
 // (HIP-5) primary binding: HNS namespace, onchain_managed status, no zone.
 func onchainPrimaryDomain(tb testing.TB, ctx coreTesting.TestContext, website *pluginDb.Website, domain string) *pluginDb.WebsiteDomain {

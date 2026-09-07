@@ -16,6 +16,7 @@ import (
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
 	"go.lumeweb.com/portal/core"
@@ -1350,7 +1351,19 @@ func TestDelegatedDomainService_ConvertToOnChain_SoleNonActiveBindingStaysPrimar
 	}, TestOptions)
 }
 
-func TestDelegatedDomainService_VerifyDomain_ReclassifiesExistingHIP5(t *testing.T) {
+// TestDelegatedDomainService_VerifyDomain_RouteDriftReportedWithoutMutation is
+// the successor of TestDelegatedDomainService_VerifyDomain_ReclassifiesExistingHIP5.
+// Historically, VerifyDomain detected a drifted HNS binding (portal-managed
+// zone, name served on-chain) and CONVERTED it automatically: status flipped
+// to onchain_managed, the zone reference and delegation data were cleared,
+// and the managed zone was deleted (the older test asserted a DeleteZone
+// expectation as evidence of that path). Verification is now read-only for
+// the route dimension:
+// it REPORTS the typed drift finding, falls through to ordinary
+// portal-delegation verification (the shared-zone fallback), and
+// performs no mutation — the zone is never deleted, and the explicit
+// ConvertToOnChain command is the only conversion path.
+func TestDelegatedDomainService_VerifyDomain_RouteDriftReportedWithoutMutation(t *testing.T) {
 	const domain = "verify-convertme"
 	const zoneID = uint(88)
 	hip5Addr, _ := startSourceProbeDNSServer(t, domain+".", "ens", "ignored.target.")
@@ -1370,14 +1383,39 @@ func TestDelegatedDomainService_VerifyDomain_ReclassifiesExistingHIP5(t *testing
 		hnsProv := svc.registry.Get("hns").(*HNSProvider)
 		hnsProv.resolverAddr = hip5Addr
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
-		mockDNS.EXPECT().DeleteZone(mock.Anything, zoneID).Return(nil).Once()
+		// The old drift conversion deleted the zone here. The drift is
+		// now report-only, but verification still falls through to ordinary
+		// portal-delegation work on the portal zone — mirror the shared-zone
+		// test's expectations (live DS + SOA self-heal).
+		mockDNS.EXPECT().GetActiveDNSSECDS(mock.Anything, zoneID).Return("60776 13 2 abc", nil).Once()
+		mockDNS.EXPECT().EnsureSOAMNAME(mock.Anything, zoneID, domain, mock.Anything).Return(nil).Once()
 
+		// The shift probe answers "ens" (HIP-5 on-chain serving) — the exact
+		// condition that used to trigger the automatic reclassification.
 		result, err := svc.VerifyDomain(context.Background(), wd)
 		require.NoError(tb, err)
-		assert.Equal(tb, DelegationNotApplicable, result.State)
-		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, wd.Status)
-		assert.Zero(tb, wd.ZoneID)
-		assert.False(tb, wd.DNSHostingEnabled)
+		require.NotNil(tb, result.RouteDrift, "verification must report the typed route-drift finding")
+		assert.Equal(tb, domainpolicy.ResolutionRouteHNSRoot, result.RouteDrift.From)
+		assert.Equal(tb, domainpolicy.ResolutionRouteCrossChain, result.RouteDrift.To)
+		assert.Equal(tb, domainpolicy.BackendEthereum, result.RouteDrift.Backend)
+		// The drift falls through to ordinary portal-delegation verification
+		// (the ordinary shared-zone fall-through) — no auto-classification.
+		assert.Equal(tb, DelegationPending, result.State)
+
+		// No mutation of any kind: the binding keeps its portal zone, hosting
+		// flag, and waiting-delegation status (persisted by the ordinary
+		// delegation flow, as it does for any pending portal-managed binding).
+		assert.Equal(tb, pluginDb.DomainStatusWaitingDelegation, wd.Status)
+		assert.Equal(tb, zoneID, wd.ZoneID)
+		assert.True(tb, wd.DNSHostingEnabled)
+		var persisted pluginDb.WebsiteDomain
+		require.NoError(tb, db.First(&persisted, wd.ID).Error)
+		assert.Equal(tb, pluginDb.DomainStatusWaitingDelegation, persisted.Status)
+		assert.Equal(tb, zoneID, persisted.ZoneID)
+		assert.True(tb, persisted.DNSHostingEnabled)
+
+		// The zone must never be torn down by verification.
+		mockDNS.AssertNotCalled(tb, "DeleteZone", mock.Anything, mock.Anything)
 	}, TestOptions)
 }
 
@@ -1413,6 +1451,10 @@ func TestDelegatedDomainService_ConvertToOnChain_NotHIP5Refused(t *testing.T) {
 }
 
 func TestDelegatedDomainService_ConvertToOnChain_AlreadyOnchainRefused(t *testing.T) {
+	// Explicit conversion is idempotent — it
+	// returns the existing typed ErrDomainAlreadyOnChain sentinel without
+	// re-running any stage: no DNS mutation, no persistence churn, and the
+	// binding keeps whatever state (including DANE ProtocolData) it holds.
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		website := createTestWebsite(tb, db, 1, "onchain")
@@ -1420,14 +1462,37 @@ func TestDelegatedDomainService_ConvertToOnChain_AlreadyOnchainRefused(t *testin
 			WebsiteID: website.ID, UserID: 1, Domain: "onchain",
 			Namespace: pluginDb.DomainNamespaceHNS,
 			Status:    pluginDb.DomainStatusOnchainManaged,
+			ProtocolData: datatypes.JSONMap{
+				"dane_cert_pem": "CERT",
+				"tlsa":          "3 1 1 abc",
+			},
 		}
 		require.NoError(tb, db.Create(wd).Error)
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
 		_, err := svc.ConvertToOnChain(context.Background(), website.ID, 1, wd.ID)
 		require.Error(tb, err)
+		assert.ErrorIs(tb, err, ErrDomainAlreadyOnChain)
 		assert.Contains(tb, err.Error(), "already on-chain managed")
+
+		// Idempotent repeat: the same typed sentinel, never a re-run.
+		_, second := svc.ConvertToOnChain(context.Background(), website.ID, 1, wd.ID)
+		require.Error(tb, second)
+		assert.ErrorIs(tb, second, ErrDomainAlreadyOnChain)
+
+		// Neither call performed DNS work: on-chain managed bindings authorize
+		// no portal DNS operations, and the repeat must not re-run anything.
+		mockDNS.AssertNotCalled(tb, "DeleteZone", mock.Anything, mock.Anything)
+		mockDNS.AssertNotCalled(tb, "CreateZone", mock.Anything, mock.Anything, mock.Anything)
+		mockDNS.AssertNotCalled(tb, "SetTLSARecord", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+
+		// The persisted row is unchanged (DANE state retained; nothing cleared).
+		var persisted pluginDb.WebsiteDomain
+		require.NoError(tb, db.First(&persisted, wd.ID).Error)
+		assert.Equal(tb, pluginDb.DomainStatusOnchainManaged, persisted.Status)
+		assert.Equal(tb, "CERT", persisted.ProtocolData["dane_cert_pem"])
 	}, TestOptions)
 }
 
@@ -1506,6 +1571,14 @@ func TestDelegatedDomainService_VerifyDomain_SharedHIP5ZoneFallsThrough(t *testi
 		assert.Equal(tb, DelegationPending, result.State)
 		assert.Equal(tb, pluginDb.DomainStatusWaitingDelegation, apex.Status)
 		mockDNS.AssertNotCalled(tb, "DeleteZone", mock.Anything, mock.Anything)
+
+		// The same fall-through path now carries the typed drift
+		// report — shared or not, the drifted name is reported, not silently
+		// ignored NOR acted upon.
+		require.NotNil(tb, result.RouteDrift)
+		assert.Equal(tb, domainpolicy.ResolutionRouteHNSRoot, result.RouteDrift.From)
+		assert.Equal(tb, domainpolicy.ResolutionRouteCrossChain, result.RouteDrift.To)
+		assert.Equal(tb, domainpolicy.BackendEthereum, result.RouteDrift.Backend)
 	}, TestOptions)
 }
 
