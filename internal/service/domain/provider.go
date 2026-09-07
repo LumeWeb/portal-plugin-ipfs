@@ -12,6 +12,7 @@ import (
 	"go.lumeweb.com/icann-tlds"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 )
 
 // tldCheckTimeout bounds the cold fetch of the IANA root zone list performed
@@ -71,6 +72,19 @@ type DANEVerifier interface {
 type DomainProvider interface {
 	Protocol() string
 	Validate(domain string) error
+	// InspectRoute queries the domain's on-chain/registry state at bind time
+	// and reports the typed route observation the name resolves through —
+	// which resolution route (standard DNS, HNS root, or cross-chain), which
+	// backend serves it, and whether the route source was assumed rather than
+	// measured live (e.g. an HNS provider without a configured handover
+	// resolver assumes the native HNS root route so native binding stays
+	// usable). The observation replaces the single boolean Inspect() discards
+	// by keeping backend identity (see domainpolicy.RouteObservation).
+	// Detection is best-effort in the same way Inspect always was: a name the
+	// resolver cannot yet answer is reported as the assumed HNS-root route so
+	// binding can proceed. Transport and malformed-probe failures remain
+	// errors so callers fail closed while the route decision is unknown.
+	InspectRoute(ctx context.Context, domain string) (domainpolicy.RouteObservation, error)
 	// Inspect queries the domain's on-chain/registry state at bind time and
 	// reports whether the name is managed on-chain (e.g. a Handshake HIP-5 name
 	// whose NS record is a HIP-5 TX record pointing at an external contract).
@@ -80,6 +94,12 @@ type DomainProvider interface {
 	// Detection is best-effort: HNS returns false when the resolver cannot
 	// answer (name not yet registered, resolver unreachable), defaulting to
 	// native so binding can proceed.
+	//
+	// COMPATIBILITY ADAPTER: implemented from InspectRoute (on-chain managed
+	// is exactly a cross-chain route observation). Callers should keep using
+	// Inspect until the route-conversion workflow consumes the typed
+	// observation; the bool discard of backend identity is why this adapter
+	// still exists.
 	Inspect(ctx context.Context, domain string) (onchainManaged bool, err error)
 	// BuildDelegation returns the provider's typed delegation payload as a
 	// json.RawMessage, so delegation never crosses the provider boundary as an
@@ -118,6 +138,21 @@ type DomainProvider interface {
 	// ApexRecordType returns the DNS record type used for the zone apex.
 	// Derived from Policy().ApexRecordType.
 	ApexRecordType() pluginCore.RecordType
+}
+
+// OnChainManagedFromRoute adapts a typed route observation to the legacy
+// Inspect bool: a name is on-chain managed exactly when its resolution route
+// is cross-chain (the only on-chain-managing route today). Errors pass
+// through unchanged. Every provider implements Inspect through this adapter
+// so the boolean compatibility outcome and the typed observation can never
+// disagree; call sites keep consuming Inspect until the typed model owns the
+// route-conversion workflow. Exported so out-of-package test doubles
+// (internal/testing/util) can share the conversion.
+func OnChainManagedFromRoute(obs domainpolicy.RouteObservation, err error) (bool, error) {
+	if err != nil {
+		return false, err
+	}
+	return obs.Route == domainpolicy.ResolutionRouteCrossChain, nil
 }
 
 type Registry struct {

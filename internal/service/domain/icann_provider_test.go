@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 )
 
 func TestICANNProvider_Protocol(t *testing.T) {
@@ -44,6 +45,27 @@ func TestICANNProvider_Inspect(t *testing.T) {
 	onchain, err := p.Inspect(context.Background(), "example.com")
 	assert.NoError(t, err)
 	assert.False(t, onchain)
+}
+
+// TestICANNProvider_InspectRouteAndBoolAgree preserves the existing Inspect
+// contract while asserting the typed route identity: ICANN always resolves
+// through standard DNS over the system-dns backend, measured (never assumed).
+func TestICANNProvider_InspectRouteAndBoolAgree(t *testing.T) {
+	p := NewICANNProvider(nil)
+	obs, err := p.InspectRoute(context.Background(), "example.com")
+	require.NoError(t, err)
+	assert.Equal(t, domainpolicy.ResolutionRouteStandardDNS, obs.Route, "ICANN resolves via standard DNS")
+	assert.Equal(t, domainpolicy.BackendSystemDNS, obs.Backend, "ICANN backend is system-dns")
+	assert.False(t, obs.AssumedSource, "ICANN route is static, never assumed")
+
+	// BOOL/TYPED PARITY: the compatibility Inspect bool must be exactly
+	// OnChainManagedFromRoute(InspectRoute) for the same call.
+	onchain, err := p.Inspect(context.Background(), "example.com")
+	require.NoError(t, err)
+	boolFromTyped, err := OnChainManagedFromRoute(obs, nil)
+	require.NoError(t, err)
+	assert.Equal(t, boolFromTyped, onchain, "Inspect must equal the typed adaptation of InspectRoute")
+	assert.False(t, onchain, "ICANN is never on-chain managed")
 }
 
 func TestICANNProvider_VerifyDelegation(t *testing.T) {

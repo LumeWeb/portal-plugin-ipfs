@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
@@ -34,8 +35,17 @@ func (p *syntheticTestProvider) Protocol() string { return p.protocol }
 func (p *syntheticTestProvider) Validate(string) error {
 	return nil
 }
-func (p *syntheticTestProvider) Inspect(context.Context, string) (bool, error) {
-	return false, nil
+func (p *syntheticTestProvider) InspectRoute(context.Context, string) (domainpolicy.RouteObservation, error) {
+	// The capability-matrix double has no chain routing: the assumed-source
+	// standard-DNS observation keeps Inspect() at its false default.
+	return domainpolicy.RouteObservation{
+		Route:         domainpolicy.ResolutionRouteStandardDNS,
+		Backend:       domainpolicy.BackendSystemDNS,
+		AssumedSource: true,
+	}, nil
+}
+func (p *syntheticTestProvider) Inspect(ctx context.Context, domain string) (bool, error) {
+	return OnChainManagedFromRoute(p.InspectRoute(ctx, domain))
 }
 func (p *syntheticTestProvider) BuildDelegation(context.Context, uint, string, *pluginDb.Website, json.RawMessage) (json.RawMessage, error) {
 	return json.Marshal(map[string]any{"protocol": p.protocol})

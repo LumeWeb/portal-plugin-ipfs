@@ -12,6 +12,7 @@ import (
 	"go.lumeweb.com/icann-tlds"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 )
 
@@ -207,8 +208,11 @@ func (f failingProvider) ApexRecordType() pluginCore.RecordType {
 	return pluginCore.RecordTypeALIAS
 }
 func (f failingProvider) Validate(domain string) error { return f.validate(domain) }
+func (f failingProvider) InspectRoute(ctx context.Context, domain string) (domainpolicy.RouteObservation, error) {
+	return domainpolicy.RouteObservation{}, nil
+}
 func (f failingProvider) Inspect(ctx context.Context, domain string) (bool, error) {
-	return false, nil
+	return OnChainManagedFromRoute(f.InspectRoute(ctx, domain))
 }
 func (f failingProvider) BuildDelegation(ctx context.Context, zoneID uint, domain string, website *pluginDb.Website, config json.RawMessage) (json.RawMessage, error) {
 	return nil, nil

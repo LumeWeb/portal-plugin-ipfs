@@ -9,6 +9,7 @@ import (
 
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 
 	"go.lumeweb.com/icann-tlds"
 )
@@ -82,11 +83,21 @@ func (p *ICANNProvider) Validate(domain string) error {
 	return nil
 }
 
-// Inspect reports that ICANN names are never on-chain managed: the
-// registry/registrar model lives out-of-band, so the portal always provisions
-// a managed zone for them as normal.
+// InspectRoute reports the ICANN route observation: an ICANN name always
+// resolves through standard DNS served by the system resolver backend and is
+// never on-chain managed (the registry/registrar model lives out-of-band), so
+// the portal always provisions a managed zone for it as normal.
+func (p *ICANNProvider) InspectRoute(ctx context.Context, domain string) (domainpolicy.RouteObservation, error) {
+	return domainpolicy.RouteObservation{
+		Route:   domainpolicy.ResolutionRouteStandardDNS,
+		Backend: domainpolicy.BackendSystemDNS,
+	}, nil
+}
+
+// Inspect is the compatibility adapter over InspectRoute: ICANN names are
+// never on-chain managed.
 func (p *ICANNProvider) Inspect(ctx context.Context, domain string) (bool, error) {
-	return false, nil
+	return OnChainManagedFromRoute(p.InspectRoute(ctx, domain))
 }
 
 func (p *ICANNProvider) BuildDelegation(ctx context.Context, zoneID uint,

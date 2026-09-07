@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	danehns "go.lumeweb.com/dane/hns"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 )
 
 // testCertPEM generates a reusable self-signed cert for TLSA tests.
@@ -196,6 +198,9 @@ func (f *fakeDNSZoneService) GetActiveDNSSECDS(ctx context.Context, zoneID uint)
 func (f *fakeDNSZoneService) EnsureSOAMNAME(ctx context.Context, zoneID uint, domain string, nameservers []string) error {
 	return nil
 }
+func (f *fakeDNSZoneService) GetZoneSOAMNAME(ctx context.Context, zoneID uint) (string, error) {
+	return "", fmt.Errorf("not wired in fake")
+}
 
 func TestHNSProvider_BuildDelegation_NoDSRecord(t *testing.T) {
 	// Regression: the delegation bundle must NOT carry a DS record in
@@ -266,6 +271,84 @@ func TestHNSProvider_Inspect_ProbeUnawareNodeFailsClosed(t *testing.T) {
 
 func TestHNSProvider_Inspect_NoResolverConfigured(t *testing.T) {
 	p := NewHNSProvider("", nil, TLSASource{})
+	onchain, err := p.Inspect(context.Background(), "myname")
+	require.NoError(t, err)
+	assert.False(t, onchain)
+}
+
+// TestHNSProvider_InspectRoute_PreservesSourceIdentity asserts the typed
+// route observation per probe source: "ens" is cross-chain over the ethereum
+// backend (HIP-5 chain-backed resolution reached through the HNS resolver,
+// NOT direct-ENS website support), "hns" is HNS-root over hns-root, and "dns"
+// is standard DNS served by the recursor — over system-dns, explicitly.
+func TestHNSProvider_InspectRoute_PreservesSourceIdentity(t *testing.T) {
+	cases := []struct {
+		name        string
+		probeSource string
+		wantRoute   domainpolicy.ResolutionRoute
+		wantBackend domainpolicy.BackendID
+		wantOnchain bool
+		wantAssumed bool
+	}{
+		{
+			name:        "ens source is cross-chain over ethereum",
+			probeSource: hip5ProbeSourceENS,
+			wantRoute:   domainpolicy.ResolutionRouteCrossChain,
+			wantBackend: domainpolicy.BackendEthereum,
+			wantOnchain: true,
+		},
+		{
+			name:        "hns source is HNS-root over hns-root",
+			probeSource: hip5ProbeSourceHNS,
+			wantRoute:   domainpolicy.ResolutionRouteHNSRoot,
+			wantBackend: domainpolicy.BackendHNSRoot,
+			wantOnchain: false,
+		},
+		{
+			name:        "dns source is standard DNS over system-dns",
+			probeSource: hip5ProbeSourceDNS,
+			wantRoute:   domainpolicy.ResolutionRouteStandardDNS,
+			wantBackend: domainpolicy.BackendSystemDNS,
+			wantOnchain: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			addr, _ := startSourceProbeDNSServer(t, "myname.", tc.probeSource)
+			p := NewHNSProvider(addr, nil, TLSASource{})
+
+			obs, err := p.InspectRoute(context.Background(), "myname")
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantRoute, obs.Route)
+			assert.Equal(t, tc.wantBackend, obs.Backend)
+			assert.Equal(t, tc.wantAssumed, obs.AssumedSource, "a measured probe is never assumed")
+
+			// BOOL/TYPED PARITY: the compatibility Inspect bool must equal
+			// the cross-chain check on the typed observation.
+			onchain, err := p.Inspect(context.Background(), "myname")
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantOnchain, onchain)
+			boolFromTyped, err := OnChainManagedFromRoute(obs, nil)
+			require.NoError(t, err)
+			assert.Equal(t, boolFromTyped, onchain, "Inspect must equal the typed adaptation of InspectRoute")
+		})
+	}
+}
+
+// TestHNSProvider_InspectRoute_NoResolverIsAssumedHNSRoot keeps the current
+// compatibility behavior (Inspect false, bind proceeds) while asserting the
+// typed observation reports HNS-root with the assumed-source marker: without
+// a configured handover resolver the source was never measured.
+func TestHNSProvider_InspectRoute_NoResolverIsAssumedHNSRoot(t *testing.T) {
+	p := NewHNSProvider("", nil, TLSASource{})
+	obs, err := p.InspectRoute(context.Background(), "myname")
+	require.NoError(t, err)
+	assert.Equal(t, domainpolicy.ResolutionRouteHNSRoot, obs.Route)
+	assert.Equal(t, domainpolicy.BackendHNSRoot, obs.Backend)
+	assert.True(t, obs.AssumedSource, "a missing resolver config forces the assumed source")
+
+	// The compatibility bool keeps its CURRENT behavior: native HNS stays
+	// usable without handover configuration.
 	onchain, err := p.Inspect(context.Background(), "myname")
 	require.NoError(t, err)
 	assert.False(t, onchain)

@@ -11,6 +11,7 @@ import (
 	mock "github.com/stretchr/testify/mock"
 	"go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 )
 
 // NewMockDomainProvider creates a new instance of MockDomainProvider. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -232,6 +233,72 @@ func (_c *MockDomainProvider_Inspect_Call) Return(onchainManaged bool, err error
 }
 
 func (_c *MockDomainProvider_Inspect_Call) RunAndReturn(run func(ctx context.Context, domain string) (bool, error)) *MockDomainProvider_Inspect_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// InspectRoute provides a mock function for the type MockDomainProvider
+func (_mock *MockDomainProvider) InspectRoute(ctx context.Context, domain string) (domainpolicy.RouteObservation, error) {
+	ret := _mock.Called(ctx, domain)
+
+	if len(ret) == 0 {
+		panic("no return value specified for InspectRoute")
+	}
+
+	var r0 domainpolicy.RouteObservation
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (domainpolicy.RouteObservation, error)); ok {
+		return returnFunc(ctx, domain)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) domainpolicy.RouteObservation); ok {
+		r0 = returnFunc(ctx, domain)
+	} else {
+		r0 = ret.Get(0).(domainpolicy.RouteObservation)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = returnFunc(ctx, domain)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockDomainProvider_InspectRoute_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'InspectRoute'
+type MockDomainProvider_InspectRoute_Call struct {
+	*mock.Call
+}
+
+// InspectRoute is a helper method to define mock.On call
+//   - ctx context.Context
+//   - domain string
+func (_e *MockDomainProvider_Expecter) InspectRoute(ctx any, domain any) *MockDomainProvider_InspectRoute_Call {
+	return &MockDomainProvider_InspectRoute_Call{Call: _e.mock.On("InspectRoute", ctx, domain)}
+}
+
+func (_c *MockDomainProvider_InspectRoute_Call) Run(run func(ctx context.Context, domain string)) *MockDomainProvider_InspectRoute_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockDomainProvider_InspectRoute_Call) Return(routeObservation domainpolicy.RouteObservation, err error) *MockDomainProvider_InspectRoute_Call {
+	_c.Call.Return(routeObservation, err)
+	return _c
+}
+
+func (_c *MockDomainProvider_InspectRoute_Call) RunAndReturn(run func(ctx context.Context, domain string) (domainpolicy.RouteObservation, error)) *MockDomainProvider_InspectRoute_Call {
 	_c.Call.Return(run)
 	return _c
 }
