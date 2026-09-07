@@ -1153,6 +1153,16 @@ func (s *WebsiteServiceDefault) dnsLinkReconcilerEnabled() bool {
 	return s.dnsConfig != nil && s.dnsConfig.DomainPolicyDNSLinkReconcilerEnabled
 }
 
+// repairReconcilerEnabled reports whether the plan-driven repair reconciler
+// owns the remaining repair effect families: the expired-challenge rotation here, and the DNSSEC/SOA zone heal
+// in the delegated-domain service. The flag defaults to FALSE: with it off,
+// the legacy repair paths run verbatim. Both writers are never active for
+// the same operation — the flagged path either reconciles or defers to the
+// legacy one with a loud log.
+func (s *WebsiteServiceDefault) repairReconcilerEnabled() bool {
+	return s.dnsConfig != nil && s.dnsConfig.DomainPolicyRepairReconcilerEnabled
+}
+
 // applyDNSLinkDesiredState applies the DNSLink record desired state for the
 // binding wd (target from website). Feature flag OFF (default): legacyWrite
 // performs exactly today's write, byte-for-byte. Flag ON: the plan-driven
@@ -2444,6 +2454,19 @@ func (s *WebsiteServiceDefault) createWebsiteDNSRecords(ctx context.Context, wd 
 }
 
 func (s *WebsiteServiceDefault) regenerateExpiredToken(ctx context.Context, website *pluginDb.Website, wd *pluginDb.WebsiteDomain) error {
+	// With the repair-reconciler flag enabled,
+	// the rotation runs as an explicit application command derived from the
+	// binding's plan (generate token → persist token/expiry → reconcile its
+	// record). Flag OFF (default): the legacy body below runs verbatim.
+	if s.repairReconcilerEnabled() {
+		handled, err := s.rotateExpiredTokenPlanDriven(ctx, website, wd)
+		if handled {
+			return err
+		}
+		// Unrepresentable input (loud log inside rotateExpiredTokenPlanDriven):
+		// nothing was written/persisted, so the legacy rotation runs verbatim.
+	}
+
 	newToken, err := s.generateValidationToken()
 	if err != nil {
 		return fmt.Errorf("failed to regenerate expired validation token: %w", err)
@@ -2472,6 +2495,143 @@ func (s *WebsiteServiceDefault) regenerateExpiredToken(ctx context.Context, webs
 		zap.String("domain", wd.Domain))
 
 	return nil
+}
+
+// rotateExpiredTokenPlanDriven is the plan-driven expired-challenge
+// rotation (an explicit application command): it derives the rotation's
+// effects from the binding's plan (domainpolicy.Diff from the observed
+// expiry), persists the fresh token/expiry, and reconciles the record.
+//
+// Ordering is the plan's prescribed command shape and intentionally differs
+// from the legacy body (which wrote DNS first): generate → persist →
+// reconcile. A failed reconciled record write is logged, never double-written
+// by a legacy fallback — the token is already persisted and validation
+// converges on the next pass.
+//
+// Nothing is written until the pure fail-closed authorization
+// (domapp.AuthorizeChallengeRotation) passes, so every unrepresentable input
+// (no plan, profile without a rotate repair, plan/service divergence, portal
+// locus without a zone) defers to the legacy rotation verbatim with a loud
+// log. It reports whether the flagged path HANDLED the rotation (handled
+// with a nil error means the rotation succeeded; handled with an error means
+// the token could not be generated/persisted — the same failure the legacy
+// path would have raised).
+func (s *WebsiteServiceDefault) rotateExpiredTokenPlanDriven(ctx context.Context, website *pluginDb.Website, wd *pluginDb.WebsiteDomain) (bool, error) {
+	logger := s.Logger()
+	if wd == nil || website == nil {
+		return false, nil
+	}
+	if s.delegatedDomainSvc == nil {
+		logger.Warn("plan-driven challenge rotation unavailable: no domain service wired; deferring to the legacy token rotation",
+			zap.String("domain", wd.Domain), zap.Uint("domain_id", wd.ID))
+		return false, nil
+	}
+	plan, err := s.delegatedDomainSvc.CurrentBindingPlan(wd, website)
+	if err != nil {
+		logger.Warn("plan-driven challenge rotation unavailable: no current-behavior plan for binding; deferring to the legacy token rotation — report plan mapping gaps for follow-up",
+			zap.String("domain", wd.Domain),
+			zap.Uint("domain_id", wd.ID),
+			zap.Error(err))
+		return false, nil
+	}
+
+	input := domapp.ChallengeRotationInput{
+		Plan:               &plan,
+		Domain:             wd.Domain,
+		ZoneID:             wd.ZoneID,
+		ChallengeExpired:   website.IsExpired(),
+		DesiredDNSLinkPath: pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash()),
+	}
+	// Pure pre-write authorization: nothing has been generated or persisted
+	// yet, so a failure here leaves the operation untouched for the legacy
+	// rotation (which then runs verbatim).
+	locus, err := domapp.AuthorizeChallengeRotation(input)
+	if err != nil {
+		logger.Warn("plan-driven challenge rotation could not represent this rotation; deferring to the legacy token rotation — report this for follow-up",
+			zap.String("domain", wd.Domain),
+			zap.Uint("domain_id", wd.ID),
+			zap.Uint("zone_id", wd.ZoneID),
+			zap.String("profile", plan.ProfileID.String()),
+			zap.Error(err))
+		return false, nil
+	}
+
+	// Explicit command step 1: generate the fresh token. Same failure the
+	// legacy path raises (no fallback would help — generation is failable
+	// infrastructure, not a representability question).
+	newToken, err := s.generateValidationToken()
+	if err != nil {
+		return true, fmt.Errorf("failed to regenerate expired validation token: %w", err)
+	}
+
+	// Explicit command step 2: persist token/expiry (the same transaction the
+	// legacy rotation runs).
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		expiresAt := time.Now().Add(s.config.ValidationTokenTTL)
+		website.ValidationToken = newToken
+		website.ValidationExpiresAt = &expiresAt
+		return tx.Save(website)
+	}); err != nil {
+		return true, fmt.Errorf("failed to save regenerated validation token: %w", err)
+	}
+
+	s.Logger().Info("Regenerated expired validation token (plan-driven)",
+		zap.Uint("website_id", website.ID),
+		zap.String("domain", wd.Domain),
+		zap.String("challenge_locus", locus.String()))
+
+	// Explicit command step 3: reconcile the record from the plan's effects.
+	// The persisted token is runtime operand content (the plan carries the
+	// record as a placeholder); its key parity with the plan's challenge label
+	// was checked at authorization. Best-effort like the legacy rotation: a
+	// failed record write logs loudly and converges on a later pass — it is
+	// never followed by a legacy double-write.
+	input.TokenRecord = fmt.Sprintf("%s=%s", s.verificationTokenKey(), newToken)
+	if s.dnsSvc != nil {
+		if _, err := domapp.ReconcileChallengeRotation(ctx, input, websiteRepairEffectExecutor{svc: s.dnsSvc}, logger.Logger); err != nil {
+			logger.Warn("plan-driven challenge rotation record reconcile failed",
+				zap.String("domain", wd.Domain),
+				zap.Uint("domain_id", wd.ID),
+				zap.Uint("zone_id", wd.ZoneID),
+				zap.String("profile", plan.ProfileID.String()),
+				zap.Error(err))
+		}
+	}
+	return true, nil
+}
+
+// websiteRepairEffectExecutor adapts the website service's DNS service into
+// the domainapp RepairExecutor port for the expired-challenge rotation.
+// The challenge write is the existing CreateWebsiteValidationRecord
+// adapter; the DNSLink write is the CreateDNSLinkRecord adapter.
+type websiteRepairEffectExecutor struct {
+	svc pluginCore.DNSService
+}
+
+func (e websiteRepairEffectExecutor) WriteDNSLinkRecord(ctx context.Context, zoneID uint, domain string, target string) error {
+	if e.svc == nil {
+		return fmt.Errorf("no DNS service wired for the DNSLink write on %s", domain)
+	}
+	return e.svc.CreateDNSLinkRecord(ctx, zoneID, domain, target)
+}
+
+func (e websiteRepairEffectExecutor) WriteChallengeRecord(ctx context.Context, zoneID uint, domain string, tokenRecord string) error {
+	if e.svc == nil {
+		return fmt.Errorf("no DNS service wired for the challenge write on %s", domain)
+	}
+	_, token, _ := strings.Cut(tokenRecord, "=")
+	return e.svc.CreateWebsiteValidationRecord(ctx, zoneID, domain, token)
+}
+
+func (e websiteRepairEffectExecutor) EnableZoneDNSSEC(_ context.Context, zoneID uint) error {
+	// The rotation flow's plans (ICANN-portal/ICANN-owner) declare no
+	// ensure-dnssec repair; an ensure effect here is unreachable and fails
+	// closed rather than silently writing zone state.
+	return fmt.Errorf("DNSSEC ensure is not a challenge-rotation effect (zone %d)", zoneID)
+}
+
+func (e websiteRepairEffectExecutor) EnsureZoneSOAMNAME(_ context.Context, zoneID uint, domain string, _ []string) error {
+	return fmt.Errorf("SOA MNAME heal is not a challenge-rotation effect (zone %d, domain %s)", zoneID, domain)
 }
 
 func (s *WebsiteServiceDefault) activateValidatedWebsite(ctx context.Context, website *pluginDb.Website) error {

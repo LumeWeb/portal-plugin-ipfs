@@ -89,6 +89,13 @@ type DNSZoneService interface {
 	// pointer; delegation is carried by the NS record), so callers must not
 	// treat an error here as a hard verification failure.
 	EnsureSOAMNAME(ctx context.Context, zoneID uint, domain string, nameservers []string) error
+
+	// GetZoneSOAMNAME returns the zone's current SOA MNAME (the first field
+	// of the apex SOA RRSet). It is the observation read for the plan-driven
+	// zone heal: the self-heal represents SOA drift as a domainpolicy
+	// observation instead of writing blind. Callers treat an error as an
+	// observation transport failure.
+	GetZoneSOAMNAME(ctx context.Context, zoneID uint) (string, error)
 }
 
 // DSRecord represents a Delegation Signer record for DNSSEC.
@@ -197,6 +204,23 @@ func (s *DelegatedDomainService) dnsLinkReconcilerEnabled() bool {
 		return false
 	}
 	return dnsCfg.DomainPolicyDNSLinkReconcilerEnabled
+}
+
+// repairReconcilerEnabled reports whether the plan-driven repair reconciler
+// owns the remaining repair effect families: the DNSSEC ensure + SOA MNAME zone heal in this service, and the
+// expired-challenge rotation in the website service. The flag defaults to
+// FALSE: with it off, the legacy self-heal paths run verbatim. Both writers
+// are never active for the same operation — the flagged path either
+// reconciles or defers to the legacy one with a loud log.
+func (s *DelegatedDomainService) repairReconcilerEnabled() bool {
+	if s.BaseComponent == nil {
+		return false
+	}
+	dnsCfg := core.GetServiceConfig[*pluginConfig.DnsConfig](s.Context(), pluginCore.DNS_SERVICE)
+	if dnsCfg == nil {
+		return false
+	}
+	return dnsCfg.DomainPolicyRepairReconcilerEnabled
 }
 
 // reconcileBindDNSLink runs the plan-driven DNSLink reconciliation for the
@@ -1000,9 +1024,29 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 	// otherwise only established at bind/create time (see selfHealZone).
 	// Gate 1 (DNSSEC) covers managed-DNSSEC namespaces; gate 2 (SOA MNAME)
 	// covers any portal-managed PowerDNS zone, ICANN included.
-	expectedDS, err := s.selfHealZone(ctx, provider, wd, expectedDS)
-	if err != nil {
-		return DelegationVerificationResult{}, err
+	//
+	// With the repair-reconciler flag enabled,
+	// the plan-driven heal derives its effects from the binding plan and
+	// Diff (observation + reconcile); when it cannot represent the heal it
+	// defers to the legacy selfHealZone with a loud log. Flag OFF (default):
+	// the legacy body runs verbatim.
+	healHandled := false
+	if s.repairReconcilerEnabled() {
+		handled, healedDS, healErr := s.healZonePlanDriven(ctx, provider, wd, expectedDS)
+		if handled {
+			healHandled = true
+			if healErr != nil {
+				return DelegationVerificationResult{}, healErr
+			}
+			expectedDS = healedDS
+		}
+	}
+	if !healHandled {
+		legacyDS, legacyErr := s.selfHealZone(ctx, provider, wd, expectedDS)
+		if legacyErr != nil {
+			return DelegationVerificationResult{}, legacyErr
+		}
+		expectedDS = legacyDS
 	}
 
 	verified, err := provider.VerifyDelegation(ctx, wd.Domain, expectedDS)
@@ -1028,7 +1072,22 @@ func (s *DelegatedDomainService) VerifyDomain(ctx context.Context,
 		// diagnosed from logs alone. Best-effort: an NS lookup failure must
 		// not mask the pending outcome.
 		approvedNS = provider.Nameservers()
-		if live, nsErr := provider.LiveNameservers(ctx, wd.Domain); nsErr != nil {
+		// With the repair-reconciler flag enabled, the live delegation
+		// evidence flows through the domainapp.DelegationNSCollector port
+		// (wired by the repair reconciler; checks remain checks — the delegation verdict
+		// itself stays on VerifyDelegation above, this port carries
+		// diagnostics only). Flag OFF (default): the same lookup is done
+		// directly, unchanged.
+		if s.repairReconcilerEnabled() {
+			collected, colErr := delegationNSCollector{svc: s.dnsSvc, provider: provider, zoneID: wd.ZoneID}.CollectDelegation(ctx, wd.Domain)
+			if colErr != nil {
+				s.Logger().Debug("failed to resolve live delegation evidence for pending delegation",
+					zap.String("domain", wd.Domain),
+					zap.Error(colErr))
+			} else {
+				liveNS = collected.NS.Nameservers
+			}
+		} else if live, nsErr := provider.LiveNameservers(ctx, wd.Domain); nsErr != nil {
 			s.Logger().Debug("failed to resolve live nameservers for pending delegation",
 				zap.String("domain", wd.Domain),
 				zap.Error(nsErr))
@@ -1173,6 +1232,216 @@ func (s *DelegatedDomainService) selfHealZone(ctx context.Context, provider Doma
 	}
 
 	return expectedDS, nil
+}
+
+// healZonePlanDriven is the plan-driven replacement for selfHealZone:
+// it represents DNSSEC key absence and SOA drift as observations, derives
+// the effects from the binding's plan (domainpolicy.Diff), and applies them
+// through the domainapp repair reconciler. Legacy semantics are preserved
+// exactly:
+//
+//   - DNSSEC: only a RequiresDNSSEC namespace whose live DS read came back
+//     empty (ZoneDNSSECStateDisabled) yields an ensure-dnssec effect. The
+//     executor's failure is fatal, and after a successful ensure this caller
+//     re-reads the live DS fail-closed: an empty or erroring post-heal read
+//     fails the verification exactly like the legacy self-heal did.
+//   - SOA MNAME: any portal-managed zone. The drift observation comes from
+//     GetZoneSOAMNAME (the read half of the heal); an unreadable SOA is an
+//     observation transport failure and behaves like the legacy
+//     unconditional ensure (the executor's EnsureSOAMNAME is idempotent and
+//     no-ops when the MNAME is already correct). Failures of the write are
+//     best-effort (logged inside the reconciler, never raised). No
+//     nameservers means nothing to correct — the observation is skipped and
+//     the heal is a no-op, like the legacy EnsureSOAMNAME nil-swap.
+//
+// It reports whether the plan-driven heal HANDLED the zone (false = the
+// operation was left untouched and the caller must run the legacy
+// selfHealZone verbatim); handled=true means no legacy heal write may run
+// afterwards (no double-write fallback).
+func (s *DelegatedDomainService) healZonePlanDriven(ctx context.Context, provider DomainProvider, wd *pluginDb.WebsiteDomain, expectedDS string) (bool, string, error) {
+	logger := s.Logger()
+	if s.dnsSvc == nil || wd == nil || wd.ZoneID == 0 {
+		return false, "", nil
+	}
+
+	// The plan is mapped from persisted facts only. It needs the owning
+	// website's target (facts.Target feeds the DNSLink intent); load it from
+	// the binding's owning website like the verification flow's callers do.
+	// A missing/invalid website is an unrepresentable input: legacy heals.
+	var website pluginDb.Website
+	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Where("id = ?", wd.WebsiteID).First(&website).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	}); err != nil {
+		logger.Warn("plan-driven zone heal unavailable: cannot load the owning website; deferring to the legacy self-heal",
+			zap.String("domain", wd.Domain),
+			zap.Uint("domain_id", wd.ID),
+			zap.Error(err))
+		return false, "", nil
+	}
+	plan, err := s.CurrentBindingPlan(wd, &website)
+	if err != nil {
+		logger.Warn("plan-driven zone heal unavailable: no current-behavior plan for binding; deferring to the legacy self-heal — report plan mapping gaps for follow-up",
+			zap.String("domain", wd.Domain),
+			zap.Uint("domain_id", wd.ID),
+			zap.Error(err))
+		return false, "", nil
+	}
+
+	// DNSSEC observation: the live DS read VerifyDomain already performed is
+	// the signing-state evidence (the same gate the legacy self-heal used).
+	// An empty DS means no active key (Disabled); a present DS means the key
+	// exists (Enabled). Indeterminate states never reach this point for
+	// DNSSEC-required namespaces (VerifyDomain aborted on the read error);
+	// namespaces without a DNSSEC requirement carry no ensure-dnssec repair
+	// in their plans, so passing no observation is safe.
+	var dnssecObs *domainpolicy.ZoneDNSSECObservation
+	if provider.RequiresDNSSEC() {
+		if expectedDS == "" {
+			dnssecObs = &domainpolicy.ZoneDNSSECObservation{State: domainpolicy.ZoneDNSSECStateDisabled}
+		} else {
+			dnssecObs = &domainpolicy.ZoneDNSSECObservation{State: domainpolicy.ZoneDNSSECStateEnabled}
+		}
+	}
+
+	// SOA MNAME observation (read half of the heal). An unreadable SOA is an
+	// observation transport failure and behaves like the legacy path wrote
+	// unconditionally: report drift and let the idempotent ensure converge.
+	nameservers := provider.Nameservers()
+	var soaObs *domainpolicy.SOAMNAMEObservation
+	if len(nameservers) > 0 && nameservers[0] != "" {
+		current, err := s.dnsSvc.GetZoneSOAMNAME(ctx, wd.ZoneID)
+		switch {
+		case err != nil:
+			logger.Debug("plan-driven zone heal: live SOA observation failed; deriving the ensure unconditionally (legacy parity)",
+				zap.String("domain", wd.Domain), zap.Uint("zone_id", wd.ZoneID), zap.Error(err))
+			soaObs = &domainpolicy.SOAMNAMEObservation{Found: true, MatchesPortalMNAME: false}
+		default:
+			soaObs = &domainpolicy.SOAMNAMEObservation{
+				Found:              true,
+				Current:            current,
+				MatchesPortalMNAME: dnsname.Equal(current, dnsname.EnsureFQDN(nameservers[0])),
+			}
+		}
+	}
+
+	result, err := domainapp.ReconcileZoneHeal(ctx, domainapp.ZoneHealInput{
+		Plan:        &plan,
+		Domain:      wd.Domain,
+		ZoneID:      wd.ZoneID,
+		ZoneDNSSEC:  dnssecObs,
+		SOAMNAME:    soaObs,
+		Nameservers: nameservers,
+	}, delegatedRepairEffectExecutor{svc: s.dnsSvc}, logger.Logger)
+	if err != nil {
+		if errors.Is(err, domainapp.ErrRepairNotReconciled) {
+			logger.Warn("plan-driven zone heal could not represent this zone; deferring to the legacy self-heal — report this for follow-up",
+				zap.String("domain", wd.Domain),
+				zap.Uint("domain_id", wd.ID),
+				zap.Uint("zone_id", wd.ZoneID),
+				zap.String("profile", plan.ProfileID.String()),
+				zap.Error(err))
+			return false, "", nil
+		}
+		// Effect execution failure: the heal write itself could not be
+		// applied. Same handling as the legacy self-heal (DNSSEC errors are
+		// fatal; SOA errors were already demoted best-effort inside the
+		// reconciler), and no legacy re-write afterwards (no double-write).
+		return true, "", err
+	}
+	if len(result.Deferred) > 0 {
+		logger.Debug("plan-driven zone heal deferred non-heal effects",
+			zap.String("domain", wd.Domain),
+			zap.Uint("zone_id", wd.ZoneID),
+			zap.String("profile", plan.ProfileID.String()),
+			zap.Strings("deferred", result.Deferred))
+	}
+
+	if result.DNSSECEnsured {
+		// Fail-closed DS doctrine (legacy parity): after a successful ensure,
+		// the live DS must actually exist before verification may proceed.
+		healedDS, dsErr := s.dnsSvc.GetActiveDNSSECDS(ctx, wd.ZoneID)
+		if dsErr != nil {
+			return true, "", fmt.Errorf("resolve live DS for zone %d after enable: %w", wd.ZoneID, dsErr)
+		}
+		if healedDS == "" {
+			return true, "", fmt.Errorf("dnssec self-heal failed for zone %d (domain %s): no active signing key after EnableDNSSEC; cannot verify delegation", wd.ZoneID, wd.Domain)
+		}
+		expectedDS = healedDS
+	}
+
+	return true, expectedDS, nil
+}
+
+// delegationNSCollector adapts the delegated-domain providers into the
+// domainapp.DelegationNSCollector port: the live NS lookup the
+// pending-delegation diagnostics used to do directly, plus the zone's live DS
+// (the same GetActiveDNSSECDS read the delegation gate uses). It carries
+// observation evidence only — no checks, no effects.
+type delegationNSCollector struct {
+	svc      DNSZoneService
+	provider DomainProvider
+	// zoneID is the binding's portal zone; zero (or a nil service) leaves the
+	// DS leg unobserved.
+	zoneID uint
+}
+
+func (c delegationNSCollector) CollectDelegation(ctx context.Context, domain string) (domainapp.DelegationObserved, error) {
+	if c.provider == nil {
+		return domainapp.DelegationObserved{}, fmt.Errorf("delegation observation for %s: no namespace provider wired", domain)
+	}
+	live, err := c.provider.LiveNameservers(ctx, domain)
+	if err != nil {
+		return domainapp.DelegationObserved{}, fmt.Errorf("live NS lookup for %s: %w", domain, err)
+	}
+	obs := domainapp.DelegationObserved{
+		NS: domainpolicy.NSObservation{Found: len(live) > 0, Nameservers: live},
+	}
+	if c.svc != nil && c.zoneID != 0 {
+		ds, dsErr := c.svc.GetActiveDNSSECDS(ctx, c.zoneID)
+		if dsErr != nil {
+			return domainapp.DelegationObserved{}, fmt.Errorf("live DS read for zone %d: %w", c.zoneID, dsErr)
+		}
+		obs.DS = &domainpolicy.DSObservation{Found: ds != "", Value: ds}
+	}
+	return obs, nil
+}
+
+// delegatedRepairEffectExecutor adapts the domain-side DNSZoneService into
+// the domainapp RepairExecutor port for the plan-driven zone heal.
+// Every method is the existing legacy write adapter, reproduced verbatim.
+type delegatedRepairEffectExecutor struct {
+	svc DNSZoneService
+}
+
+func (e delegatedRepairEffectExecutor) WriteDNSLinkRecord(ctx context.Context, zoneID uint, domain string, target string) error {
+	if e.svc == nil {
+		return fmt.Errorf("no DNS zone service wired for the DNSLink write on %s", domain)
+	}
+	return e.svc.CreateDNSLinkRecord(ctx, zoneID, domain, target)
+}
+
+func (e delegatedRepairEffectExecutor) WriteChallengeRecord(_ context.Context, zoneID uint, domain string, _ string) error {
+	// The zone heal never rotates challenges (the repair is flow-scoped by
+	// the observations); a rotate effect here is unreachable and fails closed.
+	return fmt.Errorf("challenge write is not a zone-heal effect (zone %d, domain %s)", zoneID, domain)
+}
+
+func (e delegatedRepairEffectExecutor) EnableZoneDNSSEC(ctx context.Context, zoneID uint) error {
+	if e.svc == nil {
+		return fmt.Errorf("no DNS zone service wired for the DNSSEC ensure on zone %d", zoneID)
+	}
+	_, err := e.svc.EnableDNSSEC(ctx, zoneID)
+	return err
+}
+
+func (e delegatedRepairEffectExecutor) EnsureZoneSOAMNAME(ctx context.Context, zoneID uint, domain string, nameservers []string) error {
+	if e.svc == nil {
+		return fmt.Errorf("no DNS zone service wired for the SOA MNAME heal on %s", domain)
+	}
+	return e.svc.EnsureSOAMNAME(ctx, zoneID, domain, nameservers)
 }
 
 // DeleteDomain deletes a WebsiteDomain row scoped by id, website_id, and user_id.

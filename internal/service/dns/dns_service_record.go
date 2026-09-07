@@ -85,6 +85,35 @@ func (s *DNSServiceDefault) GetRRSet(ctx context.Context, zoneID uint, name stri
 	return nil, fmt.Errorf("RRSet not found: %s %s", name, recordType)
 }
 
+// GetZoneSOAMNAME returns the zone's current SOA MNAME (the first field of
+// the apex SOA RRSet content, canonical PowerDNS form — a trailing-dot FQDN).
+// It is the read half of the zone-heal observation: the delegated-domain
+// self-heal represents SOA drift as a domainpolicy observation
+// (MatchesPortalMNAME) instead of calling the idempotent write blindly.
+// Errors (zone missing, SOA RRSet missing, malformed content) are returned,
+// not softened: callers treat an unreadable SOA as an observation transport
+// failure and proceed as with legacy unconditional ensure.
+func (s *DNSServiceDefault) GetZoneSOAMNAME(ctx context.Context, zoneID uint) (string, error) {
+	ctx, span := core.TraceMethod(ctx, "DNSService.GetZoneSOAMNAME")
+	defer span.End()
+
+	// An empty record name resolves to the zone apex (buildFullName treats
+	// "" and "@" as the apex shorthand), so this reads the zone's own SOA
+	// regardless of which binding triggered the heal.
+	records, err := s.GetRRSet(ctx, zoneID, "", "SOA")
+	if err != nil {
+		return "", fmt.Errorf("read zone %d SOA: %w", zoneID, err)
+	}
+	if len(records) == 0 {
+		return "", fmt.Errorf("zone %d SOA rrset is empty", zoneID)
+	}
+	fields := strings.Fields(records[0].Content)
+	if len(fields) == 0 {
+		return "", fmt.Errorf("zone %d malformed SOA content %q", zoneID, records[0].Content)
+	}
+	return fields[0], nil
+}
+
 // CreateRecord creates a new DNS record in PowerDNS via RRSet
 func (s *DNSServiceDefault) CreateRecord(ctx context.Context, zoneID uint, name string, recordType string, content string, ttl uint) (*apiDTO.DNSRecord, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.CreateRecord")

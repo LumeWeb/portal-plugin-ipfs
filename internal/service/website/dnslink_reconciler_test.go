@@ -68,6 +68,21 @@ func enableDNSLinkReconciler(t *testing.T, ws pluginCore.WebsiteService) {
 	svc.dnsConfig = &cfg
 }
 
+// enableRepairReconciler flips the repair-reconciler feature flag on the
+// website service's DNS config for one test, preserving the rest of the
+// config.
+func enableRepairReconciler(t *testing.T, ws pluginCore.WebsiteService) {
+	t.Helper()
+	svc, ok := ws.(*WebsiteServiceDefault)
+	require.True(t, ok, "service is not *WebsiteServiceDefault")
+	cfg := pluginConfig.DnsConfig{}
+	if svc.dnsConfig != nil {
+		cfg = *svc.dnsConfig
+	}
+	cfg.DomainPolicyRepairReconcilerEnabled = true
+	svc.dnsConfig = &cfg
+}
+
 // TestWebsiteService_PlanDNSLinkReconciler_KeySwitch_WritesDNSLinkRecord
 // verifies the flagged path for the IPNS→IPNS key switch: the plan
 // drives the DNSLink write through the reconciler's create/update executor
