@@ -2,6 +2,7 @@ package domainpolicy
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -117,5 +118,56 @@ func TestSecurityPlanInvalidPlans(t *testing.T) {
 func TestNewSecurityPlanFailsClosedOnUnknownEnums(t *testing.T) {
 	if _, err := NewSecurityPlan(RequirementRequired, Actor(-7), PublicationLocusChain, VerificationModeResolveDNS); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("negative provisioner accepted: %v", err)
+	}
+}
+
+// TestNewSecurityPlan_RejectsOutOfRangeEnums is a regression test: sentinel
+// equality alone previously let out-of-range enum integers slip through the
+// Required and Optional branches. Every unknown publication locus and
+// verification mode (negative, far-out-of-range, or the Unknown sentinel)
+// must be rejected; None is only rejected for Required security.
+func TestNewSecurityPlan_RejectsOutOfRangeEnums(t *testing.T) {
+	badPublications := []PublicationLocus{
+		PublicationLocus(99),
+		PublicationLocus(-1),
+		PublicationLocusUnknown,
+	}
+	badVerifications := []VerificationMode{
+		VerificationMode(99),
+		VerificationMode(-1),
+		VerificationModeUnknown,
+	}
+
+	for _, req := range []Requirement{RequirementRequired, RequirementOptional} {
+		for _, pub := range append(badPublications, PublicationLocusNone) {
+			t.Run(fmt.Sprintf("%s_bad_publication_%d", req, int(pub)), func(t *testing.T) {
+				_, err := NewSecurityPlan(req, ActorPortal, pub, VerificationModeResolveDNS)
+				if req == RequirementOptional && pub == PublicationLocusNone {
+					// None is allowed for Optional; expect no error.
+					if err != nil {
+						t.Fatalf("NewSecurityPlan with None publication rejected: %v", err)
+					}
+					return
+				}
+				if !errors.Is(err, ErrInvalid) {
+					t.Fatalf("NewSecurityPlan accepted out-of-range publication %d: %v", int(pub), err)
+				}
+			})
+		}
+		for _, ver := range append(badVerifications, VerificationModeNone) {
+			t.Run(fmt.Sprintf("%s_bad_verification_%d", req, int(ver)), func(t *testing.T) {
+				_, err := NewSecurityPlan(req, ActorPortal, PublicationLocusPortalZone, ver)
+				if req == RequirementOptional && ver == VerificationModeNone {
+					// None is allowed for Optional; expect no error.
+					if err != nil {
+						t.Fatalf("NewSecurityPlan with None verification rejected: %v", err)
+					}
+					return
+				}
+				if !errors.Is(err, ErrInvalid) {
+					t.Fatalf("NewSecurityPlan accepted out-of-range verification %d: %v", int(ver), err)
+				}
+			})
+		}
 	}
 }

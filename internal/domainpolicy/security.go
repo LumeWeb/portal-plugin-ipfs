@@ -214,10 +214,10 @@ func NewSecurityPlan(requirement Requirement, provisioner Actor, publication Pub
 		if !provisioner.Valid() {
 			return SecurityPlan{}, newInvalid("security plan", "required security must have a provisioner; got provisioner %d", int(provisioner))
 		}
-		if publication == PublicationLocusUnknown || publication == PublicationLocusNone {
+		if !publication.Valid() || publication == PublicationLocusNone {
 			return SecurityPlan{}, newInvalid("security plan", "required security must have a publication locus; got publication %d", int(publication))
 		}
-		if verification == VerificationModeUnknown || verification == VerificationModeNone {
+		if !verification.Valid() || verification == VerificationModeNone {
 			return SecurityPlan{}, newInvalid("security plan", "required security must have a verifier; got verification %d", int(verification))
 		}
 	case RequirementNotApplicable:
@@ -234,10 +234,10 @@ func NewSecurityPlan(requirement Requirement, provisioner Actor, publication Pub
 		if !provisioner.Valid() {
 			return SecurityPlan{}, newInvalid("security plan", "optional security must have a provisioner; got provisioner %d", int(provisioner))
 		}
-		if publication == PublicationLocusUnknown {
+		if !publication.Valid() {
 			return SecurityPlan{}, newInvalid("security plan", "optional security must have a publication locus; got publication %d", int(publication))
 		}
-		if verification == VerificationModeUnknown {
+		if !verification.Valid() {
 			return SecurityPlan{}, newInvalid("security plan", "optional security must have a verification mode; got verification %d", int(verification))
 		}
 	}
