@@ -20,6 +20,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
+	portaldb "go.lumeweb.com/portal/db"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -226,10 +227,16 @@ func TestDelegatedDomainService_CreateDomain_PlanDNSLinkReconciler_WriteErrorRol
 		require.Error(tb, err)
 		assert.ErrorContains(tb, err, "dnslink creation failed")
 
+		// Read through the retry component DB helper (RetryOnLock) like the
+		// rest of the component code paths, so a transient lock error in the
+		// rollback assertion doesn't fail the test spuriously.
 		var count int64
-		require.NoError(tb, db.Model(&pluginDb.WebsiteDomain{}).
-			Where("domain = ? AND namespace = ?", "example.com", pluginDb.DomainNamespaceICANN).
-			Count(&count).Error)
+		require.NoError(tb, portaldb.RetryableComponentLock(svc, func(tx *gorm.DB) *gorm.DB {
+			tx.Model(&pluginDb.WebsiteDomain{}).
+				Where("domain = ? AND namespace = ?", "example.com", pluginDb.DomainNamespaceICANN).
+				Count(&count)
+			return tx
+		}))
 		assert.Zero(tb, count, "the binding must be rolled back when both writes fail")
 	}, dnsLinkReconcilerTestOptions)
 }

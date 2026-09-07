@@ -1084,8 +1084,18 @@ func (s *WebsiteServiceDefault) reconcileManagedDNSLink(ctx context.Context, web
 	// fallback for anything the flagged path cannot represent (no plan, or a
 	// fail-closed diff rejection): the reconciler defers to it with a loud
 	// log rather than diverging.
-	if s.dnsLinkReconcilerEnabled() && s.reconcileDNSLinkPlanDriven(ctx, primaryWD, website) {
-		return
+	if s.dnsLinkReconcilerEnabled() {
+		handled, err := s.reconcileDNSLinkPlanDriven(ctx, primaryWD, website)
+		if err != nil {
+			// Fail-soft, legacy parity: this no-op-repair path treats a
+			// failed record write as a loud Warn only (the reconciler already
+			// logged it) — no error, no extra fallback write on either side
+			// of the flag.
+			return
+		}
+		if handled {
+			return
+		}
 	}
 
 	// Skip the write when the live dnslink record already carries the target:
@@ -1149,27 +1159,43 @@ func (s *WebsiteServiceDefault) dnsLinkReconcilerEnabled() bool {
 // reconciler owns the operation; when it cannot represent the operation
 // (no plan, fail-closed diff, divergent target), it defers back to
 // legacyWrite with a loud log — the legacy path stays authoritative for
-// unrepresentable inputs, never diverging.
+// unrepresentable inputs, never diverging. An executor write failure fails
+// soft exactly like the legacy writer it replaces (loud Warn, no fallback
+// write, no error).
 func (s *WebsiteServiceDefault) applyDNSLinkDesiredState(ctx context.Context, wd *pluginDb.WebsiteDomain, website *pluginDb.Website, legacyWrite func()) {
-	if !s.dnsLinkReconcilerEnabled() || !s.reconcileDNSLinkPlanDriven(ctx, wd, website) {
+	if !s.dnsLinkReconcilerEnabled() {
 		legacyWrite()
 		return
+	}
+	handled, err := s.reconcileDNSLinkPlanDriven(ctx, wd, website)
+	if err != nil {
+		// Fail-soft on the write, matching the legacy writer above — this
+		// target-change path only Warns on a failed record write.
+		return
+	}
+	if !handled {
+		legacyWrite()
 	}
 }
 
 // reconcileDNSLinkPlanDriven runs the plan-driven DNSLink reconciliation for
 // the binding. It reports whether the reconciler HANDLED the operation
-// (including a converged no-op); false means the operation was left
-// untouched and the caller must fall back to the legacy writer.
-func (s *WebsiteServiceDefault) reconcileDNSLinkPlanDriven(ctx context.Context, wd *pluginDb.WebsiteDomain, website *pluginDb.Website) bool {
+// (including a converged no-op); false+nil means the operation was left
+// untouched and the caller must fall back to the legacy writer. executed+nil
+// means the write succeeded. executed+err (executor write failure) means the
+// flagged path still owns the operation — no legacy fallback may fire — and
+// the caller chooses the failure policy: fail-soft Warn (legacy-parity sites)
+// or propagate the error (createWebsiteDNSRecords, so handleDNSEnabledTransition's
+// legacy DNS-setup rollback runs).
+func (s *WebsiteServiceDefault) reconcileDNSLinkPlanDriven(ctx context.Context, wd *pluginDb.WebsiteDomain, website *pluginDb.Website) (bool, error) {
 	logger := s.Logger()
 	if wd == nil || website == nil || s.dnsSvc == nil {
-		return false
+		return false, nil
 	}
 	if s.delegatedDomainSvc == nil {
 		logger.Warn("plan-driven DNSLink reconciler unavailable: no domain service wired; deferring to the legacy DNSLink writer",
 			zap.String("domain", wd.Domain), zap.Uint("domain_id", wd.ID))
-		return false
+		return false, nil
 	}
 	plan, err := s.delegatedDomainSvc.CurrentBindingPlan(wd, website)
 	if err != nil {
@@ -1177,7 +1203,7 @@ func (s *WebsiteServiceDefault) reconcileDNSLinkPlanDriven(ctx context.Context, 
 			zap.String("domain", wd.Domain),
 			zap.Uint("domain_id", wd.ID),
 			zap.Error(err))
-		return false
+		return false, nil
 	}
 
 	desired := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
@@ -1198,18 +1224,22 @@ func (s *WebsiteServiceDefault) reconcileDNSLinkPlanDriven(ctx context.Context, 
 				zap.String("profile", plan.ProfileID.String()),
 				zap.String("desired", desired),
 				zap.Error(err))
-			return false
+			return false, nil
 		}
 		// Effect execution failure: the write itself could not be applied.
-		// Same handling as the legacy writers: log loudly, do not diverge;
-		// the caller has already left the operation to the flagged path.
+		// Handled stays true because the flagged path still owns the
+		// operation (a false would re-run the legacy writer, which the flag
+		// must never trigger); the error travels because the callers own the
+		// failure policy: the fail-soft legacy-parity sites only Warn, while
+		// createWebsiteDNSRecords must surface it so handleDNSEnabledTransition's
+		// legacy DNS-setup rollback runs.
 		logger.Warn("plan-driven DNSLink reconciliation write failed",
 			zap.String("domain", wd.Domain),
 			zap.Uint("domain_id", wd.ID),
 			zap.String("profile", plan.ProfileID.String()),
 			zap.Uint("zone_id", wd.ZoneID),
 			zap.Error(err))
-		return true
+		return true, err
 	}
 	if result.NoOp() {
 		logger.Debug("plan-driven DNSLink reconcile converged with no write",
@@ -1229,7 +1259,7 @@ func (s *WebsiteServiceDefault) reconcileDNSLinkPlanDriven(ctx context.Context, 
 			zap.Strings("deferred", result.Deferred),
 			zap.String("route_drift", result.RouteDrift))
 	}
-	return true
+	return true, nil
 }
 
 // dnsLinkEffectExecutor adapts the DNS zone service into the domainapp
@@ -2389,8 +2419,21 @@ func (s *WebsiteServiceDefault) createWebsiteDNSRecords(ctx context.Context, wd 
 		// assertion; the legacy REPLACE below is the fallback for
 		// unrepresentable inputs. The validation TXT record stays a legacy
 		// write in both states (the reconciler moves only the DNSLink family).
-		if s.dnsLinkReconcilerEnabled() && s.reconcileDNSLinkPlanDriven(ctx, wd, website) {
-			return s.dnsSvc.CreateWebsiteValidationRecord(ctx, wd.ZoneID, wd.Domain, tokenRecord)
+		if s.dnsLinkReconcilerEnabled() {
+			handled, err := s.reconcileDNSLinkPlanDriven(ctx, wd, website)
+			if err != nil {
+				// Unlike the fail-soft callers, this DNS-enable path must
+				// surface a recorded write failure exactly like the legacy
+				// UpdateWebsiteDNSRecords `return err` below, so the caller's
+				// handleDNSEnabledTransition rollback (validation TXT and, for
+				// owned-record bindings, full record set + zone detach) runs
+				// instead of stranding a stale dnslink behind a "successful"
+				// re-enable.
+				return err
+			}
+			if handled {
+				return s.dnsSvc.CreateWebsiteValidationRecord(ctx, wd.ZoneID, wd.Domain, tokenRecord)
+			}
 		}
 		if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, wd.ZoneID, wd.Domain, website.TargetHash(), targetType); err != nil {
 			return err

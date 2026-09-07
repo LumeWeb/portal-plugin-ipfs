@@ -2,6 +2,7 @@ package website
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"testing"
 	"time"
@@ -279,5 +280,141 @@ func TestWebsiteService_PlanDNSLinkReconciler_NoPortalZone_NoWrites(t *testing.T
 		assert.Equal(tb, testIPNSKey.PeerID().String(), updatedWebsite.TargetHash())
 		// No zone exists: no DNS call of any kind is expected — the mock
 		// fails on unexpected calls.
+	}, dnsLinkReconcilerTestOptions)
+}
+
+// TestWebsiteService_PlanDNSLinkReconciler_HostingReEnable_WriteErrorRunsLegacyRollback
+// verifies the hosting re-enable path (handleDNSEnabledTransition →
+// createWebsiteDNSRecords) under the flag: when the plan-driven reconciler's
+// executor write fails with a non-ErrDNSLinkNotReconciled error, the failure
+// must propagate exactly like the legacy UpdateWebsiteDNSRecords `return err`
+// so handleDNSEnabledTransition's legacy DNS-setup rollback runs
+// (DeleteWebsiteValidationRecord for delegation-owned bindings; zone detaches
+// stay delegation-safe), the dns_hosting_enabled flag is NOT persisted, and
+// the binding is re-enabled cleanly on a retry rather than stranded with a
+// stale dnslink + validation TXT behind a "successful" re-enable.
+func TestWebsiteService_PlanDNSLinkReconciler_HostingReEnable_WriteErrorRunsLegacyRollback(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "flagon-reenable-rollback-test.com"
+		testZoneID := uint(9107)
+
+		newDelegationOwnedIPFSWebsite(t, tb, ctx, 9107, domain, testZoneID, testCID.String())
+		apex, err := websiteService.GetApexDomainBinding(context.Background(), 9107)
+		require.NoError(tb, err)
+		require.NotNil(tb, apex)
+
+		// Disable hosting first: delegation-owned bindings keep their zone,
+		// so the later enable is a genuine re-enable (zone survives, flag
+		// flips). Flag still OFF here — this leg is materially the same on
+		// both sides of the flag and needs no DNS writes.
+		disabled, err := websiteService.SetDomainDNSEnabled(context.Background(), testUserID1, 9107, apex.ID, false)
+		require.NoError(tb, err)
+		require.NotNil(tb, disabled)
+		assert.False(tb, disabled.DNSHostingEnabled)
+		assert.Equal(tb, testZoneID, disabled.ZoneID, "delegation-owned zone must survive the disable")
+
+		// Now enable the reconciler flag and re-enable hosting. The live
+		// dnslink is stale, so the plan drives the write; the executor fails.
+		enableDNSLinkReconciler(t, websiteService)
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{},
+		}, nil)
+		setMockResolver(websiteService, mockResolver)
+
+		mockDNS.EXPECT().CreateDNSLinkRecord(
+			mock.Anything, testZoneID, domain, mock.Anything,
+		).Return(errors.New("powerdns write failed")).Once()
+		// Rollback for a delegation-owned binding: only the website
+		// validation record may be removed.
+		mockDNS.EXPECT().DeleteWebsiteValidationRecord(
+			mock.Anything, testZoneID, domain,
+		).Return(nil).Once()
+
+		_, err = websiteService.SetDomainDNSEnabled(context.Background(), testUserID1, 9107, apex.ID, true)
+
+		// The error must propagate (legacy `return err` parity) instead of
+		// being swallowed behind a "handled" re-enable.
+		require.Error(tb, err)
+		assert.ErrorContains(tb, err, "failed to create DNS records")
+
+		// The validation TXT write never happened (strict mock would fail on
+		// the unexpected CreateWebsiteValidationRecord call), and the enable
+		// flag was not persisted — the transition failed before the flag
+		// write, so the binding is still disabled and retryable.
+		reApex, gerr := websiteService.GetApexDomainBinding(context.Background(), 9107)
+		require.NoError(tb, gerr)
+		assert.False(tb, reApex.DNSHostingEnabled, "dns_hosting_enabled must not persist when the transition failed")
+		assert.Equal(tb, testZoneID, reApex.ZoneID, "delegation-owned zone must survive the failed re-enable")
+	}, dnsLinkReconcilerTestOptions)
+}
+
+// TestWebsiteService_PlanDNSLinkReconciler_NoOpRepair_WriteErrorFailSoftIsLegacyParity
+// pins the fail-soft contract of the no-op repair path (reconcileManagedDNSLink)
+// under the flag: an executor write failure is a loud Warn only — the update
+// still reports success and no legacy fallback write fires, exactly like the
+// legacy writer's Warn-only failure handling on that path.
+func TestWebsiteService_PlanDNSLinkReconciler_NoOpRepair_WriteErrorFailSoftIsLegacyParity(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+
+		testCID := util.GenerateTestCID(t, "test data")
+		domain := "flagon-noop-failsoft-test.com"
+		testZoneID := uint(9108)
+
+		newDelegationOwnedIPFSWebsite(t, tb, ctx, 9108, domain, testZoneID, testCID.String())
+		testIPNSKey := setupIPNSAutoCreationMocks(t, mockIPNSKey, testUserID1, domain, testCID)
+		peerID := testIPNSKey.PeerID().String()
+
+		// First update (target change IPFS→IPNS) succeeds with the flagged
+		// reconciler writing the dnslink.
+		enableDNSLinkReconciler(t, websiteService)
+		mockResolver := mocks.NewMockDNSResolver(t)
+		mockResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{},
+		}, nil)
+		setMockResolver(websiteService, mockResolver)
+
+		mockDNS.EXPECT().CreateDNSLinkRecord(
+			mock.Anything, testZoneID, domain, "/ipns/"+peerID,
+		).Return(nil).Once()
+
+		converted, err := websiteService.UpdateWebsite(context.Background(), testUserID1, 9108, map[string]interface{}{
+			"target_type": string(pluginDb.WebsiteTargetTypeIPNS),
+		})
+		websiteService.WaitForPublishes()
+		require.NoError(tb, err)
+		require.NotNil(tb, converted)
+
+		// Second update is a no-op. The live dnslink mismatches the target,
+		// so the plan drives the write — and the executor fails this time.
+		// No additional DNS expectations: a legacy fallback write
+		// (UpdateWebsiteDNSRecords) or any other repair write would exhaust
+		// the mock loudly, and the update must still succeed (fail-soft).
+		mockFailResolver := mocks.NewMockDNSResolver(t)
+		mockFailResolver.EXPECT().ResolveDNSLink(domain).Return(dnslink.Result{
+			Links: map[string]dnslink.NamespaceEntries{},
+		}, nil)
+		setMockResolver(websiteService, mockFailResolver)
+
+		mockDNS.EXPECT().CreateDNSLinkRecord(
+			mock.Anything, testZoneID, domain, "/ipns/"+peerID,
+		).Return(errors.New("powerdns write failed")).Once()
+
+		updated, err := websiteService.UpdateWebsite(context.Background(), testUserID1, 9108, map[string]interface{}{
+			"target_type": string(pluginDb.WebsiteTargetTypeIPNS),
+		})
+		websiteService.WaitForPublishes()
+
+		// Fail-soft legacy parity: no error escapes the no-op repair path.
+		require.NoError(tb, err)
+		require.NotNil(tb, updated)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), updated.TargetType)
 	}, dnsLinkReconcilerTestOptions)
 }
