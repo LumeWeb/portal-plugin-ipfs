@@ -372,6 +372,199 @@ func (r *recordingDelegatedDomainSvc) GetPendingWebsiteDomainsPaginated(_ contex
 	return nil, nil
 }
 
+// driftReportingDelegatedDomainSvc yields a binding whose VerifyDomain
+// reports a typed route-drift finding (HNS root persisted state vs. observed
+// on-chain/eula.cross-chain route) — the janitor reconcile loop's
+// worst case for the report-only guarantee.
+type driftReportingDelegatedDomainSvc struct {
+	recordingDelegatedDomainSvc
+	wd pluginDb.WebsiteDomain
+	// disableDrift makes VerifyDomain stop reporting drift — simulates an
+	// operator-converted/resolved binding observed on a re-probe.
+	disableDrift bool
+	verified     int
+	verifyArg    *pluginDb.WebsiteDomain
+}
+
+func (r *driftReportingDelegatedDomainSvc) GetPendingWebsiteDomainsPaginated(_ context.Context, status pluginDb.DomainStatus, _, _ int) ([]pluginDb.WebsiteDomain, error) {
+	// The drifted binding lives in exactly one lifecycle pool; other polls
+	// (records_generated) see nothing so VerifyDomain runs once.
+	r.statuses = append(r.statuses, status)
+	if status != pluginDb.DomainStatusWaitingDelegation {
+		return nil, nil
+	}
+	return []pluginDb.WebsiteDomain{r.wd}, nil
+}
+
+func (r *driftReportingDelegatedDomainSvc) VerifyDomain(_ context.Context, wd *pluginDb.WebsiteDomain, _ ...domsvc.VerifyDomainOption) (domsvc.DelegationVerificationResult, error) {
+	r.verified++
+	r.verifyArg = wd
+	res := domsvc.DelegationVerificationResult{State: domsvc.DelegationPending}
+	if !r.disableDrift {
+		res.RouteDrift = &domsvc.RouteDriftFinding{
+			From:    domainpolicy.ResolutionRouteHNSRoot,
+			To:      domainpolicy.ResolutionRouteCrossChain,
+			Backend: domainpolicy.BackendEthereum,
+		}
+	}
+	return res, nil
+}
+
+func TestWebsiteJanitorJob_verifyPendingDelegations_RouteDriftIsReportOnly(t *testing.T) {
+	// The janitor is REPORT-ONLY for route
+	// drift. Historically, this loop converted bindings as a side effect of
+	// VerifyDomain; since VerifyDomain no longer converts, the janitor wiring
+	// must also never enqueue, schedule, or perform conversion on its own. The
+	// drift binding stays in the pending lifecycle pool (it is re-verified on
+	// later runs) and the conversion decision is left entirely to the explicit
+	// ConvertToOnChain command.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		job := NewWebsiteJanitorJob()
+		janitorJob := job.(*WebsiteJanitorJob)
+		janitorJob.db = ctx.DB()
+		janitorJob.logger = ctx.Logger()
+		fake := &driftReportingDelegatedDomainSvc{
+			wd: pluginDb.WebsiteDomain{
+				ID:        77,
+				WebsiteID: 1,
+				UserID:    1,
+				Domain:    "janitor-drift.hns",
+				Namespace: pluginDb.DomainNamespaceHNS,
+				Status:    pluginDb.DomainStatusWaitingDelegation,
+				ZoneID:    42,
+			},
+		}
+		janitorJob.delegatedDomainSvc = fake
+
+		require.NoError(tb, janitorJob.verifyPendingDelegations(context.Background()))
+
+		// The drift binding was examined exactly once per polling pass — it
+		// was neither dropped from the pool nor churned through retries.
+		assert.Equal(tb, 1, fake.verified)
+		require.NotNil(tb, fake.verifyArg)
+		assert.Equal(tb, "janitor-drift.hns", fake.verifyArg.Domain)
+		// The pending lifecycle pool is unchanged: a drifted binding remains
+		// a waiting_delegation record that later runs may re-observe.
+		assert.ElementsMatch(tb, []pluginDb.DomainStatus{
+			pluginDb.DomainStatusWaitingDelegation,
+			pluginDb.DomainStatusRecordsGenerated,
+		}, fake.statuses)
+	}, JanitorTestOptions)
+}
+
+// driftBackoffJanitor seeds a drifted binding in the database (so marker
+// persistence can be observed) and wires a janitor job against the fake
+// delegation service.
+func driftBackoffJanitor(tb coreTesting.TB, ctx coreTesting.TestContext, fake *driftReportingDelegatedDomainSvc) *WebsiteJanitorJob {
+	job := NewWebsiteJanitorJob()
+	janitorJob := job.(*WebsiteJanitorJob)
+	janitorJob.db = ctx.DB()
+	janitorJob.logger = ctx.Logger()
+	janitorJob.delegatedDomainSvc = fake
+	require.NoError(tb, ctx.DB().Create(&fake.wd).Error)
+	return janitorJob
+}
+
+func persistedDriftMarker(tb coreTesting.TB, ctx coreTesting.TestContext, id uint) *time.Time {
+	var persisted pluginDb.WebsiteDomain
+	require.NoError(tb, ctx.DB().Where("id = ?", id).First(&persisted).Error)
+	return persisted.DriftDetectedAt
+}
+
+func TestWebsiteJanitorJob_verifyPendingDelegations_DriftBackoffSkipsReprobe(t *testing.T) {
+	// A binding whose drift marker is still fresh must not be re-probed: the
+	// janitor already reported the drift and nothing about the report-only
+	// flow changes within the backoff window, so the external probes would
+	// only repeat identical work every minute.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		now := time.Now()
+		fake := &driftReportingDelegatedDomainSvc{
+			wd: pluginDb.WebsiteDomain{
+				ID:        101,
+				WebsiteID: 1,
+				UserID:    1,
+				Domain:    "drift-backoff.hns",
+				Namespace: pluginDb.DomainNamespaceHNS,
+				Status:    pluginDb.DomainStatusWaitingDelegation,
+				ZoneID:    43,
+				// Distinguishable marker: a skip must leave it exactly as-is.
+				DriftDetectedAt: &now,
+			},
+		}
+		janitorJob := driftBackoffJanitor(tb, ctx, fake)
+
+		require.NoError(tb, janitorJob.verifyPendingDelegations(context.Background()))
+
+		assert.Zero(tb, fake.verified, "drifted binding must be skipped within the backoff window")
+		marker := persistedDriftMarker(tb, ctx, fake.wd.ID)
+		require.NotNil(tb, marker)
+		assert.WithinDuration(tb, now, *marker, time.Second, "skip must not refresh the marker")
+	}, JanitorTestOptions)
+}
+
+func TestWebsiteJanitorJob_verifyPendingDelegations_DriftReprobedAfterBackoff(t *testing.T) {
+	// Once the backoff window elapses the janitor probes again and, because
+	// the drift persists, refreshes the marker — keeping the degraded
+	// (hourly-ish) reporting cadence instead of reverting to every minute.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		past := time.Now().Add(-2 * driftReprobeInterval)
+		fake := &driftReportingDelegatedDomainSvc{
+			wd: pluginDb.WebsiteDomain{
+				ID:              102,
+				WebsiteID:       1,
+				UserID:          1,
+				Domain:          "drift-reprobe.hns",
+				Namespace:       pluginDb.DomainNamespaceHNS,
+				Status:          pluginDb.DomainStatusWaitingDelegation,
+				ZoneID:          44,
+				DriftDetectedAt: &past,
+			},
+		}
+		janitorJob := driftBackoffJanitor(tb, ctx, fake)
+
+		require.NoError(tb, janitorJob.verifyPendingDelegations(context.Background()))
+
+		assert.Equal(tb, 1, fake.verified, "drifted binding must be re-probed after the backoff window")
+		require.NotNil(tb, fake.verifyArg)
+		require.NotNil(tb, fake.verifyArg.DriftDetectedAt, "marker must be refreshed after a still-drifted re-probe")
+		assert.True(tb, fake.verifyArg.DriftDetectedAt.After(past), "marker must be a fresh timestamp, not the old one")
+		marker := persistedDriftMarker(tb, ctx, fake.wd.ID)
+		require.NotNil(tb, marker)
+		assert.True(tb, marker.After(past))
+	}, JanitorTestOptions)
+}
+
+func TestWebsiteJanitorJob_verifyPendingDelegations_DriftMarkerClearedWhenResolved(t *testing.T) {
+	// A re-probe after backoff expiry that no longer observes drift clears
+	// the marker, so the binding returns to normal full-cadence verification.
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		past := time.Now().Add(-2 * driftReprobeInterval)
+		fake := &driftReportingDelegatedDomainSvc{
+			// VerifyDomain reports no drift anymore (operator converted or
+			// drift otherwise resolved).
+			disableDrift: true,
+			wd: pluginDb.WebsiteDomain{
+				ID:              103,
+				WebsiteID:       1,
+				UserID:          1,
+				Domain:          "drift-resolved.hns",
+				Namespace:       pluginDb.DomainNamespaceHNS,
+				Status:          pluginDb.DomainStatusWaitingDelegation,
+				ZoneID:          45,
+				DriftDetectedAt: &past,
+			},
+		}
+		janitorJob := driftBackoffJanitor(tb, ctx, fake)
+
+		require.NoError(tb, janitorJob.verifyPendingDelegations(context.Background()))
+
+		assert.Equal(tb, 1, fake.verified)
+		require.NotNil(tb, fake.verifyArg)
+		assert.Nil(tb, fake.verifyArg.DriftDetectedAt, "in-memory marker must be cleared")
+		assert.Nil(tb, persistedDriftMarker(tb, ctx, fake.wd.ID), "persisted marker must be cleared")
+	}, JanitorTestOptions)
+}
+
 func TestWebsiteJanitorJob_verifyPendingDelegations_IgnoresOnchainManaged(t *testing.T) {
 	// The janitor's delegation verification must only ever poll the delegation
 	// lifecycle statuses (records_generated, waiting_delegation). On-chain

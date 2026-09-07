@@ -26,6 +26,13 @@ const (
 	ValidationReasonTLSAMissing       ValidationReason = "tlsa_missing"
 	ValidationReasonTLSAMismatch      ValidationReason = "tlsa_mismatch"
 	ValidationReasonTLSAUnavailable   ValidationReason = "tlsa_unavailable"
+	// ValidationReasonRouteDrift reports that the binding's live resolution
+	// route no longer agrees with its persisted state (e.g. an HNS name has
+	// been handed over to an on-chain HIP-5 contract). Route conversion is an
+	// explicit user command: validation
+	// reports the drift and stops — it never converts, mutates, or deletes a
+	// zone, and the drift is never reported as generic delegation-pending.
+	ValidationReasonRouteDrift ValidationReason = "route_drift"
 )
 
 // ValidationCheck gate names. Shared by website DNS validation and domain

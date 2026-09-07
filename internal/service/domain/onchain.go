@@ -21,7 +21,16 @@ var (
 )
 
 // ConvertToOnChain converts a bound domain into an on-chain managed (HIP-5)
-// binding after Inspect confirms that handover serves it authoritatively.
+// binding after Inspect confirms that handover serves it authoritatively. It
+// is the ONLY route-conversion path: verification only reports route drift,
+// so the caller (the HTTP convert
+// endpoint) is the explicit, auditable transition command. On success the
+// transition's persisted operation state is the binding row itself: status
+// flips to onchain_managed and the legacy zone/delegation fields are cleared
+// atomically with the authority handover, so operators observe the final
+// state; debug/info logs on this function plus the zone-delete warnings mark
+// each stage. A repeat call returns the typed ErrDomainAlreadyOnChain
+// sentinel without performing any DNS or persistence work.
 func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID, userID, domainID uint) (*pluginDb.WebsiteDomain, error) {
 	if s.DB() == nil {
 		return nil, fmt.Errorf("database not available")
@@ -42,6 +51,13 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 	if wd.Status == pluginDb.DomainStatusOnchainManaged {
 		return nil, fmt.Errorf("%w: %q", ErrDomainAlreadyOnChain, wd.Domain)
 	}
+
+	s.Logger().Info("explicit on-chain conversion started (the only route-transition command)",
+		zap.Uint("id", wd.ID),
+		zap.String("domain", wd.Domain),
+		zap.Uint("website_id", wd.WebsiteID),
+		zap.String("from_status", string(wd.Status)),
+		zap.Uint("zone_id", wd.ZoneID))
 
 	provider := s.registry.Get(string(wd.Namespace))
 	if provider == nil {
@@ -68,12 +84,19 @@ func (s *DelegatedDomainService) ConvertToOnChain(ctx context.Context, websiteID
 	if err := s.convertInspectedBindingToOnChain(ctx, &wd); err != nil {
 		return nil, err
 	}
+	s.Logger().Info("explicit on-chain conversion completed",
+		zap.Uint("id", wd.ID),
+		zap.String("domain", wd.Domain),
+		zap.Uint("website_id", wd.WebsiteID),
+		zap.String("to_status", string(wd.Status)))
 	return &wd, nil
 }
 
 // convertInspectedBindingToOnChain applies an already-confirmed handover
-// decision. Callers must hold the decision that the domain is on-chain; this
-// keeps VerifyDomain from issuing a second source-detection query.
+// decision. Callers must hold the decision that the domain is on-chain (since
+// the ONLY caller is the explicit ConvertToOnChain command — VerifyDomain
+// reports route drift and never converts, so deleting zones from
+// verification is no longer possible).
 func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Context, wd *pluginDb.WebsiteDomain) error {
 	if wd.Status == pluginDb.DomainStatusOnchainManaged {
 		return nil
@@ -131,6 +154,11 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 			"delegation_data":     nil,
 			"dns_hosting_enabled": false,
 			"status":              pluginDb.DomainStatusOnchainManaged,
+			// The row survives conversion (status flips, not deletion), so
+			// the janitor's route-drift backoff marker must be cleared with
+			// the same atomic update — a converted binding must not carry a
+			// stale drift_detected_at into any later lifecycle state.
+			"drift_detected_at": nil,
 		}
 		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 			if err := tx.Model(wd).Updates(updates).Error; err != nil {
@@ -146,6 +174,7 @@ func (s *DelegatedDomainService) convertInspectedBindingToOnChain(ctx context.Co
 		wd.DelegationData = nil
 		wd.DNSHostingEnabled = false
 		wd.Status = pluginDb.DomainStatusOnchainManaged
+		wd.DriftDetectedAt = nil
 
 		if zoneID != 0 && s.dnsSvc != nil {
 			var sharers int64

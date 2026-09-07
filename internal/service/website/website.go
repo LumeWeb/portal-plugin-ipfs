@@ -49,6 +49,14 @@ const (
 	msgTokenExpired      = "Validation token expired for %s — a new token has been generated. Please add the updated TXT record at %s.%s to your DNS configuration"
 	msgValidated         = "DNS validation successful for %s"
 	msgDelegationPending = "Domain delegation not yet published"
+	// msgRouteDrift is the client-facing message for a reported route drift:
+	// verification observes the name now
+	// resolving on-chain (HIP-5) while the binding still holds portal DNS
+	// state. Drift has its own reason code and NEVER falls through to the
+	// generic delegation-pending message — publishing more delegation records
+	// cannot fix a name the external contract already serves; the fix-up is
+	// the explicit convert-to-on-chain command.
+	msgRouteDrift = "Chain route drift: the domain now resolves on-chain; manual conversion to on-chain managed required"
 )
 
 // Passive-gate diagnostics are single-sourced in internal/domainapp since
@@ -2366,6 +2374,26 @@ func (s *WebsiteServiceDefault) checkDelegation(ctx context.Context, primaryWD *
 			zap.String("domain", primaryWD.Domain), zap.Error(verr))
 		return false, msgDelegationPending, pluginCore.ValidationReasonDelegationPending, nil
 	}
+
+	// VerifyDomain no longer converts a
+	// drifted binding implicitly (the previous behavior reached conversion from
+	// exactly this call — checkDelegation → VerifyDomain →
+	// convertInspectedBindingToOnChain). A typed drift finding is reported
+	// here with its own reason code and message and STOPS validation: it must
+	// not fall through to generic delegation-pending, because its fix-up is
+	// the explicit convert-to-on-chain command, not delegation publishing. No
+	// DNS or binding state has been mutated by the drift report.
+	if res.RouteDrift != nil {
+		s.Logger().Info("route drift reported for primary domain; manual on-chain conversion required",
+			zap.String("domain", primaryWD.Domain),
+			zap.Uint("domain_id", primaryWD.ID),
+			zap.Uint("website_id", primaryWD.WebsiteID),
+			zap.String("persisted_route", res.RouteDrift.From.String()),
+			zap.String("observed_route", res.RouteDrift.To.String()),
+			zap.String("observed_backend", res.RouteDrift.Backend.String()))
+		return false, msgRouteDrift, pluginCore.ValidationReasonRouteDrift, nil
+	}
+
 	switch res.State {
 	case domsvc.DelegationVerified:
 		return true, "", "", nil

@@ -22,6 +22,15 @@ import (
 const (
 	JanitorJobSourceID = "ipfs"
 	JanitorJobType     = "plugin.ipfs.website_janitor"
+
+	// driftReprobeInterval bounds how often the janitor re-probes a binding
+	// that has already reported route drift. A permanently-drifted binding
+	// can only be resolved by an explicit operator conversion or removal, so
+	// re-running the external route probes every minute would burn DNS /
+	// delegation probe budget forever without changing the outcome. The
+	// binding stays in the pending pool and drift stays reported (at the
+	// degraded cadence) until a human converts or removes it.
+	driftReprobeInterval = time.Hour
 )
 
 // WebsiteJanitorJob implements core.CronJob for periodic website validation
@@ -106,6 +115,25 @@ func (j *WebsiteJanitorJob) saveWebsite(ctx context.Context, website *pluginDb.W
 		}
 		return tx
 	})
+}
+
+// setDriftMarker persists the route-drift backoff marker for a binding
+// (drift_detected_at = at; nil clears it) and mirrors the value onto the
+// in-memory record. Only the marker column is updated so any status the
+// delegated flow persists alongside verification is untouched.
+func (j *WebsiteJanitorJob) setDriftMarker(ctx context.Context, wd *pluginDb.WebsiteDomain, at *time.Time) error {
+	err := db.RetryableTransaction(ctx, j.db, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Model(&pluginDb.WebsiteDomain{}).
+			Where("id = ?", wd.ID).
+			Update("drift_detected_at", at).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
+	if err == nil {
+		wd.DriftDetectedAt = at
+	}
+	return err
 }
 
 // Run executes the janitor job logic
@@ -629,6 +657,22 @@ func (j *WebsiteJanitorJob) verifyPendingDelegations(ctx context.Context) error 
 
 			for i := range wds {
 				wd := &wds[i]
+
+				// Drift backoff: a binding that reported drift recently skips
+				// the external probes this run. Route drift cannot self-heal
+				// into anything the janitor may act on (report-only), so the
+				// extra DNS/delegation probes only add cost until the operator
+				// converts or removes the binding.
+				if wd.DriftDetectedAt != nil && time.Since(*wd.DriftDetectedAt) < driftReprobeInterval {
+					j.logger.Debug("skipping delegation verification; route-drift backoff not elapsed",
+						zap.String("domain", wd.Domain),
+						zap.String("namespace", string(wd.Namespace)),
+						zap.Uint("id", wd.ID),
+						zap.Time("drift_detected_at", *wd.DriftDetectedAt),
+						zap.Duration("reprobe_interval", driftReprobeInterval))
+					continue
+				}
+
 				verifyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 				res, err := j.delegatedDomainSvc.VerifyDomain(verifyCtx, wd)
 				cancel()
@@ -638,6 +682,49 @@ func (j *WebsiteJanitorJob) verifyPendingDelegations(ctx context.Context) error 
 						zap.String("namespace", string(wd.Namespace)),
 						zap.Error(err))
 					continue
+				}
+				// The janitor is REPORT-ONLY
+				// for route drift — a binding whose live resolution route
+				// disagrees with its persisted state. It must NOT enqueue,
+				// schedule, or perform conversion: the explicit
+				// ConvertToOnChain command is the only conversion path in the
+				// product. VerifyDomain has performed no mutation on the
+				// drift's behalf; report loudly so an operator can convert the
+				// binding manually.
+				if res.RouteDrift != nil {
+					j.logger.Warn("route drift reported during janitor delegation verification; manual on-chain conversion required (janitor is report-only and does not convert)",
+						zap.String("domain", wd.Domain),
+						zap.String("namespace", string(wd.Namespace)),
+						zap.Uint("id", wd.ID),
+						zap.String("persisted_route", res.RouteDrift.From.String()),
+						zap.String("observed_route", res.RouteDrift.To.String()),
+						zap.String("observed_backend", res.RouteDrift.Backend.String()))
+
+					// Persist the drift marker so later runs stop re-probing
+					// this binding every minute (backoff above) and instead
+					// descend to the degraded re-probe cadence.
+					now := time.Now()
+					if err := j.setDriftMarker(ctx, wd, &now); err != nil {
+						j.logger.Warn("failed to persist route-drift marker; re-probe may repeat at full cadence",
+							zap.Error(err),
+							zap.Uint("id", wd.ID))
+					}
+					continue
+				}
+
+				// A previously-drifted binding probed clean again — clear the
+				// marker so it resumes the normal full-cadence verification
+				// flow on subsequent runs.
+				if wd.DriftDetectedAt != nil {
+					if err := j.setDriftMarker(ctx, wd, nil); err != nil {
+						j.logger.Warn("failed to clear route-drift marker; degraded re-probe cadence may persist",
+							zap.Error(err),
+							zap.Uint("id", wd.ID))
+					} else {
+						j.logger.Info("route drift no longer observed; drift marker cleared",
+							zap.String("domain", wd.Domain),
+							zap.Uint("id", wd.ID))
+					}
 				}
 				if res.State != domsvc.DelegationVerified {
 					// Still pending (or not applicable): leave it for a later
