@@ -17,6 +17,7 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
@@ -40,6 +41,8 @@ type testDelegatedDomainService struct {
 	getNs       func(string) (string, bool)
 	getByName   func(context.Context, string) (*pluginDb.WebsiteDomain, error)
 	onchainTLSA func(context.Context, *pluginDb.WebsiteDomain) (bool, string, string, string, error)
+	daneTarget  func(*pluginDb.WebsiteDomain) (domsvc.DANEPublicationTarget, bool)
+	plan        func(*pluginDb.WebsiteDomain, *pluginDb.Website) (domainpolicy.Plan, error)
 }
 
 func (t *testDelegatedDomainService) UsesDelegationForOwnership(d string) bool {
@@ -49,7 +52,7 @@ func (t *testDelegatedDomainService) UsesDelegationForOwnership(d string) bool {
 	return false
 }
 
-func (t *testDelegatedDomainService) VerifyDomain(ctx context.Context, wd *pluginDb.WebsiteDomain) (domsvc.DelegationVerificationResult, error) {
+func (t *testDelegatedDomainService) VerifyDomain(ctx context.Context, wd *pluginDb.WebsiteDomain, _ ...domsvc.VerifyDomainOption) (domsvc.DelegationVerificationResult, error) {
 	if t.verify != nil {
 		return t.verify(ctx, wd)
 	}
@@ -83,6 +86,25 @@ func (t *testDelegatedDomainService) ValidateOnChainTLSA(ctx context.Context, wd
 		return t.onchainTLSA(ctx, wd)
 	}
 	return true, "", "", "", nil
+}
+
+// DANEPublicationTargetFor defaults to "no DANE publication duty"; tests
+// override via daneTarget to exercise chain-locus TLSA gating.
+func (t *testDelegatedDomainService) DANEPublicationTargetFor(wd *pluginDb.WebsiteDomain) (domsvc.DANEPublicationTarget, bool) {
+	if t.daneTarget != nil {
+		return t.daneTarget(wd)
+	}
+	return "", false
+}
+
+// CurrentBindingPlan: by default the double supplies no plan, so the website
+// service falls back to the legacy gate predicates. The plan field
+// overrides it for tests exercising plan-driven gate selection.
+func (t *testDelegatedDomainService) CurrentBindingPlan(wd *pluginDb.WebsiteDomain, website *pluginDb.Website) (domainpolicy.Plan, error) {
+	if t.plan != nil {
+		return t.plan(wd, website)
+	}
+	return domainpolicy.Plan{}, errors.New("testDelegatedDomainService supplies no current-behavior plan")
 }
 
 func setMockDelegatedDomainSvc(ws pluginCore.WebsiteService, d delegatedDomainService) {

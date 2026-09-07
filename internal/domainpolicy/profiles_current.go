@@ -471,8 +471,7 @@ func DerivePlatformProfile(root Profile, id ProfileID, backend BackendID) (Profi
 
 // CurrentProfiles builds the full set of current-behavior profiles without
 // touching the default registry. It is the single authoritative encoding of
-// the observed behavior matrix (see
-// docs/architecture/domain-hosting-overhaul.md); it encodes what the code
+// the observed behavior matrix; it encodes what the code
 // does today, including the self-hosted HNS enforcement gap, which is
 // deliberately not fixed here.
 func CurrentProfiles() ([]Profile, error) {

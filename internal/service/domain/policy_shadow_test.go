@@ -2,9 +2,8 @@ package domain
 
 // policy_shadow_test.go pins the legacy mapper's agreement with the
 // pure plan: it maps the documented current-behavior cases
-// (docs/architecture/domain-hosting-overhaul.md,
-// current-behavior matrix) through the legacy mapper plus pure PlanBinding and
-// compares the resulting plan against the characterized legacy decisions.
+// through the legacy mapper plus pure PlanBinding and compares the
+// resulting plan against the characterized legacy decisions.
 // Cases whose legacy persisted state diverges from the encoded profiles
 // are reported as divergences (never silently reconciled) and asserted
 // against an explicit expected-divergence set.

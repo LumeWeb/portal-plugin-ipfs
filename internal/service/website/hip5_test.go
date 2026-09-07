@@ -39,7 +39,8 @@ func TestShouldPerformTokenCheck(t *testing.T) {
 				Namespace: pluginDb.DomainNamespaceHNS,
 				Status:    pluginDb.DomainStatusOnchainManaged,
 			}
-			assert.False(tb, svc.shouldPerformTokenCheck(pending, wd),
+			plan, havePlan := svc.validationBindingPlan(wd, pending)
+			assert.False(tb, svc.shouldPerformTokenCheck(pending, wd, plan, havePlan),
 				"on-chain managed (HIP-5) proves ownership at bind and publishes a DANE TLSA; no TXT token")
 		})
 
@@ -49,7 +50,8 @@ func TestShouldPerformTokenCheck(t *testing.T) {
 				Namespace: pluginDb.DomainNamespaceHNS,
 				Status:    pluginDb.DomainStatusWaitingDelegation,
 			}
-			assert.False(tb, svc.shouldPerformTokenCheck(pending, wd),
+			plan, havePlan := svc.validationBindingPlan(wd, pending)
+			assert.False(tb, svc.shouldPerformTokenCheck(pending, wd, plan, havePlan),
 				"native HNS proves ownership via delegation, no TXT token")
 		})
 
@@ -61,7 +63,8 @@ func TestShouldPerformTokenCheck(t *testing.T) {
 				Status:           pluginDb.DomainStatusActive,
 				PlatformDomainID: &platformID,
 			}
-			assert.False(tb, svc.shouldPerformTokenCheck(pending, wd),
+			plan, havePlan := svc.validationBindingPlan(wd, pending)
+			assert.False(tb, svc.shouldPerformTokenCheck(pending, wd, plan, havePlan),
 				"platform subdomain is operator-controlled, no TXT token")
 		})
 
@@ -71,7 +74,8 @@ func TestShouldPerformTokenCheck(t *testing.T) {
 				Namespace: pluginDb.DomainNamespaceICANN,
 				Status:    pluginDb.DomainStatusRecordsGenerated,
 			}
-			assert.True(tb, svc.shouldPerformTokenCheck(pending, wd),
+			plan, havePlan := svc.validationBindingPlan(wd, pending)
+			assert.True(tb, svc.shouldPerformTokenCheck(pending, wd, plan, havePlan),
 				"ICANN proves ownership via TXT token")
 		})
 	}, TestOptions)
