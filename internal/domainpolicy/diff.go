@@ -114,6 +114,12 @@ func Diff(plan Plan, obs ObservationSet) ([]Effect, error) {
 			if _, planned := expected[key]; planned {
 				continue
 			}
+			// A live DS for a managed HNS zone never shows up here as a
+			// record observation: it is derived from the zone's signing key
+			// and served by the HNS root, and GateDSDelegation evaluates
+			// against ObservationSet.DS, a channel disjoint from these
+			// records. Any stale delegation-owned record found here is
+			// therefore always safe to delete.
 			switch observed.Ownership {
 			case RecordOwnershipBindingContent, RecordOwnershipBindingSecurity, RecordOwnershipDelegation:
 				appendEffect(Effect{

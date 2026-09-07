@@ -373,3 +373,23 @@ func TestOperatorOwnedRecordsAreNeverDeleted(t *testing.T) {
 		}
 	}
 }
+
+// TestInvariantNoProfileMaterializesDSRecordIntoPortalZone asserts that no
+// current profile plans a DS record intent into the portal zone: a live DS
+// for a managed HNS zone is derived from the zone's signing key and served by
+// the HNS root, never persisted as a portal-zone record (see
+// TestHNSProvider_BuildDelegation_NoDSRecord in internal/service/domain).
+func TestInvariantNoProfileMaterializesDSRecordIntoPortalZone(t *testing.T) {
+	for _, id := range currentProfileIDs {
+		profile, ok := DefaultRegistry().Lookup(id)
+		if !ok {
+			t.Fatalf("profile %q is not registered", id.String())
+		}
+		plan := planMust(t, profile)
+		for _, record := range plan.Records {
+			if record.Intent.Kind == RecordKindDS && record.Destination == PublicationLocusPortalZone {
+				t.Fatalf("profile %s materialized a DS record intent into the portal zone: %+v", id.String(), record)
+			}
+		}
+	}
+}

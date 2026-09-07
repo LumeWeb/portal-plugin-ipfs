@@ -10,7 +10,7 @@ import (
 func goodObservations() ObservationSet {
 	return ObservationSet{
 		DNSLink:       &DNSLinkObservation{Value: "/ipfs/bafkqtestcid"},
-		ChallengeTXT:  &TXTObservation{Value: ChallengeRecordLabel + "=sometoken"},
+		ChallengeTXT:  &TXTObservation{Value: ChallengeRecordLabel + "=fixture-not-a-real-token"},
 		NS:            &NSObservation{Found: true, Nameservers: []string{"ns1.portal.example"}},
 		DS:            &DSObservation{Found: true, Value: "ds-data"},
 		TLSA:          &TLSAObservation{Found: true, Value: TLSAValuePlaceholder},
@@ -55,7 +55,7 @@ func TestEvaluateCurrentWebsiteFlowPerProfile(t *testing.T) {
 			id: ProfileIDICANNPortal,
 			results: []GateResult{
 				{Kind: GateDNSLink, OK: true, Expected: "/ipfs/bafkqtestcid", Found: "/ipfs/bafkqtestcid"},
-				{Kind: GateChallengeTXT, OK: true, Found: ChallengeRecordLabel + "=sometoken"},
+				{Kind: GateChallengeTXT, OK: true, Found: ChallengeRecordLabel + "=fixture-not-a-real-token"},
 				{Kind: GateNSDelegation, OK: true, Found: "not checked (trivial pass today)"},
 			},
 		},
@@ -64,7 +64,7 @@ func TestEvaluateCurrentWebsiteFlowPerProfile(t *testing.T) {
 			id: ProfileIDICANNOwner,
 			results: []GateResult{
 				{Kind: GateDNSLink, OK: true, Expected: "/ipfs/bafkqtestcid", Found: "/ipfs/bafkqtestcid"},
-				{Kind: GateChallengeTXT, OK: true, Found: ChallengeRecordLabel + "=sometoken"},
+				{Kind: GateChallengeTXT, OK: true, Found: ChallengeRecordLabel + "=fixture-not-a-real-token"},
 			},
 		},
 		{
