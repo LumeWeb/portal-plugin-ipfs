@@ -28,4 +28,10 @@ func TestDnsConfig_Defaults(t *testing.T) {
 	assert.Equal(t, false, defs["DomainPolicyRepairReconcilerEnabled"],
 		"DnsConfig defaults must include DomainPolicyRepairReconcilerEnabled=false")
 	assert.False(t, d.DomainPolicyRepairReconcilerEnabled)
+
+	// The bounded application backfill of the persisted policy axes is
+	// REGISTERED but NOT auto-enabled: it no-ops while this flag is false.
+	assert.Equal(t, false, defs["DomainPolicyAxesBackfillEnabled"],
+		"DnsConfig defaults must include DomainPolicyAxesBackfillEnabled=false")
+	assert.False(t, d.DomainPolicyAxesBackfillEnabled)
 }

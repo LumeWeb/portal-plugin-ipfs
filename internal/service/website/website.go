@@ -127,6 +127,28 @@ type delegatedDomainService interface {
 	// and whether it carries a publication duty at all. Used only as the
 	// legacy fallback predicate for the plan-driven on-chain TLSA call selection.
 	DANEPublicationTargetFor(wd *pluginDb.WebsiteDomain) (domsvc.DANEPublicationTarget, bool)
+	// DerivePolicyAxisColumns dual-writes the
+	// persisted policy-axis columns for wd's current post-mutation state; the
+	// caller merges the returned map into its UPDATE column map alongside the
+	// legacy fields. On mapping failure only the persisted error
+	// reconciliation status is returned — ambiguous rows are never guessed.
+	DerivePolicyAxisColumns(ctx context.Context, wd *pluginDb.WebsiteDomain, website *pluginDb.Website) map[string]any
+}
+
+// mergePolicyAxes merges the dual-written persisted policy-axis columns into
+// an UPDATE column map next to the legacy
+// fields the website service is about to persist. Without a delegated-domain
+// service (degraded deployments) there is no mapper, so the legacy fields
+// alone are written and the axes stay NULL (legacy reads) until the bounded
+// backfill reconciles the row.
+func (s *WebsiteServiceDefault) mergePolicyAxes(ctx context.Context, wd *pluginDb.WebsiteDomain, website *pluginDb.Website, updates map[string]any) map[string]any {
+	if s.delegatedDomainSvc == nil || wd == nil {
+		return updates
+	}
+	for col, val := range s.delegatedDomainSvc.DerivePolicyAxisColumns(ctx, wd, website) {
+		updates[col] = val
+	}
+	return updates
 }
 
 // resolverForDomain returns the appropriate DNSResolver for the given domain.
@@ -396,8 +418,11 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 					// Persist association only for a binding that had no canonical
 					// zone. Existing ZoneID must never be overwritten.
 					if primaryWD.ZoneID == 0 {
+						primaryWD.ZoneID = dnsZone.ID
 						err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-							return tx.Model(primaryWD).Update("zone_id", dnsZone.ID)
+							return tx.Model(primaryWD).Updates(s.mergePolicyAxes(ctx, primaryWD, website, map[string]any{
+								"zone_id": dnsZone.ID,
+							}))
 						})
 						if err != nil {
 							s.Logger().Error("Failed to update website with DNS zone ID, attempting to clean up DNS zone",
@@ -416,7 +441,6 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 
 							return nil, fmt.Errorf("failed to associate DNS zone with website: %w", err)
 						}
-						primaryWD.ZoneID = dnsZone.ID
 					}
 
 					s.Logger().Info("DNS zone available for website",
@@ -947,7 +971,9 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 			}
 			wd.DNSHostingEnabled = enableDNS
 			uerr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-				if err := tx.Model(wd).Update("dns_hosting_enabled", enableDNS).Error; err != nil {
+				if err := tx.Model(wd).Updates(s.mergePolicyAxes(ctx, wd, updatedWebsite, map[string]any{
+					"dns_hosting_enabled": enableDNS,
+				})).Error; err != nil {
 					_ = tx.AddError(err)
 				}
 				return tx
@@ -1392,9 +1418,13 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 			zoneCreated = true
 		}
 
-		// Persist the canonical zone reference on the binding.
+		// Persist the canonical zone reference on the binding. Dual-write the
+		// persisted axes for the now-portal-managed state.
+		wd.ZoneID = dnsZone.ID
 		err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-			return tx.Model(wd).Update("zone_id", dnsZone.ID)
+			return tx.Model(wd).Updates(s.mergePolicyAxes(ctx, wd, &website, map[string]any{
+				"zone_id": dnsZone.ID,
+			}))
 		})
 		if err != nil {
 			s.Logger().Error("Failed to update website with DNS zone ID",
@@ -1408,7 +1438,6 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 		}
 
 		zoneAttached = true
-		wd.ZoneID = dnsZone.ID
 		s.Logger().Info("DNS zone associated with website",
 			zap.Uint("website_id", website.ID),
 			zap.Uint("zone_id", dnsZone.ID),
@@ -1452,10 +1481,12 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 				if zoneCreated {
 					_ = s.dnsSvc.DeleteZone(ctx, wd.ZoneID)
 				}
-				_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-					return tx.Model(wd).Update("zone_id", 0)
-				})
 				wd.ZoneID = 0
+				_ = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+					return tx.Model(wd).Updates(s.mergePolicyAxes(ctx, wd, &website, map[string]any{
+						"zone_id": 0,
+					}))
+				})
 			}
 			return fmt.Errorf("failed to create DNS records: %w", err)
 		}
@@ -1605,15 +1636,17 @@ func (s *WebsiteServiceDefault) handleDNSDisabledTransition(ctx context.Context,
 	}
 
 	if zoneDeleted {
+		wd.ZoneID = 0
 		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-			return tx.Model(wd).Update("zone_id", 0)
+			return tx.Model(wd).Updates(s.mergePolicyAxes(ctx, wd, &website, map[string]any{
+				"zone_id": 0,
+			}))
 		}); err != nil {
 			s.Logger().Error("Failed to clear DNS zone ID on primary domain binding",
 				zap.Error(err),
 				zap.Uint("website_id", website.ID))
 			return fmt.Errorf("failed to clear DNS zone ID: %w", err)
 		}
-		wd.ZoneID = 0
 	}
 
 	s.Logger().Info("DNS hosting disabled, website reset to pending_validation",
@@ -3609,7 +3642,9 @@ func (s *WebsiteServiceDefault) SetDomainDNSEnabled(ctx context.Context, userID,
 	}
 
 	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		if err := tx.Model(&wd).Update("dns_hosting_enabled", enabled).Error; err != nil {
+		if err := tx.Model(&wd).Updates(s.mergePolicyAxes(ctx, &wd, nil, map[string]any{
+			"dns_hosting_enabled": enabled,
+		})).Error; err != nil {
 			_ = tx.AddError(err)
 		}
 		return tx

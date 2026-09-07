@@ -41,6 +41,8 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 	"go.lumeweb.com/portal/db"
@@ -194,6 +196,17 @@ func newCompatError(kind CompatErrorKind, wd *pluginDb.WebsiteDomain, reasonForm
 // relationship is available and holds (ValidatePlatformBinding); a broken
 // relationship is a typed rejection, never a guess.
 func (s *DelegatedDomainService) legacyFacts(wd *pluginDb.WebsiteDomain, website *pluginDb.Website) (domainpolicy.BindingFacts, error) {
+	return s.legacyFactsWithTrustCheck(wd, website, false)
+}
+
+// legacyFactsWithTrustCheck derives the binding facts; when trustPrevalidated
+// is true the caller has already run the shared platform-trust validator
+// (ValidatePlatformBinding) on this exact row in the same validation pass, so
+// the fail-closed trust revalidation (and its DB read) is skipped — the same
+// contract WithPrevalidatedPlatformTrust gives VerifyDomain. Only callers that
+// hold a same-pass validation may pass true; every other read keeps the
+// legacy trust check.
+func (s *DelegatedDomainService) legacyFactsWithTrustCheck(wd *pluginDb.WebsiteDomain, website *pluginDb.Website, trustPrevalidated bool) (domainpolicy.BindingFacts, error) {
 	if wd == nil {
 		return domainpolicy.BindingFacts{}, newCompatError(CompatErrorUnknownNamespace, nil, "nil binding row")
 	}
@@ -246,7 +259,11 @@ func (s *DelegatedDomainService) legacyFacts(wd *pluginDb.WebsiteDomain, website
 			if s.BaseComponent == nil || s.DB() == nil {
 				return domainpolicy.BindingFacts{}, newCompatError(CompatErrorPlatformTrustUnavailable, wd, "platform binding %q requires database access to check platform trust", wd.Domain)
 			}
-			if terr := s.ValidatePlatformBinding(context.Background(), wd); terr != nil {
+			var terr error
+			if !trustPrevalidated {
+				terr = s.ValidatePlatformBinding(context.Background(), wd)
+			}
+			if terr != nil {
 				return domainpolicy.BindingFacts{}, newCompatError(CompatErrorImpossiblePlatformRelation, wd, "%s", terr)
 			}
 			// Platform bindings share the operator root's zone by design.
@@ -696,4 +713,272 @@ func checkRouteObservation(expected domainpolicy.ResolutionRoute, expectedBacken
 		return fmt.Errorf("route observation disagrees with persisted state")
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Persisted policy axes
+// ---------------------------------------------------------------------------
+//
+// Dual-write + dual-read: every mutation path persists the independent axis
+// columns (db.DomainPolicyAxes) alongside the legacy fields, and plan reads
+// prefer a complete valid persisted axis set, falling back to this mapper
+// otherwise. Derivation is single-sourced here — legacyFacts + legacyProfileFor
+// + PlanBinding produce the axes, so a mapped row's axes are by construction
+// the same state the legacy mapper would re-derive.
+
+// derivePolicyAxes derives the complete persisted axis set for a binding in
+// its current (post-mutation) legacy state. It runs the same mapper chain
+// CurrentBindingPlan uses, so success means "row state is coherent and the
+// current-behavior profile is known"; any CompatError leaves the row
+// unmappable and no axis may be guessed for it.
+func (s *DelegatedDomainService) derivePolicyAxes(wd *pluginDb.WebsiteDomain, website *pluginDb.Website) (pluginDb.DomainPolicyAxes, error) {
+	return s.derivePolicyAxesWithTrustCheck(wd, website, false)
+}
+
+// derivePolicyAxesWithTrustCheck is derivePolicyAxes with a
+// trustPrevalidated escape hatch (see legacyFactsWithTrustCheck): dual-write
+// derivations on paths that just validated this row's platform trust in the
+// same pass skip the duplicate trust DB read and stay inside the
+// single-platform-validation contract.
+func (s *DelegatedDomainService) derivePolicyAxesWithTrustCheck(wd *pluginDb.WebsiteDomain, website *pluginDb.Website, trustPrevalidated bool) (pluginDb.DomainPolicyAxes, error) {
+	facts, err := s.legacyFactsWithTrustCheck(wd, website, trustPrevalidated)
+	if err != nil {
+		return pluginDb.DomainPolicyAxes{}, err
+	}
+	profileID, err := s.legacyProfileFor(wd, domainpolicy.RouteObservation{})
+	if err != nil {
+		return pluginDb.DomainPolicyAxes{}, err
+	}
+	profile, ok := domainpolicy.DefaultRegistry().Lookup(profileID)
+	if !ok {
+		return pluginDb.DomainPolicyAxes{}, newCompatError(CompatErrorProfileUnregistered, wd,
+			"current-behavior profile %q is not registered", profileID.String())
+	}
+	plan, err := domainpolicy.PlanBinding(profile, facts)
+	if err != nil {
+		return pluginDb.DomainPolicyAxes{}, err
+	}
+	return pluginDb.DomainPolicyAxes{
+		Lifecycle: facts.Lifecycle,
+		Authority: plan.Authority,
+		Route:     plan.Route,
+		Backend:   plan.Backend,
+		Hosting:   facts.RequestedHosting,
+		PolicyID:  plan.ProfileID,
+		PolicyVer: plan.ProfileVersion,
+	}, nil
+}
+
+// DerivePolicyAxisColumns renders the persisted axis columns for wd's current
+// post-mutation state, for merging into an UPDATE column map alongside the
+// legacy fields. On any mapping failure it returns ONLY the persisted error
+// reconciliation status — ambiguous rows never receive guessed axis values
+// (fail closed). website may be nil, in which case the owning website row is
+// loaded (its target facts validate the profile); a lookup failure is itself
+// a mapping failure. Callers merge the returned map verbatim.
+func (s *DelegatedDomainService) DerivePolicyAxisColumns(ctx context.Context, wd *pluginDb.WebsiteDomain, website *pluginDb.Website) map[string]any {
+	return s.derivePolicyAxisColumnsValidatedTrust(ctx, wd, website, false)
+}
+
+// derivePolicyAxisColumnsValidatedTrust is DerivePolicyAxisColumns with a
+// trustPrevalidated escape hatch (see legacyFactsWithTrustCheck): mutation
+// paths that have already validated the row's platform trust in the same pass
+// use it so the dual-write derivation stays inside the
+// single-platform-validation contract. untrusted=false callers get the
+// full fail-closed derivation.
+func (s *DelegatedDomainService) derivePolicyAxisColumnsValidatedTrust(ctx context.Context, wd *pluginDb.WebsiteDomain, website *pluginDb.Website, trustPrevalidated bool) map[string]any {
+	if wd == nil {
+		return nil
+	}
+	site := website
+	if site == nil && s.BaseComponent != nil && s.DB() != nil && wd.WebsiteID != 0 {
+		var loaded pluginDb.Website
+		if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+			if err := tx.First(&loaded, wd.WebsiteID).Error; err != nil {
+				_ = tx.AddError(err)
+			}
+			return tx
+		}); err != nil {
+			s.Logger().Warn("persisted policy axes: failed to load owning website; persisting error reconciliation status (no guessed axes)",
+				zap.Uint("id", wd.ID), zap.String("domain", wd.Domain), zap.Error(err))
+			return pluginDb.PolicyAxesErrorColumns()
+		}
+		site = &loaded
+	}
+	axes, err := s.derivePolicyAxesWithTrustCheck(wd, site, trustPrevalidated)
+	if err != nil {
+		s.Logger().Warn("persisted policy axes: mapping failed; persisting error reconciliation status (no axis values guessed)",
+			zap.Uint("id", wd.ID), zap.String("domain", wd.Domain), zap.Error(err))
+		return pluginDb.PolicyAxesErrorColumns()
+	}
+	return axes.Columns()
+}
+
+// applyDualWriteAxes mirrors wd's current post-mutation legacy state into the
+// in-memory axis columns (INSERT paths, where tx.Create persists them with the
+// row). A mapping failure is recorded as the persisted error reconciliation
+// status — ambiguity is recorded, never guessed — and never fails the write.
+func applyDualWriteAxes(s *DelegatedDomainService, wd *pluginDb.WebsiteDomain, website *pluginDb.Website) {
+	axes, err := s.derivePolicyAxes(wd, website)
+	if err != nil || wd.ApplyAxes(axes) != nil {
+		// Mapping failed (or produced a value the model rejects): record the
+		// ambiguity instead of guessing axes.
+		wd.SetReconciliationStatus(pluginDb.PolicyReconciliationError)
+		if err != nil {
+			s.Logger().Debug("persisted policy axes: INSERT-time mapping unavailable; row marked unreconciled",
+				zap.Uint("id", wd.ID), zap.String("domain", wd.Domain), zap.Error(err))
+		}
+	}
+}
+
+// mergePolicyAxisColumns merges the dual-written axis columns for wd's
+// post-mutation state into an UPDATE column map (UPDATE paths). The map may
+// be the "error reconciliation status only" map for an ambiguous row: legacy
+// fields stay authoritative and reads fall back to the legacy mapper.
+// trustPrevalidated must be true only on paths that already ran the shared
+// platform-trust validator on this row in the same pass (see
+// derivePolicyAxisColumnsValidatedTrust); it false-elsewhere.
+func mergePolicyAxisColumns(s *DelegatedDomainService, ctx context.Context, wd *pluginDb.WebsiteDomain, website *pluginDb.Website, trustPrevalidated bool, updates map[string]any) map[string]any {
+	for col, val := range s.derivePolicyAxisColumnsValidatedTrust(ctx, wd, website, trustPrevalidated) {
+		updates[col] = val
+	}
+	return updates
+}
+
+// legacyExpectedRouteForClass derives the assumed route/backend for a binding
+// from its hosting class and namespace (the network-free expectation the
+// mapper and the persisted-axis staleness gate share). Platform bindings
+// resolve through the operator PowerDNS zone.
+func legacyExpectedRouteForClass(wd *pluginDb.WebsiteDomain, namespace domainpolicy.NamingSystem) (domainpolicy.ResolutionRoute, domainpolicy.BackendID, error) {
+	switch wd.Class() {
+	case pluginDb.ClassOnChainManaged:
+		if namespace != domainpolicy.NamingSystemHNS {
+			return domainpolicy.ResolutionRouteUnknown, domainpolicy.EmptyBackendID, fmt.Errorf("ICANN names are never on-chain managed")
+		}
+		return domainpolicy.ResolutionRouteCrossChain, domainpolicy.BackendEthereum, nil
+	case pluginDb.ClassPortalManaged:
+		if wd.PlatformDomainID != nil {
+			return domainpolicy.ResolutionRouteStandardDNS, domainpolicy.BackendPowerDNS, nil
+		}
+		return legacyRouteForNamespace(namespace)
+	case pluginDb.ClassSelfHosted:
+		return legacyRouteForNamespace(namespace)
+	default:
+		return domainpolicy.ResolutionRouteUnknown, domainpolicy.EmptyBackendID, fmt.Errorf("unresolved binding has no route")
+	}
+}
+
+// planFromPersistedAxes builds the plan from a COMPLETE, VALID persisted axis
+// set, preferring the new representation over the legacy mapping (dual-read).
+// ok=false means "no usable axis set — fall back to the legacy mapper": unset
+// (legacy) rows, reconciliation errors, and axis sets stale relative to the
+// current legacy fields all take the fallback, so a missed dual-write can
+// never authorize writes the current row state does not support. Persisted
+// values that fail enum validation or contradict the profile registry are
+// storage corruption and fail closed with an error instead of falling back.
+func (s *DelegatedDomainService) planFromPersistedAxes(wd *pluginDb.WebsiteDomain, website *pluginDb.Website) (domainpolicy.Plan, bool, error) {
+	if !wd.PolicyAxesMapped() {
+		return domainpolicy.Plan{}, false, nil
+	}
+	lifecycle, err := wd.GetLifecycleStatus()
+	if err != nil {
+		return domainpolicy.Plan{}, false, err
+	}
+	hosting, err := wd.GetHostingRequest()
+	if err != nil {
+		return domainpolicy.Plan{}, false, err
+	}
+	route, err := wd.GetResolutionRoute()
+	if err != nil {
+		return domainpolicy.Plan{}, false, err
+	}
+	backend, err := wd.GetResolutionBackend()
+	if err != nil {
+		return domainpolicy.Plan{}, false, err
+	}
+	policyID, policyVer, err := wd.GetPolicy()
+	if err != nil {
+		return domainpolicy.Plan{}, false, err
+	}
+	profile, ok := domainpolicy.DefaultRegistry().Lookup(policyID)
+	if !ok {
+		return domainpolicy.Plan{}, false, newCompatError(CompatErrorProfileUnregistered, wd,
+			"persisted policy_id %q is not registered", policyID.String())
+	}
+	if profile.Version != policyVer {
+		return domainpolicy.Plan{}, false, newCompatError(CompatErrorProfileUnregistered, wd,
+			"persisted policy version %s does not match registered profile %q v%s", policyVer.String(), policyID.String(), profile.Version.String())
+	}
+	// Cross-check the profile identity against the row's system properties
+	// (namespace) before trusting the axes: a persisted profile that does not
+	// belong to the row's namespace is storage corruption, never a fallback.
+	namespace, err := legacyNamespace(wd.Namespace)
+	if err != nil {
+		return domainpolicy.Plan{}, false, err
+	}
+	if profile.NamingSystem != namespace {
+		return domainpolicy.Plan{}, false, newCompatError(CompatErrorUnknownNamespace, wd,
+			"persisted policy %q belongs to namespace %s, but the row is %s", policyID.String(), profile.NamingSystem, namespace)
+	}
+	// Staleness gate: the axes must agree with the row's CURRENT legacy
+	// state. A legacy write that skipped the dual-write would leave axes
+	// stale; falling back to the legacy mapper keeps such rows safe (and the
+	// backfill re-maps them).
+	if legacyLifecycle(wd.Status) != lifecycle {
+		return domainpolicy.Plan{}, false, nil
+	}
+	if legacyRequestedHosting(wd) != hosting {
+		return domainpolicy.Plan{}, false, nil
+	}
+	expectedRoute, expectedBackend, routeErr := legacyExpectedRouteForClass(wd, namespace)
+	if routeErr != nil {
+		return domainpolicy.Plan{}, false, nil
+	}
+	if expectedRoute != route || expectedBackend != backend {
+		return domainpolicy.Plan{}, false, nil
+	}
+
+	// Zone state is not an axis column: the legacy zone reference and platform
+	// relation remain the zone inputs (validated exactly like the mapper).
+	platform := wd.PlatformDomainID != nil
+	if platform {
+		if s.BaseComponent == nil || s.DB() == nil {
+			return domainpolicy.Plan{}, false, nil
+		}
+		if terr := s.ValidatePlatformBinding(context.Background(), wd); terr != nil {
+			return domainpolicy.Plan{}, false, newCompatError(CompatErrorImpossiblePlatformRelation, wd, "%s", terr)
+		}
+	}
+	allocation := domainpolicy.ZoneAllocationNone
+	if platform {
+		allocation = domainpolicy.ZoneAllocationSharedParent
+	} else if wd.ZoneID != 0 {
+		if allocation, err = s.legacyZoneAllocation(wd); err != nil {
+			return domainpolicy.Plan{}, false, nil
+		}
+	}
+	target, err := legacyTarget(website)
+	if err != nil {
+		return domainpolicy.Plan{}, false, nil
+	}
+	facts := domainpolicy.BindingFacts{
+		Name:              wd.Domain,
+		Lifecycle:         lifecycle,
+		RequestedHosting:  hosting,
+		ZonePresent:       wd.ZoneID != 0 || platform,
+		ZoneAllocation:    allocation,
+		DiscoveredRoute:   route,
+		DiscoveredBackend: backend,
+		Target:            target,
+		PolicyVersion:     policyVer,
+	}
+	if platform {
+		rootID := *wd.PlatformDomainID
+		facts.PlatformRootID = &rootID
+	}
+	plan, err := domainpolicy.PlanBinding(profile, facts)
+	if err != nil {
+		return domainpolicy.Plan{}, false, err
+	}
+	return plan, true, nil
 }

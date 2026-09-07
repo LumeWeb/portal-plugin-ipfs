@@ -1,8 +1,11 @@
 package db
 
 import (
+	"errors"
+	"fmt"
 	"time"
 
+	"go.lumeweb.com/portal-plugin-ipfs/internal/domainpolicy"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -98,6 +101,330 @@ func (w *WebsiteDomain) GetDANETLSAOwner() string {
 // SetDANETLSAOwner stores the TLSA owner name.
 func (w *WebsiteDomain) SetDANETLSAOwner(owner string) {
 	w.daneSet(ProtocolDataTLSAOwner, owner)
+}
+
+// ---------------------------------------------------------------------------
+// Persisted policy axes
+// ---------------------------------------------------------------------------
+//
+// The independent policy axes are persisted as nullable columns next to the
+// legacy fields (status, dns_hosting_enabled, zone_id, delegation data).
+// Invariants:
+//
+//   - The legacy fields are NEVER modified or removed; they remain the
+//     fail-safe representation every legacy reader uses.
+//   - Every mutation path dual-writes the axis columns alongside the legacy
+//     fields. A row carries reconciliation_status=mapped exactly when a
+//     complete, valid axis set was derived for it; mapping failures persist
+//     the persisted error reconciliation status (PolicyReconciliationError)
+//     and NEVER guess axis values. Ambiguous rows are never SQL-backfilled.
+//   - Readers prefer a complete valid axis set (PolicyAxesMapped) and fall
+//     back to the legacy precedence (db.Class / service legacy mapper)
+//     otherwise. Validity is checked against the internal/domainpolicy enums
+//     and every accessor fails closed on unknown values.
+//
+// internal/db importing internal/domainpolicy is the approved direction: the
+// policy package is pure (it imports neither db nor services), so the
+// dependency runs persistence -> vocabulary only.
+const (
+	// PolicyReconciliationMapped marks a binding whose persisted axis columns
+	// are a complete, validated set derived from its legacy fields.
+	PolicyReconciliationMapped = "mapped"
+	// PolicyReconciliationError marks a binding whose axis derivation FAILED:
+	// the row's legacy fields are ambiguous or unmappable. No axis column is
+	// guessed for such rows. Reads must fall back to the legacy mapper.
+	PolicyReconciliationError = "error"
+)
+
+// ErrPolicyAxisUnset reports that an axis column holds no value (NULL) — the
+// normal state of a legacy row that the backfill has not touched yet.
+var ErrPolicyAxisUnset = errors.New("policy axis not persisted")
+
+// policyAxisInvalid builds the fail-closed error for a column holding a value
+// outside the internal/domainpolicy enum.
+func policyAxisInvalid(column, value string) error {
+	return fmt.Errorf("policy axis %s: unknown value %q", column, value)
+}
+
+// DomainPolicyAxes is the complete set of persisted policy axes for one
+// binding, produced by the policy-compat mapper (and the bounded backfill)
+// only. It carries no zone reference: the legacy zone_id / platform relation
+// remain the zone inputs; these axes are the independent per-binding policy
+// state.
+type DomainPolicyAxes struct {
+	Lifecycle domainpolicy.Lifecycle
+	Authority domainpolicy.AuthorityLocus
+	Route     domainpolicy.ResolutionRoute
+	Backend   domainpolicy.BackendID
+	Hosting   domainpolicy.HostingRequest
+	PolicyID  domainpolicy.ProfileID
+	PolicyVer domainpolicy.ProfileVersion
+}
+
+// Columns renders the axes as the SQL column map consumed by dual-write
+// Updates(map[string]any) calls, marking the row as mapped. Resolver of last
+// resort is the caller: Columns is only built from mapper output.
+func (a DomainPolicyAxes) Columns() map[string]any {
+	return map[string]any{
+		"lifecycle_status":      a.Lifecycle.String(),
+		"authority_locus":       a.Authority.String(),
+		"resolution_route":      a.Route.String(),
+		"resolution_backend":    string(a.Backend),
+		"hosting_request":       a.Hosting.String(),
+		"policy_id":             string(a.PolicyID),
+		"policy_version":        int(a.PolicyVer),
+		"reconciliation_status": PolicyReconciliationMapped,
+	}
+}
+
+// PolicyAxesErrorColumns is the update map for a row whose axis derivation
+// failed: persist the error reconciliation status, never guessed values.
+func PolicyAxesErrorColumns() map[string]any {
+	return map[string]any{"reconciliation_status": PolicyReconciliationError}
+}
+
+const (
+	policyColLifecycle = "lifecycle_status"
+	policyColAuthority = "authority_locus"
+	policyColRoute     = "resolution_route"
+	policyColBackend   = "resolution_backend"
+	policyColHosting   = "hosting_request"
+	policyColPolicyID  = "policy_id"
+	policyColPolicyVer = "policy_version"
+	policyColRecono    = "reconciliation_status"
+)
+
+// typed accessors for the eight persisted axis columns. Setters accept only
+// enum-valid values (fail closed on Unknown / zero values — an unresolved
+// binding persists the error reconciliation status instead of unknown axis
+// values). Getters return ErrPolicyAxisUnset for a NULL column (a legacy row
+// the backfill has not reached) and fail closed on any persisted value that
+// not part of the vocabulary.
+
+// SetLifecycleStatus persists the lifecycle axis.
+func (wd *WebsiteDomain) SetLifecycleStatus(v domainpolicy.Lifecycle) error {
+	if !v.Valid() {
+		return policyAxisInvalid(policyColLifecycle, v.String())
+	}
+	wd.LifecycleStatus = strPtr(v.String())
+	return nil
+}
+
+// GetLifecycleStatus returns the persisted lifecycle axis.
+func (wd *WebsiteDomain) GetLifecycleStatus() (domainpolicy.Lifecycle, error) {
+	raw, err := columnString(policyColLifecycle, wd.LifecycleStatus)
+	if err != nil {
+		return domainpolicy.LifecycleUnknown, err
+	}
+	v, perr := domainpolicy.ParseLifecycle(raw)
+	if perr != nil {
+		return domainpolicy.LifecycleUnknown, policyAxisInvalid(policyColLifecycle, raw)
+	}
+	return v, nil
+}
+
+// SetAuthorityLocus persists the authority-locus axis.
+func (wd *WebsiteDomain) SetAuthorityLocus(v domainpolicy.AuthorityLocus) error {
+	if !v.Valid() {
+		return policyAxisInvalid(policyColAuthority, v.String())
+	}
+	wd.AuthorityLocus = strPtr(v.String())
+	return nil
+}
+
+// GetAuthorityLocus returns the persisted authority-locus axis.
+func (wd *WebsiteDomain) GetAuthorityLocus() (domainpolicy.AuthorityLocus, error) {
+	raw, err := columnString(policyColAuthority, wd.AuthorityLocus)
+	if err != nil {
+		return domainpolicy.AuthorityLocusUnknown, err
+	}
+	v, perr := domainpolicy.ParseAuthorityLocus(raw)
+	if perr != nil {
+		return domainpolicy.AuthorityLocusUnknown, policyAxisInvalid(policyColAuthority, raw)
+	}
+	return v, nil
+}
+
+// SetResolutionRoute persists the resolution-route axis.
+func (wd *WebsiteDomain) SetResolutionRoute(v domainpolicy.ResolutionRoute) error {
+	if !v.Valid() {
+		return policyAxisInvalid(policyColRoute, v.String())
+	}
+	wd.ResolutionRoute = strPtr(v.String())
+	return nil
+}
+
+// GetResolutionRoute returns the persisted resolution-route axis.
+func (wd *WebsiteDomain) GetResolutionRoute() (domainpolicy.ResolutionRoute, error) {
+	raw, err := columnString(policyColRoute, wd.ResolutionRoute)
+	if err != nil {
+		return domainpolicy.ResolutionRouteUnknown, err
+	}
+	v, perr := domainpolicy.ParseResolutionRoute(raw)
+	if perr != nil {
+		return domainpolicy.ResolutionRouteUnknown, policyAxisInvalid(policyColRoute, raw)
+	}
+	return v, nil
+}
+
+// SetResolutionBackend persists the resolution-backend axis.
+func (wd *WebsiteDomain) SetResolutionBackend(v domainpolicy.BackendID) error {
+	if !v.Valid() {
+		return policyAxisInvalid(policyColBackend, string(v))
+	}
+	wd.ResolutionBackend = strPtr(string(v))
+	return nil
+}
+
+// GetResolutionBackend returns the persisted resolution-backend axis.
+func (wd *WebsiteDomain) GetResolutionBackend() (domainpolicy.BackendID, error) {
+	raw, err := columnString(policyColBackend, wd.ResolutionBackend)
+	if err != nil {
+		return domainpolicy.EmptyBackendID, err
+	}
+	v := domainpolicy.BackendID(raw)
+	if !v.Valid() {
+		return domainpolicy.EmptyBackendID, policyAxisInvalid(policyColBackend, raw)
+	}
+	return v, nil
+}
+
+// SetHostingRequest persists the hosting-request axis.
+func (wd *WebsiteDomain) SetHostingRequest(v domainpolicy.HostingRequest) error {
+	if !v.Valid() {
+		return policyAxisInvalid(policyColHosting, v.String())
+	}
+	wd.HostingRequest = strPtr(v.String())
+	return nil
+}
+
+// GetHostingRequest returns the persisted hosting-request axis.
+func (wd *WebsiteDomain) GetHostingRequest() (domainpolicy.HostingRequest, error) {
+	raw, err := columnString(policyColHosting, wd.HostingRequest)
+	if err != nil {
+		return domainpolicy.HostingRequestUnknown, err
+	}
+	v, perr := domainpolicy.ParseHostingRequest(raw)
+	if perr != nil {
+		return domainpolicy.HostingRequestUnknown, policyAxisInvalid(policyColHosting, raw)
+	}
+	return v, nil
+}
+
+// SetPolicy persists the profile identity and version axes together.
+func (wd *WebsiteDomain) SetPolicy(id domainpolicy.ProfileID, ver domainpolicy.ProfileVersion) error {
+	if !id.Valid() {
+		return policyAxisInvalid(policyColPolicyID, string(id))
+	}
+	if !ver.Valid() {
+		return policyAxisInvalid(policyColPolicyVer, ver.String())
+	}
+	wd.PolicyID = strPtr(string(id))
+	verVal := int(ver)
+	wd.PolicyVersion = &verVal
+	return nil
+}
+
+// GetPolicy returns the persisted profile identity and version.
+func (wd *WebsiteDomain) GetPolicy() (domainpolicy.ProfileID, domainpolicy.ProfileVersion, error) {
+	idRaw, err := columnString(policyColPolicyID, wd.PolicyID)
+	if err != nil {
+		return domainpolicy.EmptyProfileID, 0, err
+	}
+	id := domainpolicy.ProfileID(idRaw)
+	if !id.Valid() {
+		return domainpolicy.EmptyProfileID, 0, policyAxisInvalid(policyColPolicyID, idRaw)
+	}
+	if wd.PolicyVersion == nil {
+		return domainpolicy.EmptyProfileID, 0, fmt.Errorf("policy axis %s: %w", policyColPolicyVer, ErrPolicyAxisUnset)
+	}
+	ver := domainpolicy.ProfileVersion(*wd.PolicyVersion)
+	if !ver.Valid() {
+		return domainpolicy.EmptyProfileID, 0, policyAxisInvalid(policyColPolicyVer, fmt.Sprintf("%d must be positive", *wd.PolicyVersion))
+	}
+	return id, ver, nil
+}
+
+// SetReconciliationStatus marks the binding's axis reconciliation state.
+func (wd *WebsiteDomain) SetReconciliationStatus(v string) {
+	wd.ReconciliationStatus = strPtr(v)
+}
+
+// GetReconciliationStatus returns the persisted reconciliation status, or
+// ErrPolicyAxisUnset when the row has not been reconciled (legacy row).
+func (wd *WebsiteDomain) GetReconciliationStatus() (string, error) {
+	return columnString(policyColRecono, wd.ReconciliationStatus)
+}
+
+// PolicyAxesMapped reports whether the binding carries a complete axis set
+// produced by a successful mapping (the new-representation read gate). A row
+// is mapped only when its reconciliation status says so; inconsistency
+// (reconciliation_status=error) and legacy NULL rows both fail closed here so
+// callers fall back to the legacy mapper.
+func (wd *WebsiteDomain) PolicyAxesMapped() bool {
+	return wd.ReconciliationStatus != nil && *wd.ReconciliationStatus == PolicyReconciliationMapped
+}
+
+// PersistedDomainClass derives the hosting-locus class from the persisted
+// authority axis (never guessed: it fails closed when the axes are absent,
+// incomplete, or invalid). Portal- and operator-zone authority both map to
+// ClassPortalManaged — platform bindings deliberately have no separate class.
+func (wd *WebsiteDomain) PersistedDomainClass() (DomainClass, error) {
+	authority, err := wd.GetAuthorityLocus()
+	if err != nil {
+		return ClassUnresolved, err
+	}
+	switch authority {
+	case domainpolicy.AuthorityLocusPortalZone, domainpolicy.AuthorityLocusOperatorZone:
+		return ClassPortalManaged, nil
+	case domainpolicy.AuthorityLocusOwnerDNS:
+		return ClassSelfHosted, nil
+	case domainpolicy.AuthorityLocusChain:
+		return ClassOnChainManaged, nil
+	default:
+		return ClassUnresolved, policyAxisInvalid(policyColAuthority, authority.String())
+	}
+}
+
+// ApplyAxes writes the complete validated axis set onto the struct's axis
+// columns (INSERT paths and in-memory mirroring of mapped updates). It fails
+// closed on any enum-invalid value; the caller decides whether a failure
+// degrades to PolicyAxesErrorColumns.
+func (wd *WebsiteDomain) ApplyAxes(a DomainPolicyAxes) error {
+	if err := wd.SetLifecycleStatus(a.Lifecycle); err != nil {
+		return err
+	}
+	if err := wd.SetAuthorityLocus(a.Authority); err != nil {
+		return err
+	}
+	if err := wd.SetResolutionRoute(a.Route); err != nil {
+		return err
+	}
+	if err := wd.SetResolutionBackend(a.Backend); err != nil {
+		return err
+	}
+	if err := wd.SetHostingRequest(a.Hosting); err != nil {
+		return err
+	}
+	if err := wd.SetPolicy(a.PolicyID, a.PolicyVer); err != nil {
+		return err
+	}
+	wd.SetReconciliationStatus(PolicyReconciliationMapped)
+	return nil
+}
+
+// columnString reads a nullable string column with a stable not-persisted
+// error, so accessors share the fail-closed NULL handling.
+func columnString(column string, raw *string) (string, error) {
+	if raw == nil {
+		return "", fmt.Errorf("policy axis %s: %w", column, ErrPolicyAxisUnset)
+	}
+	return *raw, nil
+}
+
+func strPtr(v string) *string {
+	copied := v
+	return &copied
 }
 
 const (
@@ -246,6 +573,22 @@ type WebsiteDomain struct {
 	// binding is self-hosted (user runs the authoritative server, no portal
 	// zone).
 	DNSHostingEnabled bool `gorm:"column:dns_hosting_enabled;default:false"`
+
+	// Persisted policy axes. Nullable per-axis
+	// pointer columns: NULL means "not reconciled yet" (legacy row). The
+	// string columns hold internal/domainpolicy enum string forms; accessors
+	// above validate them fail-closed. Set only through the accessors /
+	// DomainPolicyAxes.Columns dual-write, never hand-crafted. Legacy fields
+	// above remain authoritative; these columns are additive and may be left
+	// in place on production rollback.
+	LifecycleStatus      *string `gorm:"column:lifecycle_status"`
+	AuthorityLocus       *string `gorm:"column:authority_locus"`
+	ResolutionRoute      *string `gorm:"column:resolution_route"`
+	ResolutionBackend    *string `gorm:"column:resolution_backend"`
+	HostingRequest       *string `gorm:"column:hosting_request"`
+	PolicyID             *string `gorm:"column:policy_id"`
+	PolicyVersion        *int    `gorm:"column:policy_version"`
+	ReconciliationStatus *string `gorm:"column:reconciliation_status"`
 
 	// SSL certificate state for this specific domain binding. SSL is a
 	// per-hostname property (each bound domain may hold its own cert), so it
