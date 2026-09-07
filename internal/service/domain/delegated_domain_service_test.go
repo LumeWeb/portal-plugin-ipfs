@@ -80,6 +80,160 @@ func TestDelegatedDomainService_CreateDomain(t *testing.T) {
 	}, TestOptions)
 }
 
+// TestDelegatedDomainService_CreateDomain_PlanDNSLinkReconciler verifies the
+// flagged bind path: with the DNSLink reconciler feature flag enabled,
+// the bind-time DNSLink creation routes through the plan-driven reconciler and
+// converges to the identical write — CreateDNSLinkRecord on the resolved zone
+// with the binding's domain as the record owner — and the binding finalizes
+// with the same persisted state. The flag is configured at startup and the
+// test proves the service actually observes it: the delegated-domain service
+// reads its DNS service config through its own BaseComponent context (a
+// snapshot taken at service init), so mutating a runtime ctx config object
+// the service snapshot cannot see would make this test pass vacuously
+// (the legacy path runs with flag-on assertions and nothing diverges).
+func TestDelegatedDomainService_CreateDomain_PlanDNSLinkReconciler(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+
+		website := createTestWebsite(tb, db, 1, "example.com")
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+
+		require.True(tb, svc.dnsLinkReconcilerEnabled(),
+			"the plan-driven flag must be visible to the delegated domain service's config snapshot")
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, mockDNS)
+
+		mockDNS.EXPECT().CreateZone(mock.Anything, "example.com", uint(1)).
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: "example.com"}, nil).Once()
+		// The reconciled first-publication write has the same shape as the
+		// legacy bind write: owner `_dnslink.example.com`, target from the
+		// website, TTL 300 (inside the DNS service adapter).
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), "example.com", mock.Anything).Return(nil).Once()
+
+		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
+
+		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, true, true, nil, nil)
+		assert.NoError(tb, err)
+		assert.NotNil(tb, wd)
+		assert.Equal(tb, "example.com", wd.Domain)
+		assert.Equal(tb, uint(1), wd.ZoneID)
+		assert.True(tb, wd.DNSHostingEnabled)
+	}, dnsLinkReconcilerTestOptions)
+}
+
+// dnsLinkReconcilerTestOptions is TestOptions shape with the DNSLink
+// reconciler feature flag set in the STARTUP DNS config. The flag must be
+// configured at startup because the delegated-domain service reads its DNS
+// service config through its own BaseComponent context (a snapshot taken at
+// service init): mutating a runtime ctx config object the service snapshot
+// cannot see makes a flag-on test pass vacuously (the legacy path runs with
+// flag-on-assertions and nothing diverges). Mirrors healTestOptions.
+var dnsLinkReconcilerTestOptions = coreTesting.CombineOptions(
+	coreTesting.WithProtocolConfig(internal.ProtocolName, &pluginConfig.ProtocolConfig{}),
+	testopts.NewBaseMockPluginBuilder().
+		WithMockServiceFactory(pluginCore.WEBSITE_SERVICE, mocks.NewMockWebsiteService).
+		WithServiceConfig(pluginCore.WEBSITE_SERVICE, &pluginConfig.WebsiteConfig{}).
+		WithMockServiceFactory(pluginCore.DNS_SERVICE, mocks.NewMockDNSService).
+		WithServiceConfig(pluginCore.DNS_SERVICE, &pluginConfig.DnsConfig{
+			Enabled:     true,
+			Nameservers: []string{"ns1.icann.example."},
+			// The DNSLink-reconciler flag: configured at startup so the
+			// delegated-domain service's own context (its BaseComponent
+			// config snapshot) carries it.
+			DomainPolicyDNSLinkReconcilerEnabled: true,
+		}).
+		WithService(pluginCore.DELEGATED_DOMAIN_SERVICE, NewDelegatedDomainServiceFactory).
+		WithServiceConfig(pluginCore.DELEGATED_DOMAIN_SERVICE, &pluginConfig.DelegatedDomainConfig{}).
+		WithMigrations(map[core.DBType]fs.FS{
+			core.DB_TYPE_SQLITE: migrations.GetSQLite(),
+		}).BuilderOption(),
+)
+
+// TestDelegatedDomainService_CreateDomain_PlanDNSLinkReconciler_WriteErrorFallsBackToLegacy
+// verifies the executor-write failure branch: a DNS write error from the
+// plan-driven bind reconciler is NOT ErrDNSLinkNotReconciled, yet the
+// reconciled write was still not handled — the legacy CreateDNSLinkRecord
+// fallback must run and complete the bind instead of the failure being
+// swallowed as a success.
+func TestDelegatedDomainService_CreateDomain_PlanDNSLinkReconciler_WriteErrorFallsBackToLegacy(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+
+		website := createTestWebsite(tb, db, 1, "example.com")
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+		require.True(tb, svc.dnsLinkReconcilerEnabled(),
+			"the plan-driven flag must be visible to the delegated domain service's config snapshot")
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, mockDNS)
+
+		mockDNS.EXPECT().CreateZone(mock.Anything, "example.com", uint(1)).
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: "example.com"}, nil).Once()
+		// The reconciler's executor write fails; the legacy fallback write
+		// (same owner/zone shape) then succeeds. Exactly two calls, in this
+		// order, so a swallowed failure (no fallback) or a skipping reconciler
+		// exhausts the mock loudly.
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), "example.com", mock.Anything).
+			Return(errors.New("powerdns write failed")).Once()
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), "example.com", mock.Anything).
+			Return(nil).Once()
+
+		mockWebsite := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockWebsite.EXPECT().NotifyAdminWebsiteCreated(mock.Anything, website.ID).Return(nil).Once()
+
+		wd, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, true, true, nil, nil)
+		assert.NoError(tb, err)
+		require.NotNil(tb, wd)
+		assert.Equal(tb, uint(1), wd.ZoneID)
+		assert.True(tb, wd.DNSHostingEnabled)
+	}, dnsLinkReconcilerTestOptions)
+}
+
+// TestDelegatedDomainService_CreateDomain_PlanDNSLinkReconciler_WriteErrorRollsBackWhenFallbackFails
+// verifies the rollback leg of the same failure branch: when the reconciled
+// write fails AND the legacy fallback write also fails, the caller rolls back
+// the just-created binding (deleteBindingBestEffort) and the freshly created
+// zone (DeleteZone), and CreateDomain reports the failure.
+func TestDelegatedDomainService_CreateDomain_PlanDNSLinkReconciler_WriteErrorRollsBackWhenFallbackFails(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+
+		website := createTestWebsite(tb, db, 1, "example.com")
+
+		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
+		require.NotNil(tb, svc)
+		require.True(tb, svc.dnsLinkReconcilerEnabled(),
+			"the plan-driven flag must be visible to the delegated domain service's config snapshot")
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, mockDNS)
+
+		mockDNS.EXPECT().CreateZone(mock.Anything, "example.com", uint(1)).
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 1}, Domain: "example.com"}, nil).Once()
+		// Both the reconciled write and the legacy fallback write fail.
+		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(1), "example.com", mock.Anything).
+			Return(errors.New("powerdns write failed")).Times(2)
+		// Rollback: the freshly created zone is deleted.
+		mockDNS.EXPECT().DeleteZone(mock.Anything, uint(1)).Return(nil).Once()
+
+		_, err := svc.CreateDomain(context.Background(), "icann", "example.com", website.ID, 1, true, true, nil, nil)
+		require.Error(tb, err)
+		assert.ErrorContains(tb, err, "dnslink creation failed")
+
+		var count int64
+		require.NoError(tb, db.Model(&pluginDb.WebsiteDomain{}).
+			Where("domain = ? AND namespace = ?", "example.com", pluginDb.DomainNamespaceICANN).
+			Count(&count).Error)
+		assert.Zero(tb, count, "the binding must be rolled back when both writes fail")
+	}, dnsLinkReconcilerTestOptions)
+}
+
 // TestDelegatedDomainService_CreateDomain_NotifyEvenWhenPrimarySet ensures the
 // created notification is gated on the notifyCreated flag alone — not on the
 // website lacking a primary domain. A managed-DNS create on a website that

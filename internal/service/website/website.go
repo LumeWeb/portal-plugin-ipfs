@@ -891,14 +891,20 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 				// exists: an IPNS→IPNS key switch changes the peer ID and must
 				// propagate just like an IPFS→IPNS conversion.
 				if targetHashChanged && primaryWD != nil && primaryWD.DNSHostingEnabled && primaryWD.ZoneID != 0 && primaryWD.CanPublishManagedZoneRecords() && s.dnsSvc != nil {
+					// With the DNSLink reconciler feature flag enabled, the plan
+					// drives this DNSLink write; the legacy target-change
+					// REPLACE below becomes the fallback for unrepresentable
+					// inputs.
 					newTargetHash := website.TargetHash()
 					newTargetType := pluginDb.WebsiteTargetType(website.TargetType)
-					if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, primaryWD.ZoneID, primaryDomain, newTargetHash, newTargetType); err != nil {
-						s.Logger().Warn("Failed to update DNS records for website",
-							zap.Error(err),
-							zap.Uint("website_id", websiteID),
-							zap.Uint("zone_id", primaryWD.ZoneID))
-					}
+					s.applyDNSLinkDesiredState(ctx, primaryWD, &website, func() {
+						if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, primaryWD.ZoneID, primaryDomain, newTargetHash, newTargetType); err != nil {
+							s.Logger().Warn("Failed to update DNS records for website",
+								zap.Error(err),
+								zap.Uint("website_id", websiteID),
+								zap.Uint("zone_id", primaryWD.ZoneID))
+						}
+					})
 				}
 
 				return tx
@@ -1072,6 +1078,16 @@ func (s *WebsiteServiceDefault) reconcileManagedDNSLink(ctx context.Context, web
 		return
 	}
 
+	// With the DNSLink reconciler feature flag enabled, the plan-driven
+	// reconciler is the single desired-state owner
+	// and returns here. The legacy no-op-skip/REPLACE body below becomes the
+	// fallback for anything the flagged path cannot represent (no plan, or a
+	// fail-closed diff rejection): the reconciler defers to it with a loud
+	// log rather than diverging.
+	if s.dnsLinkReconcilerEnabled() && s.reconcileDNSLinkPlanDriven(ctx, primaryWD, website) {
+		return
+	}
+
 	// Skip the write when the live dnslink record already carries the target:
 	// an idempotent client retry then performs zero external DNS writes.
 	desired := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
@@ -1116,6 +1132,127 @@ func (s *WebsiteServiceDefault) reconcileManagedDNSLink(ctx context.Context, web
 		zap.Uint("zone_id", primaryWD.ZoneID),
 		zap.String("domain", primaryWD.Domain),
 		zap.String("target_type", website.TargetType))
+}
+
+// dnsLinkReconcilerEnabled reports whether the plan-driven DNSLink reconciler
+// owns DNSLink desired-state application.
+// The flag defaults to FALSE: with it off, the legacy writers above remain
+// the exact current behavior. Both writers are never active for the same
+// operation — the flagged path either reconciles or defers to the legacy one.
+func (s *WebsiteServiceDefault) dnsLinkReconcilerEnabled() bool {
+	return s.dnsConfig != nil && s.dnsConfig.DomainPolicyDNSLinkReconcilerEnabled
+}
+
+// applyDNSLinkDesiredState applies the DNSLink record desired state for the
+// binding wd (target from website). Feature flag OFF (default): legacyWrite
+// performs exactly today's write, byte-for-byte. Flag ON: the plan-driven
+// reconciler owns the operation; when it cannot represent the operation
+// (no plan, fail-closed diff, divergent target), it defers back to
+// legacyWrite with a loud log — the legacy path stays authoritative for
+// unrepresentable inputs, never diverging.
+func (s *WebsiteServiceDefault) applyDNSLinkDesiredState(ctx context.Context, wd *pluginDb.WebsiteDomain, website *pluginDb.Website, legacyWrite func()) {
+	if !s.dnsLinkReconcilerEnabled() || !s.reconcileDNSLinkPlanDriven(ctx, wd, website) {
+		legacyWrite()
+		return
+	}
+}
+
+// reconcileDNSLinkPlanDriven runs the plan-driven DNSLink reconciliation for
+// the binding. It reports whether the reconciler HANDLED the operation
+// (including a converged no-op); false means the operation was left
+// untouched and the caller must fall back to the legacy writer.
+func (s *WebsiteServiceDefault) reconcileDNSLinkPlanDriven(ctx context.Context, wd *pluginDb.WebsiteDomain, website *pluginDb.Website) bool {
+	logger := s.Logger()
+	if wd == nil || website == nil || s.dnsSvc == nil {
+		return false
+	}
+	if s.delegatedDomainSvc == nil {
+		logger.Warn("plan-driven DNSLink reconciler unavailable: no domain service wired; deferring to the legacy DNSLink writer",
+			zap.String("domain", wd.Domain), zap.Uint("domain_id", wd.ID))
+		return false
+	}
+	plan, err := s.delegatedDomainSvc.CurrentBindingPlan(wd, website)
+	if err != nil {
+		logger.Warn("plan-driven DNSLink reconciler unavailable: no current-behavior plan for binding; deferring to the legacy DNSLink writer",
+			zap.String("domain", wd.Domain),
+			zap.Uint("domain_id", wd.ID),
+			zap.Error(err))
+		return false
+	}
+
+	desired := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
+	result, err := domapp.ReconcileDNSLink(ctx, domapp.DNSLinkReconcileInput{
+		Plan:          &plan,
+		Domain:        wd.Domain,
+		ZoneID:        wd.ZoneID,
+		DesiredTarget: desired,
+	},
+		dnsLinkObservationCollector{resolver: s.resolverForDomain(wd.Domain), logger: logger.Logger, websiteID: website.ID},
+		dnsLinkEffectExecutor{svc: s.dnsSvc},
+		logger.Logger)
+	if err != nil {
+		if errors.Is(err, domapp.ErrDNSLinkNotReconciled) {
+			logger.Warn("plan-driven DNSLink reconciler could not represent this operation; deferring to the legacy DNSLink writer",
+				zap.String("domain", wd.Domain),
+				zap.Uint("domain_id", wd.ID),
+				zap.String("profile", plan.ProfileID.String()),
+				zap.String("desired", desired),
+				zap.Error(err))
+			return false
+		}
+		// Effect execution failure: the write itself could not be applied.
+		// Same handling as the legacy writers: log loudly, do not diverge;
+		// the caller has already left the operation to the flagged path.
+		logger.Warn("plan-driven DNSLink reconciliation write failed",
+			zap.String("domain", wd.Domain),
+			zap.Uint("domain_id", wd.ID),
+			zap.String("profile", plan.ProfileID.String()),
+			zap.Uint("zone_id", wd.ZoneID),
+			zap.Error(err))
+		return true
+	}
+	if result.NoOp() {
+		logger.Debug("plan-driven DNSLink reconcile converged with no write",
+			zap.String("domain", wd.Domain),
+			zap.String("profile", plan.ProfileID.String()),
+			zap.String("desired", desired))
+	} else if result.OwnerInstruction != "" {
+		logger.Info("DNSLink is an owner-side publication duty; no portal write performed",
+			zap.String("domain", wd.Domain),
+			zap.String("profile", plan.ProfileID.String()),
+			zap.String("instruction", result.OwnerInstruction))
+	}
+	if len(result.Deferred) > 0 || result.RouteDrift != "" {
+		logger.Debug("plan-driven DNSLink reconcile deferred non-DNSLink effects",
+			zap.String("domain", wd.Domain),
+			zap.String("profile", plan.ProfileID.String()),
+			zap.Strings("deferred", result.Deferred),
+			zap.String("route_drift", result.RouteDrift))
+	}
+	return true
+}
+
+// dnsLinkEffectExecutor adapts the DNS zone service into the domainapp
+// EffectExecutor port for the DNSLink record-write family. The write
+// is the existing CreateDNSLinkRecord adapter (owner `_dnslink.<domain>`,
+// content `dnslink=<target>`, TTL 300, idempotent PowerDNS REPLACE); the
+// delete removes the domain's entire `_dnslink` TXT RRSet via DeleteRecord.
+type dnsLinkEffectExecutor struct {
+	svc pluginCore.DNSService
+}
+
+func (e dnsLinkEffectExecutor) WriteDNSLinkRecord(ctx context.Context, zoneID uint, domain string, target string) error {
+	if e.svc == nil {
+		return fmt.Errorf("no DNS service wired for the DNSLink write on %s", domain)
+	}
+	return e.svc.CreateDNSLinkRecord(ctx, zoneID, domain, target)
+}
+
+func (e dnsLinkEffectExecutor) DeleteDNSLinkRecord(ctx context.Context, zoneID uint, domain string) error {
+	if e.svc == nil {
+		return fmt.Errorf("no DNS service wired for the DNSLink delete on %s", domain)
+	}
+	return e.svc.DeleteRecord(ctx, zoneID, "_dnslink."+domain, "TXT")
 }
 
 // handleDNSEnabledTransition handles the transition when DNS hosting is enabled
@@ -2247,6 +2384,14 @@ func (s *WebsiteServiceDefault) createWebsiteDNSRecords(ctx context.Context, wd 
 		// so re-assert it from the current target alongside the validation
 		// record — otherwise a target change while hosting was disabled is
 		// stranded forever by the re-enable transition.
+		// With the DNSLink reconciler feature
+		// flag enabled, the plan drives this hosting re-enable DNSLink
+		// assertion; the legacy REPLACE below is the fallback for
+		// unrepresentable inputs. The validation TXT record stays a legacy
+		// write in both states (the reconciler moves only the DNSLink family).
+		if s.dnsLinkReconcilerEnabled() && s.reconcileDNSLinkPlanDriven(ctx, wd, website) {
+			return s.dnsSvc.CreateWebsiteValidationRecord(ctx, wd.ZoneID, wd.Domain, tokenRecord)
+		}
 		if err := s.dnsSvc.UpdateWebsiteDNSRecords(ctx, wd.ZoneID, wd.Domain, website.TargetHash(), targetType); err != nil {
 			return err
 		}
