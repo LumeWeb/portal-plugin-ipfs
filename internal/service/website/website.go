@@ -1881,14 +1881,16 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 			// rotation above and the delegation check below (VerifyDomain's
 			// status writes and DNSSEC/SOA self-heal) — remain on the legacy
 			// service paths.
+			expectedDNSLink := pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash())
 			evalInput := domapp.WebsiteValidationInput{
 				Domain:          primaryDomain,
-				ExpectedDNSLink: pluginDb.WebsiteTargetType(website.TargetType).ToDNSLinkPath(website.TargetHash()),
+				ExpectedDNSLink: expectedDNSLink,
 				Collectors: domapp.Collectors{
 					DNSLink: dnsLinkObservationCollector{
 						resolver:  s.resolverForDomain(primaryDomain),
 						logger:    s.Logger().Logger,
 						websiteID: website.ID,
+						expected:  expectedDNSLink,
 					},
 					TokenTXT: tokenTXTObservationCollector{resolver: s.resolverForDomain(primaryDomain)},
 				},
@@ -2000,13 +2002,21 @@ func (s *WebsiteServiceDefault) ValidateDNS(ctx context.Context, userID uint, we
 // domainapp DNSLink observation port. It preserves today's behavior at
 // the service boundary: the NXDOMAIN classification (record-class absence vs
 // a mismatching record), the candidate normalization (dto.IPFSPath /
-// dto.IPNSPath, ipfs preferred, then ipns — the selection legacyDNSLinkCandidate
-// reproduces from the former checkDNSLinkMatch/determineFoundDNSLink pair),
-// the wrapped transport error, and the server-side lookup log.
+// dto.IPNSPath with the pass-on-either matching legacyDNSLinkMatched
+// reproduces from the former checkDNSLinkMatch — the observed value is both
+// what the gate compares and what it reports as "found"), the wrapped
+// transport error, and the server-side lookup log.
 type dnsLinkObservationCollector struct {
 	resolver  DNSResolver
 	logger    *zap.Logger
 	websiteID uint
+	// expected is the target path the DNSLink gate compares against, derived
+	// from the website's persisted target like ExpectedDNSLink. Gate matching
+	// (legacy pass-on-either semantics) happens at collection time via
+	// legacyDNSLinkMatched because the observation collapses the resolver
+	// result into the single candidate the evaluator's equality check
+	// consumes.
+	expected string
 }
 
 func (c dnsLinkObservationCollector) CollectDNSLink(_ context.Context, domain string) (domapp.DNSLinkObserved, error) {
@@ -2021,8 +2031,13 @@ func (c dnsLinkObservationCollector) CollectDNSLink(_ context.Context, domain st
 		}
 		return domapp.DNSLinkObserved{}, fmt.Errorf("DNS lookup failed for %s: %w", domain, err)
 	}
+	// Gate matching is legacy pass-on-either (checkDNSLinkMatch): the
+	// observation carries the candidate the gate compares — the matched link
+	// on pass, the legacy "found" diagnostic on failure — so the evaluating
+	// side's single equality check against expected reproduces both.
+	legacyCandidate, _ := legacyDNSLinkMatched(result, c.expected)
 	return domapp.DNSLinkObserved{
-		Observation: domainpolicy.DNSLinkObservation{Value: legacyDNSLinkCandidate(result)},
+		Observation: domainpolicy.DNSLinkObservation{Value: legacyCandidate},
 	}, nil
 }
 
@@ -2035,9 +2050,11 @@ func (s *WebsiteServiceDefault) determineFoundDNSLink(result dnslink.Result, _ *
 	return legacyDNSLinkCandidate(result)
 }
 
-// legacyDNSLinkCandidate returns the candidate the legacy matching logic
-// reports as "found": the first ipfs link (normalized), else the first ipns
-// link. Single-sourced with the DNSLink reconcile path until the DNSLink
+// legacyDNSLinkCandidate returns the ipfs-preferred candidate: the first
+// ipfs link (normalized), else the first ipns link. This is only the single
+// fallback candidate — gate matching (legacy pass-on-either) lives in
+// legacyDNSLinkMatched. Single-sourced with the DNSLink reconcile path
+// (determineFoundDNSLink / reconcileManagedDNSLink) until the DNSLink
 // reconciler owns DNSLink writes.
 func legacyDNSLinkCandidate(result dnslink.Result) string {
 	if ipfsLinks, ok := result.Links["ipfs"]; ok && len(ipfsLinks) > 0 {
@@ -2047,6 +2064,29 @@ func legacyDNSLinkCandidate(result dnslink.Result) string {
 		return dto.IPNSPath(ipnsLinks[0].Identifier)
 	}
 	return ""
+}
+
+// legacyDNSLinkMatched reproduces the pass-on-either semantics of the former
+// checkDNSLinkMatch: the gate passes when the first ipfs link or the first
+// ipns link equals the expected target. It returns the candidate legacy code
+// reports as "found" — the matching link on pass; on failure the first ipns
+// link when present, else the first ipfs link — so a mismatch diagnostic
+// matches the legacy one (legacy overwrote its found variable in the ipns
+// block).
+func legacyDNSLinkMatched(result dnslink.Result, expected string) (candidate string, matched bool) {
+	if ipfsLinks, ok := result.Links["ipfs"]; ok && len(ipfsLinks) > 0 {
+		candidate = dto.IPFSPath(ipfsLinks[0].Identifier)
+		if candidate == expected {
+			return candidate, true
+		}
+	}
+	if ipnsLinks, ok := result.Links["ipns"]; ok && len(ipnsLinks) > 0 {
+		candidate = dto.IPNSPath(ipnsLinks[0].Identifier)
+		if candidate == expected {
+			return candidate, true
+		}
+	}
+	return candidate, false
 }
 
 // tokenTXTObservationCollector adapts the flow's DNS resolver into the

@@ -154,6 +154,24 @@ func TestEvaluateWebsiteStage_DNSLinkGate(t *testing.T) {
 		assert.Equal(t, "/ipfs/served", res.Checks[0].Found)
 	})
 
+	t.Run("mismatch_reports_collector_supplied_legacy_found_verbatim", func(t *testing.T) {
+		// The collector collapses the resolver result into the legacy-found
+		// candidate (first ipns link on failure when the ipfs link missed —
+		// see the website service's legacyDNSLinkMatched). The check must
+		// carry that value verbatim so mismatch diagnostics stay
+		// legacy-identical for TXT with both an ipfs and an ipns link.
+		input := stageInput(nil)
+		ipnsCandidate := "/ipns/stale-peer"
+		input.Collectors.DNSLink = &fakeDNSLinkCollector{value: ipnsCandidate}
+		res, err := EvaluateWebsiteStage(context.Background(), input, WebsiteStages{DNSLink: &DNSLinkGate{}})
+		require.NoError(t, err)
+		require.NotNil(t, res.Failure)
+		assert.Equal(t, pluginCore.ValidationReasonDNSMismatch, res.Failure.Reason)
+		assert.Contains(t, res.Failure.Message, ipnsCandidate)
+		require.Len(t, res.Checks, 1)
+		assert.Equal(t, ipnsCandidate, res.Checks[0].Found)
+	})
+
 	t.Run("present_record_without_links_reports_mismatch_with_empty_found", func(t *testing.T) {
 		// Today: a record that exists but carries no ipfs/ipns link is a
 		// mismatch with an empty found value — NOT record-class absence.
