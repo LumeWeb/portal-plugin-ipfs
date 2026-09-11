@@ -592,6 +592,69 @@ func TestWorkspaceService_Create_RecreateAfterSoftDelete(t *testing.T) {
 	}, workspaceTestOptions)
 }
 
+// TestWorkspaceService_Attach_MissingWorkspace_ReturnsNotFound verifies attach
+// surfaces an appropriate not-found error when the target workspace row does
+// not exist for the user (no existence/ownership leak). After attach, the
+// ambiguous workspace returns not-found instead of silently "succeeding".
+func TestWorkspaceService_Attach_MissingWorkspace_ReturnsNotFound(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		insertWebsite(tb, db, 1, 1)
+		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+
+		mockWS := mocks.NewMockWebsiteService(tb)
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+
+		// Workspace 99999 is owned by nobody, so attach must not contact the
+		// website service (no ownership leak) and must return not-found.
+		_, err := svc.Attach(context.Background(), 1, 99999, 1)
+		assert.ErrorIs(tb, err, ErrWorkspaceNotFound)
+	}, workspaceTestOptions)
+}
+
+// TestWorkspaceService_Attach_RaceClaimedKey_NoDoubleLink verifies that a
+// website whose strict UNIQUE(website_id) key is already claimed (the
+// deterministic end-state of a concurrent Create/Attach winning the race)
+// yields ErrWorkspaceAlreadyExists rather than a silent success, and that the
+// claim is never double-linked. It drives the purely deterministic, final
+// state of the race so the test cannot be flaky with timing.
+func TestWorkspaceService_Attach_RaceClaimedKey_NoDoubleLink(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		insertWebsite(tb, db, 1, 1)
+		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+
+		mockWS := mocks.NewMockWebsiteService(tb)
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		n := 0
+		svc.slugGen = func() (string, error) {
+			n++
+			return fmt.Sprintf("ws-race%d", n), nil
+		}
+
+		// A concurrent caller claims website 1 by attaching workspace A first.
+		mockWS.EXPECT().GetWebsite(mock.Anything, uint(1), uint(1)).
+			Return(&pluginDb.Website{ID: 1, UserID: 1}, nil).Times(2)
+		a, err := svc.Create(context.Background(), 1, nil)
+		require.NoError(tb, err)
+		_, err = svc.Attach(context.Background(), 1, a.ID, 1)
+		require.NoError(tb, err)
+
+		// The racing attach of a second workspace to the already-claimed
+		// website must fail with ErrWorkspaceAlreadyExists and must never create
+		// a second live link (the getByWebsite pre-check surfaces the claim).
+		b, err := svc.Create(context.Background(), 1, nil)
+		require.NoError(tb, err)
+		_, err = svc.Attach(context.Background(), 1, b.ID, 1)
+		assert.ErrorIs(tb, err, ErrWorkspaceAlreadyExists)
+
+		var liveCount int64
+		require.NoError(tb, db.Model(&pluginDb.Workspace{}).
+			Where("website_id = ? AND deleted_at IS NULL", uint(1)).Count(&liveCount).Error)
+		assert.Equal(tb, int64(1), liveCount, "the claimed key must not be double-linked")
+	}, workspaceTestOptions)
+}
+
 // TestWorkspaceService_Attach_RecreateAfterSoftDelete verifies the
 // delete-then-attach cycle releases the strict UNIQUE(website_id) key. Delete
 // soft-deletes the workspace (a tombstone still occupying the key), so a

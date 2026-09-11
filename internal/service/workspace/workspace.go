@@ -29,6 +29,7 @@ import (
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Sentinel errors for the workspace service's local (create/get/list) surface.
@@ -381,26 +382,72 @@ func (s *WorkspaceService) Attach(ctx context.Context, userID uint, workspaceID 
 		return nil, ErrWorkspaceAlreadyExists
 	}
 
-	// 5. Purge any prior soft-deleted WORKSPACE tombstone that still occupies
-	// the strict UNIQUE(website_id) key for the target website, so an
-	// attach-after-delete can re-link the same website. This mirrors Create's
-	// tombstone-purge-before-insert contract (Delete only soft-deletes, and the
-	// tombstone is created only AFTER all provider cleanup succeeds, so purging
-	// it here is data-loss safe). Only tombstones (deleted_at IS NOT NULL) are
-	// removed; a live same-website row would have already been caught by the
-	// getByWebsite check above and left to the unique key to reject.
-	if err := s.purgeWorkspaceTombstone(ctx, website.ID); err != nil {
-		return nil, err
-	}
-
-	// 6. Persist the publish link.
+	// 5. Persist the publish link and purge any prior soft-deleted WORKSPACE
+	// tombstone atomically in a single transaction. The tombstone-purging and
+	// the website_id update must commit together: a concurrent Create/Attach
+	// could otherwise claim the strict UNIQUE(website_id) key in the window
+	// between two separate transactions. The tombstone is created only AFTER all
+	// provider cleanup succeeds in Delete, so purging it here is data-loss safe;
+	// only tombstones (deleted_at IS NOT NULL) are removed and a live
+	// same-website row is left to the unique key to reject (mirrors Create's
+	// purge-before-insert contract).
 	err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		return tx.Model(&pluginDb.Workspace{}).
-			Where("id = ? AND website_id IS NULL", ws.ID).
+		// 5a. Lock the workspace row and re-verify ownership and the
+		// unattached state under the same transaction that mutates it, so no
+		// concurrent attach can observe/race a stale website_id. The row-lock
+		// serializes attaches to the same workspace; a website that is already
+		// attached here returns the same error the pre-check above would.
+		var locked pluginDb.Workspace
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND user_id = ?", workspaceID, userID).
+			First(&locked).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				_ = tx.AddError(ErrWorkspaceNotFound)
+			} else {
+				_ = tx.AddError(fmt.Errorf("workspace: failed to lock workspace: %w", err))
+			}
+			return tx
+		}
+		if locked.WebsiteID != nil {
+			_ = tx.AddError(ErrWorkspaceAlreadyAttached)
+			return tx
+		}
+
+		// 5b. Purge any prior soft-deleted workspace tombstone still holding the
+		// strict UNIQUE(website_id) key for the target website, so an
+		// attach-after-delete can re-link the same website.
+		if err := tx.
+			Where("website_id = ? AND deleted_at IS NOT NULL", website.ID).
+			Unscoped().Delete(&pluginDb.Workspace{}).Error; err != nil {
+			_ = tx.AddError(fmt.Errorf("workspace: failed to purge stale workspace tombstone: %w", err))
+			return tx
+		}
+
+		// 5c. Persist the publish link and verify a row was actually updated.
+		// The predicate re-checks website_id IS NULL, so if a concurrent attach
+		// slipped in, RowsAffected is zero and we must fail instead of silently
+		// claiming the key.
+		upd := tx.Model(&pluginDb.Workspace{}).
+			Where("id = ? AND website_id IS NULL", workspaceID).
 			Update("website_id", website.ID)
+		if upd.Error != nil {
+			if isDuplicateWorkspaceError(upd.Error) {
+				_ = tx.AddError(ErrWorkspaceAlreadyExists)
+			} else {
+				_ = tx.AddError(fmt.Errorf("workspace: failed to attach website: %w", upd.Error))
+			}
+			return tx
+		}
+		if upd.RowsAffected == 0 {
+			// The workspace row vanished or was attached concurrently under the
+			// lock; do not claim the key without a matching live row.
+			_ = tx.AddError(ErrWorkspaceNotFound)
+			return tx
+		}
+		return tx
 	})
 	if err != nil {
-		return nil, fmt.Errorf("workspace: failed to attach website: %w", err)
+		return nil, err
 	}
 	ws.WebsiteID = &website.ID
 	return ws, nil
