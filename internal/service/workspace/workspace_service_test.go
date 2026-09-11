@@ -119,6 +119,10 @@ func TestWorkspaceService_Create_InsertsProvisioningRow(t *testing.T) {
 		assert.Equal(tb, new(uint(1)), ws.WebsiteID)
 		assert.Equal(tb, uint(10), ws.PlatformDomainID)
 		assert.Equal(tb, "ws-test123", ws.Label)
+		// The returned model must carry the authoring platform domain so the DTO
+		// can populate the hostname without an extra query.
+		assert.Equal(tb, "build.example.com", ws.PlatformDomain.Domain)
+		assert.Equal(tb, "ws-test123.build.example.com", ws.Hostname())
 
 		var persisted pluginDb.Workspace
 		require.NoError(tb, db.First(&persisted, ws.ID).Error)
@@ -254,6 +258,10 @@ func TestWorkspaceService_Get_OwnershipEnforced(t *testing.T) {
 		require.NoError(tb, err)
 		require.NotNil(tb, ws)
 		assert.Equal(tb, uint(1), ws.ID)
+		// Get must preload the authoring platform domain so the DTO populates
+		// the hostname without an extra query.
+		assert.Equal(tb, "build.example.com", ws.PlatformDomain.Domain)
+		assert.Equal(tb, "a1.build.example.com", ws.Hostname())
 
 		// A non-owner cannot read it (nil, nil — no existence leak).
 		ws, err = svc.Get(context.Background(), 2, 1)
@@ -293,6 +301,12 @@ func TestWorkspaceService_List_OwnershipEnforcedAndPaginated(t *testing.T) {
 		require.NoError(tb, err)
 		assert.Equal(tb, int64(2), total)
 		assert.Len(tb, all, 2)
+		// List must preload the authoring platform domain on every returned
+		// workspace so the DTO populates the hostname without an extra query.
+		for _, w := range all {
+			assert.Equal(tb, "build.example.com", w.PlatformDomain.Domain)
+			assert.NotEmpty(tb, w.Hostname())
+		}
 
 		// Pagination (page size 1) returns one row and the correct total.
 		one, total2, err := svc.List(context.Background(), 1, nil, nil, queryutil.Pagination{PageSize: 1})
@@ -569,6 +583,63 @@ func TestWorkspaceService_Create_RecreateAfterSoftDelete(t *testing.T) {
 		assert.Equal(tb, uint(1), *second.WebsiteID)
 		assert.NotEqual(tb, first.ID, second.ID,
 			"recreation must produce a fresh workspace row, not reuse the tombstone id")
+
+		// Exactly one live workspace exists for website 1.
+		var liveCount int64
+		require.NoError(tb, db.Model(&pluginDb.Workspace{}).
+			Where("website_id = ? AND deleted_at IS NULL", uint(1)).Count(&liveCount).Error)
+		assert.Equal(tb, int64(1), liveCount)
+	}, workspaceTestOptions)
+}
+
+// TestWorkspaceService_Attach_RecreateAfterSoftDelete verifies the
+// delete-then-attach cycle releases the strict UNIQUE(website_id) key. Delete
+// soft-deletes the workspace (a tombstone still occupying the key), so a
+// subsequent Attach of a DIFFERENT unattached workspace to the same website
+// must purge that tombstone before updating website_id — otherwise the update
+// would hit the website_id unique-key violation and fail. This mirrors the
+// Create path's purge-before-insert contract.
+func TestWorkspaceService_Attach_RecreateAfterSoftDelete(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		insertWebsite(tb, db, 1, 1)
+		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+
+		mockWS := mocks.NewMockWebsiteService(tb)
+		// The first Create (attached) and the later Attach both load website 1.
+		mockWS.EXPECT().GetWebsite(mock.Anything, uint(1), uint(1)).
+			Return(&pluginDb.Website{ID: 1, UserID: 1}, nil).Twice()
+
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		n := 0
+		svc.slugGen = func() (string, error) {
+			n++
+			return fmt.Sprintf("ws-att%d", n), nil
+		}
+
+		// 1. Create a workspace attached to website 1, then simulate Delete's
+		// final step: soft-delete the row (tombstone) that still occupies the
+		// website_id strict key.
+		first, err := svc.Create(context.Background(), 1, new(uint(1)))
+		require.NoError(tb, err)
+		require.NotNil(tb, first.WebsiteID)
+		require.NoError(tb, db.Delete(first).Error)
+
+		// 2. Create a fresh unattached workspace (owned by user 1) — no website
+		// lookup needed.
+		unattached, err := svc.Create(context.Background(), 1, nil)
+		require.NoError(tb, err)
+		assert.Nil(tb, unattached.WebsiteID)
+
+		// 3. Attach the new workspace to the SAME website. Without the tombstone
+		// purge this would violate UNIQUE(website_id); with the purge the key is
+		// released and attach succeeds.
+		attached, err := svc.Attach(context.Background(), 1, unattached.ID, 1)
+		require.NoError(tb, err)
+		require.NotNil(tb, attached.WebsiteID)
+		assert.Equal(tb, uint(1), *attached.WebsiteID)
+		assert.NotEqual(tb, first.ID, attached.ID,
+			"attach must link a fresh workspace, not reuse the tombstone id")
 
 		// Exactly one live workspace exists for website 1.
 		var liveCount int64

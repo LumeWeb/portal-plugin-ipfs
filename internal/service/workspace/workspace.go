@@ -319,6 +319,10 @@ func (s *WorkspaceService) Create(ctx context.Context, userID uint, websiteID *u
 		}
 		created, err := s.insert(ctx, ws)
 		if err == nil {
+			// Populate the workspace's PlatformDomain (the authoring-domain root)
+			// from the domain already resolved above, so the returned model and
+			// its DTO include the hostname without a second query.
+			created.PlatformDomain = *pd
 			return created, nil
 		}
 		if isDuplicateWorkspaceError(err) {
@@ -377,7 +381,19 @@ func (s *WorkspaceService) Attach(ctx context.Context, userID uint, workspaceID 
 		return nil, ErrWorkspaceAlreadyExists
 	}
 
-	// 5. Persist the publish link.
+	// 5. Purge any prior soft-deleted WORKSPACE tombstone that still occupies
+	// the strict UNIQUE(website_id) key for the target website, so an
+	// attach-after-delete can re-link the same website. This mirrors Create's
+	// tombstone-purge-before-insert contract (Delete only soft-deletes, and the
+	// tombstone is created only AFTER all provider cleanup succeeds, so purging
+	// it here is data-loss safe). Only tombstones (deleted_at IS NOT NULL) are
+	// removed; a live same-website row would have already been caught by the
+	// getByWebsite check above and left to the unique key to reject.
+	if err := s.purgeWorkspaceTombstone(ctx, website.ID); err != nil {
+		return nil, err
+	}
+
+	// 6. Persist the publish link.
 	err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		return tx.Model(&pluginDb.Workspace{}).
 			Where("id = ? AND website_id IS NULL", ws.ID).
@@ -396,7 +412,12 @@ func (s *WorkspaceService) Attach(ctx context.Context, userID uint, workspaceID 
 func (s *WorkspaceService) Get(ctx context.Context, userID uint, workspaceID uint) (*pluginDb.Workspace, error) {
 	var ws pluginDb.Workspace
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		if err := s.ownedWorkspaceQuery(tx, userID).Where("workspaces.id = ?", workspaceID).First(&ws).Error; err != nil {
+		// Eagerly preload the PlatformDomain so the returned model (and its
+		// DTO) carries the authoring hostname without a follow-up query.
+		if err := s.ownedWorkspaceQuery(tx, userID).
+			Where("workspaces.id = ?", workspaceID).
+			Preload("PlatformDomain").
+			First(&ws).Error; err != nil {
 			_ = tx.AddError(err)
 		}
 		return tx
@@ -417,7 +438,9 @@ func (s *WorkspaceService) List(ctx context.Context, userID uint, filters []quer
 	var total int64
 
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		query := s.ownedWorkspaceQuery(tx, userID)
+		// Eagerly preload the PlatformDomain so each listed workspace (and its
+		// DTO) carries the authoring hostname without a follow-up query.
+		query := s.ownedWorkspaceQuery(tx, userID).Preload("PlatformDomain")
 		query = queryutil.ApplyFilters(query, filters, nil)
 		query = queryutil.ApplySort(query, sort)
 		query = queryutil.ApplyPagination(query, pagination)
