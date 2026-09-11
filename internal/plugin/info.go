@@ -18,6 +18,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/pin"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/upload"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/website"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/service/workspace"
 	"go.lumeweb.com/portal/core"
 	portal_plugin_ipfs "go.lumeweb.com/web/go/portal-plugin-ipfs"
 )
@@ -30,6 +31,7 @@ func GetCollectors() []prometheus.Collector {
 	collectors = append(collectors, block.GetCollectors()...)
 	collectors = append(collectors, filemanager.GetCollectors()...)
 	collectors = append(collectors, website.GetCollectors()...)
+	collectors = append(collectors, workspace.GetCollectors()...)
 	collectors = append(collectors, ipfs.GetMetricsCollectors()...)
 
 	return collectors
@@ -85,6 +87,11 @@ func getPluginInfoWithoutTemplates() core.PluginInfo {
 					ID:      pluginCore.DNS_SERVICE,
 					Factory: dns.NewDNSService,
 				},
+				{
+					ID:      pluginCore.WORKSPACE_SERVICE,
+					Factory: workspace.NewWorkspaceService,
+					Depends: []string{pluginCore.WEBSITE_SERVICE, pluginCore.DELEGATED_DOMAIN_SERVICE},
+				},
 			}, nil
 		},
 		CronJobs: []core.PluginCronJob{
@@ -94,15 +101,11 @@ func getPluginInfoWithoutTemplates() core.PluginInfo {
 				Schedule: core.NewCronScheduleDefinition(core.CronScheduleTypeCron).
 					WithCronExpression("* * * * *"),
 			},
-			// Bounded policy-axis backfill. Registered per the cron pattern
-			// but NOT auto-enabled — the job
-			// no-ops unless dns.domain_policy_axes_backfill_enabled is true
-			// (default false). There is no SQL backfill of ambiguous rows.
 			{
-				Name:    "domain_policy_axes_backfill",
-				Factory: func() (core.CronJob, error) { return domain.NewDomainPolicyAxesBackfillJob(), nil },
+				Name:    workspace.ReconcileJobType,
+				Factory: func() (core.CronJob, error) { return workspace.NewReconcileJob(), nil },
 				Schedule: core.NewCronScheduleDefinition(core.CronScheduleTypeCron).
-					WithCronExpression("*/5 * * * *"),
+					WithCronExpression("* * * * *"),
 			},
 		},
 		Models: []any{
@@ -116,6 +119,7 @@ func getPluginInfoWithoutTemplates() core.PluginInfo {
 			&db.DNSZone{},
 			&db.PlatformDomain{},
 			&db.WebsiteEvent{},
+			&db.Workspace{},
 		},
 		Metrics:         GetCollectors(),
 		Migrations:      core.DBMigration{core.DB_TYPE_SQLITE: migrations.GetSQLite(), core.DB_TYPE_MYSQL: migrations.GetMySQL()},
