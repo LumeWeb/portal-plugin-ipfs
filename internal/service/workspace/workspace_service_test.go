@@ -2,8 +2,10 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -612,19 +614,29 @@ func TestWorkspaceService_Attach_MissingWorkspace_ReturnsNotFound(t *testing.T) 
 	}, workspaceTestOptions)
 }
 
-// TestWorkspaceService_Attach_RaceClaimedKey_NoDoubleLink verifies that a
-// website whose strict UNIQUE(website_id) key is already claimed (the
-// deterministic end-state of a concurrent Create/Attach winning the race)
-// yields ErrWorkspaceAlreadyExists rather than a silent success, and that the
-// claim is never double-linked. It drives the purely deterministic, final
-// state of the race so the test cannot be flaky with timing.
-func TestWorkspaceService_Attach_RaceClaimedKey_NoDoubleLink(t *testing.T) {
+// TestWorkspaceService_Attach_RaceConcurrent_DistinctWorkspaces drives the
+// real transactional race between two concurrent Attach calls for the SAME
+// otherwise-unclaimed website. Both workspaces are distinct, unattached, and
+// owned by the same user, and the website starts with no live workspace claim,
+// so both goroutines pass the step-4 getByWebsite pre-check and contend in the
+// transactional attach path (row lock / tombstone purge / UPDATE RowsAffected)
+// rather than short-circuiting on an already-claimed key. Exactly one attach
+// must win and the other must lose with ErrWorkspaceAlreadyExists (surfaced
+// either by the strict UNIQUE(website_id) key inside the transaction or the
+// pre-check, depending on interleaving), and the website must end with exactly
+// one live workspace. A start barrier maximizes overlap without relying on a
+// precise scheduling assumption.
+func TestWorkspaceService_Attach_RaceConcurrent_DistinctWorkspaces(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
 		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
 
 		mockWS := mocks.NewMockWebsiteService(tb)
+		// Each of the two concurrent Attach calls loads website 1 exactly once.
+		mockWS.EXPECT().GetWebsite(mock.Anything, uint(1), uint(1)).
+			Return(&pluginDb.Website{ID: 1, UserID: 1}, nil).Times(2)
+
 		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
 		n := 0
 		svc.slugGen = func() (string, error) {
@@ -632,21 +644,48 @@ func TestWorkspaceService_Attach_RaceClaimedKey_NoDoubleLink(t *testing.T) {
 			return fmt.Sprintf("ws-race%d", n), nil
 		}
 
-		// A concurrent caller claims website 1 by attaching workspace A first.
-		mockWS.EXPECT().GetWebsite(mock.Anything, uint(1), uint(1)).
-			Return(&pluginDb.Website{ID: 1, UserID: 1}, nil).Times(2)
+		// Two distinct unattached workspaces owned by the same user.
 		a, err := svc.Create(context.Background(), 1, nil)
 		require.NoError(tb, err)
-		_, err = svc.Attach(context.Background(), 1, a.ID, 1)
-		require.NoError(tb, err)
-
-		// The racing attach of a second workspace to the already-claimed
-		// website must fail with ErrWorkspaceAlreadyExists and must never create
-		// a second live link (the getByWebsite pre-check surfaces the claim).
+		require.Nil(tb, a.WebsiteID)
 		b, err := svc.Create(context.Background(), 1, nil)
 		require.NoError(tb, err)
-		_, err = svc.Attach(context.Background(), 1, b.ID, 1)
-		assert.ErrorIs(tb, err, ErrWorkspaceAlreadyExists)
+		require.Nil(tb, b.WebsiteID)
+		require.NotEqual(tb, a.ID, b.ID, "the racing workspaces must be distinct rows")
+
+		// Launch both Attach calls behind a barrier so they start together and
+		// both are likely to pass the step-4 pre-check before either commits.
+		start := make(chan struct{})
+		res := make(chan error, 2)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		for _, wsID := range []uint{a.ID, b.ID} {
+			go func(id uint) {
+				defer wg.Done()
+				<-start
+				_, err := svc.Attach(context.Background(), 1, id, 1)
+				res <- err
+			}(wsID)
+		}
+		close(start)
+		wg.Wait()
+		close(res)
+
+		// Exactly one attach succeeds; the loser reports ErrWorkspaceAlreadyExists.
+		var successes, alreadyExists int
+		for err := range res {
+			switch {
+			case err == nil:
+				successes++
+			case errors.Is(err, ErrWorkspaceAlreadyExists):
+				alreadyExists++
+			default:
+				tb.Errorf("unexpected concurrent attach error: %v", err)
+			}
+		}
+		assert.Equal(tb, 1, successes, "exactly one concurrent attach must succeed")
+		assert.Equal(tb, 1, alreadyExists,
+			"the losing attach must report ErrWorkspaceAlreadyExists, not a silent claim")
 
 		var liveCount int64
 		require.NoError(tb, db.Model(&pluginDb.Workspace{}).
