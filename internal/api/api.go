@@ -49,6 +49,7 @@ type API struct {
 	workflowService    core.WorkflowService
 	ipnsKeyService     pluginCore.IPNSKeyService
 	websiteService     pluginCore.WebsiteService
+	workspaceService   pluginCore.WorkspaceService
 	delegatedDomainSvc *domain.DelegatedDomainService
 	dnsService         pluginCore.DNSService
 	dnsConfig          *pluginConfig.DnsConfig
@@ -71,6 +72,7 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 			api.workflowService = core.GetService[core.WorkflowService](ctx, core.WORKFLOW_SERVICE)
 			api.ipnsKeyService = core.GetService[pluginCore.IPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
 			api.websiteService = core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+			api.workspaceService = core.GetServiceOptional[pluginCore.WorkspaceService](ctx, pluginCore.WORKSPACE_SERVICE)
 			api.dnsService = core.GetService[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
 			api.dnsConfig = core.GetServiceConfig[*pluginConfig.DnsConfig](ctx, pluginCore.DNS_SERVICE)
 
@@ -916,6 +918,112 @@ See also:.*`),
 
 	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), websiteConfigRoutes, router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register website config routes: %w", err)
+	}
+
+	workspaceRoutes := router.DefineRoutes(
+		router.NewRoute(http.MethodPost, "/workspaces", a.createWorkspace,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Create workspace"),
+				router.WithDescription(`Creates a workspace owned by the authenticated user. Optionally pass website_id to attach it to a website the user owns (the publish link); omit it to create an unattached workspace that needs no Website record or domain. Building in a workspace is separate from publishing.`),
+				router.WithTags("Workspaces"),
+				router.WithRequestBody(&dto.WorkspaceRequest{}, "Workspace request", true),
+				router.WithSuccessResponse(http.StatusCreated, "Created workspace", router.WithJSONContent(dto.WorkspaceResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/workspaces", a.listWorkspaces,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("List workspaces"),
+				router.WithDescription(`Lists workspaces owned by the authenticated user, including unattached workspaces, filtered, sorted, and paginated.`),
+				router.WithTags("Workspaces"),
+				router.WithSuccessResponse(http.StatusOK, "Workspaces", router.WithJSONContent(dto.WorkspaceResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/workspaces/resolve", a.resolveWorkspace,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Resolve a workspace's runtime identity"),
+				router.WithDescription(`Lets a runtime container resolve its own workspace identity from the Coolify-injected COOLIFY_RESOURCE_UUID (the application/resource UUID) plus its workspace PORTAL_API_KEY. The API-key owner must match the workspace owner and the resource UUID must match the workspace's application_resource_id; a mismatch returns not-found. Returns workspace data plus the optional Website publish relationship, never exposing secrets.`),
+				router.WithTags("Workspaces"),
+				router.WithQueryParam("resource_uuid", "The Coolify-injected application/resource UUID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Resolved workspace", router.WithJSONContent(dto.WorkspaceResolveResponse{})),
+				router.WithErrorResponses(router.DefineSwaggerErrorResponses(
+					DefineErrorResponse(http.StatusUnauthorized, "Unauthenticated or invalid API key"),
+					DefineErrorResponse(http.StatusUnprocessableEntity, "Missing resource_uuid"),
+					DefineErrorResponse(http.StatusNotFound, "Workspace not found for this resource UUID/API key"),
+				)),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/workspaces/:id", a.getWorkspace,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Get workspace"),
+				router.WithDescription(`Returns a workspace owned by the authenticated user.`),
+				router.WithTags("Workspaces"),
+				router.WithPathParam("id", "Workspace ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Workspace", router.WithJSONContent(dto.WorkspaceResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/workspaces/:id/attach", a.attachWorkspace,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Attach workspace to website"),
+				router.WithDescription(`Links an existing unattached workspace (owned by the user) to a website the user owns. Verifies ownership of both and prevents duplicate attachment. Only records the publish link; it never changes the workspace authoring hostname.`),
+				router.WithTags("Workspaces"),
+				router.WithPathParam("id", "Workspace ID", ""),
+				router.WithRequestBody(&dto.WorkspaceRequest{}, "Workspace request", true),
+				router.WithSuccessResponse(http.StatusOK, "Attached workspace", router.WithJSONContent(dto.WorkspaceResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/workspaces/:id/suspend", a.suspendWorkspace,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Suspend workspace"),
+				router.WithDescription(`Stops a ready workspace's application (and, per configuration, its dedicated database) and marks it suspended. The database and storage are preserved by default.`),
+				router.WithTags("Workspaces"),
+				router.WithPathParam("id", "Workspace ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Suspended workspace", router.WithJSONContent(dto.WorkspaceResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodPost, "/workspaces/:id/resume", a.resumeWorkspace,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Resume workspace"),
+				router.WithDescription(`Starts a suspended workspace's application (and, per configuration, its dedicated database), refreshes the runtime environment, waits for readiness, and marks it ready.`),
+				router.WithTags("Workspaces"),
+				router.WithPathParam("id", "Workspace ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Ready workspace", router.WithJSONContent(dto.WorkspaceResponse{})),
+			),
+		),
+		router.NewRoute(http.MethodDelete, "/workspaces/:id", a.deleteWorkspace,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Delete workspace"),
+				router.WithDescription(`Marks a workspace deleting, revokes its portal API key, deletes the application (and storage) before the database, treats provider 404 as already deleted, and soft-deletes the workspace.`),
+				router.WithTags("Workspaces"),
+				router.WithPathParam("id", "Workspace ID", ""),
+				router.WithSuccessResponse(http.StatusOK, "Deleted workspace", router.WithJSONContent(dto.WorkspaceResponse{})),
+				router.WithErrorResponses(router.DefineSwaggerErrorResponses(
+					DefineErrorResponse(http.StatusNotFound, "Workspace not found"),
+					DefineErrorResponse(http.StatusConflict, "Workspace is already being deleted"),
+				)),
+			),
+		),
+		router.NewRoute(http.MethodGet, "/workspaces/:id/access", a.getWorkspaceAccess,
+			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithSwagger(
+				router.WithSummary("Get workspace access credentials"),
+				router.WithDescription(`Returns the owner's proxy Basic Auth credentials. Pass ?rotate=true to rotate them. Only the proxy credential is returned; the portal API key and database password are never exposed.`),
+				router.WithTags("Workspaces"),
+				router.WithPathParam("id", "Workspace ID", ""),
+				router.WithQueryParam("rotate", "Rotate the proxy credential before returning", false),
+				router.WithSuccessResponse(http.StatusOK, "Access credentials", router.WithJSONContent(dto.WorkspaceAccessResponse{})),
+			),
+		),
+	)
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), workspaceRoutes, router.WithMiddlewares(authMw), router.WithCors()); err != nil {
+		return fmt.Errorf("failed to register workspace routes: %w", err)
 	}
 
 	// DNS routes for zone and record management
