@@ -34,6 +34,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/coolify"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/db"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -247,16 +248,98 @@ func (s *WorkspaceService) RotateAccessCredentials(ctx context.Context, userID u
 		// provider update succeeds: if the provider rejects the rotation, the
 		// old persisted credential is preserved so a retry re-applies the same
 		// value to a consistent provider/DB state.
+		//
+		// The auth is enforced by the workspace image from the WORKSPACE_AUTH_*
+		// secret env vars, so applying the rotation means upserting those vars
+		// and triggering a redeploy — Coolify only reads environment changes
+		// at deploy time. Only the deployment is refreshed; storage/volumes
+		// are never touched here.
+		//
+		// The whole sequence (env upsert → redeploy → wait → row persist) is
+		// treated as atomic: the rotation is guarded by a rollback that undoes
+		// any partial application (provider env + in-memory pointers) back to
+		// the persisted values, and the rollback is disarmed only after the
+		// row has been persisted.
+		var rb *deployRollback
 		if ws.ApplicationResourceID != nil {
 			if s.provider == nil {
 				return nil, ErrWorkspaceProviderUnavailable
 			}
-			if err := s.provider.SetApplicationBasicAuth(ctx, *ws.ApplicationResourceID, username, password); err != nil {
+			rb = newDeployRollback()
+			defer rb.run(ctx)
+
+			// Snapshot the current (old) in-memory pointers so the rollback can
+			// restore both the workspace object and the provider environment to
+			// the persisted state.
+			oldUser, oldPass := ws.ProxyUsername, ws.ProxyPassword
+			envApplied := false
+			restore := func(ctx context.Context) {
+				// Always drop the unpersisted staged values from the workspace
+				// object; re-upsert the provider env only if the rotated values
+				// actually reached Coolify.
+				ws.ProxyUsername, ws.ProxyPassword = oldUser, oldPass
+				if !envApplied || oldUser == nil || oldPass == nil || ws.ApplicationResourceID == nil {
+					return
+				}
+				authEnv, err := s.proxyAuthEnvironment(ws)
+				if err != nil {
+					s.Logger().Error("workspace: rotation rollback could not build old auth env", zap.Error(err))
+					return
+				}
+				if err := s.provider.SetApplicationEnvironment(ctx, *ws.ApplicationResourceID, authEnv); err != nil {
+					s.Logger().Error("workspace: rotation rollback env restore failed",
+						zap.String("app_id", *ws.ApplicationResourceID), zap.Error(err))
+					return
+				}
+				// The abandoned rotation deploy may still have gone out
+				// (ambiguously), so trigger a best-effort redeploy so the
+				// running container is guaranteed to enforce the restored,
+				// row-consistent credentials. A failed restore deploy leaves
+				// the next reconcile/rotation to converge.
+				if _, err := s.provider.StartApplication(ctx, *ws.ApplicationResourceID); err != nil {
+					s.Logger().Error("workspace: rotation rollback redeploy failed",
+						zap.String("app_id", *ws.ApplicationResourceID), zap.Error(err))
+				}
+			}
+
+			// Stage the rotated credentials in memory so the environment build
+			// injects the NEW values; persistence still happens only after the
+			// provider calls succeed.
+			ws.ProxyUsername, ws.ProxyPassword = &username, &password
+			authEnv, err := s.proxyAuthEnvironment(ws)
+			if err != nil {
+				restore(ctx)
+				return nil, fmt.Errorf("%w: %v", ErrProxyCredentialsUnavailable, err)
+			}
+			if err := s.provider.SetApplicationEnvironment(ctx, *ws.ApplicationResourceID, authEnv); err != nil {
+				restore(ctx)
 				return nil, fmt.Errorf("workspace: failed to apply rotated proxy credentials: %w", err)
+			}
+			envApplied = true
+			rb.push(restore)
+			dep, err := s.provider.StartApplication(ctx, *ws.ApplicationResourceID)
+			if err != nil {
+				return nil, fmt.Errorf("workspace: failed to redeploy workspace for rotated credentials: %w", err)
+			}
+			// Wait for the redeploy to reach a terminal state before returning
+			// (and persisting) the new credential: Coolify only reads the env
+			// upsert at deploy time, so an early success report would hand the
+			// owner credentials the running container is not enforcing yet.
+			// A failed/slow deployment errors out here with the old persisted
+			// credential intact, so a retry converges. Volumes are unaffected.
+			if dep.ID != "" {
+				if err := s.waitDeploymentFinished(ctx, dep.ID); err != nil {
+					return nil, fmt.Errorf("workspace: redeploy for rotated credentials did not finish: %w", err)
+				}
 			}
 		}
 		if err := s.overwriteProxyCredentials(ctx, ws, username, password); err != nil {
 			return nil, err
+		}
+		if rb != nil {
+			// The full sequence (env + redeploy + row) succeeded; disarm the
+			// rollback.
+			rb.commit()
 		}
 	} else {
 		// Return the persisted credential, generating/persisting on first use
@@ -268,6 +351,46 @@ func (s *WorkspaceService) RotateAccessCredentials(ctx context.Context, userID u
 	}
 
 	return &pluginDb.AccessCredentials{Username: username, Password: password}, nil
+}
+
+// deployRollback collects compensating actions for a multi-step provider
+// mutation (env upsert, redeploy, storage) so a failure part-way through
+// cannot leave the provider holding a half-applied state. It is used like a
+// mutex: defer the release immediately, and only commit() after the LAST
+// side-effect (including the workspace-row persistence) succeeds — otherwise
+// the deferred release runs every compensating action in LIFO order. Steps run
+// best-effort; failures are logged and never mask the original error, since
+// the next reconcile pass re-asserts the persisted environment anyway.
+type deployRollback struct {
+	steps []func(context.Context)
+	done  bool
+}
+
+func newDeployRollback() *deployRollback {
+	return &deployRollback{}
+}
+
+// push registers a compensating action. Actions run in reverse order of
+// registration.
+func (d *deployRollback) push(step func(context.Context)) {
+	d.steps = append(d.steps, step)
+}
+
+// commit marks the operation successful and disarms the deferred rollback.
+func (d *deployRollback) commit() {
+	d.done = true
+}
+
+// run executes and clears the rollback when the operation was not committed.
+// Steps are best-effort: each one logs its own failures via the bound logger.
+func (d *deployRollback) run(ctx context.Context) {
+	if d.done {
+		return
+	}
+	for i := len(d.steps) - 1; i >= 0; i-- {
+		d.steps[i](ctx)
+	}
+	d.steps = nil
 }
 
 // ownedWorkspace loads a workspace scoped to the requesting user. It uses Get

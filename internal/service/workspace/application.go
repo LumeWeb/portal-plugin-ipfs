@@ -134,14 +134,15 @@ func (s *WorkspaceService) provisionApplication(ctx context.Context, ws *pluginD
 	}
 
 	// 2. Generate (or reuse) the proxy Basic Auth credentials, separate from
-	// the portal API key.
-	username, password, err := s.proxyCredentials(ctx, ws)
-	if err != nil {
+	// the portal API key. They are not part of the create payload; they are
+	// injected as WORKSPACE_AUTH_* secret environment variables by the
+	// SetApplicationEnvironment step that follows creation.
+	if _, _, err := s.proxyCredentials(ctx, ws); err != nil {
 		return fmt.Errorf("%w: %v", ErrProxyCredentialsUnavailable, err)
 	}
 
 	// 3. Create with instant_deploy=false and deterministic name/tag.
-	created, err := s.provider.CreateApplication(ctx, s.buildCreateApplicationRequest(ws, username, password))
+	created, err := s.provider.CreateApplication(ctx, s.buildCreateApplicationRequest(ws))
 	if err != nil {
 		// A 409 domain conflict is permanent; do not auto-resolve it.
 		if coolify.IsConflict(err) {
@@ -215,22 +216,26 @@ func (s *WorkspaceService) findCandidateApplication(ctx context.Context, ws *plu
 	}
 }
 
-// buildCreateApplicationRequest maps the workspace/runtime config and the
-// proxy credentials into a provider-neutral create request. The domain is the
-// workspace hostname over HTTPS with HTTPS forced, no generated domain, no
-// forced domain override, HTTP Basic Auth enabled, Docker/Coolify health-check
-// settings, app resource limits, and noindex for the hostname. The
-// deterministic name (with any install-namespace prefix) plus the
-// installation-scoped tag is the adoption/recovery key; Coolify v4.3.19
-// persists application tags, so they are sent to enable tag-scoped recovery.
+// buildCreateApplicationRequest maps the workspace/runtime config into a
+// provider-neutral create request. The domain is the workspace hostname over
+// HTTPS with HTTPS forced, no generated domain, no forced domain override,
+// Docker/Coolify health-check settings, app resource limits, and noindex for
+// the hostname. The deterministic name (with any install-namespace prefix)
+// plus the installation-scoped tag is the adoption/recovery key; Coolify
+// v4.3.19 persists application tags, so they are sent to enable tag-scoped
+// recovery.
+//
+// Proxy Basic Auth is NOT a Coolify application field: the workspace image
+// enforces it from the WORKSPACE_AUTH_* secret environment variables injected via
+// buildEnvironment (see SetApplicationEnvironment).
 //
 // The health-check settings are the Docker/Coolify container health check:
 // the path comes from config, and the port/method/return code are wired from
 // the runtime port and fixed GitOps defaults. These are exercised by the
 // container against itself (localhost/container access) and are NOT exposed as
-// a public Caddy route; Coolify Basic Auth is deliberately not applied to this
-// path. The workspace service never HTTP-probes this path itself.
-func (s *WorkspaceService) buildCreateApplicationRequest(ws *pluginDb.Workspace, username, password string) coolify.CreateApplicationRequest {
+// a public Caddy route, so they are reached without Basic Auth. The workspace
+// service never HTTP-probes this path itself.
+func (s *WorkspaceService) buildCreateApplicationRequest(ws *pluginDb.Workspace) coolify.CreateApplicationRequest {
 	prov := s.config.Coolify
 	rt := s.config.Runtime
 	hostname := ws.Hostname()
@@ -244,8 +249,6 @@ func (s *WorkspaceService) buildCreateApplicationRequest(ws *pluginDb.Workspace,
 		Tag:                   rt.Tag,
 		Port:                  strconv.Itoa(int(rt.Port)),
 		Domain:                "https://" + hostname,
-		BasicAuthUsername:     username,
-		BasicAuthPassword:     password,
 		HealthCheckEnabled:    rt.HealthPath != "",
 		HealthCheckPath:       rt.HealthPath,
 		HealthCheckPort:       strconv.Itoa(int(rt.Port)),
@@ -404,8 +407,9 @@ func (s *WorkspaceService) desiredStorageMounts(ws *pluginDb.Workspace) []coolif
 
 // SetApplicationEnvironment upserts the workspace runtime environment from the
 // configuration, the reconciled database credentials, and the issued portal
-// API key. It marks secrets (the portal API key and the database password) as
-// shown-once when supported and never logs the payload or its response.
+// API key. It marks secrets (the portal API key, the database password, and
+// the proxy Basic Auth credentials) as shown-once when supported and never
+// logs the payload or its response.
 func (s *WorkspaceService) SetApplicationEnvironment(ctx context.Context, ws *pluginDb.Workspace, appID string, dbCreds *DatabaseCredentials, apiKey *dashboardCore.IssuedAPIKey) error {
 	if s.provider == nil {
 		return fmt.Errorf("workspace: provider not available")
@@ -419,14 +423,18 @@ func (s *WorkspaceService) SetApplicationEnvironment(ctx context.Context, ws *pl
 	if err := s.ensurePlatformDomain(ctx, ws); err != nil {
 		return err
 	}
-	return s.provider.SetApplicationEnvironment(ctx, appID, s.buildEnvironment(ws, dbCreds, apiKey))
+	env, err := s.buildEnvironment(ws, dbCreds, apiKey)
+	if err != nil {
+		return err
+	}
+	return s.provider.SetApplicationEnvironment(ctx, appID, env)
 }
 
 // buildEnvironment constructs the desired runtime environment. The fixed
 // PORTAL_* keys and the configured database environment key names are all
 // injected here; the configured database key names come from the runtime
 // config so the service remains runtime-generic.
-func (s *WorkspaceService) buildEnvironment(ws *pluginDb.Workspace, dbCreds *DatabaseCredentials, apiKey *dashboardCore.IssuedAPIKey) []coolify.EnvironmentVariable {
+func (s *WorkspaceService) buildEnvironment(ws *pluginDb.Workspace, dbCreds *DatabaseCredentials, apiKey *dashboardCore.IssuedAPIKey) ([]coolify.EnvironmentVariable, error) {
 	dbEnv := s.config.Runtime.DatabaseEnv
 	hostname := ws.Hostname()
 	// Runtime identity comes from Coolify itself: Coolify automatically injects
@@ -438,6 +446,10 @@ func (s *WorkspaceService) buildEnvironment(ws *pluginDb.Workspace, dbCreds *Dat
 	// Website numeric ID is ever injected as a runtime environment variable.
 	// The authoring hostname (PORTAL_WORKSPACE_URL) is always the workspace's
 	// own platform hostname, independent of any published website domain.
+	auth, err := s.proxyAuthEnvironment(ws)
+	if err != nil {
+		return nil, err
+	}
 	env := []coolify.EnvironmentVariable{
 		{Key: "PORTAL_API_URL", Value: s.portalAPIURL},
 		{Key: "PORTAL_API_KEY", Value: apiKey.Token, Secret: true},
@@ -449,7 +461,23 @@ func (s *WorkspaceService) buildEnvironment(ws *pluginDb.Workspace, dbCreds *Dat
 		{Key: dbEnv.User, Value: dbCreds.Username},
 		{Key: dbEnv.Password, Value: dbCreds.Password, Secret: true},
 	}
-	return env
+	return append(env, auth...), nil
+}
+
+// proxyAuthEnvironment returns the proxy Basic Auth environment variables the
+// workspace image enforces on public routes (WORKSPACE_AUTH_USERNAME /
+// WORKSPACE_AUTH_PASSWORD). Both are marked secret so Coolify never reflects
+// their values in API responses. They are read from the workspace row, which
+// carries the portal-generated credentials; a missing pair is an internal
+// inconsistency and fails closed.
+func (s *WorkspaceService) proxyAuthEnvironment(ws *pluginDb.Workspace) ([]coolify.EnvironmentVariable, error) {
+	if ws.ProxyUsername == nil || ws.ProxyPassword == nil {
+		return nil, ErrProxyCredentialsUnavailable
+	}
+	return []coolify.EnvironmentVariable{
+		{Key: "WORKSPACE_AUTH_USERNAME", Value: *ws.ProxyUsername, Secret: true},
+		{Key: "WORKSPACE_AUTH_PASSWORD", Value: *ws.ProxyPassword, Secret: true},
+	}, nil
 }
 
 // StartAndObserveApplication starts the application, polls the deployment to a

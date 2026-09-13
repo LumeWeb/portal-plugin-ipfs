@@ -12,9 +12,9 @@ package coolify
 //   - start + poll to running (write permission);
 //   - sensitive secret retrieval via GET /databases/{uuid} (read:sensitive);
 //   - private connectivity wiring through the internal DB host;
-//   - create of a Docker-image application with domain + proxy Basic Auth
+//   - create of a Docker-image application with domain
 //     + Docker/Coolify health-check settings (write + deploy);
-//   - bulk environment upsert and storage;
+//   - bulk environment upsert (including the proxy auth secrets) and storage;
 //   - start + deployment to a terminal state + application running/healthy
 //     (deploy).
 //
@@ -194,9 +194,7 @@ func runCoolifySmoke(ctx context.Context, client *Client, cfg smokeConfig, logf 
 	}
 	logf("smoke: database %s private host %s", dbID, dbHost)
 
-	// 5. Create the Docker-image application with domain + proxy Basic Auth.
-	basicUser := "smoke-" + suffix
-	basicPass := randomSecret()
+	// 5. Create the Docker-image application with domain + health checks.
 	appResult, err := client.CreateApplication(ctx, CreateApplicationRequest{
 		ServerUUID:            cfg.serverUUID,
 		ProjectUUID:           cfg.projectUUID,
@@ -207,8 +205,6 @@ func runCoolifySmoke(ctx context.Context, client *Client, cfg smokeConfig, logf 
 		Tag:                   "latest",
 		Port:                  "80",
 		Domain:                domain,
-		BasicAuthUsername:     basicUser,
-		BasicAuthPassword:     basicPass,
 		HealthCheckEnabled:    true,
 		HealthCheckPath:       "/",
 		HealthCheckPort:       "80",
@@ -237,10 +233,15 @@ func runCoolifySmoke(ctx context.Context, client *Client, cfg smokeConfig, logf 
 	})
 
 	// 6. Wire the database into the application environment (private
-	// connectivity). The DB password is sent as a secret env entry.
+	// connectivity). Secret entries (the proxy auth credentials and the DB
+	// password) are sent as secret env entries.
+	smokeAuthUser := "smoke-" + suffix
+	smokeAuthPass := randomSecret()
 	envs := []EnvironmentVariable{
 		{Key: "PORTAL_API_URL", Value: "https://api.example.com"},
 		{Key: "PORTAL_WORKSPACE_URL", Value: domain},
+		{Key: "WORKSPACE_AUTH_USERNAME", Value: smokeAuthUser, Secret: true},
+		{Key: "WORKSPACE_AUTH_PASSWORD", Value: smokeAuthPass, Secret: true},
 		{Key: "DB_HOST", Value: dbHost},
 		{Key: "DB_NAME", Value: db.Database},
 		{Key: "DB_USER", Value: db.Username},
