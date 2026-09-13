@@ -503,8 +503,8 @@ func TestSetApplicationEnvironment_SecretsAndKeys(t *testing.T) {
 		// WORKSPACE_AUTH_* env vars (never a Coolify application field).
 		assert.True(tb, byKey["WORKSPACE_AUTH_USERNAME"].Secret)
 		assert.True(tb, byKey["WORKSPACE_AUTH_PASSWORD"].Secret)
-		assert.Equal(tb, "auth-ws-user", byKey["WORKSPACE_AUTH_USERNAME"].Value)
-		assert.Equal(tb, "auth-ws-pass-super-secret", byKey["WORKSPACE_AUTH_PASSWORD"].Value)
+		assert.Equal(tb, authUser, byKey["WORKSPACE_AUTH_USERNAME"].Value)
+		assert.Equal(tb, authPass, byKey["WORKSPACE_AUTH_PASSWORD"].Value)
 
 		// Database values injected under the CONFIGURED key names.
 		assert.Equal(tb, "db.internal", byKey["WORDPRESS_DB_HOST"].Value)

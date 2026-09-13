@@ -235,6 +235,10 @@ func (c *Client) GetApplication(ctx context.Context, resourceID string) (Applica
 }
 
 // SetApplicationEnvironment upserts the application environment in bulk.
+// Coolify's bulk endpoint is update-or-create per key (ApplicationsController
+// create_bulk_envs): keys present in the payload are updated (or created),
+// and envs ABSENT from the payload are never deleted. Partial payloads are
+// therefore safe for targeted changes (e.g. rotating the proxy auth vars).
 func (c *Client) SetApplicationEnvironment(ctx context.Context, resourceID string, envs []EnvironmentVariable) error {
 	type item struct {
 		Key         string `json:"key"`
