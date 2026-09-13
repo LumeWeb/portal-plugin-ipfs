@@ -13,17 +13,20 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	dashboardCore "go.lumeweb.com/portal-plugin-dashboard/core"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	pluginInternal "go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/coolify"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/mysqlprovision"
 	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
+	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
 	"go.lumeweb.com/queryutil"
@@ -55,10 +58,13 @@ var (
 	// workspace that is already attached to a website, or would attach a website
 	// that already has a live workspace.
 	ErrWorkspaceAlreadyAttached = errors.New("workspace: workspace is already attached to a website")
-	// ErrWorkspacePlatformDomainUnavailable is returned when the configured
-	// platform domain is not registered/enabled (or the look-up service is not
-	// wired).
-	ErrWorkspacePlatformDomainUnavailable = errors.New("workspace: configured platform domain is not available")
+	// ErrWorkspacePlatformDomainUnavailable is returned when no enabled
+	// platform domain is registered (or the look-up service is not wired).
+	ErrWorkspacePlatformDomainUnavailable = errors.New("workspace: no enabled platform domain is available")
+	// ErrWorkspacePlatformDomainAmbiguous is returned when more than one
+	// enabled platform domain is registered: the workspace authoring hostname
+	// root is ambiguous and must be resolved by enabling exactly one.
+	ErrWorkspacePlatformDomainAmbiguous = errors.New("workspace: multiple enabled platform domains; enable exactly one for the workspace hostname root")
 	// ErrWorkspaceLabelExhausted is returned when the label generator could not
 	// produce a label that satisfies the (platform_domain_id, label) unique key
 	// within the retry budget.
@@ -76,15 +82,21 @@ type WorkspaceService struct {
 	*core.BaseComponent
 
 	config *pluginConfig.WorkspaceConfig
+	// portalAPIURL is the portal API base URL injected into every runtime as
+	// PORTAL_API_URL. It is derived once at startup from the portal core config
+	// (this plugin's API subdomain on the core domain/secure/external-port), so
+	// it is never separately configurable.
+	portalAPIURL string
 	// provider is the provider-neutral Coolify adapter, built during startup
 	// when the service is enabled. It stays nil while disabled.
 	provider coolify.WorkspaceProvider
 
 	// websiteSvc loads the owning website during Create and enforces ownership.
 	websiteSvc pluginCore.WebsiteService
-	// platformSvc resolves the configured enabled PlatformDomain for the
-	// workspace hostname root. It is a narrow interface so tests can inject a
-	// fake; in production it is the concrete *domsvc.DelegatedDomainService.
+	// platformSvc lists the enabled PlatformDomain rows so Create can require
+	// exactly one for the workspace hostname root. It is a narrow interface so
+	// tests can inject a fake; in production it is the concrete
+	// *domsvc.DelegatedDomainService.
 	platformSvc platformDomainResolver
 	// apiKeySvc is the dashboard plugin's exported core.APIKeyService, used to
 	// issue/reissue the workspace portal API key. It is wired from the portal
@@ -122,9 +134,10 @@ var _ core.Service = (*WorkspaceService)(nil)
 var _ pluginCore.WorkspaceService = (*WorkspaceService)(nil)
 
 // platformDomainResolver is the subset of *domsvc.DelegatedDomainService used
-// by the workspace service to resolve the configured enabled platform domain.
+// by the workspace service to list enabled platform domains so it can require
+// exactly one for the workspace hostname root.
 type platformDomainResolver interface {
-	GetEnabledPlatformDomain(ctx context.Context, domain string, namespace pluginDb.DomainNamespace) (*pluginDb.PlatformDomain, error)
+	ListEnabledPlatformDomains(ctx context.Context, pagination queryutil.Pagination) ([]*pluginDb.PlatformDomain, int64, error)
 }
 
 // NewWorkspaceService creates the workspace service. Startup loads the service
@@ -187,8 +200,7 @@ func (s *WorkspaceService) startupValidate(ctx core.Context) error {
 		return fmt.Errorf("workspace: config not registered")
 	}
 
-	// Structural validation (URL scheme, token, placement IDs, runtime and
-	// database settings, storage mounts, environment key names). Live platform
+	// Structural validation of the workspace service's own fields. Live platform
 	// domain resolution and the sensitive-database reachability check are left
 	// to the reconciliation path that owns those dependencies.
 	if err := s.config.Validate(); err != nil {
@@ -197,6 +209,21 @@ func (s *WorkspaceService) startupValidate(ctx core.Context) error {
 
 	if !s.config.Enabled {
 		return nil
+	}
+
+	// Reach each nested config struct's OWN validator independently. The parent
+	// WorkspaceConfig deliberately does not orchestrate child validation, so the
+	// service assembles the enabled-path validation across the independently
+	// owning config structs (Coolify placement/auth, runtime image/tag/port and
+	// storage/env leaves, and the shared database resource).
+	if err := s.config.Coolify.Validate(); err != nil {
+		return err
+	}
+	if err := s.config.Runtime.Validate(); err != nil {
+		return err
+	}
+	if err := s.config.Database.Validate(); err != nil {
+		return err
 	}
 
 	// The dashboard API-key issuance boundary is a hard dependency of
@@ -216,17 +243,29 @@ func (s *WorkspaceService) startupValidate(ctx core.Context) error {
 	}
 	s.identityKey = ctx.Config().Config().Core.Identity.PrivateKey()
 
-	client, err := coolify.NewClient(s.config.Provider.APIURL, s.config.Provider.APIToken)
+	// Derive the portal API URL from the portal core config once, so the
+	// runtime's PORTAL_API_URL always matches portal HTTP routing (this
+	// plugin's API subdomain on the core domain/secure/active-port) with no
+	// duplicate configuration to drift.
+	s.portalAPIURL = derivePortalAPIURL(pluginInternal.ProtocolName, ctx.Config().Config().Core)
+	// Fail fast when the derivation produced no host (an empty/unconfigured
+	// core domain), so an empty PORTAL_API_URL can never be injected into a
+	// runtime. This must be validated here at startup, before any provisioning,
+	// rather than silently proxying an empty URL to every deployed workspace.
+	if err := validatePortalAPIURL(s.portalAPIURL); err != nil {
+		return err
+	}
+
+	client, err := coolify.NewClient(s.config.Coolify.APIURL, s.config.Coolify.APIToken)
 	if err != nil {
 		return err
 	}
 	s.provider = coolify.NewProvider(client)
 
-	timeout := s.config.RequestTimeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	ctxTimeout, cancel := context.WithTimeout(ctx, timeout)
+	// RequestTimeout is owned by the config-manager defaults (see
+	// WorkspaceConfig.Defaults) so it is always set; there is no service-side
+	// fallback to duplicate that default.
+	ctxTimeout, cancel := context.WithTimeout(ctx, s.config.RequestTimeout)
 	defer cancel()
 	if err := client.Health(ctxTimeout); err != nil {
 		return fmt.Errorf("workspace: coolify health check failed: %w", err)
@@ -566,9 +605,12 @@ func (s *WorkspaceService) ownedWorkspaceQuery(tx *gorm.DB, userID uint) *gorm.D
 	return tx.Model(&pluginDb.Workspace{}).Where("workspaces.user_id = ?", userID)
 }
 
-// resolveEnabledPlatformDomain resolves the configured enabled PlatformDomain
-// for the workspace hostname root. It returns (nil, nil) when no enabled root
-// matches the configuration.
+// resolveEnabledPlatformDomain returns the workspaces' authoring hostname root
+// from the enabled PlatformDomain rows. The hostname root must be unambiguous,
+// so exactly one enabled platform domain is required: no enabled root yields
+// (nil, nil) → ErrWorkspacePlatformDomainUnavailable, and more than one yields
+// ErrWorkspacePlatformDomainAmbiguous. The namespace comes from the DB row's
+// typed value, never from config.
 func (s *WorkspaceService) resolveEnabledPlatformDomain(ctx context.Context) (*pluginDb.PlatformDomain, error) {
 	if s.config == nil {
 		return nil, ErrWorkspaceNotEnabled
@@ -576,7 +618,52 @@ func (s *WorkspaceService) resolveEnabledPlatformDomain(ctx context.Context) (*p
 	if s.platformSvc == nil {
 		return nil, fmt.Errorf("workspace: platform domain service not available")
 	}
-	return s.platformSvc.GetEnabledPlatformDomain(ctx, s.config.PlatformDomain, pluginDb.DomainNamespace(s.config.PlatformDomainNamespace))
+	roots, _, err := s.platformSvc.ListEnabledPlatformDomains(ctx, queryutil.Pagination{})
+	if err != nil {
+		return nil, err
+	}
+	if len(roots) == 0 {
+		return nil, nil
+	}
+	if len(roots) > 1 {
+		return nil, ErrWorkspacePlatformDomainAmbiguous
+	}
+	return roots[0], nil
+}
+
+// derivePortalAPIURL builds the portal API base URL from the portal core
+// config, mirroring the portal HTTP service's route resolution: the API
+// subdomain (this plugin's) is prefixed onto the trimmed root core domain,
+// the scheme follows Core.Secure, and the active port is Core.ExternalPort when
+// set else Core.Port. An empty root domain yields "" (no host to derive).
+func derivePortalAPIURL(apiSubdomain string, core config.CoreConfig) string {
+	root := strings.Trim(strings.ToLower(core.Domain), ".")
+	if root == "" {
+		return ""
+	}
+	host := root
+	if apiSubdomain = strings.Trim(strings.ToLower(strings.TrimSpace(apiSubdomain)), "."); apiSubdomain != "" {
+		host = apiSubdomain + "." + root
+	}
+	scheme := "http"
+	if core.Secure {
+		scheme = "https"
+	}
+	port := core.Port
+	if core.ExternalPort != 0 {
+		port = core.ExternalPort
+	}
+	return scheme + "://" + net.JoinHostPort(host, strconv.FormatUint(uint64(port), 10))
+}
+
+// validatePortalAPIURL rejects an empty derived portal API URL. An empty URL
+// means the core domain is unconfigured, so PORTAL_API_URL would be injected
+// empty into every workspace runtime; fail fast at startup instead.
+func validatePortalAPIURL(url string) error {
+	if url == "" {
+		return errors.New("workspace: portal api url is empty: core domain is not configured")
+	}
+	return nil
 }
 
 // newLabel returns a fresh DNS-safe opaque label via the injected generator.

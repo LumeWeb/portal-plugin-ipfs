@@ -26,6 +26,33 @@ func (a *API) workspacePathID(c echo.Context) (uint, error) {
 	return uint(id), nil
 }
 
+// toUintPtr converts an optional int website ID (as carried by the wire DTO)
+// into the *uint expected by the workspace service, preserving nil for an
+// unattached workspace. A non-positive ID (nil or <= 0) is treated as
+// unattached/omit semantics: an explicitly constructed request with
+// WebsiteID: ptr(0) can never reach the required-ID validation in Create or
+// become an attached ID 0. Only a positive ID attaches the workspace.
+func toUintPtr(v *int) *uint {
+	if v == nil || *v <= 0 {
+		return nil
+	}
+	u := uint(*v)
+	return &u
+}
+
+// attachedWebsiteID converts the wire WebsiteID on the attach path into the
+// uint expected by the workspace service, rejecting nil and non-positive
+// (<= 0) values. Unlike the Create-path normalizer (toUintPtr), which treats
+// nil/<=0 as "unattached", attach REQUIRES a real website to link, so a
+// non-positive value is invalid: converting a negative int directly via
+// uint(*v) would silently wrap to an enormous positive ID.
+func attachedWebsiteID(v *int) (uint, bool) {
+	if v == nil || *v <= 0 {
+		return 0, false
+	}
+	return uint(*v), true
+}
+
 // workspaceError maps a workspace service error to the registered API error
 // codes for workspace routes.
 func workspaceError(err error) *core.Error {
@@ -35,7 +62,8 @@ func workspaceError(err error) *core.Error {
 	case errors.Is(err, workspacesvc.ErrWorkspaceInvalidState):
 		return NewError(ErrKeyWorkspaceInvalidState, err)
 	case errors.Is(err, workspacesvc.ErrWorkspaceNotEnabled),
-		errors.Is(err, workspacesvc.ErrWorkspacePlatformDomainUnavailable):
+		errors.Is(err, workspacesvc.ErrWorkspacePlatformDomainUnavailable),
+		errors.Is(err, workspacesvc.ErrWorkspacePlatformDomainAmbiguous):
 		return NewError(ErrKeyWorkspaceDisabled, err)
 	case errors.Is(err, workspacesvc.ErrWorkspaceAlreadyExists),
 		errors.Is(err, workspacesvc.ErrWorkspaceAlreadyAttached):
@@ -62,7 +90,7 @@ func (a *API) createWorkspace(c echo.Context) error {
 		return nil
 	}
 
-	ws, err := a.workspaceService.Create(ctx.Context.Request().Context(), user, req.WebsiteID)
+	ws, err := a.workspaceService.Create(ctx.Context.Request().Context(), user, toUintPtr(req.WebsiteID))
 	if err != nil {
 		a.Logger().Error("Failed to create workspace", zap.Error(err), zap.Uint("user_id", user))
 		apiErr := workspaceError(err)
@@ -187,12 +215,13 @@ func (a *API) attachWorkspace(c echo.Context) error {
 	if _, ok := httputil.DecodeAndValidateRequest[*dto.WorkspaceRequest](ctx, &req); !ok {
 		return nil
 	}
-	if req.WebsiteID == nil {
-		apiErr := NewError(ErrKeyInvalidRequest, errors.New("website_id is required to attach a workspace"))
+	websiteID, ok := attachedWebsiteID(req.WebsiteID)
+	if !ok {
+		apiErr := NewError(ErrKeyInvalidRequest, errors.New("website_id is required to attach a workspace and must be a positive integer"))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	ws, err := a.workspaceService.Attach(ctx.Context.Request().Context(), user, workspaceID, *req.WebsiteID)
+	ws, err := a.workspaceService.Attach(ctx.Context.Request().Context(), user, workspaceID, websiteID)
 	if err != nil {
 		a.Logger().Error("Failed to attach workspace", zap.Error(err), zap.Uint("workspace_id", workspaceID), zap.Uint("user_id", user))
 		apiErr := workspaceError(err)

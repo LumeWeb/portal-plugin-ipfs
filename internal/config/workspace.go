@@ -55,27 +55,22 @@ type WorkspaceConfig struct {
 	// PollInterval is how long to wait between provider status polls.
 	PollInterval time.Duration `config:"poll_interval"`
 
-	// PortalAPIURL is the public API base URL injected into the runtime as
-	// PORTAL_API_URL.
-	PortalAPIURL string `config:"portal_api_url"`
-
-	// PlatformDomain is the root domain (e.g. build.example.com) from which the
-	// configured enabled workspace hostname is derived.
-	PlatformDomain string `config:"platform_domain"`
-	// PlatformDomainNamespace is the DNS namespace (e.g. icann) the platform
-	// domain is resolved under.
-	PlatformDomainNamespace string `config:"platform_domain_namespace"`
-
-	// Provider holds Coolify placement/token configuration.
-	Provider WorkspaceProviderConfig `config:"provider"`
+	// Provider holds Coolify placement/token configuration. The portal
+	// API URL and platform domain are NOT configured here: the API URL is
+	// derived at runtime from the portal core config (this plugin's API
+	// subdomain on the core domain/secure/port), and the workspace hostname
+	// root is selected DB-driven from the single enabled platform domain.
+	Coolify WorkspaceCoolifyConfig `config:"coolify"`
 	// Runtime holds the selected application image and its runtime settings.
 	Runtime WorkspaceRuntimeConfig `config:"runtime"`
 	// Database holds the dedicated database resource settings.
 	Database WorkspaceDatabaseConfig `config:"database"`
 }
 
-// WorkspaceProviderConfig holds Coolify placement and authentication settings.
-type WorkspaceProviderConfig struct {
+// WorkspaceCoolifyConfig holds Coolify placement and authentication settings.
+// It is named for the runtime it targets (Coolify) so a later provider does
+// not inherit misleadingly generic naming.
+type WorkspaceCoolifyConfig struct {
 	APIURL          string `config:"api_url"`
 	APIToken        string `config:"api_token"`
 	ServerUUID      string `config:"server_uuid"`
@@ -170,16 +165,25 @@ type DatabaseEnvironmentKeys struct {
 	Password string `config:"password"`
 }
 
-// Compile-time assertions that the config satisfies the portal contracts it is
-// registered as: config.ServiceConfig requires Defaults(); startup validation
-// is driven through config.Validator.
+// Compile-time assertions that the config structs satisfy the portal contracts
+// they are registered as: config.ServiceConfig requires Defaults(); startup
+// validation is driven through config.Validator. WorkspaceConfig owns only its
+// own scalar-field validation; each nested struct validates itself
+// independently (see each Validate method). WorkspaceConfig deliberately does
+// NOT orchestrate child validation.
 var _ config.ServiceConfig = (*WorkspaceConfig)(nil)
 var _ config.Validator = (*WorkspaceConfig)(nil)
+var _ config.Validator = (*WorkspaceCoolifyConfig)(nil)
+var _ config.Validator = (*WorkspaceRuntimeConfig)(nil)
+var _ config.Validator = (*WorkspaceStorageConfig)(nil)
+var _ config.Validator = (*WorkspaceDatabaseConfig)(nil)
+var _ config.Validator = (*DatabaseEnvironmentKeys)(nil)
 
 // Defaults returns the conservative defaults for the workspace service. Only
 // fields that are safe to default are set here; the Coolify API URL/token,
-// placement IDs, image/tag/port, portal API URL, and platform domain are all
-// intentionally left empty and required by Validate() when Enabled is true.
+// placement IDs, and image/tag/port are all intentionally left empty and
+// required by Validate() when Enabled is true. The portal API URL and platform
+// domain are not configurable here at all (see WorkspaceConfig).
 func (c WorkspaceConfig) Defaults() map[string]any {
 	return map[string]any{
 		"Enabled":            false,
@@ -211,88 +215,24 @@ var validDNSPrefixRe = regexp.MustCompile(`^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 // ceiling.
 const maxInstallNamespaceLen = 24
 
-// Validate performs structural validation of the workspace config. When the
-// service is disabled, validation passes trivially. Live checks (Coolify
+// Validate performs structural validation of the workspace service config. It
+// validates ONLY the workspace service's own scalar fields; it deliberately does
+// NOT orchestrate validation of its nested config structs (WorkspaceCoolifyConfig,
+// WorkspaceRuntimeConfig, WorkspaceDatabaseConfig). Those own and run their own
+// Validate methods, and the workspace service startup path reaches each of them
+// independently when the service is enabled. Live checks (Coolify
 // health/version, platform domain resolution, and the sensitive-database
 // reachability check) are performed by the service startup/reconciliation path
 // once the required dependencies exist.
 func (c WorkspaceConfig) Validate() error {
+	// When the service is disabled, the workspace config owns nothing to
+	// validate and passes trivially. Remaining fields are ignored by the
+	// service while disabled (see WorkspaceConfig).
 	if !c.Enabled {
 		return nil
 	}
 
-	// 1. Coolify URL must be HTTPS unless it points at an explicitly allowed
-	// loopback development host.
-	if err := validateCoolifyURL(c.Provider.APIURL); err != nil {
-		return err
-	}
-
-	// 2. API token must be present.
-	if c.Provider.APIToken == "" {
-		return errors.New("workspace: provider.api_token is required when enabled")
-	}
-
-	// 3. Server, project, environment, and destination IDs must be present.
-	if c.Provider.ServerUUID == "" {
-		return errors.New("workspace: provider.server_uuid is required when enabled")
-	}
-	if c.Provider.ProjectUUID == "" {
-		return errors.New("workspace: provider.project_uuid is required when enabled")
-	}
-	if c.Provider.EnvironmentUUID == "" {
-		return errors.New("workspace: provider.environment_uuid is required when enabled")
-	}
-	if c.Provider.DestinationUUID == "" {
-		return errors.New("workspace: provider.destination_uuid is required when enabled")
-	}
-
-	// 4. Image, tag, and port must be present.
-	if c.Runtime.Image == "" {
-		return errors.New("workspace: runtime.image is required when enabled")
-	}
-	if c.Runtime.Tag == "" {
-		return errors.New("workspace: runtime.tag is required when enabled")
-	}
-	if c.Runtime.Port == 0 {
-		return errors.New("workspace: runtime.port is required when enabled")
-	}
-
-	// Portal API URL and platform domain are required to build the runtime
-	// environment and hostname.
-	if c.PortalAPIURL == "" {
-		return errors.New("workspace: portal_api_url is required when enabled")
-	}
-	if c.PlatformDomain == "" {
-		return errors.New("workspace: platform_domain is required when enabled")
-	}
-
-	// 4a. The shared MySQL/MariaDB resource is a hard dependency of logical
-	// database provisioning: its Coolify resource ID is required when enabled.
-	// There is deliberately NO per-workspace database password secret here:
-	// each workspace's logical database password is derived with HKDF-SHA256
-	// keyed by the portal identity key (Core.Identity.PrivateKey) plus a
-	// per-workspace random salt persisted on the workspace row, so no separate
-	// config secret exists to leak or rotate globally. The admin/root
-	// connection (host/port/user/password) is NOT configured here either — it
-	// is derived from the shared resource via Coolify's existing
-	// GET /databases/{uuid} API at provisioning time, so no Coolify
-	// modifications are required. No password material is ever logged or
-	// returned from an API here.
-	if c.Database.ResourceID == "" {
-		return errors.New("workspace: database.resource_id is required when enabled")
-	}
-
-	// 4a′. InstallNamespace is optional, but when set it must be a valid DNS
-	// label (RFC 1035) so the deterministic application/volume resource names
-	// it prefixes remain valid Coolify resource names (bounded, DNS-safe).
-	if ns := c.Provider.InstallNamespace; ns != "" && !validDNSPrefixRe.MatchString(ns) {
-		return fmt.Errorf("workspace: provider.install_namespace %q is not a valid DNS label (RFC 1035)", ns)
-	}
-	if ns := c.Provider.InstallNamespace; len(ns) > maxInstallNamespaceLen {
-		return fmt.Errorf("workspace: provider.install_namespace %q exceeds %d chars", ns, maxInstallNamespaceLen)
-	}
-
-	// 4b. Reconcile settings must be valid when enabled.
+	// Reconcile/retry/drift settings must be valid when enabled.
 	if c.ReconcileBatchSize <= 0 {
 		return errors.New("workspace: reconcile_batch_size must be positive when enabled")
 	}
@@ -309,33 +249,93 @@ func (c WorkspaceConfig) Validate() error {
 		return errors.New("workspace: drift_check_interval must not be negative when enabled")
 	}
 
-	// 5. Resource limits must parse into accepted Coolify/Docker values.
-	// The shared database resource is configured once in Coolify by the
-	// operator; its resource limits live in Coolify, not in this config. Only
-	// the application runtime resource limits are validated here.
+	return nil
+}
+
+// Validate performs structural validation of the Coolify placement and
+// authentication settings. It runs only when the workspace service is enabled
+// (the service reaches it independently). The portal API URL and platform
+// domain are intentionally NOT configured here (see WorkspaceConfig).
+func (c WorkspaceCoolifyConfig) Validate() error {
+	// 1. Coolify URL must be HTTPS unless it points at an explicitly allowed
+	// loopback development host.
+	if err := validateCoolifyURL(c.APIURL); err != nil {
+		return err
+	}
+
+	// 2. API token must be present.
+	if c.APIToken == "" {
+		return errors.New("workspace: coolify.api_token is required when enabled")
+	}
+
+	// 3. Server, project, environment, and destination IDs must be present.
+	if c.ServerUUID == "" {
+		return errors.New("workspace: coolify.server_uuid is required when enabled")
+	}
+	if c.ProjectUUID == "" {
+		return errors.New("workspace: coolify.project_uuid is required when enabled")
+	}
+	if c.EnvironmentUUID == "" {
+		return errors.New("workspace: coolify.environment_uuid is required when enabled")
+	}
+	if c.DestinationUUID == "" {
+		return errors.New("workspace: coolify.destination_uuid is required when enabled")
+	}
+
+	// 4. InstallNamespace is optional, but when set it must be a valid DNS
+	// label (RFC 1035) so the deterministic application/volume resource names
+	// it prefixes remain valid Coolify resource names (bounded, DNS-safe).
+	if ns := c.InstallNamespace; ns != "" && !validDNSPrefixRe.MatchString(ns) {
+		return fmt.Errorf("workspace: coolify.install_namespace %q is not a valid DNS label (RFC 1035)", ns)
+	}
+	if ns := c.InstallNamespace; len(ns) > maxInstallNamespaceLen {
+		return fmt.Errorf("workspace: coolify.install_namespace %q exceeds %d chars", ns, maxInstallNamespaceLen)
+	}
+
+	return nil
+}
+
+// Validate performs structural validation of the runtime's own scalar fields
+// (image, tag, port, and resource limits). It also reaches the runtime's
+// structural leaves so their individual Validate methods run: each storage
+// mount and the database environment key names. It does NOT read or validate
+// anything owned by WorkspaceConfig or the Coolify/database sibling config.
+func (c WorkspaceRuntimeConfig) Validate() error {
+	// Image, tag, and port must be present.
+	if c.Image == "" {
+		return errors.New("workspace: runtime.image is required when enabled")
+	}
+	if c.Tag == "" {
+		return errors.New("workspace: runtime.tag is required when enabled")
+	}
+	if c.Port == 0 {
+		return errors.New("workspace: runtime.port is required when enabled")
+	}
+
+	// Resource limits must parse into accepted Coolify/Docker values. The
+	// shared database resource's own limits live in Coolify, not this config;
+	// only the application runtime resource limits are validated here.
 	for _, v := range []struct {
 		field string
 		value string
 	}{
-		{"runtime.memory_limit", c.Runtime.MemoryLimit},
-		{"runtime.memory_reservation", c.Runtime.MemoryReservation},
+		{"runtime.memory_limit", c.MemoryLimit},
+		{"runtime.memory_reservation", c.MemoryReservation},
 	} {
 		if v.value != "" && !memoryLimitRe.MatchString(v.value) {
 			return fmt.Errorf("workspace: %s %q is not a valid memory limit", v.field, v.value)
 		}
 	}
-	if c.Runtime.CPULimit != "" && !cpuLimitRe.MatchString(c.Runtime.CPULimit) {
-		return fmt.Errorf("workspace: runtime.cpu_limit %q is not a valid CPU limit", c.Runtime.CPULimit)
+	if c.CPULimit != "" && !cpuLimitRe.MatchString(c.CPULimit) {
+		return fmt.Errorf("workspace: runtime.cpu_limit %q is not a valid CPU limit", c.CPULimit)
 	}
 
-	// 6. Storage mount paths must be absolute and unique.
-	seenMounts := make(map[string]string, len(c.Runtime.Storage))
-	for i, m := range c.Runtime.Storage {
-		if strings.TrimSpace(m.NameSuffix) == "" {
-			return fmt.Errorf("workspace: runtime.storage[%d].name_suffix is required", i)
-		}
-		if !filepath.IsAbs(m.MountPath) {
-			return fmt.Errorf("workspace: runtime.storage[%d].mount_path %q must be absolute", i, m.MountPath)
+	// Storage mount paths must be absolute and unique across the runtime's
+	// mounts.
+	seenMounts := make(map[string]string, len(c.Storage))
+	for i, m := range c.Storage {
+		if err := m.Validate(); err != nil {
+			return fmt.Errorf("workspace: runtime.storage[%d]: %w", i, err)
 		}
 		if prev, ok := seenMounts[m.MountPath]; ok {
 			return fmt.Errorf("workspace: runtime.storage mount_path %q is duplicated (%s and %s)", m.MountPath, prev, m.NameSuffix)
@@ -343,18 +343,42 @@ func (c WorkspaceConfig) Validate() error {
 		seenMounts[m.MountPath] = m.NameSuffix
 	}
 
-	// 7. Database environment key names must be non-empty and distinct.
-	if err := validateDistinctEnvKeys(map[string]string{
-		"host":     c.Runtime.DatabaseEnv.Host,
-		"port":     c.Runtime.DatabaseEnv.Port,
-		"name":     c.Runtime.DatabaseEnv.Name,
-		"user":     c.Runtime.DatabaseEnv.User,
-		"password": c.Runtime.DatabaseEnv.Password,
-	}); err != nil {
-		return err
-	}
+	// Database environment key names must be non-empty and distinct.
+	return c.DatabaseEnv.Validate()
+}
 
+// Validate performs structural validation of a single storage mount.
+func (c WorkspaceStorageConfig) Validate() error {
+	if strings.TrimSpace(c.NameSuffix) == "" {
+		return errors.New("name_suffix is required")
+	}
+	if !filepath.IsAbs(c.MountPath) {
+		return fmt.Errorf("mount_path %q must be absolute", c.MountPath)
+	}
 	return nil
+}
+
+// Validate performs structural validation of the shared MySQL/MariaDB resource
+// config. Only the Coolify resource ID is configured here (see
+// WorkspaceDatabaseConfig); it is required when the workspace service is
+// enabled.
+func (c WorkspaceDatabaseConfig) Validate() error {
+	if c.ResourceID == "" {
+		return errors.New("workspace: database.resource_id is required when enabled")
+	}
+	return nil
+}
+
+// Validate performs structural validation of the runtime's database environment
+// variable names: each role must map to a non-empty, distinct key.
+func (c DatabaseEnvironmentKeys) Validate() error {
+	return validateDistinctEnvKeys(map[string]string{
+		"host":     c.Host,
+		"port":     c.Port,
+		"name":     c.Name,
+		"user":     c.User,
+		"password": c.Password,
+	})
 }
 
 func validateDistinctEnvKeys(keys map[string]string) error {
@@ -376,11 +400,11 @@ func validateDistinctEnvKeys(keys map[string]string) error {
 // http://127.0.0.1, http://[::1]).
 func validateCoolifyURL(raw string) error {
 	if raw == "" {
-		return errors.New("workspace: provider.api_url is required when enabled")
+		return errors.New("workspace: coolify.api_url is required when enabled")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("workspace: provider.api_url %q is not a valid URL: %w", raw, err)
+		return fmt.Errorf("workspace: coolify.api_url %q is not a valid URL: %w", raw, err)
 	}
 	if u.Scheme == "https" {
 		return nil
@@ -388,7 +412,7 @@ func validateCoolifyURL(raw string) error {
 	if u.Scheme == "http" && isLoopbackHost(u.Hostname()) {
 		return nil
 	}
-	return fmt.Errorf("workspace: provider.api_url %q must use https (http is only allowed for loopback development hosts)", raw)
+	return fmt.Errorf("workspace: coolify.api_url %q must use https (http is only allowed for loopback development hosts)", raw)
 }
 
 func isLoopbackHost(host string) bool {
