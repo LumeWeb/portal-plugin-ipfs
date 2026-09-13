@@ -12,9 +12,10 @@ import (
 // separate from publishing, so website_id is optional: omit it to create an
 // unattached workspace that needs no Website record or domain.
 type WorkspaceRequest struct {
-	// WebsiteID is the optional website to attach the workspace to. Omit it to
-	// create an unattached workspace.
-	WebsiteID *uint `json:"website_id" zog:"optional"`
+	// WebsiteID is the optional website to attach the workspace to. Omit it
+	// (nil) to create an unattached workspace; a nil WebsiteID is omitted from
+	// the JSON wire form so clients never see or need to send website_id 0.
+	WebsiteID *int `json:"website_id,omitempty" zog:"optional"`
 }
 
 // ToModel satisfies httputil.DTORequest for the workspace request. The service

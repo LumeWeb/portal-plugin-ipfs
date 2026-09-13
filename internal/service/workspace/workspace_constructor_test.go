@@ -30,10 +30,15 @@ func TestWorkspaceService_DisabledConfigPassesStartupValidation(t *testing.T) {
 
 func TestWorkspaceService_InvalidEnabledConfigFailsBeforeNetwork(t *testing.T) {
 	// An enabled but incomplete config must fail structural validation before
-	// any Coolify client/network is touched (ctx stays nil).
+	// any Coolify client/network is touched (ctx stays nil). The workspace
+	// service's own fields are valid so this exercises the independently-owned
+	// Coolify child validator (not the parent WorkspaceConfig, which owns only
+	// its own fields).
 	svc := &WorkspaceService{config: &pluginConfig.WorkspaceConfig{
-		Enabled: true,
-		Provider: pluginConfig.WorkspaceProviderConfig{
+		Enabled:            true,
+		ReconcileBatchSize: 50,
+		RetryMaxAttempts:   3,
+		Coolify: pluginConfig.WorkspaceCoolifyConfig{
 			APIURL: "https://coolify.example.com",
 		},
 	}}

@@ -158,7 +158,7 @@ func newProvisionService(tb coreTesting.TB, db *gorm.DB, provider *fakeWorkspace
 			Enabled:          true,
 			ProvisionTimeout: time.Minute,
 			PollInterval:     time.Millisecond,
-			Provider: pluginConfig.WorkspaceProviderConfig{
+			Coolify: pluginConfig.WorkspaceCoolifyConfig{
 				ServerUUID:      "srv-1",
 				ProjectUUID:     "proj-1",
 				EnvironmentUUID: "env-1",

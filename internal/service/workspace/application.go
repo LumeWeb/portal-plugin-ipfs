@@ -231,7 +231,7 @@ func (s *WorkspaceService) findCandidateApplication(ctx context.Context, ws *plu
 // a public Caddy route; Coolify Basic Auth is deliberately not applied to this
 // path. The workspace service never HTTP-probes this path itself.
 func (s *WorkspaceService) buildCreateApplicationRequest(ws *pluginDb.Workspace, username, password string) coolify.CreateApplicationRequest {
-	prov := s.config.Provider
+	prov := s.config.Coolify
 	rt := s.config.Runtime
 	hostname := ws.Hostname()
 	return coolify.CreateApplicationRequest{
@@ -391,7 +391,7 @@ func (s *WorkspaceService) desiredStorageMounts(ws *pluginDb.Workspace) []coolif
 	mounts := make([]coolify.StorageMount, 0, len(cfg))
 	ns := ""
 	if s.config != nil {
-		ns = s.config.Provider.InstallNamespace
+		ns = s.config.Coolify.InstallNamespace
 	}
 	for _, sc := range cfg {
 		mounts = append(mounts, coolify.StorageMount{
@@ -439,7 +439,7 @@ func (s *WorkspaceService) buildEnvironment(ws *pluginDb.Workspace, dbCreds *Dat
 	// The authoring hostname (PORTAL_WORKSPACE_URL) is always the workspace's
 	// own platform hostname, independent of any published website domain.
 	env := []coolify.EnvironmentVariable{
-		{Key: "PORTAL_API_URL", Value: s.config.PortalAPIURL},
+		{Key: "PORTAL_API_URL", Value: s.portalAPIURL},
 		{Key: "PORTAL_API_KEY", Value: apiKey.Token, Secret: true},
 		{Key: "PORTAL_WORKSPACE_URL", Value: "https://" + hostname},
 
@@ -625,7 +625,7 @@ func isApplicationFailure(err error) bool {
 func (s *WorkspaceService) applicationName(id uint) string {
 	ns := ""
 	if s.config != nil {
-		ns = s.config.Provider.InstallNamespace
+		ns = s.config.Coolify.InstallNamespace
 	}
 	return deterministicApplicationName(ns, id)
 }
@@ -648,7 +648,7 @@ func deterministicApplicationName(ns string, id uint) string {
 func (s *WorkspaceService) applicationTag() string {
 	ns := ""
 	if s.config != nil {
-		ns = s.config.Provider.InstallNamespace
+		ns = s.config.Coolify.InstallNamespace
 	}
 	return deterministicWorkspaceTag(ns)
 }

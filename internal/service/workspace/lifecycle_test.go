@@ -132,8 +132,6 @@ func lifecycleConfig() *pluginConfig.WorkspaceConfig {
 		Enabled:          true,
 		ProvisionTimeout: time.Minute,
 		PollInterval:     time.Millisecond,
-		PlatformDomain:   "build.example.com",
-		PortalAPIURL:     "https://portal.example.com",
 		Runtime: pluginConfig.WorkspaceRuntimeConfig{
 			HealthPath: "/healthz",
 			DatabaseEnv: pluginConfig.DatabaseEnvironmentKeys{
@@ -169,6 +167,7 @@ func newLifecycleService(tb coreTesting.TB, db *gorm.DB, provider coolify.Worksp
 		apiKeySvc:     apiKey,
 		mysqlProv:     &fakeEngineer{},
 		identityKey:   testIdentityPrivateKey(),
+		portalAPIURL:  "https://portal.example.com",
 	}
 }
 

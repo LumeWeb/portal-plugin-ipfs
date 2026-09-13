@@ -180,8 +180,7 @@ func newAppService(tb coreTesting.TB, db *gorm.DB, provider *fakeAppProvider, rt
 			Enabled:          true,
 			ProvisionTimeout: time.Minute,
 			PollInterval:     time.Millisecond,
-			PortalAPIURL:     "https://api.example.com",
-			Provider: pluginConfig.WorkspaceProviderConfig{
+			Coolify: pluginConfig.WorkspaceCoolifyConfig{
 				ServerUUID:      "srv-1",
 				ProjectUUID:     "proj-1",
 				EnvironmentUUID: "env-1",
@@ -190,7 +189,8 @@ func newAppService(tb coreTesting.TB, db *gorm.DB, provider *fakeAppProvider, rt
 			Runtime:  rt,
 			Database: pluginConfig.WorkspaceDatabaseConfig{ResourceID: "shared-db-resource"},
 		},
-		provider: provider,
+		provider:     provider,
+		portalAPIURL: "https://api.example.com",
 	}
 }
 
@@ -206,7 +206,7 @@ func TestReconcileApplication_CreatePersistsIDAndProxyCreds(t *testing.T) {
 		// This installation shares placement with other installations, so it
 		// sets a namespace: the deterministic name is prefixed and every
 		// application carries the installation-scoped tag.
-		svc.config.Provider.InstallNamespace = "portalx"
+		svc.config.Coolify.InstallNamespace = "portalx"
 
 		res, err := svc.ReconcileApplication(context.Background(), ws)
 		require.NoError(tb, err)
@@ -360,7 +360,7 @@ func TestReconcileApplication_TagScopedAdoptionExactName(t *testing.T) {
 			appStatus: coolify.ResourceStatusRunning,
 		}
 		svc := newAppService(tb, db, fake, appRuntimeConfig())
-		svc.config.Provider.InstallNamespace = "portalx"
+		svc.config.Coolify.InstallNamespace = "portalx"
 
 		_, err := svc.ReconcileApplication(context.Background(), ws)
 		require.NoError(tb, err)
@@ -392,7 +392,7 @@ func TestReconcileApplication_SameNameWithoutTagNotAdopted(t *testing.T) {
 			appStatus:    coolify.ResourceStatusRunning,
 		}
 		svc := newAppService(tb, db, fake, appRuntimeConfig())
-		svc.config.Provider.InstallNamespace = "portalx"
+		svc.config.Coolify.InstallNamespace = "portalx"
 
 		_, err := svc.ReconcileApplication(context.Background(), ws)
 		require.NoError(tb, err)
@@ -423,7 +423,7 @@ func TestReconcileApplication_TagScopedAmbiguityFailsClosed(t *testing.T) {
 			},
 		}
 		svc := newAppService(tb, db, fake, appRuntimeConfig())
-		svc.config.Provider.InstallNamespace = "portalx"
+		svc.config.Coolify.InstallNamespace = "portalx"
 
 		_, err := svc.ReconcileApplication(context.Background(), ws)
 		require.ErrorIs(tb, err, ErrApplicationAdoptionAmbiguous)
@@ -656,7 +656,7 @@ func TestWorkspaceTagDerivation(t *testing.T) {
 
 	// applicationTags wraps applicationTag: empty when no namespace.
 	svc := &WorkspaceService{config: &pluginConfig.WorkspaceConfig{
-		Provider: pluginConfig.WorkspaceProviderConfig{InstallNamespace: "portalx"},
+		Coolify: pluginConfig.WorkspaceCoolifyConfig{InstallNamespace: "portalx"},
 	}}
 	assert.Equal(t, []string{"portalx-workspaces"}, svc.applicationTags())
 	assert.Equal(t, "portalx-workspaces", svc.applicationTag())

@@ -18,6 +18,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db/migrations"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/testopts"
+	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.lumeweb.com/queryutil"
@@ -37,26 +38,57 @@ var workspaceTestOptions = coreTesting.CombineOptions(
 func strptr(v string) *string { return &v }
 
 // fakePlatformResolver is a fake platformDomainResolver for tests that returns
-// a single configured enabled PlatformDomain matching the requested domain.
+// the configured list of enabled PlatformDomain roots.
 type fakePlatformResolver struct {
-	id        uint
-	domain    string
-	namespace pluginDb.DomainNamespace
-	enabled   bool
+	roots []*pluginDb.PlatformDomain
 }
 
-func (f *fakePlatformResolver) GetEnabledPlatformDomain(_ context.Context, domain string, namespace pluginDb.DomainNamespace) (*pluginDb.PlatformDomain, error) {
-	if !f.enabled || f.domain == "" || domain != f.domain {
-		return nil, nil
-	}
-	if namespace != "" && f.namespace != "" && namespace != f.namespace {
-		return nil, nil
-	}
-	return &pluginDb.PlatformDomain{ID: f.id, Domain: f.domain, Namespace: f.namespace, Enabled: f.enabled}, nil
+func (f *fakePlatformResolver) ListEnabledPlatformDomains(_ context.Context, _ queryutil.Pagination) ([]*pluginDb.PlatformDomain, int64, error) {
+	return f.roots, int64(len(f.roots)), nil
 }
 
 func enabledFakeResolver(id uint, domain, namespace string) *fakePlatformResolver {
-	return &fakePlatformResolver{id: id, domain: domain, namespace: pluginDb.DomainNamespace(namespace), enabled: true}
+	return &fakePlatformResolver{roots: []*pluginDb.PlatformDomain{
+		{ID: id, Domain: domain, Namespace: pluginDb.DomainNamespace(namespace), Enabled: true},
+	}}
+}
+
+// TestDerivePortalAPIURL verifies PORTAL_API_URL is derived from the portal
+// core config (this plugin's API subdomain on the core domain, secure scheme,
+// and active port) rather than from a duplicate workspace config field.
+func TestDerivePortalAPIURL(t *testing.T) {
+	t.Run("secure with external port", func(t *testing.T) {
+		got := derivePortalAPIURL("ipfs", config.CoreConfig{
+			Domain:       "example.com",
+			Secure:       true,
+			Port:         8080,
+			ExternalPort: 443,
+		})
+		assert.Equal(t, "https://ipfs.example.com:443", got)
+	})
+
+	t.Run("insecure uses core port", func(t *testing.T) {
+		got := derivePortalAPIURL("ipfs", config.CoreConfig{
+			Domain: "example.com",
+			Port:   8080,
+		})
+		assert.Equal(t, "http://ipfs.example.com:8080", got)
+	})
+
+	t.Run("empty subdomain falls back to root", func(t *testing.T) {
+		got := derivePortalAPIURL("", config.CoreConfig{Domain: "example.com", Port: 80})
+		assert.Equal(t, "http://example.com:80", got)
+	})
+
+	t.Run("empty domain yields empty url", func(t *testing.T) {
+		got := derivePortalAPIURL("ipfs", config.CoreConfig{Port: 80})
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("whitespace and dots are trimmed from subdomain", func(t *testing.T) {
+		got := derivePortalAPIURL(" ipfs. ", config.CoreConfig{Domain: "Example.COM", Secure: true, Port: 443})
+		assert.Equal(t, "https://ipfs.example.com:443", got)
+	})
 }
 
 // newTestService constructs a workspace service wired to the given DB, mocks,
@@ -70,9 +102,7 @@ func newTestService(tb coreTesting.TB, db *gorm.DB, websiteSvc pluginCore.Websit
 	svc := &WorkspaceService{
 		BaseComponent: bc,
 		config: &pluginConfig.WorkspaceConfig{
-			Enabled:                 true,
-			PlatformDomain:          "build.example.com",
-			PlatformDomainNamespace: "icann",
+			Enabled: true,
 		},
 		websiteSvc:  websiteSvc,
 		platformSvc: platformSvc,
@@ -204,11 +234,52 @@ func TestWorkspaceService_Create_PlatformDomainUnavailable(t *testing.T) {
 		mockWS := mocks.NewMockWebsiteService(tb)
 		_ = db
 
-		// No enabled platform domain matches the config.
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "other.example.com", "icann"))
+		// No enabled platform domain registered → the hostname root is
+		// unavailable.
+		svc := newTestService(tb, db, mockWS, &fakePlatformResolver{})
 
 		_, err := svc.Create(context.Background(), 1, new(uint(1)))
 		assert.ErrorIs(tb, err, ErrWorkspacePlatformDomainUnavailable)
+	}, workspaceTestOptions)
+}
+
+func TestWorkspaceService_Create_MultipleEnabledPlatformDomainsAmbiguous(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		mockWS := mocks.NewMockWebsiteService(tb)
+		_ = db
+
+		// Two enabled roots make the workspace hostname root ambiguous; create
+		// must fail rather than silently pick one.
+		svc := newTestService(tb, db, mockWS, &fakePlatformResolver{roots: []*pluginDb.PlatformDomain{
+			{ID: 10, Domain: "build.example.com", Namespace: pluginDb.DomainNamespaceICANN, Enabled: true},
+			{ID: 11, Domain: "build.alt.example", Namespace: pluginDb.DomainNamespaceICANN, Enabled: true},
+		}})
+
+		_, err := svc.Create(context.Background(), 1, new(uint(1)))
+		assert.ErrorIs(tb, err, ErrWorkspacePlatformDomainAmbiguous)
+	}, workspaceTestOptions)
+}
+
+func TestWorkspaceService_Create_SinglePlatformRootNamespaceFromDB(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		insertWebsite(tb, db, 1, 1)
+
+		mockWS := mocks.NewMockWebsiteService(tb)
+		mockWS.EXPECT().GetWebsite(mock.Anything, uint(1), uint(1)).
+			Return(&pluginDb.Website{ID: 1, UserID: 1}, nil)
+
+		// The single enabled root's namespace comes from the DB row (HNS here),
+		// not from any config value.
+		svc := newTestService(tb, db, mockWS, &fakePlatformResolver{roots: []*pluginDb.PlatformDomain{
+			{ID: 10, Domain: "build.example.com", Namespace: pluginDb.DomainNamespaceHNS, Enabled: true},
+		}})
+
+		ws, err := svc.Create(context.Background(), 1, new(uint(1)))
+		require.NoError(tb, err)
+		assert.Equal(tb, uint(10), ws.PlatformDomainID)
+		assert.Equal(tb, pluginDb.DomainNamespaceHNS, ws.PlatformDomain.Namespace)
 	}, workspaceTestOptions)
 }
 
