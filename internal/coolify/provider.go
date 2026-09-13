@@ -74,12 +74,11 @@ type CreateApplicationRequest struct {
 	Tag                string
 	Port               string
 	Domain             string
-	BasicAuthUsername  string
-	BasicAuthPassword  string
 	HealthCheckEnabled bool
 	// HealthCheckPath is the Docker/Coolify container health-check path, probed
-	// by the container itself (localhost/container access), NOT a public Caddy
-	// route. Coolify Basic Auth is deliberately not applied to it.
+	// by the container itself (localhost/container access), and is reachable
+	// without proxy Basic Auth (which the image enforces from injected env
+	// vars only on public routes).
 	HealthCheckPath       string
 	HealthCheckPort       string
 	HealthCheckMethod     string
@@ -162,7 +161,6 @@ type WorkspaceProvider interface {
 	CreateApplication(context.Context, CreateApplicationRequest) (CreatedResource, error)
 	GetApplication(context.Context, string) (ApplicationResource, error)
 	SetApplicationEnvironment(context.Context, string, []EnvironmentVariable) error
-	SetApplicationBasicAuth(context.Context, string, string, string) error
 	EnsureApplicationStorage(context.Context, string, []StorageMount) error
 	StartApplication(context.Context, string) (DeploymentResource, error)
 	StopApplication(context.Context, string) error
@@ -236,10 +234,6 @@ func (p *Provider) GetApplication(ctx context.Context, id string) (ApplicationRe
 
 func (p *Provider) SetApplicationEnvironment(ctx context.Context, id string, env []EnvironmentVariable) error {
 	return p.client.SetApplicationEnvironment(ctx, id, env)
-}
-
-func (p *Provider) SetApplicationBasicAuth(ctx context.Context, id string, username, password string) error {
-	return p.client.SetApplicationBasicAuth(ctx, id, username, password)
 }
 
 func (p *Provider) EnsureApplicationStorage(ctx context.Context, id string, mounts []StorageMount) error {

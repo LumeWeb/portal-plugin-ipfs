@@ -232,19 +232,17 @@ func TestReconcileApplication_CreatePersistsIDAndProxyCreds(t *testing.T) {
 		// noindex for that hostname.
 		assert.Equal(tb, "https://ws-test.build.example.com", req.Domain)
 		assert.Equal(tb, []string{"ws-test.build.example.com"}, req.NoindexDomains)
-		// Proxy Basic Auth enabled with generated credentials (a strong random
-		// password, separate from the portal API key).
-		require.NotEmpty(tb, req.BasicAuthUsername)
-		require.NotEmpty(tb, req.BasicAuthPassword)
-		assert.GreaterOrEqual(tb, len(req.BasicAuthPassword), 32)
-
+		// Proxy Basic Auth is NOT part of the create payload; credentials are
+		// generated (a strong random password, separate from the portal API
+		// key) and injected later as secret env vars.
 		// Resource ID persisted immediately; proxy credentials persisted.
 		require.NotNil(tb, ws.ApplicationResourceID)
 		assert.Equal(tb, "app-created", *ws.ApplicationResourceID)
 		require.NotNil(tb, ws.ProxyUsername)
 		require.NotNil(tb, ws.ProxyPassword)
-		assert.Equal(tb, req.BasicAuthUsername, *ws.ProxyUsername)
-		assert.Equal(tb, req.BasicAuthPassword, *ws.ProxyPassword)
+		assert.NotEmpty(tb, *ws.ProxyUsername)
+		assert.NotEmpty(tb, *ws.ProxyPassword)
+		assert.GreaterOrEqual(tb, len(*ws.ProxyPassword), 32)
 
 		var persisted pluginDb.Workspace
 		require.NoError(tb, db.First(&persisted, ws.ID).Error)
@@ -465,6 +463,9 @@ func TestSetApplicationEnvironment_SecretsAndKeys(t *testing.T) {
 		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
+		authUser, authPass := "auth-ws-user", "auth-ws-pass-super-secret"
+		ws.ProxyUsername, ws.ProxyPassword = &authUser, &authPass
+
 		fake := &fakeAppProvider{}
 		svc := newAppService(tb, db, fake, appRuntimeConfig())
 
@@ -498,6 +499,13 @@ func TestSetApplicationEnvironment_SecretsAndKeys(t *testing.T) {
 		assert.NotContains(tb, byKey, "PORTAL_WEBSITE_ID")
 		assert.NotContains(tb, byKey, "PORTAL_COOLIFY_APPLICATION_ID")
 
+		// Proxy Basic Auth is enforced by the image from the secret
+		// WORKSPACE_AUTH_* env vars (never a Coolify application field).
+		assert.True(tb, byKey["WORKSPACE_AUTH_USERNAME"].Secret)
+		assert.True(tb, byKey["WORKSPACE_AUTH_PASSWORD"].Secret)
+		assert.Equal(tb, "auth-ws-user", byKey["WORKSPACE_AUTH_USERNAME"].Value)
+		assert.Equal(tb, "auth-ws-pass-super-secret", byKey["WORKSPACE_AUTH_PASSWORD"].Value)
+
 		// Database values injected under the CONFIGURED key names.
 		assert.Equal(tb, "db.internal", byKey["WORDPRESS_DB_HOST"].Value)
 		assert.Equal(tb, "3306", byKey["WORDPRESS_DB_PORT"].Value)
@@ -518,7 +526,7 @@ func TestSetApplicationEnvironment_SecretsAndKeys(t *testing.T) {
 		// (COOLIFY_RESOURCE_UUID is injected by Coolify itself, not by the
 		// portal). Fixing the count catches any accidental
 		// remote-ID/extra key added to buildEnvironment.
-		assert.Len(tb, envs, 8, "runtime environment must contain exactly the portal contract + logical DB keys, with no workspace/website/resource ID")
+		assert.Len(tb, envs, 10, "runtime environment must contain exactly the portal contract + proxy auth + logical DB keys, with no workspace/website/resource ID")
 		for _, e := range envs {
 			assert.NotContains(tb, strings.ToLower(e.Key), "resource")
 			assert.NotContains(tb, strings.ToLower(e.Key), "coolify")

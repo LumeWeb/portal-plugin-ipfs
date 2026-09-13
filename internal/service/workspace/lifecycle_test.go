@@ -48,8 +48,6 @@ type fakeLifecycleProvider struct {
 	deleteAppErr   error
 
 	// rotation
-	basicAuthSets [][]string
-	basicAuthErr  error
 
 	// a simple ordered record of significant calls (for ordering assertions)
 	order []string
@@ -97,12 +95,6 @@ func (f *fakeLifecycleProvider) DeleteApplication(_ context.Context, _ string) e
 	f.deleteAppCalls++
 	f.record("delete-app")
 	return f.deleteAppErr
-}
-
-func (f *fakeLifecycleProvider) SetApplicationBasicAuth(_ context.Context, _ string, username, password string) error {
-	f.basicAuthSets = append(f.basicAuthSets, []string{username, password})
-	f.record("set-basic-auth")
-	return f.basicAuthErr
 }
 
 func (f *fakeLifecycleProvider) SetApplicationEnvironment(_ context.Context, _ string, envs []coolify.EnvironmentVariable) error {
@@ -190,6 +182,12 @@ func lifecycleWorkspace(tb coreTesting.TB, db *gorm.DB, status pluginDb.Workspac
 		DatabaseUser:          logName,
 		APIKeyID:              apiKeyID,
 	}
+	// An adopted application always carries portal-generated proxy
+	// credentials on the row; the application environment is built from them.
+	if appID != nil {
+		user, pass := "proxy-user", "proxy-pass"
+		ws.ProxyUsername, ws.ProxyPassword = &user, &pass
+	}
 	require.NoError(tb, db.Create(ws).Error)
 	attachPlatformDomain(ws)
 	return ws
@@ -273,9 +271,10 @@ func TestWorkspaceService_Resume_StartsAppAndMarksReady(t *testing.T) {
 		assert.Equal(tb, pluginDb.WorkspaceStatusReady, out.Status)
 		assert.Equal(tb, 1, fake.startAppCalls)
 		require.Len(tb, fake.envSets, 1)
-		// the environment includes the game secrets marked Secret: true; they are
-		// only written to Coolify, never returned/logged by the service.
-		require.Len(tb, fake.envSets[0], 8)
+		// the environment includes the secret entries (marked Secret: true);
+		// they are only written to Coolify, never returned/logged by the
+		// service.
+		require.Len(tb, fake.envSets[0], 10)
 		// readiness is decided by the Coolify application status (running) and
 		// the workspace is marked ready; no portal HTTP probe is performed.
 		var persisted pluginDb.Workspace
@@ -433,7 +432,8 @@ func TestWorkspaceService_RotateAccessCredentials_ReturnsOnlyProxyCreds(t *testi
 		require.NoError(tb, err)
 		assert.Equal(tb, user, creds.Username)
 		assert.Equal(tb, pass, creds.Password)
-		assert.Empty(tb, fake.basicAuthSets, "non-rotating access must not touch the provider")
+		assert.Empty(tb, fake.envSets, "non-rotating access must not touch the provider")
+		assert.Zero(tb, fake.startAppCalls, "non-rotating access must not redeploy")
 	}, workspaceTestOptions)
 }
 
@@ -453,8 +453,18 @@ func TestWorkspaceService_RotateAccessCredentials_PersistsAndAppliesNewCreds(t *
 		require.NotEmpty(tb, creds.Username)
 		require.NotEmpty(tb, creds.Password)
 		assert.NotEqual(tb, user, creds.Username)
-		require.Len(tb, fake.basicAuthSets, 1)
-		assert.Equal(tb, []string{creds.Username, creds.Password}, fake.basicAuthSets[0])
+		// Rotated credentials are applied as secret env vars and a redeploy
+		// is triggered so the image picks them up.
+		require.Len(tb, fake.envSets, 1)
+		envByKey := make(map[string]coolify.EnvironmentVariable, len(fake.envSets[0]))
+		for _, e := range fake.envSets[0] {
+			envByKey[e.Key] = e
+		}
+		assert.Equal(tb, creds.Username, envByKey["WORKSPACE_AUTH_USERNAME"].Value)
+		assert.Equal(tb, creds.Password, envByKey["WORKSPACE_AUTH_PASSWORD"].Value)
+		assert.True(tb, envByKey["WORKSPACE_AUTH_USERNAME"].Secret)
+		assert.True(tb, envByKey["WORKSPACE_AUTH_PASSWORD"].Secret)
+		assert.Equal(tb, 1, fake.startAppCalls, "rotation must redeploy so env changes take effect")
 
 		// Persisted on the row.
 		var persisted pluginDb.Workspace
@@ -474,7 +484,7 @@ func TestWorkspaceService_RotateAccessCredentials_ProviderFailureKeepsPersistedV
 		user, pass := "old-user", "old-pass"
 		ws.ProxyUsername, ws.ProxyPassword = &user, &pass
 		require.NoError(tb, db.Model(ws).Updates(map[string]any{"proxy_username": user, "proxy_password": pass}).Error)
-		fake := &fakeLifecycleProvider{basicAuthErr: errors.New("boom")}
+		fake := &fakeLifecycleProvider{envErr: errors.New("boom")}
 		svc := newLifecycleService(tb, db, fake, nil, nil)
 
 		_, err := svc.RotateAccessCredentials(context.Background(), 1, ws.ID, true)
@@ -482,7 +492,8 @@ func TestWorkspaceService_RotateAccessCredentials_ProviderFailureKeepsPersistedV
 		// The provider update is applied before persistence; a provider failure
 		// must NOT persist the new value, so the OLD credential remains intact
 		// and a retry can re-apply the same rotation consistently.
-		require.Len(tb, fake.basicAuthSets, 1, "provider must be called once before failing")
+		require.Len(tb, fake.envSets, 1, "provider must be called once before failing")
+		assert.Zero(tb, fake.startAppCalls, "no redeploy may be triggered when the env upsert fails")
 
 		var persisted pluginDb.Workspace
 		require.NoError(tb, db.First(&persisted, ws.ID).Error)
@@ -493,10 +504,37 @@ func TestWorkspaceService_RotateAccessCredentials_ProviderFailureKeepsPersistedV
 	}, workspaceTestOptions)
 }
 
+func TestWorkspaceService_RotateAccessCredentials_RetryableDeployFailuresKeepsPersistedValue(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		appID := "app-1"
+		ws := lifecycleWorkspace(tb, db, pluginDb.WorkspaceStatusReady, &appID, nil, nil)
+		user, pass := "old-user", "old-pass"
+		ws.ProxyUsername, ws.ProxyPassword = &user, &pass
+		require.NoError(tb, db.Model(ws).Updates(map[string]any{"proxy_username": user, "proxy_password": pass}).Error)
+		// The redeploy polls to a terminal failure.
+		fake := &fakeLifecycleProvider{depStatuses: []coolify.ResourceStatus{coolify.ResourceStatusFailed}}
+		svc := newLifecycleService(tb, db, fake, nil, nil)
+
+		_, err := svc.RotateAccessCredentials(context.Background(), 1, ws.ID, true)
+		require.Error(tb, err)
+		assert.ErrorContains(tb, err, "did not finish")
+		// Persistence only happens after the redeploy reaches a terminal
+		// success, so the OLD credential stays on the row when the deployment
+		// fails.
+		var persisted pluginDb.Workspace
+		require.NoError(tb, db.First(&persisted, ws.ID).Error)
+		require.NotNil(tb, persisted.ProxyUsername)
+		require.NotNil(tb, persisted.ProxyPassword)
+		assert.Equal(tb, user, *persisted.ProxyUsername, "old username must be preserved when the redeploy fails")
+		assert.Equal(tb, pass, *persisted.ProxyPassword, "old password must be preserved when the redeploy fails")
+	}, workspaceTestOptions)
+}
+
 // TestWorkspaceService_RotateAccessCredentials_AppliesProviderBeforePersist
 // verifies the rotation order: the new credential is applied to the provider
-// BEFORE it is persisted, so the provider and DB never disagree about which
-// value is active.
+// (secret env upsert) BEFORE it is persisted, so the provider and DB never
+// disagree about which value is active.
 func TestWorkspaceService_RotateAccessCredentials_AppliesProviderBeforePersist(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
@@ -513,8 +551,14 @@ func TestWorkspaceService_RotateAccessCredentials_AppliesProviderBeforePersist(t
 
 		// The provider is applied once with the returned credential, and the
 		// same value is then persisted (provider before persist).
-		require.Len(tb, fake.basicAuthSets, 1)
-		assert.Equal(tb, []string{creds.Username, creds.Password}, fake.basicAuthSets[0])
+		require.Len(tb, fake.envSets, 1)
+		envByKey := make(map[string]coolify.EnvironmentVariable, len(fake.envSets[0]))
+		for _, e := range fake.envSets[0] {
+			envByKey[e.Key] = e
+		}
+		assert.Equal(tb, creds.Username, envByKey["WORKSPACE_AUTH_USERNAME"].Value)
+		assert.Equal(tb, creds.Password, envByKey["WORKSPACE_AUTH_PASSWORD"].Value)
+		assert.Equal(tb, 1, fake.startAppCalls)
 
 		var persisted pluginDb.Workspace
 		require.NoError(tb, db.First(&persisted, ws.ID).Error)
@@ -522,6 +566,76 @@ func TestWorkspaceService_RotateAccessCredentials_AppliesProviderBeforePersist(t
 		require.NotNil(tb, persisted.ProxyPassword)
 		assert.Equal(tb, creds.Username, *persisted.ProxyUsername)
 		assert.Equal(tb, creds.Password, *persisted.ProxyPassword)
+	}, workspaceTestOptions)
+}
+
+func TestDeployRollback_RunsStepsLIFOAndDisarmsOnCommit(t *testing.T) {
+	var calls []string
+	rb := newDeployRollback()
+	defer rb.run(context.Background())
+
+	// Steps observe the ctx handed to run().
+	wantCtx := context.WithValue(context.Background(), ctxKeyTest{}, "rollback")
+	rb.push(func(ctx context.Context) {
+		calls = append(calls, "first-"+ctx.Value(ctxKeyTest{}).(string))
+	})
+	rb.push(func(ctx context.Context) {
+		calls = append(calls, "second-"+ctx.Value(ctxKeyTest{}).(string))
+	})
+
+	// Not committed: the deferred release runs steps LIFO (second before first).
+	rb.run(wantCtx)
+	require.Equal(t, []string{"second-rollback", "first-rollback"}, calls)
+
+	// A second run is a no-op (steps cleared), and after commit() the deferred
+	// release is disarmed entirely.
+	rb.push(func(context.Context) { calls = append(calls, "armed") })
+	rb.run(context.Background())
+	require.Equal(t, []string{"second-rollback", "first-rollback", "armed"}, calls)
+	rb.commit()
+	rb.run(context.Background())
+	require.Equal(t, []string{"second-rollback", "first-rollback", "armed"}, calls)
+}
+
+type ctxKeyTest struct{}
+
+func TestWorkspaceService_RotateAccessCredentials_RestoresOldEnvWhenRedeployFails(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		appID := "app-1"
+		ws := lifecycleWorkspace(tb, db, pluginDb.WorkspaceStatusReady, &appID, nil, nil)
+		user, pass := "old-user", "old-pass"
+		ws.ProxyUsername, ws.ProxyPassword = &user, &pass
+		require.NoError(tb, db.Model(ws).Updates(map[string]any{"proxy_username": user, "proxy_password": pass}).Error)
+		// The rotation deploy reaches a terminal FAILURE after the rotated env
+		// vars were upserted.
+		fake := &fakeLifecycleProvider{depStatuses: []coolify.ResourceStatus{coolify.ResourceStatusFailed}}
+		svc := newLifecycleService(tb, db, fake, nil, nil)
+
+		_, err := svc.RotateAccessCredentials(context.Background(), 1, ws.ID, true)
+		require.Error(tb, err)
+
+		// Rollback: Coolify env is restored to the OLD credential, the running
+		// runtime is redeployed on the restored env, and the row keeps the
+		// persisted values.
+		require.GreaterOrEqual(tb, len(fake.envSets), 2, "rollback must re-upsert the old credential")
+		assert.Equal(tb, 2, fake.startAppCalls, "rollback must redeploy the restored env")
+		restored := fake.envSets[len(fake.envSets)-1]
+		byKey := make(map[string]coolify.EnvironmentVariable, len(restored))
+		for _, e := range restored {
+			byKey[e.Key] = e
+		}
+		assert.Equal(tb, "old-user", byKey["WORKSPACE_AUTH_USERNAME"].Value)
+		assert.Equal(tb, "old-pass", byKey["WORKSPACE_AUTH_PASSWORD"].Value)
+		require.NotNil(tb, ws.ProxyUsername)
+		require.NotNil(tb, ws.ProxyPassword)
+		assert.Equal(tb, "old-user", *ws.ProxyUsername, "in-memory pointers must revert to the persisted values")
+		assert.Equal(tb, "old-pass", *ws.ProxyPassword, "in-memory pointers must revert to the persisted values")
+		// Row keeps the old credential (never persisted the staged rotation).
+		var persisted pluginDb.Workspace
+		require.NoError(tb, db.First(&persisted, ws.ID).Error)
+		assert.Equal(tb, "old-user", *persisted.ProxyUsername)
+		assert.Equal(tb, "old-pass", *persisted.ProxyPassword)
 	}, workspaceTestOptions)
 }
 
