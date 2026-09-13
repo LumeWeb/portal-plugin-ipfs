@@ -43,6 +43,19 @@ type WorkspaceResponse struct {
 	Updated time.Time `json:"updated"`
 }
 
+// WorkspaceListResponseResponse is a swagger-only DTO that represents the paginated response for workspaces.
+// It merges the generic queryutil.Response[*dto.WorkspaceResponse] for OpenAPI documentation.
+//
+// This struct exists due to a TODO bug where queryutil.Response generics are not getting detected
+// properly as an array type in the swagger documentation generation. By providing a concrete struct,
+// we ensure the swagger docs correctly show the data field as an array of WorkspaceResponse items.
+//
+// Note: This struct is only used for swagger documentation, not for actual encoding.
+type WorkspaceListResponseResponse struct {
+	Data  []WorkspaceResponse `json:"data"`
+	Total int64               `json:"total"`
+}
+
 func (r *WorkspaceResponse) FromModel(model *pluginDb.Workspace) error {
 	r.ID = model.ID
 	r.WebsiteID = model.WebsiteID
