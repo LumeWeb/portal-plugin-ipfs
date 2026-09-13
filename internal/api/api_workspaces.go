@@ -40,6 +40,19 @@ func toUintPtr(v *int) *uint {
 	return &u
 }
 
+// attachedWebsiteID converts the wire WebsiteID on the attach path into the
+// uint expected by the workspace service, rejecting nil and non-positive
+// (<= 0) values. Unlike the Create-path normalizer (toUintPtr), which treats
+// nil/<=0 as "unattached", attach REQUIRES a real website to link, so a
+// non-positive value is invalid: converting a negative int directly via
+// uint(*v) would silently wrap to an enormous positive ID.
+func attachedWebsiteID(v *int) (uint, bool) {
+	if v == nil || *v <= 0 {
+		return 0, false
+	}
+	return uint(*v), true
+}
+
 // workspaceError maps a workspace service error to the registered API error
 // codes for workspace routes.
 func workspaceError(err error) *core.Error {
@@ -202,12 +215,13 @@ func (a *API) attachWorkspace(c echo.Context) error {
 	if _, ok := httputil.DecodeAndValidateRequest[*dto.WorkspaceRequest](ctx, &req); !ok {
 		return nil
 	}
-	if req.WebsiteID == nil {
-		apiErr := NewError(ErrKeyInvalidRequest, errors.New("website_id is required to attach a workspace"))
+	websiteID, ok := attachedWebsiteID(req.WebsiteID)
+	if !ok {
+		apiErr := NewError(ErrKeyInvalidRequest, errors.New("website_id is required to attach a workspace and must be a positive integer"))
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	ws, err := a.workspaceService.Attach(ctx.Context.Request().Context(), user, workspaceID, uint(*req.WebsiteID))
+	ws, err := a.workspaceService.Attach(ctx.Context.Request().Context(), user, workspaceID, websiteID)
 	if err != nil {
 		a.Logger().Error("Failed to attach workspace", zap.Error(err), zap.Uint("workspace_id", workspaceID), zap.Uint("user_id", user))
 		apiErr := workspaceError(err)

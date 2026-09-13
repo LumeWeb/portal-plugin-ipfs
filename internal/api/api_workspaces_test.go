@@ -30,3 +30,35 @@ func TestToUintPtr(t *testing.T) {
 		assert.Equal(t, uint(42), *got)
 	})
 }
+
+// TestAttachedWebsiteID covers the attach-path conversion of the wire
+// WebsiteID. Unlike Create (which normalizes nil/<=0 to "unattached"), attach
+// REQUIRES a positive website to link, so nil and non-positive values must be
+// rejected (ok=false) before conversion: a negative int must never wrap to a
+// huge uint, and zero must not become an attached ID 0. Only a positive ID
+// passes through unchanged.
+func TestAttachedWebsiteID(t *testing.T) {
+	t.Run("nil is rejected", func(t *testing.T) {
+		id, ok := attachedWebsiteID(nil)
+		assert.False(t, ok)
+		assert.Equal(t, uint(0), id)
+	})
+
+	t.Run("zero is rejected", func(t *testing.T) {
+		id, ok := attachedWebsiteID(new(int(0)))
+		assert.False(t, ok)
+		assert.Equal(t, uint(0), id)
+	})
+
+	t.Run("negative is rejected (no wrap)", func(t *testing.T) {
+		id, ok := attachedWebsiteID(new(int(-1)))
+		assert.False(t, ok)
+		assert.Equal(t, uint(0), id)
+	})
+
+	t.Run("positive is accepted unchanged", func(t *testing.T) {
+		id, ok := attachedWebsiteID(new(int(42)))
+		require.True(t, ok)
+		assert.Equal(t, uint(42), id)
+	})
+}

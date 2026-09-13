@@ -248,6 +248,13 @@ func (s *WorkspaceService) startupValidate(ctx core.Context) error {
 	// plugin's API subdomain on the core domain/secure/active-port) with no
 	// duplicate configuration to drift.
 	s.portalAPIURL = derivePortalAPIURL(pluginInternal.ProtocolName, ctx.Config().Config().Core)
+	// Fail fast when the derivation produced no host (an empty/unconfigured
+	// core domain), so an empty PORTAL_API_URL can never be injected into a
+	// runtime. This must be validated here at startup, before any provisioning,
+	// rather than silently proxying an empty URL to every deployed workspace.
+	if err := validatePortalAPIURL(s.portalAPIURL); err != nil {
+		return err
+	}
 
 	client, err := coolify.NewClient(s.config.Coolify.APIURL, s.config.Coolify.APIToken)
 	if err != nil {
@@ -647,6 +654,16 @@ func derivePortalAPIURL(apiSubdomain string, core config.CoreConfig) string {
 		port = core.ExternalPort
 	}
 	return scheme + "://" + net.JoinHostPort(host, strconv.FormatUint(uint64(port), 10))
+}
+
+// validatePortalAPIURL rejects an empty derived portal API URL. An empty URL
+// means the core domain is unconfigured, so PORTAL_API_URL would be injected
+// empty into every workspace runtime; fail fast at startup instead.
+func validatePortalAPIURL(url string) error {
+	if url == "" {
+		return errors.New("workspace: portal api url is empty: core domain is not configured")
+	}
+	return nil
 }
 
 // newLabel returns a fresh DNS-safe opaque label via the injected generator.

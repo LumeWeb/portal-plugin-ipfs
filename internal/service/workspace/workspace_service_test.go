@@ -91,6 +91,34 @@ func TestDerivePortalAPIURL(t *testing.T) {
 	})
 }
 
+// TestValidatePortalAPIURL verifies startup fails fast when the derived portal
+// API URL is empty (an unconfigured core domain) so PORTAL_API_URL can never be
+// injected empty into a workspace runtime. A non-empty derived URL always
+// passes.
+func TestValidatePortalAPIURL(t *testing.T) {
+	t.Run("empty url is rejected at startup", func(t *testing.T) {
+		// Mirrors an empty core domain: derivePortalAPIURL returns "" and
+		// startupValidate must fail rather than allow an empty PORTAL_API_URL.
+		err := validatePortalAPIURL(derivePortalAPIURL("ipfs", config.CoreConfig{Port: 80}))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "portal api url is empty")
+	})
+
+	t.Run("secure url passes", func(t *testing.T) {
+		err := validatePortalAPIURL(derivePortalAPIURL("ipfs", config.CoreConfig{
+			Domain: "example.com", Secure: true, Port: 443,
+		}))
+		require.NoError(t, err)
+	})
+
+	t.Run("insecure url passes", func(t *testing.T) {
+		err := validatePortalAPIURL(derivePortalAPIURL("ipfs", config.CoreConfig{
+			Domain: "example.com", Port: 8080,
+		}))
+		require.NoError(t, err)
+	})
+}
+
 // newTestService constructs a workspace service wired to the given DB, mocks,
 // and a fixed label generator. It is constructed directly (not through the
 // factory) so tests can set Enabled=true and inject a fake platform resolver,
