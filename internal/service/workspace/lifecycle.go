@@ -168,12 +168,13 @@ func (s *WorkspaceService) Delete(ctx context.Context, userID uint, workspaceID 
 		return nil, ErrWorkspaceNotFound
 	}
 
-	// Validate the transition: an already-deleting workspace is not deleted
-	// again (the Delete API is idempotent at the DB level: a second call sees
-	// the soft-deleted row excluded from the ownership join).
-	if ws.Status == pluginDb.WorkspaceStatusDeleting {
-		return nil, fmt.Errorf("%w: workspace is already being deleted", ErrWorkspaceInvalidState)
-	}
+	// A delete that previously failed mid-teardown (status `deleting`) may be
+	// re-run: every step below is idempotent — revoking a revoked key is a
+	// no-op, provider deletes treat 404 as already deleted, logical drops use
+	// DROP ... IF EXISTS, RRSet deletes are PowerDNS no-ops — so a retry
+	// simply resumes where it stopped. A COMPLETED delete surfaces as
+	// not-found instead: the row is soft-deleted and excluded from Get, so
+	// the Delete API stays idempotent at the DB level without a status guard.
 
 	// 1. Mark deleting first so the row signals an in-progress teardown (and a
 	// concurrent reconciler/delete does not double-run provider deletes).

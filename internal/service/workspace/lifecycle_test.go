@@ -380,17 +380,39 @@ func TestWorkspaceService_Delete_TreatsProvider404AsAlreadyDeleted(t *testing.T)
 	}, workspaceTestOptions)
 }
 
-func TestWorkspaceService_Delete_RejectsAlreadyDeleting(t *testing.T) {
+// Regression test: a delete that fails mid-teardown (here: the DNS teardown
+// step) leaves the row `deleting`, and a retry must resume the teardown
+// instead of being rejected by a status guard — otherwise the workspace is
+// stranded in `deleting` forever and the authoring-hostname record stays
+// orphaned in the platform zone.
+func TestWorkspaceService_Delete_RetriesAfterMidTeardownFailure(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		ws := lifecycleWorkspace(tb, db, pluginDb.WorkspaceStatusDeleting, nil, nil, nil)
 		fake := &fakeLifecycleProvider{}
 		svc := newLifecycleService(tb, db, fake, nil, nil)
+		dns := svc.dnsSvc.(*fakeDNSService)
 
+		dns.deleteErr = assert.AnError
 		_, err := svc.Delete(context.Background(), 1, ws.ID)
-		require.Error(tb, err)
-		assert.ErrorIs(tb, err, ErrWorkspaceInvalidState)
-		assert.Equal(tb, 0, fake.deleteAppCalls, "already-deleting must not delete provider resources again")
+		require.ErrorIs(tb, err, ErrWorkspaceDNSRecordFailed)
+
+		// The failed attempt tombstoned nothing: the row stays live and
+		// `deleting`.
+		var live int64
+		require.NoError(tb, db.Model(&pluginDb.Workspace{}).Where("id = ?", ws.ID).Count(&live).Error)
+		assert.Equal(tb, int64(1), live)
+
+		// A retry with the DNS failure cleared resumes and completes.
+		dns.deleteErr = nil
+		out, err := svc.Delete(context.Background(), 1, ws.ID)
+		require.NoError(tb, err)
+		assert.NotNil(tb, out.DeletedAt)
+
+		// The completed delete tombstoned the row (the strict unique keys are
+		// reclaimed only by the purge-before-insert re-provision path).
+		require.NoError(tb, db.Model(&pluginDb.Workspace{}).Where("id = ?", ws.ID).Count(&live).Error)
+		assert.Equal(tb, int64(0), live, "workspace must be soft-deleted after the retry")
 	}, workspaceTestOptions)
 }
 
