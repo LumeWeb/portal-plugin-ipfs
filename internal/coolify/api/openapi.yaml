@@ -2077,7 +2077,6 @@ components:
       - uuid
       - name
       - status
-      - type
       properties:
         uuid:
           type: string
@@ -2085,7 +2084,10 @@ components:
           type: string
         status:
           type: string
-        type:
+        # Upstream Coolify models append "database_type" (values such as
+        # "standalone-mysql", "standalone-mariadb"); it has never sent a
+        # bare "type" field on database resources.
+        database_type:
           type: string
         internal_db_url:
           type: string

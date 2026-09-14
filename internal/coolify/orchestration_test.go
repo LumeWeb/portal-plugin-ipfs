@@ -62,7 +62,7 @@ func (f *smokeFake) handler() http.Handler {
 		case http.MethodGet:
 			if !f.sensitiveOk {
 				writeJSON(w, http.StatusOK, map[string]string{
-					"uuid": "db-1", "name": "db", "status": "running", "type": "mariadb",
+					"uuid": "db-1", "name": "db", "status": "running", "database_type": "standalone-mariadb",
 				})
 				return
 			}
@@ -70,7 +70,7 @@ func (f *smokeFake) handler() http.Handler {
 				"uuid":             "db-1",
 				"name":             "db",
 				"status":           "running",
-				"type":             "mariadb",
+				"database_type":    "standalone-mariadb",
 				"internal_db_url":  "mariadb://smoke-user:smoke-pass@db-1.internal:3306/smokedb",
 				"mariadb_user":     "smoke-user",
 				"mariadb_password": "smoke-pass",

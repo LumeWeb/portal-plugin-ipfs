@@ -150,15 +150,19 @@ func (c *Client) GetDatabase(ctx context.Context, resourceID string) (DatabaseRe
 	d := resp.JSON200
 	out.ID = d.Uuid
 	out.Status = normalizeResourceStatus(d.Status)
-	out.Type = d.Type
+	// Upstream reports the engine via the model-appended database_type
+	// attribute ("standalone-mysql", "standalone-mariadb"), not a "type"
+	// field; normalize it to the bare engine name.
+	engine := strings.TrimPrefix(strings.ToLower(deref(d.DatabaseType)), "standalone-")
+	out.Type = engine
 	out.InternalURL = deref(d.InternalDbUrl)
-	switch {
-	case strings.EqualFold(d.Type, "mariadb"):
+	switch engine {
+	case "mariadb":
 		out.Username = deref(d.MariadbUser)
 		out.Password = deref(d.MariadbPassword)
 		out.Database = deref(d.MariadbDatabase)
 		out.RootPassword = deref(d.MariadbRootPassword)
-	case strings.EqualFold(d.Type, "mysql"):
+	case "mysql":
 		out.Username = deref(d.MysqlUser)
 		out.Password = deref(d.MysqlPassword)
 		out.Database = deref(d.MysqlDatabase)
