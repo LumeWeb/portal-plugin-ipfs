@@ -170,7 +170,7 @@ func newLifecycleService(tb coreTesting.TB, db *gorm.DB, provider coolify.Worksp
 func lifecycleWorkspace(tb coreTesting.TB, db *gorm.DB, status pluginDb.WorkspaceStatus, appID *string, logName *string, apiKeyID *uint) *pluginDb.Workspace {
 	tb.Helper()
 	insertWebsite(tb, db, 1, 1)
-	insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+	insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 	ws := &pluginDb.Workspace{
 		UserID:                1,
 		WebsiteID:             new(uint(1)),

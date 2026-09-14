@@ -23,7 +23,7 @@ import (
 // reloading the row from the DB (which would wipe in-memory-only fields such as
 // injected proxy credentials). The DB row keeps platform_domain_id=10.
 func attachPlatformDomain(ws *pluginDb.Workspace) *pluginDb.Workspace {
-	ws.PlatformDomain = pluginDb.PlatformDomain{ID: ws.PlatformDomainID, Domain: "build.example.com"}
+	ws.PlatformDomain = pluginDb.PlatformDomain{ID: ws.PlatformDomainID, Domain: "example.com"}
 	return ws
 }
 
@@ -198,7 +198,7 @@ func TestReconcileApplication_CreatePersistsIDAndProxyCreds(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
 		fake := &fakeAppProvider{appStatus: coolify.ResourceStatusRunning}
@@ -256,7 +256,7 @@ func TestReconcileApplication_ProxyCredsReusedOnResume(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
 		fake := &fakeAppProvider{appStatus: coolify.ResourceStatusRunning}
@@ -285,7 +285,7 @@ func TestReconcileApplication_PartialFailureResumeDoesNotDuplicate(t *testing.T)
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
 		// First pass: create persists the ID, but a transient GetApplication
@@ -316,7 +316,7 @@ func TestReconcileApplication_AdoptExistingAfterAmbiguousCreate(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
 		// No installation namespace is configured, so recovery falls back to a
@@ -344,7 +344,7 @@ func TestReconcileApplication_TagScopedAdoptionExactName(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
 		name := "portalx-workspace-" + itoa(ws.ID) + "-app"
@@ -376,7 +376,7 @@ func TestReconcileApplication_SameNameWithoutTagNotAdopted(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
 		name := "portalx-workspace-" + itoa(ws.ID) + "-app"
@@ -408,7 +408,7 @@ func TestReconcileApplication_TagScopedAmbiguityFailsClosed(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
 		name := "portalx-workspace-" + itoa(ws.ID) + "-app"
@@ -435,7 +435,7 @@ func TestReconcileApplication_DomainConflictIsPermanent(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
 		fake := &fakeAppProvider{
@@ -460,7 +460,7 @@ func TestSetApplicationEnvironment_SecretsAndKeys(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
 		authUser, authPass := "auth-ws-user", "auth-ws-pass-super-secret"
@@ -538,7 +538,7 @@ func TestReconcileApplicationStorage_Idempotent(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
 		rt := appRuntimeConfig()
@@ -569,7 +569,7 @@ func TestStartAndObserveApplication_Success(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 		user := "wsuser"
 		pass := "wspass"
@@ -603,7 +603,7 @@ func TestStartAndObserveApplication_DeploymentFailure(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
 		fake := &fakeAppProvider{
@@ -628,7 +628,7 @@ func TestStartAndObserveApplication_UnhealthyApplication(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
 		// The deployment finishes, but the application reports the Docker

@@ -102,7 +102,7 @@ func getPluginInfoWithoutTemplates() core.PluginInfo {
 					WithCronExpression("* * * * *"),
 			},
 			{
-				Name:    workspace.ReconcileJobType,
+				Name:    "workspace_reconciler",
 				Factory: func() (core.CronJob, error) { return workspace.NewReconcileJob(), nil },
 				Schedule: core.NewCronScheduleDefinition(core.CronScheduleTypeCron).
 					WithCronExpression("* * * * *"),
