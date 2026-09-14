@@ -210,7 +210,14 @@ func (s *WorkspaceService) Delete(ctx context.Context, userID uint, workspaceID 
 		return nil, err
 	}
 
-	// 5. Soft-delete the workspace. The strict unique keys are intentionally
+	// 5. Delete the authoring hostname's record from the platform root's zone.
+	// Like the other provider deletions, a failure aborts the teardown so the
+	// caller can retry the idempotent Delete; a missing zone is a no-op.
+	if err := s.DeleteDNSRecords(ctx, ws); err != nil {
+		return nil, fmt.Errorf("workspace: failed to delete workspace dns record: %w", err)
+	}
+
+	// 6. Soft-delete the workspace. The strict unique keys are intentionally
 	// left STRICT; the tombstone must be purged by a later re-provision before
 	// the website_id / label / provider-ID keys are reclaimed (see the model
 	// comment).

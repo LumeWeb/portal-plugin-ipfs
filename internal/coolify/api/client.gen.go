@@ -87,6 +87,27 @@ func (e ApplicationRedirect) Valid() bool {
 	}
 }
 
+// Defines values for ServerProxyType.
+const (
+	Caddy   ServerProxyType = "caddy"
+	None    ServerProxyType = "none"
+	Traefik ServerProxyType = "traefik"
+)
+
+// Valid indicates whether the value is a known member of the ServerProxyType enum.
+func (e ServerProxyType) Valid() bool {
+	switch e {
+	case Caddy:
+		return true
+	case None:
+		return true
+	case Traefik:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CreateDockerimageApplicationJSONBodyRedirect.
 const (
 	CreateDockerimageApplicationJSONBodyRedirectBoth   CreateDockerimageApplicationJSONBodyRedirect = "both"
@@ -591,6 +612,21 @@ type PersistentStorage struct {
 	MountPath string  `json:"mount_path"`
 	Name      string  `json:"name"`
 }
+
+// Server Coolify server. Only the fields the workspace service reads are declared; unknown upstream fields are ignored by the client.
+type Server struct {
+	Description *string          `json:"description,omitempty"`
+	Id          *int             `json:"id,omitempty"`
+	Ip          *string          `json:"ip,omitempty"`
+	Name        *string          `json:"name,omitempty"`
+	Port        *int             `json:"port,omitempty"`
+	ProxyType   *ServerProxyType `json:"proxy_type,omitempty"`
+	User        *string          `json:"user,omitempty"`
+	Uuid        string           `json:"uuid"`
+}
+
+// ServerProxyType defines model for Server.ProxyType.
+type ServerProxyType string
 
 // StorageList defines model for StorageList.
 type StorageList struct {
@@ -1511,6 +1547,9 @@ type ClientInterface interface {
 
 	// ListResources request
 	ListResources(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListServers request
+	ListServers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) ListApplications(ctx context.Context, params *ListApplicationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1791,6 +1830,18 @@ func (c *Client) Healthcheck(ctx context.Context, reqEditors ...RequestEditorFn)
 
 func (c *Client) ListResources(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListResourcesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListServers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListServersRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -2721,6 +2772,33 @@ func NewListResourcesRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewListServersRequest generates requests for ListServers
+func NewListServersRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/servers")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -2830,6 +2908,9 @@ type ClientWithResponsesInterface interface {
 
 	// ListResourcesWithResponse request
 	ListResourcesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListResourcesResponse, error)
+
+	// ListServersWithResponse request
+	ListServersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListServersResponse, error)
 }
 
 type ListApplicationsResponse struct {
@@ -3340,6 +3421,30 @@ func (r ListResourcesResponse) StatusCode() int {
 	return 0
 }
 
+type ListServersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]Server
+	JSON400      *N400
+	JSON401      *N401
+}
+
+// Status returns HTTPResponse.Status
+func (r ListServersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListServersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 // ListApplicationsWithResponse request returning *ListApplicationsResponse
 func (c *ClientWithResponses) ListApplicationsWithResponse(ctx context.Context, params *ListApplicationsParams, reqEditors ...RequestEditorFn) (*ListApplicationsResponse, error) {
 	rsp, err := c.ListApplications(ctx, params, reqEditors...)
@@ -3549,6 +3654,15 @@ func (c *ClientWithResponses) ListResourcesWithResponse(ctx context.Context, req
 		return nil, err
 	}
 	return ParseListResourcesResponse(rsp)
+}
+
+// ListServersWithResponse request returning *ListServersResponse
+func (c *ClientWithResponses) ListServersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListServersResponse, error) {
+	rsp, err := c.ListServers(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListServersResponse(rsp)
 }
 
 // ParseListApplicationsResponse parses an HTTP response from a ListApplicationsWithResponse call
@@ -4433,6 +4547,46 @@ func ParseListResourcesResponse(rsp *http.Response) (*ListResourcesResponse, err
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest string
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest N400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest N401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListServersResponse parses an HTTP response from a ListServersWithResponse call
+func ParseListServersResponse(rsp *http.Response) (*ListServersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListServersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Server
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

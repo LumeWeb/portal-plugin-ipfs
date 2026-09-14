@@ -86,6 +86,50 @@ func TestCreateDatabaseReturnsUUID(t *testing.T) {
 	}
 }
 
+func TestGetServerIPResolvesByUUID(t *testing.T) {
+	var gotPath, gotAuth string
+	client, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"uuid":"other-1","ip":"10.0.0.1"},
+			{"uuid":"srv-1","ip":"203.0.113.7"}
+		]`))
+	})
+	ip, err := client.GetServerIP(context.Background(), "srv-1")
+	if err != nil {
+		t.Fatalf("GetServerIP: %v", err)
+	}
+	if ip != "203.0.113.7" {
+		t.Errorf("ip = %q", ip)
+	}
+	if gotPath != "/servers" || gotAuth != "Bearer test-token" {
+		t.Errorf("request: path=%q auth=%q", gotPath, gotAuth)
+	}
+}
+
+func TestGetServerIPFailsClosed(t *testing.T) {
+	t.Run("unknown server", func(t *testing.T) {
+		client, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"uuid":"other-1","ip":"10.0.0.1"}]`))
+		})
+		if _, err := client.GetServerIP(context.Background(), "missing"); err == nil {
+			t.Fatal("expected error for unknown server uuid")
+		}
+	})
+	t.Run("server without ip", func(t *testing.T) {
+		client, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"uuid":"srv-1"}]`))
+		})
+		if _, err := client.GetServerIP(context.Background(), "srv-1"); err == nil {
+			t.Fatal("expected error for server without ip")
+		}
+	})
+}
+
 func TestGetDatabaseTypedSensitiveResponse(t *testing.T) {
 	client, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

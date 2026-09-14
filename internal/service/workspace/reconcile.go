@@ -382,6 +382,12 @@ func (s *WorkspaceService) reconcileProvision(ctx context.Context, ws *pluginDb.
 	if err := s.SetApplicationEnvironment(ctx, ws, *ws.ApplicationResourceID, dbCreds, apiKey); err != nil {
 		return err
 	}
+	// Publish the authoring hostname's record after the application exists so
+	// a transient DNS/zone problem does not delay the Coolify deployment: the
+	// record is a pure upsert and converges on the next successful pass.
+	if err := s.ReconcileDNS(ctx, ws); err != nil {
+		return err
+	}
 	return s.StartAndObserveApplication(ctx, ws, *ws.ApplicationResourceID)
 }
 

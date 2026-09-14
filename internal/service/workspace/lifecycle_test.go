@@ -157,6 +157,7 @@ func newLifecycleService(tb coreTesting.TB, db *gorm.DB, provider coolify.Worksp
 		config:        cfg,
 		provider:      provider,
 		apiKeySvc:     apiKey,
+		dnsSvc:        newFakeDNSService(),
 		mysqlProv:     &fakeEngineer{},
 		identityKey:   testIdentityPrivateKey(),
 		portalAPIURL:  "https://portal.example.com",

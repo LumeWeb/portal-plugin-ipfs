@@ -158,6 +158,11 @@ type WorkspaceProvider interface {
 	// per-workspace resource.
 	ResolveDatabaseResource(context.Context, string) (DatabaseResource, error)
 
+	// ResolveServerIP returns the IP Coolify has registered for the placement
+	// server (by its UUID). It is the A/AAAA record target for workspace
+	// hostnames: the integrated proxy that terminates them listens there.
+	ResolveServerIP(context.Context, string) (string, error)
+
 	CreateApplication(context.Context, CreateApplicationRequest) (CreatedResource, error)
 	GetApplication(context.Context, string) (ApplicationResource, error)
 	SetApplicationEnvironment(context.Context, string, []EnvironmentVariable) error
@@ -222,6 +227,11 @@ func (p *Provider) Client() *Client { return p.client }
 // database/user provisioning.
 func (p *Provider) ResolveDatabaseResource(ctx context.Context, id string) (DatabaseResource, error) {
 	return p.client.GetDatabase(ctx, id)
+}
+
+// ResolveServerIP resolves the placement server's registered IP by UUID.
+func (p *Provider) ResolveServerIP(ctx context.Context, serverUUID string) (string, error) {
+	return p.client.GetServerIP(ctx, serverUUID)
 }
 
 func (p *Provider) CreateApplication(ctx context.Context, req CreateApplicationRequest) (CreatedResource, error) {
