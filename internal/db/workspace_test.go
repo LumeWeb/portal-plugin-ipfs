@@ -17,7 +17,7 @@ func TestWorkspace_Hostname(t *testing.T) {
 	ws := Workspace{
 		Label: "alice",
 		PlatformDomain: PlatformDomain{
-			Domain: "build.lumeweb.com",
+			Domain: "lumeweb.com",
 		},
 	}
 	assert.Equal(t, "alice.build.lumeweb.com", ws.Hostname())

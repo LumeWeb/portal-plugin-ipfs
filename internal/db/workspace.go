@@ -149,9 +149,15 @@ type AccessCredentials struct {
 	Password string
 }
 
-// Hostname returns the workspace's authoring hostname formed from its label
-// and the linked platform domain. The label must already be normalized to a
-// valid DNS label by the caller before persisting.
+// WorkspaceHostSubdomainLabel is the fixed DNS segment inserted between the
+// workspace label and the platform root, reserving the "<label>.build.<root>"
+// namespace for workspace authoring hostnames so it never collides with
+// platform-subdomain claims published directly under the root.
+const WorkspaceHostSubdomainLabel = "build"
+
+// Hostname returns the workspace's authoring hostname: "<label>.build.<root>",
+// where root is the linked platform domain. The label must already be
+// normalized to a valid DNS label by the caller before persisting.
 func (w *Workspace) Hostname() string {
-	return w.Label + "." + w.PlatformDomain.Domain
+	return w.Label + "." + WorkspaceHostSubdomainLabel + "." + w.PlatformDomain.Domain
 }

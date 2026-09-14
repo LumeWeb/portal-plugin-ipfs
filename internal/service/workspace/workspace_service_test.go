@@ -164,13 +164,13 @@ func TestWorkspaceService_Create_InsertsProvisioningRow(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 
 		mockWS := mocks.NewMockWebsiteService(tb)
 		mockWS.EXPECT().GetWebsite(mock.Anything, uint(1), uint(1)).
 			Return(&pluginDb.Website{ID: 1, UserID: 1}, nil)
 
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 
 		ws, err := svc.Create(context.Background(), 1, new(uint(1)))
 		require.NoError(tb, err)
@@ -181,7 +181,7 @@ func TestWorkspaceService_Create_InsertsProvisioningRow(t *testing.T) {
 		assert.Equal(tb, "ws-test123", ws.Label)
 		// The returned model must carry the authoring platform domain so the DTO
 		// can populate the hostname without an extra query.
-		assert.Equal(tb, "build.example.com", ws.PlatformDomain.Domain)
+		assert.Equal(tb, "example.com", ws.PlatformDomain.Domain)
 		assert.Equal(tb, "ws-test123.build.example.com", ws.Hostname())
 
 		var persisted pluginDb.Workspace
@@ -195,7 +195,7 @@ func TestWorkspaceService_Create_LabelCollisionRetries(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 
 		// A workspace already claims label "dup" on this platform domain.
 		require.NoError(tb, db.Create(&pluginDb.Workspace{
@@ -211,7 +211,7 @@ func TestWorkspaceService_Create_LabelCollisionRetries(t *testing.T) {
 			Return(&pluginDb.Website{ID: 1, UserID: 1}, nil)
 
 		calls := 0
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 		svc.slugGen = func() (string, error) {
 			calls++
 			if calls == 1 {
@@ -231,7 +231,7 @@ func TestWorkspaceService_Create_NotEnabled(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		mockWS := mocks.NewMockWebsiteService(tb)
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 		svc.config.Enabled = false
 
 		_, err := svc.Create(context.Background(), 1, new(uint(1)))
@@ -246,7 +246,7 @@ func TestWorkspaceService_Create_WebsiteNotOwnedOrMissing(t *testing.T) {
 		// GetWebsite enforces ownership and returns nil when the website is
 		// missing or not owned.
 		mockWS.EXPECT().GetWebsite(mock.Anything, uint(2), uint(1)).Return(nil, nil)
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 
 		_, err := svc.Create(context.Background(), 2, new(uint(1)))
 		assert.ErrorIs(tb, err, ErrWorkspaceNotFound)
@@ -280,7 +280,7 @@ func TestWorkspaceService_Create_MultipleEnabledPlatformDomainsAmbiguous(t *test
 		// Two enabled roots make the workspace hostname root ambiguous; create
 		// must fail rather than silently pick one.
 		svc := newTestService(tb, db, mockWS, &fakePlatformResolver{roots: []*pluginDb.PlatformDomain{
-			{ID: 10, Domain: "build.example.com", Namespace: pluginDb.DomainNamespaceICANN, Enabled: true},
+			{ID: 10, Domain: "example.com", Namespace: pluginDb.DomainNamespaceICANN, Enabled: true},
 			{ID: 11, Domain: "build.alt.example", Namespace: pluginDb.DomainNamespaceICANN, Enabled: true},
 		}})
 
@@ -301,7 +301,7 @@ func TestWorkspaceService_Create_SinglePlatformRootNamespaceFromDB(t *testing.T)
 		// The single enabled root's namespace comes from the DB row (HNS here),
 		// not from any config value.
 		svc := newTestService(tb, db, mockWS, &fakePlatformResolver{roots: []*pluginDb.PlatformDomain{
-			{ID: 10, Domain: "build.example.com", Namespace: pluginDb.DomainNamespaceHNS, Enabled: true},
+			{ID: 10, Domain: "example.com", Namespace: pluginDb.DomainNamespaceHNS, Enabled: true},
 		}})
 
 		ws, err := svc.Create(context.Background(), 1, new(uint(1)))
@@ -315,7 +315,7 @@ func TestWorkspaceService_Create_OneWorkspacePerWebsite(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		// Website 1 already has a live workspace.
 		require.NoError(tb, db.Create(&pluginDb.Workspace{
 			UserID:           1,
@@ -329,7 +329,7 @@ func TestWorkspaceService_Create_OneWorkspacePerWebsite(t *testing.T) {
 		mockWS.EXPECT().GetWebsite(mock.Anything, uint(1), uint(1)).
 			Return(&pluginDb.Website{ID: 1, UserID: 1}, nil)
 
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 
 		_, err := svc.Create(context.Background(), 1, new(uint(1)))
 		assert.ErrorIs(tb, err, ErrWorkspaceAlreadyExists)
@@ -341,7 +341,7 @@ func TestWorkspaceService_Get_OwnershipEnforced(t *testing.T) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
 		insertWebsite(tb, db, 2, 2)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		// Website 1 (user 1) has workspace id=1; website 2 (user 2) has workspace id=2.
 		require.NoError(tb, db.Create(&pluginDb.Workspace{
 			Model: gorm.Model{ID: 1}, UserID: 1, WebsiteID: new(uint(1)), PlatformDomainID: 10, Label: "a1",
@@ -352,7 +352,7 @@ func TestWorkspaceService_Get_OwnershipEnforced(t *testing.T) {
 			Status: pluginDb.WorkspaceStatusReady,
 		}).Error)
 
-		svc := newTestService(tb, db, nil, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, nil, enabledFakeResolver(10, "example.com", "icann"))
 
 		// Owner can read their own workspace.
 		ws, err := svc.Get(context.Background(), 1, 1)
@@ -361,7 +361,7 @@ func TestWorkspaceService_Get_OwnershipEnforced(t *testing.T) {
 		assert.Equal(tb, uint(1), ws.ID)
 		// Get must preload the authoring platform domain so the DTO populates
 		// the hostname without an extra query.
-		assert.Equal(tb, "build.example.com", ws.PlatformDomain.Domain)
+		assert.Equal(tb, "example.com", ws.PlatformDomain.Domain)
 		assert.Equal(tb, "a1.build.example.com", ws.Hostname())
 
 		// A non-owner cannot read it (nil, nil — no existence leak).
@@ -383,7 +383,7 @@ func TestWorkspaceService_List_OwnershipEnforcedAndPaginated(t *testing.T) {
 		insertWebsite(tb, db, 2, 1) // user 1 owns two websites
 		insertWebsite(tb, db, 3, 2) // user 2 owns one website
 		insertWebsite(tb, db, 4, 3) // user 3 owns one website, no workspace
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 
 		// One workspace per website: websites 1,2 (user 1) and 3 (user 2).
 		require.NoError(tb, db.Create(&pluginDb.Workspace{
@@ -396,7 +396,7 @@ func TestWorkspaceService_List_OwnershipEnforcedAndPaginated(t *testing.T) {
 			UserID: 2, WebsiteID: new(uint(3)), PlatformDomainID: 10, Label: "c", Status: pluginDb.WorkspaceStatusProvisioning,
 		}).Error)
 
-		svc := newTestService(tb, db, nil, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, nil, enabledFakeResolver(10, "example.com", "icann"))
 
 		all, total, err := svc.List(context.Background(), 1, nil, nil, queryutil.Pagination{})
 		require.NoError(tb, err)
@@ -405,7 +405,7 @@ func TestWorkspaceService_List_OwnershipEnforcedAndPaginated(t *testing.T) {
 		// List must preload the authoring platform domain on every returned
 		// workspace so the DTO populates the hostname without an extra query.
 		for _, w := range all {
-			assert.Equal(tb, "build.example.com", w.PlatformDomain.Domain)
+			assert.Equal(tb, "example.com", w.PlatformDomain.Domain)
 			assert.NotEmpty(tb, w.Hostname())
 		}
 
@@ -444,11 +444,11 @@ func TestWorkspaceService_GenerateOpaqueLabel_DNSFormat(t *testing.T) {
 func TestWorkspaceService_Create_NoWebsite_UnattachedWorkspaces(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		// No insertWebsite and no GetWebsite mock: the create must not touch the
 		// website service at all.
 		mockWS := mocks.NewMockWebsiteService(tb)
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 		// Produce a distinct label per create so (platform_domain_id, label)
 		// collisions do not interfere with the unattached-workspace assertions.
 		n := 0
@@ -486,11 +486,11 @@ func TestWorkspaceService_Attach_LinksUnattachedWorkspace(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 
 		// Create an unattached workspace for user 1.
 		mockWS := mocks.NewMockWebsiteService(tb)
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 		n := 0
 		svc.slugGen = func() (string, error) {
 			n++
@@ -531,10 +531,10 @@ func TestWorkspaceService_Attach_OwnershipEnforced(t *testing.T) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1) // website 1 owned by user 1
 		insertWebsite(tb, db, 2, 2) // website 2 owned by user 2
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 
 		mockWS := mocks.NewMockWebsiteService(tb)
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 		ws, err := svc.Create(context.Background(), 1, nil)
 		require.NoError(tb, err)
 
@@ -558,7 +558,7 @@ func TestWorkspaceService_ResolveRuntime_Attached(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 50, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := &pluginDb.Workspace{
 			UserID:                1,
 			WebsiteID:             new(uint(50)),
@@ -573,7 +573,7 @@ func TestWorkspaceService_ResolveRuntime_Attached(t *testing.T) {
 		mockWS.EXPECT().GetWebsite(mock.Anything, uint(1), uint(50)).
 			Return(&pluginDb.Website{ID: 50, UserID: 1, TargetType: string(pluginDb.WebsiteTargetTypeIPFS), Status: "active"}, nil)
 
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 
 		resolved, website, err := svc.ResolveRuntime(context.Background(), 1, "coolify-resource-abc")
 		require.NoError(tb, err)
@@ -590,7 +590,7 @@ func TestWorkspaceService_ResolveRuntime_Attached(t *testing.T) {
 func TestWorkspaceService_ResolveRuntime_Unattached(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := &pluginDb.Workspace{
 			UserID:                1,
 			WebsiteID:             nil,
@@ -602,7 +602,7 @@ func TestWorkspaceService_ResolveRuntime_Unattached(t *testing.T) {
 		require.NoError(tb, db.Create(ws).Error)
 
 		mockWS := mocks.NewMockWebsiteService(tb)
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 
 		resolved, website, err := svc.ResolveRuntime(context.Background(), 1, "coolify-resource-unattached")
 		require.NoError(tb, err)
@@ -617,7 +617,7 @@ func TestWorkspaceService_ResolveRuntime_Unattached(t *testing.T) {
 func TestWorkspaceService_ResolveRuntime_RejectsMismatch(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := &pluginDb.Workspace{
 			UserID:                2, // owned by user 2
 			WebsiteID:             nil,
@@ -629,7 +629,7 @@ func TestWorkspaceService_ResolveRuntime_RejectsMismatch(t *testing.T) {
 		require.NoError(tb, db.Create(ws).Error)
 
 		mockWS := mocks.NewMockWebsiteService(tb)
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 
 		// Wrong owner (user 1 resolves a workspace owned by user 2).
 		resolved, website, err := svc.ResolveRuntime(context.Background(), 1, "coolify-resource-owned-by-2")
@@ -655,12 +655,12 @@ func TestWorkspaceService_Create_RecreateAfterSoftDelete(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 
 		mockWS := mocks.NewMockWebsiteService(tb)
 		mockWS.EXPECT().GetWebsite(mock.Anything, uint(1), uint(1)).
 			Return(&pluginDb.Website{ID: 1, UserID: 1}, nil).Times(1)
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 
 		// 1. Create a workspace attached to website 1.
 		first, err := svc.Create(context.Background(), 1, new(uint(1)))
@@ -701,10 +701,10 @@ func TestWorkspaceService_Attach_MissingWorkspace_ReturnsNotFound(t *testing.T) 
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 
 		mockWS := mocks.NewMockWebsiteService(tb)
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 
 		// Workspace 99999 is owned by nobody, so attach must not contact the
 		// website service (no ownership leak) and must return not-found.
@@ -729,14 +729,14 @@ func TestWorkspaceService_Attach_RaceConcurrent_DistinctWorkspaces(t *testing.T)
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 
 		mockWS := mocks.NewMockWebsiteService(tb)
 		// Each of the two concurrent Attach calls loads website 1 exactly once.
 		mockWS.EXPECT().GetWebsite(mock.Anything, uint(1), uint(1)).
 			Return(&pluginDb.Website{ID: 1, UserID: 1}, nil).Times(2)
 
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 		n := 0
 		svc.slugGen = func() (string, error) {
 			n++
@@ -804,14 +804,14 @@ func TestWorkspaceService_Attach_RecreateAfterSoftDelete(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
 		insertWebsite(tb, db, 1, 1)
-		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 
 		mockWS := mocks.NewMockWebsiteService(tb)
 		// The first Create (attached) and the later Attach both load website 1.
 		mockWS.EXPECT().GetWebsite(mock.Anything, uint(1), uint(1)).
 			Return(&pluginDb.Website{ID: 1, UserID: 1}, nil).Twice()
 
-		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "build.example.com", "icann"))
+		svc := newTestService(tb, db, mockWS, enabledFakeResolver(10, "example.com", "icann"))
 		n := 0
 		svc.slugGen = func() (string, error) {
 			n++
