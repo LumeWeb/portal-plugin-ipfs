@@ -19,7 +19,7 @@ func TestCompositeStatusNormalization(t *testing.T) {
 		switch r.URL.Path {
 		case "/databases/db-uuid-1":
 			_, _ = w.Write([]byte(`{` +
-				`"uuid":"db-uuid-1","name":"db","status":"running:healthy","type":"mariadb",` +
+				`"uuid":"db-uuid-1","name":"db","status":"running:healthy","database_type":"standalone-mariadb",` +
 				`"internal_db_url":"mysql://user:pw@mariadb.internal:3306/db1",` +
 				`"mariadb_user":"user","mariadb_password":"pw","mariadb_database":"db1"}`))
 		case "/applications/app-1":

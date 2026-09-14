@@ -134,7 +134,7 @@ func TestGetDatabaseTypedSensitiveResponse(t *testing.T) {
 	client, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"uuid":"db-uuid-1","name":"workspace-1-db","status":"running","type":"mariadb",
+			"uuid":"db-uuid-1","name":"workspace-1-db","status":"running","database_type":"standalone-mariadb",
 			"internal_db_url":"mysql://user:pw@mariadb.internal:3306/db1",
 			"mariadb_user":"user","mariadb_password":"pw","mariadb_database":"db1"
 		}`))
@@ -158,7 +158,7 @@ func TestGetDatabaseMissingSensitiveIsNotErrorButEmpty(t *testing.T) {
 	// Simulates a token without read:sensitive — fields are absent.
 	client, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"uuid":"db-uuid-1","name":"x","status":"running","type":"mariadb"}`))
+		_, _ = w.Write([]byte(`{"uuid":"db-uuid-1","name":"x","status":"running","database_type":"standalone-mariadb"}`))
 	})
 	got, err := client.GetDatabase(context.Background(), "db-uuid-1")
 	if err != nil {
@@ -186,7 +186,7 @@ func TestGetDatabase_EngineCredentialSelection(t *testing.T) {
 		{
 			name: "mariadb selects mariadb_* fields",
 			typ:  "mariadb",
-			body: `{"uuid":"db","status":"running","type":"mariadb",
+			body: `{"uuid":"db","status":"running","database_type":"standalone-mariadb",
 				"mariadb_user":"muser","mariadb_password":"mpw","mariadb_database":"mdb","mariadb_root_password":"mroot",
 				"mysql_user":"xuser","mysql_password":"xpw","mysql_database":"xdb","mysql_root_password":"xroot"}`,
 			wantUser: "muser", wantPass: "mpw", wantDB: "mdb", wantRoot: "mroot",
@@ -194,15 +194,15 @@ func TestGetDatabase_EngineCredentialSelection(t *testing.T) {
 		{
 			name: "mysql selects mysql_* fields",
 			typ:  "mysql",
-			body: `{"uuid":"db","status":"running","type":"mysql",
+			body: `{"uuid":"db","status":"running","database_type":"standalone-mysql",
 				"mariadb_user":"xuser","mariadb_password":"xpw","mariadb_database":"xdb","mariadb_root_password":"xroot",
 				"mysql_user":"suser","mysql_password":"spw","mysql_database":"sdb","mysql_root_password":"sroot"}`,
 			wantUser: "suser", wantPass: "spw", wantDB: "sdb", wantRoot: "sroot",
 		},
 		{
 			name: "unknown type leaves credentials empty",
-			typ:  "postgres",
-			body: `{"uuid":"db","status":"running","type":"postgres",
+			typ:  "postgresql",
+			body: `{"uuid":"db","status":"running","database_type":"standalone-postgresql",
 				"mariadb_root_password":"mroot","mysql_root_password":"sroot"}`,
 			wantRoot: "",
 		},

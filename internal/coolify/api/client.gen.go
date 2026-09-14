@@ -563,6 +563,7 @@ type CreatedResource struct {
 
 // Database defines model for Database.
 type Database struct {
+	DatabaseType        *string `json:"database_type,omitempty"`
 	InternalDbUrl       *string `json:"internal_db_url,omitempty"`
 	MariadbDatabase     *string `json:"mariadb_database,omitempty"`
 	MariadbPassword     *string `json:"mariadb_password,omitempty"`
@@ -574,7 +575,6 @@ type Database struct {
 	MysqlUser           *string `json:"mysql_user,omitempty"`
 	Name                string  `json:"name"`
 	Status              string  `json:"status"`
-	Type                string  `json:"type"`
 	Uuid                string  `json:"uuid"`
 }
 
