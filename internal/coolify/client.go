@@ -101,6 +101,35 @@ func (c *Client) CreateDatabase(ctx context.Context, req CreateDatabaseRequest) 
 	return out, nil
 }
 
+// GetServerIP resolves the IP Coolify has registered for a server by its UUID
+// (the same value Coolify uses to reach the server over SSH). The workspace
+// DNS reconciler uses it as the A/AAAA record target for workspace hostnames:
+// the integrated proxy (Caddy) that terminates those hostnames listens on the
+// server itself, so its registered IP is the routing fact to point DNS at.
+// It fails closed when the server is unknown or reports no IP.
+func (c *Client) GetServerIP(ctx context.Context, serverUUID string) (string, error) {
+	resp, err := c.generated.ListServersWithResponse(ctx)
+	if err != nil {
+		return "", fmt.Errorf("coolify: list servers: %w", err)
+	}
+	if cerr := StatusCodeError(resp.HTTPResponse, resp.Body); cerr != nil {
+		return "", cerr
+	}
+	if resp.JSON200 == nil {
+		return "", fmt.Errorf("coolify: list servers response missing body")
+	}
+	for _, s := range *resp.JSON200 {
+		if s.Uuid != serverUUID {
+			continue
+		}
+		if s.Ip == nil || *s.Ip == "" {
+			return "", fmt.Errorf("coolify: server %s reports no ip", serverUUID)
+		}
+		return *s.Ip, nil
+	}
+	return "", fmt.Errorf("coolify: server %s not found", serverUUID)
+}
+
 // GetDatabase returns database details. Sensitive fields are pointers and are
 // expected to be non-nil only when the token has read:sensitive permission;
 // when they are absent they are left empty and the caller fails closed. The
@@ -277,8 +306,6 @@ func (c *Client) SetApplicationEnvironment(ctx context.Context, resourceID strin
 	}
 	return StatusCodeError(resp.HTTPResponse, resp.Body)
 }
-
-
 
 // GetApplicationStorage lists persistent and file storage for an application.
 func (c *Client) GetApplicationStorage(ctx context.Context, resourceID string) ([]StorageMount, error) {
@@ -465,7 +492,6 @@ func strPtr(s string) *string {
 	}
 	return &s
 }
-
 
 // strSlicePtr returns a pointer to a copy of ss when it is non-empty, so the
 // JSON body only carries tags when there are any to send.

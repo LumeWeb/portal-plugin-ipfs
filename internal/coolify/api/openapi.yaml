@@ -1544,6 +1544,26 @@ paths:
                   status:
                     type: string
                 type: object
+  /servers:
+    get:
+      tags:
+      - Servers
+      summary: List
+      description: 'List all servers.'
+      operationId: list-servers
+      responses:
+        '200':
+          description: 'Get all servers.'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Server'
+        '400':
+          $ref: '#/components/responses/400'
+        '401':
+          $ref: '#/components/responses/401'
 components:
   responses:
     '400':
@@ -2195,6 +2215,33 @@ components:
           type: integer
           nullable: true
       type: object
+    Server:
+      description: 'Coolify server. Only the fields the workspace service reads
+        are declared; unknown upstream fields are ignored by the client.'
+      type: object
+      required:
+      - uuid
+      properties:
+        id:
+          type: integer
+        uuid:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        ip:
+          type: string
+        user:
+          type: string
+        port:
+          type: integer
+        proxy_type:
+          type: string
+          enum:
+          - traefik
+          - caddy
+          - none
     CreatedResource:
       type: object
       required:

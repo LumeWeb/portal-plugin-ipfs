@@ -103,6 +103,10 @@ type WorkspaceService struct {
 	// context at startup when the workspace service is enabled. IPFS imports
 	// only dashboard's exported core package, never dashboard internals.
 	apiKeySvc dashboardCore.APIKeyService
+	// dnsSvc publishes the per-workspace authoring-hostname records into the
+	// platform root's PowerDNS zone (ReconcileDNS). It is wired from the
+	// portal context at startup when the workspace service is enabled.
+	dnsSvc pluginCore.DNSService
 	// identityKey is the portal identity private key (Core.Identity.PrivateKey),
 	// the single source of secrecy for deriving each workspace's logical
 	// database password. It is wired at startup when the service is enabled
@@ -119,11 +123,16 @@ type WorkspaceService struct {
 	// tests can pin/override generation; defaults to generateOpaqueLabel.
 	slugGen func() (string, error)
 
-	// lockMu guards locks. Reconcile uses an in-process keyed lock per
-	// workspace so a single portal instance never runs two reconcilers (or a
-	// reconciler and a lifecycle op) for the same workspace concurrently. The
-	// current deployment is single-instance; a DB claim/lease would be needed
-	// before running multiple replicas.
+	// lockMu guards locks. Reconcile and every mutating lifecycle operation
+	// (create is serialized by its unique keys, attach by the UNIQUE
+	// (website_id) backstop) use an in-process keyed lock per workspace so a
+	// single portal instance never runs two of them for the same workspace
+	// concurrently. The lock must be held across "load workspace state →
+	// validate transition → provider side effects → row updates": because
+	// every participant loads its row BEFORE it can know it needs the lock,
+	// the state must be re-read under the lock (see reloadWorkspaceLocked).
+	// The current deployment is single-instance; a DB claim/lease would be
+	// needed before running multiple replicas.
 	lockMu sync.Mutex
 	locks  map[uint]*sync.Mutex
 }
@@ -163,6 +172,11 @@ func NewWorkspaceService() (core.Service, []core.ContextBuilderOption, error) {
 			// enabled (startupValidate guards on Enabled), keeping the disabled
 			// path free of cross-plugin coupling.
 			svc.apiKeySvc = core.GetServiceOptional[dashboardCore.APIKeyService](ctx, dashboardCore.API_KEY_SERVICE)
+			// Wire the DNS service so provisioning can publish the workspace
+			// authoring-hostname record into the platform root's zone.
+			// Required only when the workspace service is enabled
+			// (startupValidate guards on Enabled).
+			svc.dnsSvc = core.GetServiceOptional[pluginCore.DNSService](ctx, pluginCore.DNS_SERVICE)
 			return svc.startupValidate(ctx)
 		}),
 	)
@@ -230,6 +244,13 @@ func (s *WorkspaceService) startupValidate(ctx core.Context) error {
 	// provisioning and must be present when the workspace service is enabled.
 	if s.apiKeySvc == nil {
 		return fmt.Errorf("workspace: api key service not available")
+	}
+
+	// The DNS service is a hard dependency of provisioning too: every
+	// workspace's authoring hostname gets an authoritative record in the
+	// platform root's zone, so without it the hostnames would never resolve.
+	if s.dnsSvc == nil {
+		return fmt.Errorf("workspace: dns service not available")
 	}
 
 	// The portal identity key is the single source of secrecy for deriving each
