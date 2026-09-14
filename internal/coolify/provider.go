@@ -2,6 +2,7 @@ package coolify
 
 import (
 	"context"
+	"strings"
 )
 
 // ResourceStatus is a coarse, provider-neutral status for a Coolify resource.
@@ -31,6 +32,26 @@ const (
 	ResourceStatusUnhealthy ResourceStatus = "unhealthy"
 	ResourceStatusDegraded  ResourceStatus = "degraded"
 )
+
+// normalizeResourceStatus maps Coolify's composite container status
+// ("state:health", e.g. "running:healthy") onto the coarse ResourceStatus
+// vocabulary. Coolify's ContainerStatusAggregator always emits this colon
+// format for container-backed resources, and a missing/failing healthcheck
+// yields "running:unknown"/"running:excluded" for a perfectly running
+// container, so the base state is authoritative: only an explicit "unhealthy"
+// health suffix is promoted to ResourceStatusUnhealthy (a running container
+// whose health check is failing is not ready, regardless of state). A suffix
+// that is not "unhealthy" is dropped (e.g. "degraded:excluded" -> "degraded").
+func normalizeResourceStatus(raw string) ResourceStatus {
+	state, health, hasHealth := strings.Cut(raw, ":")
+	if !hasHealth {
+		return ResourceStatus(raw)
+	}
+	if ResourceStatus(health) == ResourceStatusUnhealthy {
+		return ResourceStatusUnhealthy
+	}
+	return ResourceStatus(state)
+}
 
 // CreatedResource is the result of a create operation: the provider resource
 // UUID, recorded as soon as Coolify returns it.

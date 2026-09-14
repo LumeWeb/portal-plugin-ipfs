@@ -149,7 +149,7 @@ func (c *Client) GetDatabase(ctx context.Context, resourceID string) (DatabaseRe
 	}
 	d := resp.JSON200
 	out.ID = d.Uuid
-	out.Status = ResourceStatus(d.Status)
+	out.Status = normalizeResourceStatus(d.Status)
 	out.Type = d.Type
 	out.InternalURL = deref(d.InternalDbUrl)
 	switch {
@@ -258,7 +258,7 @@ func (c *Client) GetApplication(ctx context.Context, resourceID string) (Applica
 	}
 	a := resp.JSON200
 	out.ID = deref(a.Uuid)
-	out.Status = ResourceStatus(deref(a.Status))
+	out.Status = normalizeResourceStatus(deref(a.Status))
 	out.Domain = deref(a.Fqdn)
 	return out, nil
 }
