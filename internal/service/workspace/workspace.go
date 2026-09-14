@@ -123,11 +123,16 @@ type WorkspaceService struct {
 	// tests can pin/override generation; defaults to generateOpaqueLabel.
 	slugGen func() (string, error)
 
-	// lockMu guards locks. Reconcile uses an in-process keyed lock per
-	// workspace so a single portal instance never runs two reconcilers (or a
-	// reconciler and a lifecycle op) for the same workspace concurrently. The
-	// current deployment is single-instance; a DB claim/lease would be needed
-	// before running multiple replicas.
+	// lockMu guards locks. Reconcile and every mutating lifecycle operation
+	// (create is serialized by its unique keys, attach by the UNIQUE
+	// (website_id) backstop) use an in-process keyed lock per workspace so a
+	// single portal instance never runs two of them for the same workspace
+	// concurrently. The lock must be held across "load workspace state →
+	// validate transition → provider side effects → row updates": because
+	// every participant loads its row BEFORE it can know it needs the lock,
+	// the state must be re-read under the lock (see reloadWorkspaceLocked).
+	// The current deployment is single-instance; a DB claim/lease would be
+	// needed before running multiple replicas.
 	lockMu sync.Mutex
 	locks  map[uint]*sync.Mutex
 }

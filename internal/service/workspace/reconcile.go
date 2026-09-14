@@ -112,20 +112,26 @@ func (j *ReconcileJob) Run(ctx core.Context, eventCtx context.Context) error {
 		zap.Int("batch_size", len(batch)),
 		zap.Duration("interval", svc.ReconcileInterval()))
 
-	for _, ws := range batch {
-		unlock := svc.lockWorkspace(ws.ID)
-		reconcileErr := svc.reconcileWithRetry(eventCtx, ws)
-		unlock()
-
-		if reconcileErr != nil && !errors.Is(reconcileErr, context.Canceled) {
-			// The classified error is already secret-safe (no tokens/body) and
-			// recorded on the row; this log carries only the workspace ID and
-			// the coarse outcome.
-			j.logger.Warn("Workspace reconcile failed",
-				zap.Uint("workspace_id", ws.ID),
-				zap.String("outcome", outcomeLabel(reconcileErr)),
-				zap.Error(reconcileErr))
+	for _, selected := range batch {
+		unlock := svc.lockWorkspace(selected.ID)
+		// The batch was selected before this (possibly blocking) lock was
+		// acquired; another pass or a lifecycle op may have advanced, claimed
+		// or deleted the workspace in the meantime. Re-read under the lock and
+		// act only on the current state.
+		ws, err := svc.reloadWorkspaceLocked(eventCtx, selected.ID)
+		if err == nil && !ws.DeletedAt.Valid {
+			reconcileErr := svc.reconcileWithRetry(eventCtx, ws)
+			if reconcileErr != nil && !errors.Is(reconcileErr, context.Canceled) {
+				// The classified error is already secret-safe (no tokens/body)
+				// and recorded on the row; this log carries only the workspace
+				// ID and the coarse outcome.
+				j.logger.Warn("Workspace reconcile failed",
+					zap.Uint("workspace_id", ws.ID),
+					zap.String("outcome", outcomeLabel(reconcileErr)),
+					zap.Error(reconcileErr))
+			}
 		}
+		unlock()
 	}
 
 	svc.refreshStateGauge(eventCtx)
@@ -216,8 +222,11 @@ func (s *WorkspaceService) retryDelay(count int) time.Duration {
 }
 
 // lockWorkspace acquires the in-process keyed lock for one workspace and
-// returns a function to release it. It is only safe across one portal instance
-// (the current deployment).
+// returns a function to release it. It serializes reconcile passes against
+// each other AND against the mutating lifecycle operations (Suspend/Resume/
+// Delete/RotateAccessCredentials), which acquire the same keyed lock around
+// their own load-validate-mutate sequence. It is only safe across one portal
+// instance (the current deployment).
 func (s *WorkspaceService) lockWorkspace(id uint) func() {
 	s.lockMu.Lock()
 	if s.locks == nil {
@@ -231,6 +240,26 @@ func (s *WorkspaceService) lockWorkspace(id uint) func() {
 	s.lockMu.Unlock()
 	m.Lock()
 	return m.Unlock
+}
+
+// reloadWorkspaceLocked re-reads the current workspace row (with its platform
+// domain) after lockWorkspace has been acquired. Because every participant
+// selects its row before it can know it must wait for the lock, the state a
+// goroutine acted on could already be stale: another reconcile pass finished
+// provisioning, or a lifecycle op claimed or deleted the workspace. Callers
+// must re-check deleted status and their transition guards from THIS value.
+func (s *WorkspaceService) reloadWorkspaceLocked(ctx context.Context, id uint) (*pluginDb.Workspace, error) {
+	var ws pluginDb.Workspace
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		if err := tx.Preload("PlatformDomain").First(&ws, id).Error; err != nil {
+			_ = tx.AddError(err)
+		}
+		return tx
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &ws, nil
 }
 
 // selectReconcileBatch selects a bounded batch of workspaces needing work:

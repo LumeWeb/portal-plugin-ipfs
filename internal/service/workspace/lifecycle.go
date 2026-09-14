@@ -59,12 +59,26 @@ func (s *WorkspaceService) Suspend(ctx context.Context, userID uint, workspaceID
 	if s.provider == nil {
 		return nil, ErrWorkspaceProviderUnavailable
 	}
-	ws, err := s.ownedWorkspace(ctx, userID, workspaceID)
+
+	// First load establishes ownership only; the transition guard is checked
+	// from the state re-read under the workspace lock (see Delete).
+	owned, err := s.ownedWorkspace(ctx, userID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	if ws == nil {
+	if owned == nil {
 		return nil, ErrWorkspaceNotFound
+	}
+
+	unlock := s.lockWorkspace(workspaceID)
+	defer unlock()
+
+	ws, err := s.reloadWorkspaceLocked(ctx, workspaceID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrWorkspaceNotFound
+		}
+		return nil, err
 	}
 
 	// Validate the transition: only a ready workspace can be suspended.
@@ -101,12 +115,26 @@ func (s *WorkspaceService) Resume(ctx context.Context, userID uint, workspaceID 
 	if s.provider == nil {
 		return nil, ErrWorkspaceProviderUnavailable
 	}
-	ws, err := s.ownedWorkspace(ctx, userID, workspaceID)
+
+	// First load establishes ownership only; the transition guard is checked
+	// from the state re-read under the workspace lock (see Delete).
+	owned, err := s.ownedWorkspace(ctx, userID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	if ws == nil {
+	if owned == nil {
 		return nil, ErrWorkspaceNotFound
+	}
+
+	unlock := s.lockWorkspace(workspaceID)
+	defer unlock()
+
+	ws, err := s.reloadWorkspaceLocked(ctx, workspaceID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrWorkspaceNotFound
+		}
+		return nil, err
 	}
 
 	// Validate the transition: only a suspended workspace can be resumed.
@@ -146,13 +174,17 @@ func (s *WorkspaceService) Resume(ctx context.Context, userID uint, workspaceID 
 	return ws, nil
 }
 
-// Delete removes a workspace and its resources. It marks the row `deleting`,
-// revokes the workspace portal API key through the exported dashboard
-// core.APIKeyService, deletes the application (and its storage), then drops
-// ONLY the workspace's logical database/user from the shared MySQL/MariaDB
-// resource via DropLogicalDatabase — never the shared resource itself. A
-// provider 404 is treated as already deleted, and finally the workspace is
-// soft-deleted.
+// Delete removes a workspace and its resources. Serialized by the per-
+// workspace lock, it marks the row `deleting`, revokes the workspace portal
+// API key through the exported dashboard core.APIKeyService, deletes the
+// authoring hostname's records from the platform zone (before anything
+// destructive, so a partial teardown never leaves a live hostname), deletes
+// the application (and its storage), then drops ONLY the workspace's logical
+// database/user from the shared MySQL/MariaDB resource via
+// DropLogicalDatabase — never the shared resource itself. A provider 404 is
+// treated as already deleted, and finally the workspace is soft-deleted.
+// A delete that previously failed mid-teardown may be retried: every step is
+// idempotent, so the retry resumes where it stopped.
 func (s *WorkspaceService) Delete(ctx context.Context, userID uint, workspaceID uint) (*pluginDb.Workspace, error) {
 	if s.config == nil || !s.config.Enabled {
 		return nil, ErrWorkspaceNotEnabled
@@ -160,12 +192,29 @@ func (s *WorkspaceService) Delete(ctx context.Context, userID uint, workspaceID 
 	if s.provider == nil {
 		return nil, ErrWorkspaceProviderUnavailable
 	}
-	ws, err := s.ownedWorkspace(ctx, userID, workspaceID)
+
+	// Serialize against the reconciler and the other lifecycle mutators. The
+	// FIRST load only establishes ownership (and rejects a not-found row
+	// cheaply); the state the teardown acts on is re-read under the lock.
+	owned, err := s.ownedWorkspace(ctx, userID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	if ws == nil {
+	if owned == nil {
 		return nil, ErrWorkspaceNotFound
+	}
+
+	unlock := s.lockWorkspace(workspaceID)
+	defer unlock()
+
+	ws, err := s.reloadWorkspaceLocked(ctx, workspaceID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Soft-deleted between the two loads by the concurrent delete that
+			// held the lock: completed, so surface the API's not-found.
+			return nil, ErrWorkspaceNotFound
+		}
+		return nil, err
 	}
 
 	// A delete that previously failed mid-teardown (status `deleting`) may be
@@ -176,15 +225,18 @@ func (s *WorkspaceService) Delete(ctx context.Context, userID uint, workspaceID 
 	// not-found instead: the row is soft-deleted and excluded from Get, so
 	// the Delete API stays idempotent at the DB level without a status guard.
 
-	// 1. Mark deleting first so the row signals an in-progress teardown (and a
-	// concurrent reconciler/delete does not double-run provider deletes).
+	// 1. Mark deleting first so the row signals an in-progress teardown. The
+	// workspace lock and this marker together serialize the teardown; a retry
+	// after a failed step re-runs the marker (a no-op) and resumes.
 	if err := s.setStatus(ctx, ws, pluginDb.WorkspaceStatusDeleting); err != nil {
 		return nil, err
 	}
 
 	// 2. Revoke the workspace portal API key. The key row ID is a revocable
-	// identity; the raw JWT was never persisted. Treated as best-effort but an
-	// unexpected failure aborts the teardown so it can be retried.
+	// identity; the raw JWT was never persisted. An unexpected failure aborts
+	// the teardown so it can be retried (nothing destructive has happened
+	// yet); a missing/already-revoked key is treated as success by the
+	// dashboard service, so the retry resumes past it.
 	if ws.APIKeyID != nil {
 		if s.apiKeySvc == nil {
 			return nil, errors.New("workspace: api key service not available")
@@ -195,7 +247,17 @@ func (s *WorkspaceService) Delete(ctx context.Context, userID uint, workspaceID 
 		}
 	}
 
-	// 3. Delete the application first (including its storage and volumes). A
+	// 3. Delete the authoring hostname's record from the platform root's zone
+	// BEFORE any destructive provider work, so a partial teardown never leaves
+	// a published hostname pointing at a deleted application. A failure here
+	// aborts while everything is still intact (retryable); a missing zone is a
+	// no-op. Like the DNS write, the delete is an idempotent no-op-able RRSet
+	// OPERATION, so a later retry re-running it is harmless.
+	if err := s.DeleteDNSRecords(ctx, ws); err != nil {
+		return nil, fmt.Errorf("workspace: failed to delete workspace dns record: %w", err)
+	}
+
+	// 4. Delete the application (including its storage and volumes). A
 	// provider 404 means it is already deleted.
 	if ws.ApplicationResourceID != nil {
 		if err := s.provider.DeleteApplication(ctx, *ws.ApplicationResourceID); err != nil && !coolify.IsNotFound(err) {
@@ -203,19 +265,12 @@ func (s *WorkspaceService) Delete(ctx context.Context, userID uint, workspaceID 
 		}
 	}
 
-	// 4. Drop only the workspace's logical database/user from the shared
+	// 5. Drop only the workspace's logical database/user from the shared
 	// MySQL/MariaDB resource. The shared resource itself is never touched.
 	// DropLogicalDatabase is a no-op when no logical identifiers were
 	// provisioned, so deleting a partially-provisioned workspace is safe.
 	if err := s.DropLogicalDatabase(ctx, ws); err != nil {
 		return nil, err
-	}
-
-	// 5. Delete the authoring hostname's record from the platform root's zone.
-	// Like the other provider deletions, a failure aborts the teardown so the
-	// caller can retry the idempotent Delete; a missing zone is a no-op.
-	if err := s.DeleteDNSRecords(ctx, ws); err != nil {
-		return nil, fmt.Errorf("workspace: failed to delete workspace dns record: %w", err)
 	}
 
 	// 6. Soft-delete the workspace. The strict unique keys are intentionally
@@ -237,12 +292,26 @@ func (s *WorkspaceService) RotateAccessCredentials(ctx context.Context, userID u
 	if s.config == nil || !s.config.Enabled {
 		return nil, ErrWorkspaceNotEnabled
 	}
-	ws, err := s.ownedWorkspace(ctx, userID, workspaceID)
+	// First load establishes ownership only; the workspace state below is
+	// re-read under the lock so a concurrent reconcile/teardown cannot race
+	// the env upsert and redeploy (see Delete).
+	owned, err := s.ownedWorkspace(ctx, userID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	if ws == nil {
+	if owned == nil {
 		return nil, ErrWorkspaceNotFound
+	}
+
+	unlock := s.lockWorkspace(workspaceID)
+	defer unlock()
+
+	ws, err := s.reloadWorkspaceLocked(ctx, workspaceID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrWorkspaceNotFound
+		}
+		return nil, err
 	}
 
 	var username, password string

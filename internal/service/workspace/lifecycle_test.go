@@ -380,6 +380,30 @@ func TestWorkspaceService_Delete_TreatsProvider404AsAlreadyDeleted(t *testing.T)
 	}, workspaceTestOptions)
 }
 
+// Regression test for the reconciler's post-lock reload: a workspace that an
+// in-flight teardown (or concurrent reconcile) soft-deleted while a second
+// reconcile pass waited for the lock must come back not-found on the reload,
+// so the pass skips it instead of acting on the state it selected earlier.
+func TestReloadWorkspaceLocked_SoftDeletedRowIsNotFound(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		// lifecycleWorkspace inserts website 1, platform domain 10, and the row.
+		ws := lifecycleWorkspace(tb, db, pluginDb.WorkspaceStatusReady, nil, nil, nil)
+		fake := &fakeLifecycleProvider{}
+		svc := newLifecycleService(tb, db, fake, nil, nil)
+
+		// Simulate the selection→lock window: the row is batch-selected, a
+		// concurrent delete (holding the lock) completes, and the waiter loads
+		// only after acquiring the lock.
+		require.NoError(tb, db.Delete(&pluginDb.Workspace{}, ws.ID).Error)
+
+		unlock := svc.lockWorkspace(ws.ID)
+		_, err := svc.reloadWorkspaceLocked(context.Background(), ws.ID)
+		unlock()
+		require.ErrorIs(tb, err, gorm.ErrRecordNotFound)
+	}, workspaceTestOptions)
+}
+
 // Regression test: a delete that fails mid-teardown (here: the DNS teardown
 // step) leaves the row `deleting`, and a retry must resume the teardown
 // instead of being rejected by a status guard — otherwise the workspace is
@@ -388,9 +412,15 @@ func TestWorkspaceService_Delete_TreatsProvider404AsAlreadyDeleted(t *testing.T)
 func TestWorkspaceService_Delete_RetriesAfterMidTeardownFailure(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		db := ctx.DB()
-		ws := lifecycleWorkspace(tb, db, pluginDb.WorkspaceStatusDeleting, nil, nil, nil)
+		apiKeyID := uint(55)
+		// The API key is revoked by BOTH attempts: the prior failure of a
+		// later teardown step leaves it already revoked, and the dashboard
+		// service treats a missing key as success — the regression pins that
+		// the retry still completes with an already-revoked key.
+		ws := lifecycleWorkspace(tb, db, pluginDb.WorkspaceStatusReady, nil, nil, &apiKeyID)
 		fake := &fakeLifecycleProvider{}
-		svc := newLifecycleService(tb, db, fake, nil, nil)
+		mockKey := mockAPIKeyService(tb, apiKeyID)
+		svc := newLifecycleService(tb, db, fake, mockKey, nil)
 		dns := svc.dnsSvc.(*fakeDNSService)
 
 		dns.deleteErr = assert.AnError
@@ -413,6 +443,22 @@ func TestWorkspaceService_Delete_RetriesAfterMidTeardownFailure(t *testing.T) {
 		// reclaimed only by the purge-before-insert re-provision path).
 		require.NoError(tb, db.Model(&pluginDb.Workspace{}).Where("id = ?", ws.ID).Count(&live).Error)
 		assert.Equal(tb, int64(0), live, "workspace must be soft-deleted after the retry")
+
+		// Both attempts revoked the already-revoked key (revocation is a
+		// no-op the second time), and the retry re-ran the DNS teardown.
+		var revokeCalls int
+		for _, call := range mockKey.Calls {
+			if call.Method == "RevokeAPIKey" {
+				revokeCalls++
+			}
+		}
+		assert.Equal(tb, 2, revokeCalls, "retry must re-revoke (dashboard treats missing as success)")
+		// The failed attempt's deletes never landed (the fake rejects them);
+		// the retry deletes both address families successfully.
+		require.Len(tb, dns.deletes, 2)
+		families := []string{dns.deletes[0].Type, dns.deletes[1].Type}
+		assert.Contains(t, families, "A")
+		assert.Contains(t, families, "AAAA")
 	}, workspaceTestOptions)
 }
 
