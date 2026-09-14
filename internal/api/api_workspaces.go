@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"net/http"
 	"strconv"
 
 	"github.com/labstack/echo/v4"
@@ -96,6 +97,7 @@ func (a *API) createWorkspace(c echo.Context) error {
 		apiErr := workspaceError(err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
+	ctx.Response().Before(func() { ctx.Response().Status = http.StatusCreated })
 	return httputil.EncodeResponse(ctx, ws, &dto.WorkspaceResponse{})
 }
 
