@@ -3,7 +3,6 @@ package coolify
 import (
 	"context"
 	"strings"
-	"time"
 )
 
 // ResourceStatus is a coarse, provider-neutral status for a Coolify resource.
@@ -142,13 +141,9 @@ type ApplicationResource struct {
 }
 
 // DeploymentResource tracks an application deployment by its deployment UUID.
-// UpdatedAt is the provider's last-update timestamp for the queue entry (nil
-// when unavailable); it lets callers decide whether a non-terminal deployment
-// is still plausibly moving or has likely wedged.
 type DeploymentResource struct {
-	ID        string
-	Status    ResourceStatus
-	UpdatedAt *time.Time
+	ID     string
+	Status ResourceStatus
 }
 
 // StorageMount is a persistent volume attachment for an application.

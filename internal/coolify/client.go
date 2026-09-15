@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"go.lumeweb.com/portal-plugin-ipfs/internal/coolify/api"
 )
@@ -421,11 +420,6 @@ func (c *Client) GetDeployment(ctx context.Context, deploymentID string) (Deploy
 	if resp.JSON200 != nil {
 		out.ID = deploymentID
 		out.Status = ResourceStatus(deref(resp.JSON200.Status))
-		if updated := deref(resp.JSON200.UpdatedAt); updated != "" {
-			if parsed, perr := time.Parse(time.RFC3339, updated); perr == nil {
-				out.UpdatedAt = &parsed
-			}
-		}
 	}
 	return out, nil
 }

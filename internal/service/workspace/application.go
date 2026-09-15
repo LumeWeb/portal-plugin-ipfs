@@ -517,14 +517,14 @@ func (s *WorkspaceService) queuedDeploymentInFlight(ctx context.Context, ws *plu
 	}
 	switch dep.Status {
 	case coolify.ResourceStatusQueued, "in_progress":
-		// Do not wedge forever on a deployment stuck non-terminal (hung
-		// build, wedged daemon): once it has been pending past the
-		// provisioning window it is assumed dead, the cursor is forgotten and
-		// a fresh start is allowed.
-		if dep.UpdatedAt != nil && time.Since(*dep.UpdatedAt) > s.provisionTimeout() {
-			_ = s.setDeploymentResourceID(ctx, ws, "")
-			return false
-		}
+		// Still awaits — however long it has been pending. There is no
+		// cancel endpoint in the Coolify API surface this SDK targets, so a
+		// deployment that looks wedged must NEVER be started over: the
+		// original may still be running and restarting it would stack exactly
+		// the duplicate deployment this guard exists to prevent. A wedged
+		// deployment resolves through the bounded cross-pass retry budget
+		// (the observe path times out, the row strands in `failed` with
+		// LastError) and ends at operator intervention.
 		return true
 	default:
 		// Terminal: nothing awaits. Forget the cursor; if the app needs
