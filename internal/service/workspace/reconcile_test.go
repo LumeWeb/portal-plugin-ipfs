@@ -487,6 +487,44 @@ func TestReconcileWithRetry_RetryBudgetExhaustedStopsScheduling(t *testing.T) {
 	}, workspaceTestOptions)
 }
 
+// TestReconcileWithRetry_PermanentFailuresDoNotDrainRetryBudget verifies the
+// retry_count semantics at the scheduling unit: only failures that schedule a
+// retry increment it, so permanent drift failures never erode the cross-pass
+// transient budget — a workspace that first accumulated operator-intervention
+// failures still gets its full RetryTotalLimit of transient retries. (A full
+// pipeline walk cannot isolate this: the first permanent failure demotes the
+// row to `failed`, and the next pass exits through a different code path.)
+func TestReconcileWithRetry_PermanentFailuresDoNotDrainRetryBudget(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		ws := insertReadyDriftWorkspace(tb, db)
+		svc := newReconcileService(tb, db, &fakeWorkspaceProvider{})
+
+		permErr := &coolify.Error{StatusCode: 403, Message: "forbidden"}
+		transientErr := &coolify.Error{StatusCode: 503, Message: "overloaded"}
+
+		// Two consecutive permanent drift failures: never scheduled, so the
+		// budget is untouched.
+		svc.applyReconcileFailure(context.Background(), ws, permErr, classifyError(permErr))
+		svc.applyReconcileFailure(context.Background(), ws, permErr, classifyError(permErr))
+
+		var reloaded pluginDb.Workspace
+		require.NoError(tb, db.First(&reloaded, ws.ID).Error)
+		assert.Zero(tb, reloaded.RetryCount,
+			"permanent failures must not consume the transient retry budget")
+		assert.Nil(tb, reloaded.NextRetryAt)
+
+		// A later transient failure still gets the FULL budget: the first
+		// scheduled retry, not one already spent.
+		svc.applyReconcileFailure(context.Background(), ws, transientErr, classifyError(transientErr))
+		require.NoError(tb, db.First(&reloaded, ws.ID).Error)
+		assert.Equal(tb, 1, reloaded.RetryCount,
+			"transient retries must be counted independently of permanent failures")
+		require.NotNil(tb, reloaded.NextRetryAt,
+			"the transient failure must still schedule a retry")
+	}, workspaceTestOptions)
+}
+
 // TestReconcileWithRetry_PermanentNotRetried verifies a permanent (403)
 // failure is surfaced immediately and never retried, even though attempts
 // remain in the budget.

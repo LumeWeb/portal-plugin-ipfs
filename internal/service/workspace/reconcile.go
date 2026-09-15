@@ -508,7 +508,13 @@ func (s *WorkspaceService) persistReconcileOK(ctx context.Context, ws *pluginDb.
 // and clear NextRetryAt — except on a deleting workspace, where NextRetryAt is
 // always scheduled so the bounded teardown retries keep converging.
 func (s *WorkspaceService) applyReconcileFailure(ctx context.Context, ws *pluginDb.Workspace, err error, cls classifyResult) {
-	newCount := ws.RetryCount + 1
+	// retry_count counts SCHEDULED retries since the last success, so only a
+	// failure that actually schedules a retry consumes the cross-pass budget:
+	// permanent/drift failures (which never reschedule on a non-deleting row)
+	// must not erode the transient budget, or a workspace that accumulated
+	// operator-intervention failures first gets fewer retries than
+	// RetryTotalLimit configures and can strand immediately.
+	newCount := ws.RetryCount
 	var nextRetry *time.Time
 	// Keep the bounded backoff (retry_count keeps growing, so the delay caps
 	// at RetryMaxDelay) for EVERY failure class on a deleting workspace:
@@ -518,13 +524,14 @@ func (s *WorkspaceService) applyReconcileFailure(ctx context.Context, ws *plugin
 	// `deleting` row with NULL next_retry_at stays selected every pass, so it
 	// must never be left unscheduled.
 	// The cross-pass budget (RetryTotalLimit) is the operator-intervention
-	// gate for `failed` rows: once the workspace's retry_count passes it, a
+	// gate for `failed` rows: once the scheduled-retry count reaches it, a
 	// transient failure no longer schedules next_retry_at, so the row strands
 	// in `failed` invisible to the batch query instead of re-provisioning
 	// forever and starving the bounded batch.
 	scheduleRetry := ws.Status == pluginDb.WorkspaceStatusDeleting ||
-		(cls.category == catRetryable && newCount <= s.maxTotalRetries())
+		(cls.category == catRetryable && newCount+1 <= s.maxTotalRetries())
 	if scheduleRetry {
+		newCount++
 		t := time.Now().Add(s.retryDelay(newCount))
 		nextRetry = &t
 	}

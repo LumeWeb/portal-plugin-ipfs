@@ -117,9 +117,11 @@ type Workspace struct {
 	Status    WorkspaceStatus `gorm:"type:varchar(32);not null;index"`
 	LastError string          `gorm:"type:text"`
 
-	// RetryCount is how many consecutive reconcile failures a workspace has
-	// accumulated. It feeds bounded exponential backoff for transient failures
-	// so a pathological workspace cannot hot-loop the reconciler.
+	// RetryCount is how many retries the reconciler has scheduled since the
+	// last success. Only failures that schedule a retry increment it, so
+	// permanent/drift failures never consume the cross-pass retry budget. It
+	// feeds bounded exponential backoff so a pathological workspace cannot
+	// hot-loop the reconciler.
 	RetryCount int `gorm:"not null;default:0"`
 	// NextRetryAt gates when a failed workspace becomes eligible for a retry.
 	// It is set to a backoff time in the future on failure; the reconciler only
