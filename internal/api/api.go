@@ -572,7 +572,8 @@ Returns metadata for all IPNS keys including peer IDs, names, and creation dates
 
 See also:.*`),
 				router.WithTags("IPNS"),
-				router.WithSuccessResponse(http.StatusOK, "List of IPNS keys", router.WithJSONContent(dto.IPNSKeyListResponseResponse{})),
+				router.WithPaginationParams(),
+				router.WithSuccessResponse(http.StatusOK, "List of IPNS keys", router.WithJSONContent(dto.IPNSKeyListResponseResponse{}), router.WithTotalCountHeader()),
 			),
 		),
 		router.NewRoute(http.MethodGet, "/ipns/keys/:id", a.getIPNSKey,
