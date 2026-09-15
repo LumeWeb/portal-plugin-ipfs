@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	dashboardCore "go.lumeweb.com/portal-plugin-dashboard/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
@@ -74,6 +75,8 @@ func TestClassifyError(t *testing.T) {
 		{name: "403 forbidden is permanent", err: forbidden(), expected: catPermanent},
 		{name: "application domain conflict is permanent", err: ErrApplicationDomainConflict, expected: catPermanent},
 		{name: "application provision timeout is retryable", err: ErrApplicationProvisionTimeout, expected: catRetryable},
+		{name: "deployment failed is retryable", err: ErrDeploymentFailed, expected: catRetryable},
+		{name: "application not healthy is retryable", err: ErrApplicationNotHealthy, expected: catRetryable},
 		{name: "shared database credential missing is permanent", err: ErrDatabaseCredentialFieldMissing, expected: catPermanent},
 		{name: "shared database url malformed is permanent", err: ErrDatabaseURLMalformed, expected: catPermanent},
 		{name: "shared database server failed is permanent", err: ErrDatabaseServerFailed, expected: catPermanent},
@@ -352,6 +355,173 @@ func TestReconcileWithRetry_RetryableProvisioningDemotesToFailed(t *testing.T) {
 		assert.Equal(tb, pluginDb.WorkspaceStatusFailed, reloaded.Status,
 			"a retryable failure on a provisioning workspace must demote to failed")
 		assert.Equal(tb, 1, reloaded.RetryCount)
+	}, workspaceTestOptions)
+}
+
+// deployFailProvider composes the application-phase fake with the shared-DB
+// resolution and server-IP lookups the full provisioning pipeline touches, so
+// reconcileProvision runs to its final step and fails exactly at the
+// deployment-observation point (a failed Coolify deployment, e.g. a bad image).
+type deployFailProvider struct {
+	*fakeAppProvider
+}
+
+func (f *deployFailProvider) ResolveDatabaseResource(_ context.Context, _ string) (coolify.DatabaseResource, error) {
+	return runningDatabase(), nil
+}
+
+func (f *deployFailProvider) ResolveServerIP(_ context.Context, _ string) (string, error) {
+	return "203.0.113.7", nil
+}
+
+// TestReconcileWithRetry_DeploymentFailureSchedulesRetry covers the stranded
+// workspace incident: a failed Coolify deployment (e.g. a bad docker image)
+// demotes the workspace to `failed` and MUST schedule NextRetryAt, and the
+// demoted row must be selected again by the next batch pass. The batch query
+// only picks `failed` rows whose NextRetryAt has elapsed, so a demotion
+// without retry scheduling strands the workspace forever with no signal.
+func TestReconcileWithRetry_DeploymentFailureSchedulesRetry(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		insertWebsite(tb, db, 1, 1)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
+		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
+
+		provider := &deployFailProvider{fakeAppProvider: &fakeAppProvider{
+			startDep:    coolify.DeploymentResource{ID: "deploy-1"},
+			depStatuses: []coolify.ResourceStatus{coolify.ResourceStatusFailed},
+		}}
+		apiKey := dashboardCore.NewMockAPIKeyService(tb)
+		apiKey.EXPECT().IssueAPIKey(mock.Anything, uint(1), mock.Anything, mock.Anything).
+			Return(&dashboardCore.IssuedAPIKey{ID: 77, Token: "test"}, nil).Maybe()
+		apiKey.EXPECT().ReissueAPIKey(mock.Anything, uint(1), mock.Anything, mock.Anything).
+			Return(&dashboardCore.IssuedAPIKey{ID: 77, Token: "test"}, nil).Maybe()
+
+		bc := &core.BaseComponent{}
+		bc.SetDB(db)
+		svc := &WorkspaceService{
+			BaseComponent: bc,
+			config: &config.WorkspaceConfig{
+				RetryMaxAttempts:  1,
+				RetryInitialDelay: time.Millisecond,
+				RetryMaxDelay:     time.Millisecond,
+				ProvisionTimeout:  time.Minute,
+				PollInterval:      time.Millisecond,
+				Coolify: pluginConfig.WorkspaceCoolifyConfig{
+					ServerUUID:      "srv-1",
+					ProjectUUID:     "proj-1",
+					EnvironmentUUID: "env-1",
+					DestinationUUID: "dest-1",
+				},
+				Runtime:  appRuntimeConfig(),
+				Database: pluginConfig.WorkspaceDatabaseConfig{ResourceID: "shared-db"},
+			},
+			provider:     provider,
+			apiKeySvc:    apiKey,
+			dnsSvc:       newFakeDNSService(),
+			mysqlProv:    &fakeEngineer{},
+			identityKey:  testIdentityPrivateKey(),
+			portalAPIURL: "https://portal.example.com",
+		}
+
+		err := svc.reconcileWithRetry(context.Background(), ws)
+		require.ErrorIs(tb, err, ErrDeploymentFailed)
+
+		var reloaded pluginDb.Workspace
+		require.NoError(tb, db.First(&reloaded, ws.ID).Error)
+		assert.Equal(tb, pluginDb.WorkspaceStatusFailed, reloaded.Status,
+			"a deployment failure must demote a provisioning workspace to failed")
+		assert.Equal(tb, 1, reloaded.RetryCount)
+		require.NotNil(tb, reloaded.NextRetryAt,
+			"a demoted `failed` workspace must schedule NextRetryAt, otherwise it is never selected again")
+
+		// The demoted row is immediately retry-eligible (fast backoff
+		// config): the next batch selection must return it.
+		batch, err := svc.selectReconcileBatch(context.Background())
+		require.NoError(tb, err)
+		require.Len(tb, batch, 1)
+		assert.Equal(tb, ws.ID, batch[0].ID)
+	}, workspaceTestOptions)
+}
+
+// TestReconcileWithRetry_RetryBudgetExhaustedStopsScheduling verifies the
+// cross-pass budget: a workspace whose retry_count already passed
+// RetryTotalLimit stops scheduling next_retry_at on a transient failure, so
+// the row strands in `failed` (invisible to the batch query) instead of
+// re-provisioning forever and starving the bounded batch.
+func TestReconcileWithRetry_RetryBudgetExhaustedStopsScheduling(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		insertWebsite(tb, db, 1, 1)
+		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		ws := &pluginDb.Workspace{
+			UserID:           1,
+			WebsiteID:        new(uint(1)),
+			PlatformDomainID: 10,
+			Label:            "ws-budget",
+			Status:           pluginDb.WorkspaceStatusProvisioning,
+			RetryCount:       10, // default budget (10) already consumed
+		}
+		require.NoError(tb, db.Create(ws).Error)
+
+		fake := &fakeWorkspaceProvider{}
+		svc := newReconcileService(tb, db, fake)
+		// reconcileProvision's first step (ReconcileDatabase) fails retryably.
+		fake.resolveErr = &coolify.Error{StatusCode: 503, Message: "db starting"}
+
+		err := svc.reconcileWithRetry(context.Background(), ws)
+		require.Error(tb, err)
+		assert.Equal(tb, catRetryable, classifyError(err).category,
+			"the failure itself is still a transient class")
+
+		var reloaded pluginDb.Workspace
+		require.NoError(tb, db.First(&reloaded, ws.ID).Error)
+		assert.Equal(tb, pluginDb.WorkspaceStatusFailed, reloaded.Status)
+		assert.Nil(tb, reloaded.NextRetryAt,
+			"past the cross-pass budget a transient failure must NOT schedule another retry")
+
+		batch, err := svc.selectReconcileBatch(context.Background())
+		require.NoError(tb, err)
+		assert.Empty(tb, batch,
+			"a budget-exhausted failed row must no longer occupy batch slots")
+	}, workspaceTestOptions)
+}
+
+// TestReconcileWithRetry_PermanentFailuresDoNotDrainRetryBudget verifies the
+// retry_count semantics at the scheduling unit: only failures that schedule a
+// retry increment it, so permanent drift failures never erode the cross-pass
+// transient budget — a workspace that first accumulated operator-intervention
+// failures still gets its full RetryTotalLimit of transient retries. (A full
+// pipeline walk cannot isolate this: the first permanent failure demotes the
+// row to `failed`, and the next pass exits through a different code path.)
+func TestReconcileWithRetry_PermanentFailuresDoNotDrainRetryBudget(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		ws := insertReadyDriftWorkspace(tb, db)
+		svc := newReconcileService(tb, db, &fakeWorkspaceProvider{})
+
+		permErr := &coolify.Error{StatusCode: 403, Message: "forbidden"}
+		transientErr := &coolify.Error{StatusCode: 503, Message: "overloaded"}
+
+		// Two consecutive permanent drift failures: never scheduled, so the
+		// budget is untouched.
+		svc.applyReconcileFailure(context.Background(), ws, permErr, classifyError(permErr))
+		svc.applyReconcileFailure(context.Background(), ws, permErr, classifyError(permErr))
+
+		var reloaded pluginDb.Workspace
+		require.NoError(tb, db.First(&reloaded, ws.ID).Error)
+		assert.Zero(tb, reloaded.RetryCount,
+			"permanent failures must not consume the transient retry budget")
+		assert.Nil(tb, reloaded.NextRetryAt)
+
+		// A later transient failure still gets the FULL budget: the first
+		// scheduled retry, not one already spent.
+		svc.applyReconcileFailure(context.Background(), ws, transientErr, classifyError(transientErr))
+		require.NoError(tb, db.First(&reloaded, ws.ID).Error)
+		assert.Equal(tb, 1, reloaded.RetryCount,
+			"transient retries must be counted independently of permanent failures")
+		require.NotNil(tb, reloaded.NextRetryAt,
+			"the transient failure must still schedule a retry")
 	}, workspaceTestOptions)
 }
 
