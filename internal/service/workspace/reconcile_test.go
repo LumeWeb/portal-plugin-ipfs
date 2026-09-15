@@ -390,6 +390,10 @@ func TestReconcileWithRetry_DeploymentFailureSchedulesRetry(t *testing.T) {
 		provider := &deployFailProvider{fakeAppProvider: &fakeAppProvider{
 			startDep:    coolify.DeploymentResource{ID: "deploy-1"},
 			depStatuses: []coolify.ResourceStatus{coolify.ResourceStatusFailed},
+			// The pre-start status check must see a not-yet-lived app
+			// (exited); the fake otherwise defaults GetApplication to running,
+			// which would skip the start and never reach deploy-1.
+			appStatus: coolify.ResourceStatusExited,
 		}}
 		apiKey := dashboardCore.NewMockAPIKeyService(tb)
 		apiKey.EXPECT().IssueAPIKey(mock.Anything, uint(1), mock.Anything, mock.Anything).

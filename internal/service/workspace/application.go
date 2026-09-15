@@ -480,27 +480,137 @@ func (s *WorkspaceService) proxyAuthEnvironment(ws *pluginDb.Workspace) ([]cooli
 	}, nil
 }
 
-// StartAndObserveApplication starts the application, polls the deployment to a
+// appLaunchInFlight reports whether the application is either already live
+// (running/ready/healthy) or has a launch already underway (starting/
+// restarting). In both cases queueing another start would only duplicate the
+// Coolify deployment (Coolify does not dedupe POST /start), so the caller must
+// observe instead of start.
+func appLaunchInFlight(status coolify.ResourceStatus) bool {
+	switch status {
+	case coolify.ResourceStatusRunning, coolify.ResourceStatusReady,
+		coolify.ResourceStatusHealthy, coolify.ResourceStatusStarting, "restarting":
+		return true
+	}
+	return false
+}
+
+// queuedDeploymentInFlight reports whether this workspace's persistently
+// recorded deployment (the last one this portal queued) is still queued or
+// running. It closes the re-entry window the application status alone cannot
+// see: right after POST /start, Coolify still reports the app's PRE-deploy
+// status (e.g. exited) until the queued deployment replaces the container, so
+// a reconcile re-entry in that window would rely on the deployment record, not
+// the app status, to avoid a duplicate start. A terminal deployment (or a
+// vanished record) clears the cursor and reports no pending work.
+func (s *WorkspaceService) queuedDeploymentInFlight(ctx context.Context, ws *pluginDb.Workspace) bool {
+	if ws.DeploymentResourceID == nil || *ws.DeploymentResourceID == "" {
+		return false
+	}
+	dep, err := s.provider.GetDeployment(ctx, *ws.DeploymentResourceID)
+	if err != nil {
+		// A record that is gone (purged / deleted app) can never be awaiting;
+		// forget the cursor so later entries do not re-poll it. Transport
+		// errors also resolve to "not pending": starting again is the safe
+		// recovery for a workspace that is not live.
+		_ = s.setDeploymentResourceID(ctx, ws, "")
+		return false
+	}
+	switch dep.Status {
+	case coolify.ResourceStatusQueued, "in_progress":
+		// Still awaits — however long it has been pending. There is no
+		// cancel endpoint in the Coolify API surface this SDK targets, so a
+		// deployment that looks wedged must NEVER be started over: the
+		// original may still be running and restarting it would stack exactly
+		// the duplicate deployment this guard exists to prevent. A wedged
+		// deployment resolves through the bounded cross-pass retry budget
+		// (the observe path times out, the row strands in `failed` with
+		// LastError) and ends at operator intervention.
+		return true
+	default:
+		// Terminal: nothing awaits. Forget the cursor; if the app needs
+		// (re)starting the caller will queue a fresh deployment and overwrite
+		// it anyway.
+		_ = s.setDeploymentResourceID(ctx, ws, "")
+		return false
+	}
+}
+
+// setDeploymentResourceID persists (or, with an empty id, forgets) the last
+// queued deployment UUID on the workspace and updates the in-memory pointer.
+func (s *WorkspaceService) setDeploymentResourceID(ctx context.Context, ws *pluginDb.Workspace, deploymentID string) error {
+	var stored *string
+	if deploymentID != "" {
+		stored = &deploymentID
+	}
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		return tx.Model(&pluginDb.Workspace{}).
+			Where("id = ?", ws.ID).
+			Update("deployment_resource_id", stored)
+	})
+	if err != nil {
+		return fmt.Errorf("workspace: failed to persist deployment resource id: %w", err)
+	}
+	ws.DeploymentResourceID = stored
+	return nil
+}
+
+// StartAndObserveApplication starts the application (unless a launch is
+// already underway or the app is already live), polls the deployment to a
 // terminal state, waits for the application to report a ready/healthy status
 // via the Coolify API, and only then marks the workspace ready. Readiness is
 // decided purely from Coolify's deployment and application status — the portal
 // performs no HTTP probe of the public workspace URL. The deployment UUID is
 // held in memory only; after a service restart that loses it, reconciliation
 // falls back to the application status poll.
+//
+// The pre-start status check is what keeps reconcile re-entry (an in-pass
+// retry or a follow-up pass while the row is still `provisioning`) from
+// producing a SECOND Coolify deployment: without it, every retry merrily
+// env-upserts and queues a fresh deployment while the first one is still
+// running or has already succeeded.
 func (s *WorkspaceService) StartAndObserveApplication(ctx context.Context, ws *pluginDb.Workspace, appID string) error {
 	if s.provider == nil {
 		return fmt.Errorf("workspace: provider not available")
 	}
 
-	// 1. Start the application and record the deployment UUID in memory.
-	dep, err := s.provider.StartApplication(ctx, appID)
+	// 0. Resolve the application's current status BEFORE queueing a start.
+	// A 404 (drift) or a failing status lookup surfaces before any deployment
+	// side effect, and an already-launching/live application is observed
+	// instead of started again.
+	res, err := s.provider.GetApplication(ctx, appID)
 	if err != nil {
 		return err
 	}
 
-	// 2. Poll the deployment to a terminal state when we have its UUID.
-	if dep.ID != "" {
-		if err := s.waitDeploymentFinished(ctx, dep.ID); err != nil {
+	// 1. Start the application, unless a launch is already in flight (possibly
+	// from a prior retry/pass): either visible in the application status, or
+	// still queued behind the app's pre-deploy status — then recorded by the
+	// deployment cursor. Whatever deployment we await (newly queued or the
+	// recorded one) is waited to its terminal state BEFORE consulting the app
+	// status: until the deployment replaces the container, the app still
+	// reports its pre-deploy status (e.g. exited), which waitApplicationRunning
+	// must not misread as a terminal failure.
+	startNeeded := !appLaunchInFlight(res.Status)
+	depID := ""
+	if startNeeded && s.queuedDeploymentInFlight(ctx, ws) {
+		startNeeded = false
+		depID = *ws.DeploymentResourceID
+	}
+	if startNeeded {
+		dep, err := s.provider.StartApplication(ctx, appID)
+		if err != nil {
+			return err
+		}
+
+		// Record the deployment UUID immediately so a re-entry can recognize
+		// this queued deployment before the app status reflects it.
+		if err := s.setDeploymentResourceID(ctx, ws, dep.ID); err != nil {
+			return err
+		}
+		depID = dep.ID
+	}
+	if depID != "" {
+		if err := s.waitDeploymentFinished(ctx, depID); err != nil {
 			if isApplicationFailure(err) {
 				_ = s.recordLastError(ctx, ws, err)
 			}
@@ -508,8 +618,9 @@ func (s *WorkspaceService) StartAndObserveApplication(ctx context.Context, ws *p
 		}
 	}
 
-	// 3. Wait for the application to report running/ready (or a health-aware
-	// terminal state) from the Coolify API.
+	// 2. Wait for the application to report running/ready (or a health-aware
+	// terminal state) from the Coolify API — also the sole wait when the launch
+	// was already in flight (no new deployment was queued above).
 	if err := s.waitApplicationRunning(ctx, appID); err != nil {
 		if isApplicationFailure(err) {
 			_ = s.recordLastError(ctx, ws, err)
@@ -517,7 +628,7 @@ func (s *WorkspaceService) StartAndObserveApplication(ctx context.Context, ws *p
 		return err
 	}
 
-	// 4. Mark the workspace ready only on success.
+	// 3. Mark the workspace ready only on success.
 	return s.markReady(ctx, ws)
 }
 
