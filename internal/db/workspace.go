@@ -103,6 +103,16 @@ type Workspace struct {
 	ApplicationResourceID *string `gorm:"type:varchar(64);uniqueIndex"`
 	APIKeyID              *uint   `gorm:"index"`
 
+	// DeploymentResourceID is the LAST queued Coolify deployment UUID for the
+	// application, persisted as soon as StartApplication accepts the request.
+	// Queueing is not idempotent on the Coolify side (POST /start never
+	// dedupes), so a reconcile re-entry while that deployment is still
+	// queued/in progress — and the application itself still reports its
+	// pre-deploy status (e.g. exited) — must observe the recorded deployment
+	// instead of queueing a duplicate. It is not unique: the column stores a
+	// cursor to the most recent queued deployment, not an identity.
+	DeploymentResourceID *string `gorm:"type:varchar(64)"`
+
 	// ProxyUsername and ProxyPassword are the workspace's reverse-proxy Basic
 	// Auth credentials, generated at application creation and kept separate
 	// from the portal API key. They authenticate the portal's own access to

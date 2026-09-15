@@ -676,8 +676,8 @@ func TestStartAndObserveApplication_AlreadyRunningDoesNotRedeploy(t *testing.T) 
 		insertWebsite(tb, db, 1, 1)
 		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
-		user := "wsuser"
-		pass := "wspass"
+		user, pass, err := generateProxyCredentials()
+		require.NoError(tb, err)
 		ws.ProxyUsername = &user
 		ws.ProxyPassword = &pass
 
@@ -688,8 +688,7 @@ func TestStartAndObserveApplication_AlreadyRunningDoesNotRedeploy(t *testing.T) 
 		}
 		svc := newAppService(tb, db, fake, appRuntimeConfig())
 
-		err := svc.StartAndObserveApplication(context.Background(), ws, "app-created")
-		require.NoError(tb, err)
+		require.NoError(tb, svc.StartAndObserveApplication(context.Background(), ws, "app-created"))
 
 		// Observe-only: no start, no deployment queue entry, workspace ready.
 		assert.Equal(tb, 0, fake.startCalls)
@@ -698,6 +697,46 @@ func TestStartAndObserveApplication_AlreadyRunningDoesNotRedeploy(t *testing.T) 
 		require.NoError(tb, db.First(&persisted, ws.ID).Error)
 		assert.Equal(tb, pluginDb.WorkspaceStatusReady, persisted.Status)
 		assert.Empty(tb, persisted.LastError)
+	}, workspaceTestOptions)
+}
+
+// TestStartAndObserveApplication_QueuedDeploymentObservedNotRestarted covers
+// the window the application status cannot see: right after POST /start,
+// Coolify still reports the app's PRE-deploy status (exited) until the queued
+// deployment replaces the container. A reconcile re-entry in that window must
+// observe the recorded deployment instead of queueing a duplicate.
+func TestStartAndObserveApplication_QueuedDeploymentObservedNotRestarted(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		insertWebsite(tb, db, 1, 1)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
+		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
+		user, pass, err := generateProxyCredentials()
+		require.NoError(tb, err)
+		ws.ProxyUsername = &user
+		ws.ProxyPassword = &pass
+		require.NoError(tb, db.First(&ws, ws.ID).Error)
+
+		// A previous pass already queued deploy-1; the app still reports
+		// exited (the deployment has not replaced the container yet).
+		fake := &fakeAppProvider{
+			appStatus:   coolify.ResourceStatusExited,
+			appStatuses: []coolify.ResourceStatus{coolify.ResourceStatusExited, coolify.ResourceStatusRunning},
+			depStatuses: []coolify.ResourceStatus{coolify.ResourceStatusQueued, coolify.ResourceStatusFinished},
+		}
+		svc := newAppService(tb, db, fake, appRuntimeConfig())
+
+		// Simulate the prior pass's persisted deployment cursor.
+		depID := "deploy-1"
+		require.NoError(tb, db.Model(&pluginDb.Workspace{}).Where("id = ?", ws.ID).
+			Update("deployment_resource_id", depID).Error)
+		ws.DeploymentResourceID = &depID
+
+		require.NoError(tb, svc.StartAndObserveApplication(context.Background(), ws, "app-created"))
+
+		// Observe-only: the queued deployment is awaited, never duplicated.
+		assert.Equal(tb, 0, fake.startCalls)
+		assert.Equal(tb, pluginDb.WorkspaceStatusReady, ws.Status)
 	}, workspaceTestOptions)
 }
 

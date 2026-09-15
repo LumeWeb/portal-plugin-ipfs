@@ -494,6 +494,58 @@ func appLaunchInFlight(status coolify.ResourceStatus) bool {
 	return false
 }
 
+// queuedDeploymentInFlight reports whether this workspace's persistently
+// recorded deployment (the last one this portal queued) is still queued or
+// running. It closes the re-entry window the application status alone cannot
+// see: right after POST /start, Coolify still reports the app's PRE-deploy
+// status (e.g. exited) until the queued deployment replaces the container, so
+// a reconcile re-entry in that window would rely on the deployment record, not
+// the app status, to avoid a duplicate start. A terminal deployment (or a
+// vanished record) clears the cursor and reports no pending work.
+func (s *WorkspaceService) queuedDeploymentInFlight(ctx context.Context, ws *pluginDb.Workspace) bool {
+	if ws.DeploymentResourceID == nil || *ws.DeploymentResourceID == "" {
+		return false
+	}
+	dep, err := s.provider.GetDeployment(ctx, *ws.DeploymentResourceID)
+	if err != nil {
+		// A record that is gone (purged / deleted app) can never be awaiting;
+		// forget the cursor so later entries do not re-poll it. Transport
+		// errors also resolve to "not pending": starting again is the safe
+		// recovery for a workspace that is not live.
+		_ = s.setDeploymentResourceID(ctx, ws, "")
+		return false
+	}
+	switch dep.Status {
+	case coolify.ResourceStatusQueued, "in_progress":
+		return true
+	default:
+		// Terminal: nothing awaits. Forget the cursor; if the app needs
+		// (re)starting the caller will queue a fresh deployment and overwrite
+		// it anyway.
+		_ = s.setDeploymentResourceID(ctx, ws, "")
+		return false
+	}
+}
+
+// setDeploymentResourceID persists (or, with an empty id, forgets) the last
+// queued deployment UUID on the workspace and updates the in-memory pointer.
+func (s *WorkspaceService) setDeploymentResourceID(ctx context.Context, ws *pluginDb.Workspace, deploymentID string) error {
+	var stored *string
+	if deploymentID != "" {
+		stored = &deploymentID
+	}
+	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		return tx.Model(&pluginDb.Workspace{}).
+			Where("id = ?", ws.ID).
+			Update("deployment_resource_id", stored)
+	})
+	if err != nil {
+		return fmt.Errorf("workspace: failed to persist deployment resource id: %w", err)
+	}
+	ws.DeploymentResourceID = stored
+	return nil
+}
+
 // StartAndObserveApplication starts the application (unless a launch is
 // already underway or the app is already live), polls the deployment to a
 // terminal state, waits for the application to report a ready/healthy status
@@ -522,13 +574,23 @@ func (s *WorkspaceService) StartAndObserveApplication(ctx context.Context, ws *p
 		return err
 	}
 
-	// 1. Start the application and record the deployment UUID in memory,
-	// unless a launch is already in flight (possibly from a prior retry/pass).
-	if appLaunchInFlight(res.Status) {
-		// Observe only; dep stays zero so no deployment poll happens.
-	} else {
+	// 1. Start the application, unless a launch is already in flight (possibly
+	// from a prior retry/pass): either visible in the application status, or
+	// still queued behind the app's pre-deploy status — then recorded by the
+	// deployment cursor.
+	startNeeded := !appLaunchInFlight(res.Status)
+	if startNeeded && s.queuedDeploymentInFlight(ctx, ws) {
+		startNeeded = false
+	}
+	if startNeeded {
 		dep, err := s.provider.StartApplication(ctx, appID)
 		if err != nil {
+			return err
+		}
+
+		// Record the deployment UUID immediately so a re-entry can recognize
+		// this queued deployment before the app status reflects it.
+		if err := s.setDeploymentResourceID(ctx, ws, dep.ID); err != nil {
 			return err
 		}
 
