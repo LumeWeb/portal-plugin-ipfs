@@ -615,6 +615,14 @@ func classifyError(err error) classifyResult {
 	}
 
 	// Sentinel terminal errors already wired into the building blocks.
+	// Deployment-observation outcomes (deploy failed / app never became
+	// healthy) are deliberately NOT permanent: they are runtime states a
+	// corrected image or a recovered runtime resolves on its own, so the
+	// reconciler must keep retrying them on backoff — otherwise a failing
+	// workspace strands in `failed` with no NextRetryAt and is never selected
+	// again (the batch query only picks `failed` rows whose NextRetryAt has
+	// elapsed). Truly operator-fixed conditions (bad credentials, conflicts)
+	// keep their own classification at their own call sites.
 	switch {
 	case errors.Is(err, ErrDatabaseCredentialFieldMissing),
 		errors.Is(err, ErrDatabaseURLMalformed),
@@ -622,11 +630,11 @@ func classifyError(err error) classifyResult {
 		errors.Is(err, ErrApplicationDomainConflict),
 		errors.Is(err, ErrApplicationAdoptionAmbiguous),
 		errors.Is(err, ErrApplicationCreateNoID),
-		errors.Is(err, ErrDeploymentFailed),
-		errors.Is(err, ErrApplicationNotHealthy),
 		errors.Is(err, ErrProxyCredentialsUnavailable):
 		return classifyResult{category: catPermanent}
-	case errors.Is(err, ErrApplicationProvisionTimeout):
+	case errors.Is(err, ErrDeploymentFailed),
+		errors.Is(err, ErrApplicationNotHealthy),
+		errors.Is(err, ErrApplicationProvisionTimeout):
 		return classifyResult{category: catRetryable}
 	}
 
