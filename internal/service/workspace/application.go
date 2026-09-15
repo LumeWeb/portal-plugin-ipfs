@@ -180,7 +180,7 @@ func (s *WorkspaceService) provisionApplication(ctx context.Context, ws *pluginD
 // discriminator. The exact-name match within the tag-scoped result set keeps
 // adoption unambiguous.
 func (s *WorkspaceService) findCandidateApplication(ctx context.Context, ws *pluginDb.Workspace) (*coolify.Resource, error) {
-	name := s.applicationName(ws.ID)
+	name := s.applicationName(ws.Label)
 	var resources []coolify.Resource
 	if tag := s.applicationTag(); tag != "" {
 		// Tag-scoped recovery on v4.3.19+: only applications this installation
@@ -244,7 +244,7 @@ func (s *WorkspaceService) buildCreateApplicationRequest(ws *pluginDb.Workspace)
 		ProjectUUID:           prov.ProjectUUID,
 		EnvironmentUUID:       prov.EnvironmentUUID,
 		DestinationUUID:       prov.DestinationUUID,
-		Name:                  s.applicationName(ws.ID),
+		Name:                  s.applicationName(ws.Label),
 		Image:                 rt.Image,
 		Tag:                   rt.Tag,
 		Port:                  strconv.Itoa(int(rt.Port)),
@@ -398,7 +398,7 @@ func (s *WorkspaceService) desiredStorageMounts(ws *pluginDb.Workspace) []coolif
 	}
 	for _, sc := range cfg {
 		mounts = append(mounts, coolify.StorageMount{
-			Name:      deterministicVolumeName(ns, ws.ID, sc.NameSuffix),
+			Name:      deterministicVolumeName(ns, ws.Label, sc.NameSuffix),
 			MountPath: sc.MountPath,
 		})
 	}
@@ -650,22 +650,24 @@ func isApplicationFailure(err error) bool {
 // installations sharing the same Coolify placement never collide. It is
 // bounded (<= 63 chars) and DNS/Coolify-resource-name safe, and together with
 // the installation-scoped tag it is the adoption/recovery key.
-func (s *WorkspaceService) applicationName(id uint) string {
+func (s *WorkspaceService) applicationName(label string) string {
 	ns := ""
 	if s.config != nil {
 		ns = s.config.Coolify.InstallNamespace
 	}
-	return deterministicApplicationName(ns, id)
+	return deterministicApplicationName(ns, label)
 }
 
 // deterministicApplicationName builds the bounded, DNS-safe deterministic
-// application name from an optional install-namespace prefix and the workspace
-// ID. The full name never exceeds Coolify's 63-char resource-name ceiling.
-func deterministicApplicationName(ns string, id uint) string {
+// application name from an optional install-namespace prefix and the
+// workspace's opaque URL label (e.g. "ws-k7x4p9zq"), never the sequential row
+// ID, so resource names stay non-enumerable like the workspace hostname. The
+// full name never exceeds Coolify's 63-char resource-name ceiling.
+func deterministicApplicationName(ns string, label string) string {
 	if ns == "" {
-		return fmt.Sprintf("workspace-%d-app", id)
+		return fmt.Sprintf("%s-app", label)
 	}
-	return fmt.Sprintf("%s-workspace-%d-app", ns, id)
+	return fmt.Sprintf("%s-%s-app", ns, label)
 }
 
 // applicationTag returns the single installation-scoped Coolify tag applied to
@@ -704,11 +706,12 @@ func deterministicWorkspaceTag(ns string) string {
 }
 
 // deterministicVolumeName is the deterministic persistent volume name for one
-// of a workspace's storage mounts, optionally prefixed with the install
+// of a workspace's storage mounts, derived from the workspace's opaque URL
+// label (never the sequential row ID) and optionally prefixed with the install
 // namespace to stay unique across installations sharing a placement.
-func deterministicVolumeName(ns string, id uint, suffix string) string {
+func deterministicVolumeName(ns string, label string, suffix string) string {
 	if ns == "" {
-		return fmt.Sprintf("workspace-%d-%s", id, suffix)
+		return fmt.Sprintf("%s-%s", label, suffix)
 	}
-	return fmt.Sprintf("%s-workspace-%d-%s", ns, id, suffix)
+	return fmt.Sprintf("%s-%s-%s", ns, label, suffix)
 }

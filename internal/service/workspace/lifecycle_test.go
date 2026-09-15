@@ -303,8 +303,8 @@ func TestWorkspaceService_Resume_RecconciledLogicalDBNotCoolifyDB(t *testing.T) 
 		// or creates a Coolify database resource.
 		eng := svc.mysqlProv.(*fakeEngineer)
 		require.Len(tb, eng.ensureCalls, 1, "resume must re-provision the logical database")
-		assert.Equal(tb, "workspace_"+itoa(ws.ID), eng.ensureCalls[0].Database)
-		assert.Equal(tb, "workspace_"+itoa(ws.ID), eng.ensureCalls[0].User)
+		assert.Equal(tb, "ws_lifecycle", eng.ensureCalls[0].Database)
+		assert.Equal(tb, "ws_lifecycle", eng.ensureCalls[0].User)
 		// The environment is refreshed (set-env) before the app starts, and the
 		// shared Coolify DB host is used for the connection values. ReconcileDatabase
 		// and ReconcileAPIKey do not touch the provider, so the only provider

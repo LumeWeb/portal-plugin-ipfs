@@ -149,7 +149,9 @@ func (e *MySQLEngineer) DropDatabase(ctx context.Context, req EnsureRequest) err
 	if e.db == nil {
 		return errors.New("mysqlprovision: no database connection")
 	}
-	if err := validateReq(req); err != nil {
+	// Dropping never needs the (ephemeral) password, so callers do not have to
+	// re-derive it; only the identifiers are validated here.
+	if err := validateIdentifiers(req); err != nil {
 		return err
 	}
 	db, err := quoteIdent(req.Database)
@@ -170,6 +172,19 @@ func (e *MySQLEngineer) DropDatabase(ctx context.Context, req EnsureRequest) err
 }
 
 func validateReq(req EnsureRequest) error {
+	if err := validateIdentifiers(req); err != nil {
+		return err
+	}
+	if req.Password == "" {
+		return errors.New("mysqlprovision: password is required")
+	}
+	return nil
+}
+
+// validateIdentifiers checks only the database/user identifier fields, shared
+// by both the ensure (password required) and drop (password never needed)
+// paths.
+func validateIdentifiers(req EnsureRequest) error {
 	if req.Database == "" || req.User == "" {
 		return errors.New("mysqlprovision: database and user are required")
 	}
@@ -178,9 +193,6 @@ func validateReq(req EnsureRequest) error {
 	}
 	if !identRe.MatchString(req.User) {
 		return fmt.Errorf("mysqlprovision: invalid user name %q", req.User)
-	}
-	if req.Password == "" {
-		return errors.New("mysqlprovision: password is required")
 	}
 	return nil
 }

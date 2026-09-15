@@ -217,7 +217,7 @@ func TestReconcileApplication_CreatePersistsIDAndProxyCreds(t *testing.T) {
 		require.Equal(tb, 1, fake.createCalls)
 		req := fake.lastCreate
 		// Namespace-prefixed deterministic name.
-		assert.Equal(tb, "portalx-workspace-"+itoa(ws.ID)+"-app", req.Name)
+		assert.Equal(tb, "portalx-ws-test-app", req.Name)
 		// The installation-scoped tag is sent (Coolify v4.3.19 persists
 		// application tags), enabling tag-scoped recovery.
 		assert.Equal(tb, []string{"portalx-workspaces"}, req.Tags)
@@ -321,7 +321,7 @@ func TestReconcileApplication_AdoptExistingAfterAmbiguousCreate(t *testing.T) {
 
 		// No installation namespace is configured, so recovery falls back to a
 		// deterministic-name listing (FindApplicationByName).
-		name := "workspace-" + itoa(ws.ID) + "-app"
+		name := "ws-test-app"
 		fake := &fakeAppProvider{
 			resources: []coolify.Resource{
 				{ID: "app-existing", Name: name, Type: "application", Status: coolify.ResourceStatusRunning},
@@ -347,7 +347,7 @@ func TestReconcileApplication_TagScopedAdoptionExactName(t *testing.T) {
 		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
-		name := "portalx-workspace-" + itoa(ws.ID) + "-app"
+		name := "portalx-ws-test-app"
 		fake := &fakeAppProvider{
 			// Simulates GET /applications?tag=portalx-workspaces returning this
 			// installation's apps: the same-named otherx app is absent because
@@ -379,7 +379,7 @@ func TestReconcileApplication_SameNameWithoutTagNotAdopted(t *testing.T) {
 		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
-		name := "portalx-workspace-" + itoa(ws.ID) + "-app"
+		name := "portalx-ws-test-app"
 		fake := &fakeAppProvider{
 			// A same-named resource EXISTS but carries a different/other tag, so
 			// the tag-scoped query returns nothing for this installation.
@@ -411,7 +411,7 @@ func TestReconcileApplication_TagScopedAmbiguityFailsClosed(t *testing.T) {
 		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
 		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
 
-		name := "portalx-workspace-" + itoa(ws.ID) + "-app"
+		name := "portalx-ws-test-app"
 		fake := &fakeAppProvider{
 			// Two applications carry the installation tag and share the exact
 			// deterministic name: ambiguous, must fail closed.
@@ -473,7 +473,7 @@ func TestSetApplicationEnvironment_SecretsAndKeys(t *testing.T) {
 			Host: "db.internal", Port: 3306, Database: "wsdb",
 			Username: "ws", Password: "db-super-secret",
 		}
-		apiKey := &dashboardCore.IssuedAPIKey{ID: 42, Token: "portal-jwt-secret", Name: "workspace-" + itoa(ws.ID)}
+		apiKey := &dashboardCore.IssuedAPIKey{ID: 42, Token: "portal-jwt-secret", Name: "ws-test"}
 
 		err := svc.SetApplicationEnvironment(context.Background(), ws, "app-created", dbCreds, apiKey)
 		require.NoError(tb, err)
@@ -558,8 +558,8 @@ func TestReconcileApplicationStorage_Idempotent(t *testing.T) {
 
 		assert.Equal(tb, 2, fake.storageCalls)
 		want := []coolify.StorageMount{
-			{Name: "workspace-" + itoa(ws.ID) + "-data", MountPath: "/var/www/html"},
-			{Name: "workspace-" + itoa(ws.ID) + "-uploads", MountPath: "/var/www/html/wp-content/uploads"},
+			{Name: "ws-test-data", MountPath: "/var/www/html"},
+			{Name: "ws-test-uploads", MountPath: "/var/www/html/wp-content/uploads"},
 		}
 		assert.Equal(tb, want, fake.storageMount)
 	}, workspaceTestOptions)
@@ -657,10 +657,10 @@ func TestWorkspaceTagDerivation(t *testing.T) {
 	// With an install namespace, the tag is the installation-scoped
 	// "<ns>-workspaces" token; the name is namespace-prefixed.
 	assert.Equal(t, "portalx-workspaces", deterministicWorkspaceTag("portalx"))
-	assert.Equal(t, "portalx-workspace-7-app", deterministicApplicationName("portalx", 7))
+	assert.Equal(t, "portalx-ws-k7x4p9zq-app", deterministicApplicationName("portalx", "ws-k7x4p9zq"))
 	// Without a namespace, no tag is emitted and the name is unprefixed.
 	assert.Equal(t, "", deterministicWorkspaceTag(""))
-	assert.Equal(t, "workspace-7-app", deterministicApplicationName("", 7))
+	assert.Equal(t, "ws-k7x4p9zq-app", deterministicApplicationName("", "ws-k7x4p9zq"))
 
 	// applicationTags wraps applicationTag: empty when no namespace.
 	svc := &WorkspaceService{config: &pluginConfig.WorkspaceConfig{

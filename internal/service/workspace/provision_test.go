@@ -210,8 +210,8 @@ func TestReconcileDatabase_ProvisionsLogicalDBOnSharedResource(t *testing.T) {
 
 		// Deterministic logical identifiers derived from the workspace ID.
 		req := eng.ensureCalls[0]
-		assert.Equal(tb, "workspace_"+itoa(ws.ID), req.Database)
-		assert.Equal(tb, "workspace_"+itoa(ws.ID), req.User)
+		assert.Equal(tb, "ws_test", req.Database)
+		assert.Equal(tb, "ws_test", req.User)
 
 		// The password is derived (strong, deterministic from the identity key
 		// + per-workspace salt) and NOT persisted. Only the non-secret salt is
@@ -229,19 +229,19 @@ func TestReconcileDatabase_ProvisionsLogicalDBOnSharedResource(t *testing.T) {
 		require.NotNil(tb, creds)
 		assert.Equal(tb, "db.internal", creds.Host)
 		assert.Equal(tb, uint16(3306), creds.Port)
-		assert.Equal(tb, "workspace_"+itoa(ws.ID), creds.Database)
-		assert.Equal(tb, "workspace_"+itoa(ws.ID), creds.Username)
+		assert.Equal(tb, "ws_test", creds.Database)
+		assert.Equal(tb, "ws_test", creds.Username)
 		assert.Equal(tb, wantPass, creds.Password)
 
 		// Logical name/user persisted on the row; password is not.
 		require.NotNil(tb, ws.DatabaseName)
 		require.NotNil(tb, ws.DatabaseUser)
-		assert.Equal(tb, "workspace_"+itoa(ws.ID), *ws.DatabaseName)
-		assert.Equal(tb, "workspace_"+itoa(ws.ID), *ws.DatabaseUser)
+		assert.Equal(tb, "ws_test", *ws.DatabaseName)
+		assert.Equal(tb, "ws_test", *ws.DatabaseUser)
 		var persisted pluginDb.Workspace
 		require.NoError(tb, db.First(&persisted, ws.ID).Error)
 		require.NotNil(tb, persisted.DatabaseName)
-		assert.Equal(tb, "workspace_"+itoa(ws.ID), *persisted.DatabaseName)
+		assert.Equal(tb, "ws_test", *persisted.DatabaseName)
 		assert.Empty(tb, persisted.LastError)
 		assert.Nil(tb, persisted.ApplicationResourceID)
 	}, workspaceTestOptions)
@@ -543,8 +543,8 @@ func TestReconcileAPIKey_IssueOnFresh(t *testing.T) {
 		ws := insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning)
 
 		mockKey := dashboardCore.NewMockAPIKeyService(tb)
-		mockKey.EXPECT().IssueAPIKey(mock.Anything, uint(1), "workspace-"+itoa(ws.ID), apiKeyTTL).
-			Return(&dashboardCore.IssuedAPIKey{ID: 42, Token: "jwt-abc", Name: "workspace-" + itoa(ws.ID)}, nil)
+		mockKey.EXPECT().IssueAPIKey(mock.Anything, uint(1), "ws-test", apiKeyTTL).
+			Return(&dashboardCore.IssuedAPIKey{ID: 42, Token: "jwt-abc", Name: "ws-test"}, nil)
 
 		fake := &fakeWorkspaceProvider{}
 		svc := newProvisionService(tb, db, fake, mockKey, &fakeEngineer{})
@@ -577,7 +577,7 @@ func TestReconcileAPIKey_ReissueWhenRowExists(t *testing.T) {
 		// Reissue, never a second Issue (no duplicate key rows). An unexpected
 		// IssueAPIKey call would fail the mock.
 		mockKey.EXPECT().ReissueAPIKey(mock.Anything, uint(1), keyID, apiKeyTTL).
-			Return(&dashboardCore.IssuedAPIKey{ID: keyID, Token: "jwt-refreshed", Name: "workspace-" + itoa(ws.ID)}, nil)
+			Return(&dashboardCore.IssuedAPIKey{ID: keyID, Token: "jwt-refreshed", Name: "ws-test"}, nil)
 
 		fake := &fakeWorkspaceProvider{}
 		svc := newProvisionService(tb, db, fake, mockKey, &fakeEngineer{})
