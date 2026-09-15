@@ -2,8 +2,8 @@
 // error classification. This file provides:
 //
 //   - ReconcileJob, the plugin cron job, running on WorkspaceConfig.ReconcileInterval;
-//   - bounded batch selection of provisioning / retry-eligible-failed /
-//     ready|suspended drift-check workspaces;
+//   - bounded batch selection of provisioning / deleting (teardown resume) /
+//     retry-eligible-failed / ready|suspended drift-check workspaces;
 //   - an in-process keyed per-workspace lock (current single-instance setup);
 //   - failure classification and bounded exponential backoff for
 //     timeout/429/5xx, with permanent handling for 401/403/409/422;
@@ -265,6 +265,10 @@ func (s *WorkspaceService) reloadWorkspaceLocked(ctx context.Context, id uint) (
 // selectReconcileBatch selects a bounded batch of workspaces needing work:
 //
 //   - provisioning workspaces (advance the pipeline),
+//   - deleting workspaces whose NextRetryAt has elapsed (resumes an
+//     interrupted teardown; NextRetryAt is always set by applyReconcileFailure
+//     for a failing teardown, so a fresh `deleting` row — NULL — is also
+//     eligible, including one stranded by a process restart mid-teardown),
 //   - failed workspaces whose NextRetryAt has elapsed (retry-eligible),
 //   - ready/suspended workspaces past DriftCheckInterval (drift check).
 func (s *WorkspaceService) selectReconcileBatch(ctx context.Context) ([]*pluginDb.Workspace, error) {
@@ -282,10 +286,12 @@ func (s *WorkspaceService) selectReconcileBatch(ctx context.Context) ([]*pluginD
 			Where(`(
 				status = ? OR
 				(status = ? AND next_retry_at IS NOT NULL AND next_retry_at <= ?) OR
+				(status = ? AND (next_retry_at IS NULL OR next_retry_at <= ?)) OR
 				(status IN ? AND (last_reconcile_at IS NULL OR last_reconcile_at <= ?))
 			)`,
 				pluginDb.WorkspaceStatusProvisioning,
 				pluginDb.WorkspaceStatusFailed, now,
+				pluginDb.WorkspaceStatusDeleting, now,
 				statuses,
 				driftThreshold,
 			).
@@ -374,7 +380,7 @@ func (s *WorkspaceService) reconcileWithRetry(ctx context.Context, ws *pluginDb.
 
 // reconcileWorkspace advances one workspace based on its current status:
 // provisioning/failed run the provisioning pipeline; ready/suspended only get
-// a drift check (never-recreate).
+// a drift check (never-recreate); deleting resumes the idempotent teardown.
 func (s *WorkspaceService) reconcileWorkspace(ctx context.Context, ws *pluginDb.Workspace) error {
 	if s.provider == nil {
 		return ErrWorkspaceProviderUnavailable
@@ -384,10 +390,24 @@ func (s *WorkspaceService) reconcileWorkspace(ctx context.Context, ws *pluginDb.
 		return s.reconcileProvision(ctx, ws)
 	case pluginDb.WorkspaceStatusReady, pluginDb.WorkspaceStatusSuspended:
 		return s.driftCheck(ctx, ws)
+	case pluginDb.WorkspaceStatusDeleting:
+		// A `deleting` row carries a durable delete intent that failed or was
+		// interrupted mid-teardown (provider outage, process restart). Every
+		// teardown step is idempotent (see teardown), so re-running from the
+		// top is both "start over" and "resume": it converges on the completed
+		// teardown. Rerouting to the provisioning pipeline is deliberately
+		// forbidden here — resurrecting the application would undo the owner's
+		// irrevocable delete request.
+		return s.reconcileTeardown(ctx, ws)
 	default:
-		// deleting (or unknown): the reconciler does not touch it.
 		return nil
 	}
+}
+
+// reconcileTeardown resumes a workspace whose teardown was interrupted: it
+// re-runs the shared, idempotent teardown steps and soft-deletes the row.
+func (s *WorkspaceService) reconcileTeardown(ctx context.Context, ws *pluginDb.Workspace) error {
+	return s.teardown(ctx, ws)
 }
 
 // reconcileProvision drives the full provisioning pipeline. The building
@@ -464,15 +484,25 @@ func (s *WorkspaceService) persistReconcileOK(ctx context.Context, ws *pluginDb.
 // retry state, and transitions the workspace's status. ready/suspended
 // workspaces that fail a transient (retryable) drift check KEEP their
 // ready/suspended status: a transient drift failure does not mean the
-// workspace is broken, so it must not be demoted. Provisioning workspaces and
-// permanent/drift failures DO demote to failed (an operator must intervene, or
-// the provisioning pipeline needs a retry gate). Transient failures get a
-// backoff NextRetryAt; permanent and drift failures are not auto-retried
-// (operator must intervene) and clear NextRetryAt.
+// workspace is broken, so it must not be demoted. deleting workspaces also
+// KEEP their status for either failure class: the delete intent is irrevocable
+// and a failed/drift teardown must never be demoted — `failed` would reroute
+// the reconciler into the provisioning pipeline and resurrect the workspace.
+// Provisioning workspaces and permanent/drift failures DO demote to failed (an
+// operator must intervene, or the provisioning pipeline needs a retry gate).
+// Transient failures get a backoff NextRetryAt; permanent and drift failures
+// are not auto-retried (operator must intervene) and clear NextRetryAt —
+// except on a deleting workspace, where NextRetryAt is always scheduled so the
+// bounded teardown retries keep converging.
 func (s *WorkspaceService) applyReconcileFailure(ctx context.Context, ws *pluginDb.Workspace, err error, cls classifyResult) {
 	newCount := ws.RetryCount + 1
 	var nextRetry *time.Time
-	if cls.category == catRetryable {
+	// Keep the bounded backoff (retry_count keeps growing, so the delay caps
+	// at RetryMaxDelay) for EVERY failure class on a deleting workspace:
+	// a "permanent" teardown failure (e.g. 401 during a credential rotation)
+	// still self-heals if the cause resolves, instead of stranding the row in
+	// `deleting` with no retry scheduled.
+	if cls.category == catRetryable || ws.Status == pluginDb.WorkspaceStatusDeleting {
 		t := time.Now().Add(s.retryDelay(newCount))
 		nextRetry = &t
 	}
@@ -481,11 +511,17 @@ func (s *WorkspaceService) applyReconcileFailure(ctx context.Context, ws *plugin
 	// A transient (retryable) drift-check failure on a workspace that is
 	// already oper-ready or suspended is not a demotion condition: the runtime
 	// is still standing and will simply be drift-checked again after the
-	// backoff. Everything else (provisioning, or a permanent/drift failure)
-	// transitions to failed as before.
+	// backoff. A deleting workspace keeps its status for any failure class
+	// (see above). Everything else (provisioning, or a permanent/drift
+	// failure) transitions to failed as before.
 	newStatus := pluginDb.WorkspaceStatusFailed
-	if (ws.Status == pluginDb.WorkspaceStatusReady || ws.Status == pluginDb.WorkspaceStatusSuspended) &&
-		cls.category == catRetryable {
+	switch {
+	case ws.Status == pluginDb.WorkspaceStatusDeleting:
+		// Any failure class: the delete intent is irrevocable and must not be
+		// rerouted into the provisioning pipeline (see reconcileWorkspace).
+		newStatus = ws.Status
+	case (ws.Status == pluginDb.WorkspaceStatusReady || ws.Status == pluginDb.WorkspaceStatusSuspended) &&
+		cls.category == catRetryable:
 		newStatus = ws.Status
 	}
 
