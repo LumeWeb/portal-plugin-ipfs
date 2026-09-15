@@ -427,13 +427,11 @@ func TestWorkspaceService_GenerateOpaqueLabel_DNSFormat(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		label, err := generateOpaqueLabel()
 		require.NoError(tb, err)
-		require.Len(tb, label, len("ws-")+labelRandomChars)
-		assert.Equal(tb, "ws-", label[:3])
-		// DNS label chars only: lower-case alphanumeric plus hyphens, no leading
-		// or trailing hyphen.
+		require.Len(tb, label, labelRandomChars)
+		// DNS label chars only: lower-case alphanumeric, no separators.
 		for i := 0; i < len(label); i++ {
 			c := label[i]
-			assert.True(tb, (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || (i > 0 && i < len(label)-1 && c == '-'))
+			assert.True(tb, (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
 		}
 	}, workspaceTestOptions)
 }

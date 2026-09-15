@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	dashboardCore "go.lumeweb.com/portal-plugin-dashboard/core"
@@ -139,8 +140,8 @@ func (s *WorkspaceService) ReconcileDatabase(ctx context.Context, ws *pluginDb.W
 	// 2. Deterministic logical identifiers and password. The password is
 	// derived from the portal identity key plus this workspace's random salt
 	// (generated/persisted lazily); it is held in memory only.
-	dbName := deterministicDatabaseName(ws.ID)
-	dbUser := deterministicDatabaseUser(ws.ID)
+	dbName := deterministicDatabaseName(ws.Label)
+	dbUser := deterministicDatabaseUser(ws.Label)
 	password, err := s.databasePassword(ctx, ws)
 	if err != nil {
 		return nil, err
@@ -397,7 +398,7 @@ func (s *WorkspaceService) ReconcileAPIKey(ctx context.Context, ws *pluginDb.Wor
 	// Ownership is authoritative on the workspace (UserID); no Website join is
 	// needed, so unattached workspaces can issue API keys too.
 	ownerID := ws.UserID
-	name := deterministicAPIKeyName(ws.ID)
+	name := deterministicAPIKeyName(ws.Label)
 
 	if ws.APIKeyID == nil {
 		issued, err := s.apiKeySvc.IssueAPIKey(ctx, ownerID, name, apiKeyTTL)
@@ -489,19 +490,23 @@ func sleepContext(ctx context.Context, d time.Duration) bool {
 }
 
 // deterministicDatabaseName is the deterministic logical database name for a
-// workspace on the shared MySQL/MariaDB server. It is validated by
-// mysqlprovision (strict identifier charset).
-func deterministicDatabaseName(id uint) string {
-	return fmt.Sprintf("workspace_%d", id)
+// workspace on the shared MySQL/MariaDB server, derived from the workspace's
+// opaque URL label (never the sequential row ID) so identifiers stay
+// non-enumerable. MySQL identifiers cannot contain hyphens, so the label's
+// hyphens become underscores ("ws-k7x4p9zq" -> "ws_k7x4p9zq"); the result
+// satisfies mysqlprovision's strict identifier charset.
+func deterministicDatabaseName(label string) string {
+	return strings.ReplaceAll(label, "-", "_")
 }
 
-// deterministicDatabaseUser is the deterministic logical user for a workspace.
-func deterministicDatabaseUser(id uint) string {
-	return fmt.Sprintf("workspace_%d", id)
+// deterministicDatabaseUser is the deterministic logical user for a workspace,
+// derived from the workspace's opaque URL label like the database name.
+func deterministicDatabaseUser(label string) string {
+	return strings.ReplaceAll(label, "-", "_")
 }
 
 // deterministicAPIKeyName is the dashboard API key name for a workspace's
-// portal credential.
-func deterministicAPIKeyName(id uint) string {
-	return fmt.Sprintf("workspace-%d", id)
+// portal credential, derived from the workspace's opaque URL label.
+func deterministicAPIKeyName(label string) string {
+	return label
 }

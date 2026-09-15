@@ -786,21 +786,21 @@ func isDuplicateKeyError(err error) bool {
 // chars, no separators so the generated label never needs trimming).
 const labelAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 
-// labelRandomChars is the number of random chars appended to the "ws-" prefix.
+// labelRandomChars is the number of random chars in the generated label.
 const labelRandomChars = 8
 
 // generateOpaqueLabel returns a DNS-safe, opaque label that does not encode a
-// username or website title, e.g. "ws-k7x4p9zq". It is a valid RFC 1035 label:
-// 1-63 chars, alphanumerics/hyphens, no leading hyphen, always lower-case.
-// crypto/rand makes labels non-sequential and hard to enumerate.
+// username or website title, e.g. "k7x4p9zq". It is a valid RFC 1035 label:
+// 1-63 chars, alphanumerics only (no separators, so no leading/trailing
+// hyphen), always lower-case. crypto/rand makes labels non-sequential and hard
+// to enumerate.
 func generateOpaqueLabel() (string, error) {
 	buf := make([]byte, labelRandomChars)
 	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("workspace: failed to generate label: %w", err)
 	}
 	var sb strings.Builder
-	sb.Grow(len("ws-") + labelRandomChars)
-	sb.WriteString("ws-")
+	sb.Grow(labelRandomChars)
 	for _, v := range buf {
 		sb.WriteByte(labelAlphabet[int(v)%len(labelAlphabet)])
 	}
