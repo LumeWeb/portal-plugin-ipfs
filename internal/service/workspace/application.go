@@ -517,6 +517,14 @@ func (s *WorkspaceService) queuedDeploymentInFlight(ctx context.Context, ws *plu
 	}
 	switch dep.Status {
 	case coolify.ResourceStatusQueued, "in_progress":
+		// Do not wedge forever on a deployment stuck non-terminal (hung
+		// build, wedged daemon): once it has been pending past the
+		// provisioning window it is assumed dead, the cursor is forgotten and
+		// a fresh start is allowed.
+		if dep.UpdatedAt != nil && time.Since(*dep.UpdatedAt) > s.provisionTimeout() {
+			_ = s.setDeploymentResourceID(ctx, ws, "")
+			return false
+		}
 		return true
 	default:
 		// Terminal: nothing awaits. Forget the cursor; if the app needs
@@ -577,10 +585,16 @@ func (s *WorkspaceService) StartAndObserveApplication(ctx context.Context, ws *p
 	// 1. Start the application, unless a launch is already in flight (possibly
 	// from a prior retry/pass): either visible in the application status, or
 	// still queued behind the app's pre-deploy status — then recorded by the
-	// deployment cursor.
+	// deployment cursor. Whatever deployment we await (newly queued or the
+	// recorded one) is waited to its terminal state BEFORE consulting the app
+	// status: until the deployment replaces the container, the app still
+	// reports its pre-deploy status (e.g. exited), which waitApplicationRunning
+	// must not misread as a terminal failure.
 	startNeeded := !appLaunchInFlight(res.Status)
+	depID := ""
 	if startNeeded && s.queuedDeploymentInFlight(ctx, ws) {
 		startNeeded = false
+		depID = *ws.DeploymentResourceID
 	}
 	if startNeeded {
 		dep, err := s.provider.StartApplication(ctx, appID)
@@ -593,15 +607,14 @@ func (s *WorkspaceService) StartAndObserveApplication(ctx context.Context, ws *p
 		if err := s.setDeploymentResourceID(ctx, ws, dep.ID); err != nil {
 			return err
 		}
-
-		// Poll the deployment to a terminal state when we have its UUID.
-		if dep.ID != "" {
-			if err := s.waitDeploymentFinished(ctx, dep.ID); err != nil {
-				if isApplicationFailure(err) {
-					_ = s.recordLastError(ctx, ws, err)
-				}
-				return err
+		depID = dep.ID
+	}
+	if depID != "" {
+		if err := s.waitDeploymentFinished(ctx, depID); err != nil {
+			if isApplicationFailure(err) {
+				_ = s.recordLastError(ctx, ws, err)
 			}
+			return err
 		}
 	}
 

@@ -68,7 +68,10 @@ type fakeAppProvider struct {
 	startErr   error
 
 	depStatuses []coolify.ResourceStatus
-	depErr      error
+	// depUpdatedAt, when non-zero, is returned as the deployment queue entry's
+	// UpdatedAt (used to simulate stuck deployments).
+	depUpdatedAt time.Time
+	depErr       error
 }
 
 func (f *fakeAppProvider) CreateApplication(_ context.Context, req coolify.CreateApplicationRequest) (coolify.CreatedResource, error) {
@@ -144,7 +147,12 @@ func (f *fakeAppProvider) GetDeployment(_ context.Context, _ string) (coolify.De
 		st = f.depStatuses[0]
 		f.depStatuses = f.depStatuses[1:]
 	}
-	return coolify.DeploymentResource{ID: "deploy-1", Status: st}, nil
+	dep := coolify.DeploymentResource{ID: "deploy-1", Status: st}
+	if !f.depUpdatedAt.IsZero() {
+		updated := f.depUpdatedAt
+		dep.UpdatedAt = &updated
+	}
+	return dep, nil
 }
 
 // appRuntimeConfig returns a runtime config wired for the application tests.
@@ -737,6 +745,47 @@ func TestStartAndObserveApplication_QueuedDeploymentObservedNotRestarted(t *test
 		// Observe-only: the queued deployment is awaited, never duplicated.
 		assert.Equal(tb, 0, fake.startCalls)
 		assert.Equal(tb, pluginDb.WorkspaceStatusReady, ws.Status)
+	}, workspaceTestOptions)
+}
+
+// TestStartAndObserveApplication_StuckDeploymentClearedAfterTimeout covers the
+// wedged-deployment case: a recorded deployment pending past the provisioning
+// window is assumed dead, its cursor is cleared, and a FRESH start is queued
+// instead of observing a hung deployment forever.
+func TestStartAndObserveApplication_StuckDeploymentClearedAfterTimeout(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		insertWebsite(tb, db, 1, 1)
+		insertPlatformDomain(tb, db, 10, "example.com", "icann", true)
+		ws := attachPlatformDomain(insertWorkspace(tb, db, 0, 1, 10, pluginDb.WorkspaceStatusProvisioning))
+		user, pass, err := generateProxyCredentials()
+		require.NoError(tb, err)
+		ws.ProxyUsername = &user
+		ws.ProxyPassword = &pass
+
+		// The recorded deployment has been stuck in_progress far past the
+		// provisioning window (config: ProvisionTimeout = time.Minute).
+		fake := &fakeAppProvider{
+			appStatus:    coolify.ResourceStatusExited,
+			appStatuses:  []coolify.ResourceStatus{coolify.ResourceStatusExited, coolify.ResourceStatusRunning},
+			depStatuses:  []coolify.ResourceStatus{"in_progress"},
+			depUpdatedAt: time.Now().Add(-2 * time.Minute),
+			startDep:     coolify.DeploymentResource{ID: "deploy-2"},
+		}
+		svc := newAppService(tb, db, fake, appRuntimeConfig())
+		depID := "deploy-1"
+		require.NoError(tb, db.Model(&pluginDb.Workspace{}).Where("id = ?", ws.ID).
+			Update("deployment_resource_id", depID).Error)
+		ws.DeploymentResourceID = &depID
+
+		require.NoError(tb, svc.StartAndObserveApplication(context.Background(), ws, "app-created"))
+
+		// The wedged cursor was cleared and a fresh deployment queued.
+		assert.Equal(tb, 1, fake.startCalls)
+		assert.Equal(tb, pluginDb.WorkspaceStatusReady, ws.Status)
+		var persisted pluginDb.Workspace
+		require.NoError(tb, db.First(&persisted, ws.ID).Error)
+		assert.NotEmpty(tb, persisted.DeploymentResourceID)
 	}, workspaceTestOptions)
 }
 
