@@ -480,36 +480,72 @@ func (s *WorkspaceService) proxyAuthEnvironment(ws *pluginDb.Workspace) ([]cooli
 	}, nil
 }
 
-// StartAndObserveApplication starts the application, polls the deployment to a
+// appLaunchInFlight reports whether the application is either already live
+// (running/ready/healthy) or has a launch already underway (starting/
+// restarting). In both cases queueing another start would only duplicate the
+// Coolify deployment (Coolify does not dedupe POST /start), so the caller must
+// observe instead of start.
+func appLaunchInFlight(status coolify.ResourceStatus) bool {
+	switch status {
+	case coolify.ResourceStatusRunning, coolify.ResourceStatusReady,
+		coolify.ResourceStatusHealthy, coolify.ResourceStatusStarting, "restarting":
+		return true
+	}
+	return false
+}
+
+// StartAndObserveApplication starts the application (unless a launch is
+// already underway or the app is already live), polls the deployment to a
 // terminal state, waits for the application to report a ready/healthy status
 // via the Coolify API, and only then marks the workspace ready. Readiness is
 // decided purely from Coolify's deployment and application status — the portal
 // performs no HTTP probe of the public workspace URL. The deployment UUID is
 // held in memory only; after a service restart that loses it, reconciliation
 // falls back to the application status poll.
+//
+// The pre-start status check is what keeps reconcile re-entry (an in-pass
+// retry or a follow-up pass while the row is still `provisioning`) from
+// producing a SECOND Coolify deployment: without it, every retry merrily
+// env-upserts and queues a fresh deployment while the first one is still
+// running or has already succeeded.
 func (s *WorkspaceService) StartAndObserveApplication(ctx context.Context, ws *pluginDb.Workspace, appID string) error {
 	if s.provider == nil {
 		return fmt.Errorf("workspace: provider not available")
 	}
 
-	// 1. Start the application and record the deployment UUID in memory.
-	dep, err := s.provider.StartApplication(ctx, appID)
+	// 0. Resolve the application's current status BEFORE queueing a start.
+	// A 404 (drift) or a failing status lookup surfaces before any deployment
+	// side effect, and an already-launching/live application is observed
+	// instead of started again.
+	res, err := s.provider.GetApplication(ctx, appID)
 	if err != nil {
 		return err
 	}
 
-	// 2. Poll the deployment to a terminal state when we have its UUID.
-	if dep.ID != "" {
-		if err := s.waitDeploymentFinished(ctx, dep.ID); err != nil {
-			if isApplicationFailure(err) {
-				_ = s.recordLastError(ctx, ws, err)
-			}
+	// 1. Start the application and record the deployment UUID in memory,
+	// unless a launch is already in flight (possibly from a prior retry/pass).
+	if appLaunchInFlight(res.Status) {
+		// Observe only; dep stays zero so no deployment poll happens.
+	} else {
+		dep, err := s.provider.StartApplication(ctx, appID)
+		if err != nil {
 			return err
+		}
+
+		// Poll the deployment to a terminal state when we have its UUID.
+		if dep.ID != "" {
+			if err := s.waitDeploymentFinished(ctx, dep.ID); err != nil {
+				if isApplicationFailure(err) {
+					_ = s.recordLastError(ctx, ws, err)
+				}
+				return err
+			}
 		}
 	}
 
-	// 3. Wait for the application to report running/ready (or a health-aware
-	// terminal state) from the Coolify API.
+	// 2. Wait for the application to report running/ready (or a health-aware
+	// terminal state) from the Coolify API — also the sole wait when the launch
+	// was already in flight (no new deployment was queued above).
 	if err := s.waitApplicationRunning(ctx, appID); err != nil {
 		if isApplicationFailure(err) {
 			_ = s.recordLastError(ctx, ws, err)
@@ -517,7 +553,7 @@ func (s *WorkspaceService) StartAndObserveApplication(ctx context.Context, ws *p
 		return err
 	}
 
-	// 4. Mark the workspace ready only on success.
+	// 3. Mark the workspace ready only on success.
 	return s.markReady(ctx, ws)
 }
 

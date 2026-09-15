@@ -246,24 +246,24 @@ func (s *WorkspaceService) Delete(ctx context.Context, userID uint, workspaceID 
 // step is idempotent, so the reconciler can resume a teardown that failed
 // part-way through and simply re-run it from the top:
 //
-//   2. revoke the workspace portal API key — the key row ID is a revocable
-//      identity; the raw JWT was never persisted. An unexpected failure aborts
-//      the teardown so it can be retried (nothing destructive has happened yet);
-//      a missing/already-revoked key is treated as success by the dashboard
-//      service, so a retry resumes past it;
-//   3. delete the authoring hostname's record from the platform root's zone
-//      BEFORE any destructive provider work, so a partial teardown never
-//      leaves a published hostname pointing at a deleted application. A failure
-//      here aborts while everything is still intact (retryable); a missing zone
-//      is a no-op. The delete is an idempotent no-op-able RRSet OPERATION, so a
-//      later retry re-running it is harmless;
-//   4. delete the application (including its storage and volumes) — a provider
-//      404 means it is already deleted;
-//   5. drop only the workspace's logical database/user from the shared
-//      MySQL/MariaDB resource (never the shared resource itself).
-//      DropLogicalDatabase is a no-op when no logical identifiers were
-//      provisioned, so a partially-provisioned workspace is safe;
-//   6. soft-delete the workspace row.
+//  2. revoke the workspace portal API key — the key row ID is a revocable
+//     identity; the raw JWT was never persisted. An unexpected failure aborts
+//     the teardown so it can be retried (nothing destructive has happened yet);
+//     a missing/already-revoked key is treated as success by the dashboard
+//     service, so a retry resumes past it;
+//  3. delete the authoring hostname's record from the platform root's zone
+//     BEFORE any destructive provider work, so a partial teardown never
+//     leaves a published hostname pointing at a deleted application. A failure
+//     here aborts while everything is still intact (retryable); a missing zone
+//     is a no-op. The delete is an idempotent no-op-able RRSet OPERATION, so a
+//     later retry re-running it is harmless;
+//  4. delete the application (including its storage and volumes) — a provider
+//     404 means it is already deleted;
+//  5. drop only the workspace's logical database/user from the shared
+//     MySQL/MariaDB resource (never the shared resource itself).
+//     DropLogicalDatabase is a no-op when no logical identifiers were
+//     provisioned, so a partially-provisioned workspace is safe;
+//  6. soft-delete the workspace row.
 //
 // The strict unique keys are intentionally left STRICT; the tombstone must be
 // purged by a later re-provision before the website_id / label / provider-ID

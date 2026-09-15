@@ -40,8 +40,11 @@ type fakeLifecycleProvider struct {
 	startDep      coolify.DeploymentResource
 	startAppErr   error
 	depStatuses   []coolify.ResourceStatus
-	appStatus     coolify.ResourceStatus
-	depErr        error
+	// appStatuses, when set, is consumed as a queue by GetApplication (so a
+	// pre-start check can observe exited -> started -> running).
+	appStatuses []coolify.ResourceStatus
+	appStatus   coolify.ResourceStatus
+	depErr      error
 
 	// delete
 	deleteAppCalls int
@@ -80,9 +83,19 @@ func (f *fakeLifecycleProvider) GetDeployment(_ context.Context, _ string) (cool
 }
 
 func (f *fakeLifecycleProvider) GetApplication(_ context.Context, _ string) (coolify.ApplicationResource, error) {
-	st := f.appStatus
-	if st == "" {
-		st = coolify.ResourceStatusRunning
+	st := coolify.ResourceStatus("")
+	if len(f.appStatuses) > 0 {
+		st = f.appStatuses[0]
+		f.appStatuses = f.appStatuses[1:]
+	} else if f.appStatus != "" {
+		st = f.appStatus
+	} else {
+		// Default lifecycle flow: the app is stopped (a suspend leaves it
+		// exited) until it is started, then it reports running.
+		st = coolify.ResourceStatusExited
+		if f.startAppCalls > 0 {
+			st = coolify.ResourceStatusRunning
+		}
 	}
 	return coolify.ApplicationResource{ID: "app-created", Status: st, Domain: "https://ws-test.build.example.com"}, nil
 }
