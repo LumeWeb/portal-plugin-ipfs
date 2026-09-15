@@ -232,55 +232,68 @@ func (s *WorkspaceService) Delete(ctx context.Context, userID uint, workspaceID 
 		return nil, err
 	}
 
-	// 2. Revoke the workspace portal API key. The key row ID is a revocable
-	// identity; the raw JWT was never persisted. An unexpected failure aborts
-	// the teardown so it can be retried (nothing destructive has happened
-	// yet); a missing/already-revoked key is treated as success by the
-	// dashboard service, so the retry resumes past it.
-	if ws.APIKeyID != nil {
-		if s.apiKeySvc == nil {
-			return nil, errors.New("workspace: api key service not available")
-		}
-		// Ownership is authoritative on the workspace (UserID).
-		if err := s.apiKeySvc.RevokeAPIKey(ctx, ws.UserID, *ws.APIKeyID); err != nil {
-			return nil, fmt.Errorf("workspace: failed to revoke api key: %w", err)
-		}
-	}
-
-	// 3. Delete the authoring hostname's record from the platform root's zone
-	// BEFORE any destructive provider work, so a partial teardown never leaves
-	// a published hostname pointing at a deleted application. A failure here
-	// aborts while everything is still intact (retryable); a missing zone is a
-	// no-op. Like the DNS write, the delete is an idempotent no-op-able RRSet
-	// OPERATION, so a later retry re-running it is harmless.
-	if err := s.DeleteDNSRecords(ctx, ws); err != nil {
-		return nil, fmt.Errorf("workspace: failed to delete workspace dns record: %w", err)
-	}
-
-	// 4. Delete the application (including its storage and volumes). A
-	// provider 404 means it is already deleted.
-	if ws.ApplicationResourceID != nil {
-		if err := s.provider.DeleteApplication(ctx, *ws.ApplicationResourceID); err != nil && !coolify.IsNotFound(err) {
-			return nil, fmt.Errorf("workspace: failed to delete application: %w", err)
-		}
-	}
-
-	// 5. Drop only the workspace's logical database/user from the shared
-	// MySQL/MariaDB resource. The shared resource itself is never touched.
-	// DropLogicalDatabase is a no-op when no logical identifiers were
-	// provisioned, so deleting a partially-provisioned workspace is safe.
-	if err := s.DropLogicalDatabase(ctx, ws); err != nil {
-		return nil, err
-	}
-
-	// 6. Soft-delete the workspace. The strict unique keys are intentionally
-	// left STRICT; the tombstone must be purged by a later re-provision before
-	// the website_id / label / provider-ID keys are reclaimed (see the model
-	// comment).
-	if err := s.softDelete(ctx, ws); err != nil {
+	// 2-6. Run the (idempotent) teardown; a failed mid-teardown retry simply
+	// resumes where it stopped.
+	if err := s.teardown(ctx, ws); err != nil {
 		return nil, err
 	}
 	return ws, nil
+}
+
+// teardown performs the destructive half of a workspace delete, steps 2-6 of
+// Delete, with no ownership load and no status transition: the `deleting`
+// marker (an explicit delete intent) is assumed to already be in place. Every
+// step is idempotent, so the reconciler can resume a teardown that failed
+// part-way through and simply re-run it from the top:
+//
+//   2. revoke the workspace portal API key — the key row ID is a revocable
+//      identity; the raw JWT was never persisted. An unexpected failure aborts
+//      the teardown so it can be retried (nothing destructive has happened yet);
+//      a missing/already-revoked key is treated as success by the dashboard
+//      service, so a retry resumes past it;
+//   3. delete the authoring hostname's record from the platform root's zone
+//      BEFORE any destructive provider work, so a partial teardown never
+//      leaves a published hostname pointing at a deleted application. A failure
+//      here aborts while everything is still intact (retryable); a missing zone
+//      is a no-op. The delete is an idempotent no-op-able RRSet OPERATION, so a
+//      later retry re-running it is harmless;
+//   4. delete the application (including its storage and volumes) — a provider
+//      404 means it is already deleted;
+//   5. drop only the workspace's logical database/user from the shared
+//      MySQL/MariaDB resource (never the shared resource itself).
+//      DropLogicalDatabase is a no-op when no logical identifiers were
+//      provisioned, so a partially-provisioned workspace is safe;
+//   6. soft-delete the workspace row.
+//
+// The strict unique keys are intentionally left STRICT; the tombstone must be
+// purged by a later re-provision before the website_id / label / provider-ID
+// keys are reclaimed (see the model comment).
+func (s *WorkspaceService) teardown(ctx context.Context, ws *pluginDb.Workspace) error {
+	if ws.APIKeyID != nil {
+		if s.apiKeySvc == nil {
+			return errors.New("workspace: api key service not available")
+		}
+		// Ownership is authoritative on the workspace (UserID).
+		if err := s.apiKeySvc.RevokeAPIKey(ctx, ws.UserID, *ws.APIKeyID); err != nil {
+			return fmt.Errorf("workspace: failed to revoke api key: %w", err)
+		}
+	}
+
+	if err := s.DeleteDNSRecords(ctx, ws); err != nil {
+		return fmt.Errorf("workspace: failed to delete workspace dns record: %w", err)
+	}
+
+	if ws.ApplicationResourceID != nil {
+		if err := s.provider.DeleteApplication(ctx, *ws.ApplicationResourceID); err != nil && !coolify.IsNotFound(err) {
+			return fmt.Errorf("workspace: failed to delete application: %w", err)
+		}
+	}
+
+	if err := s.DropLogicalDatabase(ctx, ws); err != nil {
+		return err
+	}
+
+	return s.softDelete(ctx, ws)
 }
 
 // RotateAccessCredentials returns the workspace's proxy Basic Auth credentials

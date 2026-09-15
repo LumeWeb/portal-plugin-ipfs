@@ -15,7 +15,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	dashboardCore "go.lumeweb.com/portal-plugin-dashboard/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/coolify"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
@@ -400,5 +402,241 @@ func TestReconcileWithRetry_Cancellation(t *testing.T) {
 		require.NoError(tb, db.First(&reloaded, ws.ID).Error)
 		assert.Equal(tb, pluginDb.WorkspaceStatusReady, reloaded.Status, "cancelled pass must not mark the workspace failed")
 		assert.Zero(tb, reloaded.RetryCount)
+	}, workspaceTestOptions)
+}
+
+// newTeardownReconcileService wires a workspace service for reconciler-side
+// teardown tests: fast retry config (so bounded passes do not sleep on real
+// backoff), the lifecycle fake provider, and the fake DNS/engineer fakes so
+// the idempotent teardown steps run without a live PowerDNS/MySQL.
+func newTeardownReconcileService(tb coreTesting.TB, db *gorm.DB, provider coolify.WorkspaceProvider, apiKey dashboardCore.APIKeyService) *WorkspaceService {
+	tb.Helper()
+	bc := &core.BaseComponent{}
+	bc.SetDB(db)
+	return &WorkspaceService{
+		BaseComponent: bc,
+		config: &config.WorkspaceConfig{
+			RetryMaxAttempts:  3,
+			RetryInitialDelay: time.Millisecond,
+			RetryMaxDelay:     time.Millisecond,
+			Runtime: pluginConfig.WorkspaceRuntimeConfig{
+				HealthPath: "/healthz",
+				DatabaseEnv: pluginConfig.DatabaseEnvironmentKeys{
+					Host:     "DB_HOST",
+					Port:     "DB_PORT",
+					Name:     "DB_NAME",
+					User:     "DB_USER",
+					Password: "DB_PASSWORD",
+				},
+			},
+			Database: pluginConfig.WorkspaceDatabaseConfig{
+				ResourceID: "shared-db",
+			},
+		},
+		provider:    provider,
+		apiKeySvc:   apiKey,
+		dnsSvc:      newFakeDNSService(),
+		mysqlProv:   &fakeEngineer{},
+		identityKey: testIdentityPrivateKey(),
+	}
+}
+
+// insertStrandedDeletingWorkspace inserts a workspace stranded in `deleting`
+// (the state a mid-teardown failure or process restart leaves behind): an
+// application resource ID and logical DB identifiers still persisted, plus an
+// API key and proxy credentials, exactly as a partially-torn-down row looks.
+// seq disambiguates fixture IDs so several stranded rows can coexist in one
+// test DB (website/domain/label keys must stay unique).
+func insertStrandedDeletingWorkspace(tb coreTesting.TB, db *gorm.DB, appID, logName string, apiKeyID uint, seq uint) *pluginDb.Workspace {
+	tb.Helper()
+	insertWebsite(tb, db, seq, seq)
+	// platform_domains has a unique (domain, namespace) key; give each
+	// fixture its own root subdomain label.
+	insertPlatformDomain(tb, db, seq*10, fmt.Sprintf("build%d.example.com", seq), "icann", true)
+	name, key := logName, apiKeyID
+	ws := &pluginDb.Workspace{
+		UserID:                seq,
+		WebsiteID:             &seq,
+		PlatformDomainID:      seq * 10,
+		Label:                 logName,
+		Status:                pluginDb.WorkspaceStatusDeleting,
+		ApplicationResourceID: &appID,
+		DatabaseName:          &name,
+		DatabaseUser:          &name,
+		APIKeyID:              &key,
+	}
+	require.NoError(tb, db.Create(ws).Error)
+	attachPlatformDomain(ws)
+	return ws
+}
+
+// TestReconcileWithRetry_DeletingResumesTeardownAndSoftDeletes verifies the
+// reconciler picks up a stranded `deleting` workspace and completes the
+// idempotent teardown: the API key is revoked, the application deleted, the
+// logical DB dropped, and the row soft-deleted — the "start over" resume
+// converges on the completed teardown.
+func TestReconcileWithRetry_DeletingResumesTeardownAndSoftDeletes(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		ws := insertStrandedDeletingWorkspace(tb, db, "app-1", "workspace_9", 55, 1)
+
+		fake := &fakeLifecycleProvider{}
+		apiKey := mockAPIKeyService(tb, 55)
+		svc := newTeardownReconcileService(tb, db, fake, apiKey)
+
+		err := svc.reconcileWithRetry(context.Background(), ws)
+		require.NoError(tb, err, "the resumed teardown must complete")
+
+		// The teardown re-ran from the top: key revoked, app deleted, logical
+		// DB dropped, row tombstoned.
+		var revokeCalls int
+		for _, call := range apiKey.Calls {
+			if call.Method == "RevokeAPIKey" {
+				revokeCalls++
+			}
+		}
+		assert.Equal(tb, 1, revokeCalls, "the teardown must revoke the workspace API key")
+		assert.Equal(tb, 1, fake.deleteAppCalls, "the teardown must delete the application")
+		eng := svc.mysqlProv.(*fakeEngineer)
+		require.Len(tb, eng.dropCalls, 1, "the teardown must drop the logical database")
+		assert.Equal(tb, "workspace_9", eng.dropCalls[0].Database)
+		assert.Equal(tb, "workspace_9", eng.dropCalls[0].User)
+
+		var live int64
+		require.NoError(tb, db.Model(&pluginDb.Workspace{}).Where("id = ?", ws.ID).Count(&live).Error)
+		assert.Equal(tb, int64(0), live, "the workspace must be soft-deleted")
+		var tombstoned int64
+		require.NoError(tb, db.Model(&pluginDb.Workspace{}).Unscoped().Where("id = ?", ws.ID).Count(&tombstoned).Error)
+		assert.Equal(tb, int64(1), tombstoned)
+	}, workspaceTestOptions)
+}
+
+// TestReconcileWithRetry_DeletingTeardownFailureKeepsDeleting verifies a
+// failing teardown NEVER demotes the row to `failed` (which would reroute the
+// reconciler into the provisioning pipeline and resurrect the workspace the
+// owner asked to delete): the row keeps `deleting` and accumulates bounded
+// retry metadata for the next pass.
+func TestReconcileWithRetry_DeletingTeardownFailureKeepsDeleting(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		ws := insertStrandedDeletingWorkspace(tb, db, "app-1", "workspace_9", 55, 1)
+
+		fake := &fakeLifecycleProvider{deleteAppErr: &coolify.Error{StatusCode: 503, Message: "overloaded"}}
+		svc := newTeardownReconcileService(tb, db, fake, mockAPIKeyService(tb, 55))
+
+		err := svc.reconcileWithRetry(context.Background(), ws)
+		require.Error(tb, err)
+
+		// Bounded within-pass retries still fire for a retryable failure.
+		assert.Equal(tb, 3, fake.deleteAppCalls)
+
+		var reloaded pluginDb.Workspace
+		require.NoError(tb, db.Unscoped().First(&reloaded, ws.ID).Error)
+		assert.Equal(tb, pluginDb.WorkspaceStatusDeleting, reloaded.Status,
+			"a failing teardown must keep the irrevocable deleting status")
+		assert.Equal(tb, 1, reloaded.RetryCount, "one bounded pass accumulates one consecutive failure")
+		require.NotNil(tb, reloaded.NextRetryAt, "retry metadata must be scheduled")
+		require.NotEmpty(tb, reloaded.LastError, "the failure must be recorded")
+		// The row must NOT have been processed by the provisioning pipeline.
+		assert.False(tb, reloaded.DeletedAt.Valid, "no soft-delete on a failed pass")
+	}, workspaceTestOptions)
+}
+
+// TestReconcileWithRetry_DeletingPermanentFailureStillSchedulesRetry verifies
+// a permanent-class teardown failure (401) aborts immediately (no within-pass
+// retry), but — unlike failed workspaces — still schedules NextRetryAt so the
+// stranded `deleting` row keeps converging on later passes instead of being
+// stranded with no retry scheduled.
+func TestReconcileWithRetry_DeletingPermanentFailureStillSchedulesRetry(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		ws := insertStrandedDeletingWorkspace(tb, db, "app-1", "workspace_9", 55, 1)
+
+		fake := &fakeLifecycleProvider{deleteAppErr: &coolify.Error{StatusCode: 401, Message: "forbidden"}}
+		svc := newTeardownReconcileService(tb, db, fake, mockAPIKeyService(tb, 55))
+
+		err := svc.reconcileWithRetry(context.Background(), ws)
+		require.Error(tb, err)
+		assert.Equal(tb, catPermanent, classifyError(err).category)
+		assert.Equal(tb, 1, fake.deleteAppCalls, "permanent errors must not be retried within the pass")
+
+		var reloaded pluginDb.Workspace
+		require.NoError(tb, db.Unscoped().First(&reloaded, ws.ID).Error)
+		assert.Equal(tb, pluginDb.WorkspaceStatusDeleting, reloaded.Status)
+		require.NotNil(tb, reloaded.NextRetryAt, "a deleting workspace still gets a bounded retry")
+	}, workspaceTestOptions)
+}
+
+// TestReconcileWithRetry_DeletingResumesAfterFailedPass mirrors the
+// owner-retry regression test: a pass that fails mid-teardown (key revoked,
+// DNS deleted, app delete failing) leaves the row deleting with retry state;
+// the NEXT reconciler pass resumes from the top and completes the teardown.
+func TestReconcileWithRetry_DeletingResumesAfterFailedPass(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		ws := insertStrandedDeletingWorkspace(tb, db, "app-1", "workspace_9", 55, 1)
+
+		fake := &fakeLifecycleProvider{deleteAppErr: &coolify.Error{StatusCode: 503, Message: "overloaded"}}
+		svc := newTeardownReconcileService(tb, db, fake, mockAPIKeyService(tb, 55))
+
+		require.Error(tb, svc.reconcileWithRetry(context.Background(), ws), "pass 1 must fail mid-teardown")
+		var live int64
+		require.NoError(tb, db.Model(&pluginDb.Workspace{}).Where("id = ?", ws.ID).Count(&live).Error)
+		assert.Equal(tb, int64(1), live, "pass 1 must not tombstone the row")
+
+		// Pass 2: the provider outage resolved; the teardown resumes and the
+		// already-revoked key / already-deleted RRSet steps are idempotent
+		// re-runs.
+		fake.deleteAppErr = nil
+		require.NoError(tb, svc.reconcileWithRetry(context.Background(), ws), "pass 2 must complete the teardown")
+
+		assert.Equal(tb, 4, fake.deleteAppCalls, "3 attempts in pass 1 + 1 attempt in pass 2")
+		var liveAfter int64
+		require.NoError(tb, db.Model(&pluginDb.Workspace{}).Where("id = ?", ws.ID).Count(&liveAfter).Error)
+		assert.Equal(tb, int64(0), liveAfter, "pass 2 must soft-delete the workspace")
+	}, workspaceTestOptions)
+}
+
+// TestSelectReconcileBatch_IncludesDeletingRows verifies deleting workspaces
+// are selected for teardown resume when their NextRetryAt has elapsed (a fresh
+// NULL NextRetryAt — e.g. a restart mid-teardown — is also eligible), and that
+// one still inside its backoff window is deferred.
+func TestSelectReconcileBatch_IncludesDeletingRows(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+
+		eligible := insertStrandedDeletingWorkspace(tb, db, "app-1", "workspace_1", 55, 1)
+		deferred := insertStrandedDeletingWorkspace(tb, db, "app-2", "workspace_2", 56, 2)
+		require.NoError(tb, db.Model(&pluginDb.Workspace{}).Where("id = ?", deferred.ID).
+			Update("next_retry_at", time.Now().Add(time.Hour)).Error)
+
+		insertWebsite(tb, db, 3, 3)
+		insertPlatformDomain(tb, db, 30, "build3.example.com", "icann", true)
+		readyID := uint(3)
+		other := &pluginDb.Workspace{
+			UserID:           3,
+			WebsiteID:        &readyID,
+			PlatformDomainID: 30,
+			Label:            "ws-ready",
+			Status:           pluginDb.WorkspaceStatusReady,
+		}
+		require.NoError(tb, db.Create(other).Error)
+		// A ready workspace is only drift-checked past DriftCheckInterval; mark
+		// it freshly reconciled so it stays out of the batch.
+		require.NoError(tb, db.Model(&pluginDb.Workspace{}).Where("id = ?", other.ID).
+			Update("last_reconcile_at", time.Now()).Error)
+
+		svc := &WorkspaceService{BaseComponent: &core.BaseComponent{}}
+		svc.BaseComponent.SetDB(db)
+		batch, err := svc.selectReconcileBatch(context.Background())
+		require.NoError(tb, err)
+
+		ids := make(map[uint]bool, len(batch))
+		for _, w := range batch {
+			ids[w.ID] = true
+		}
+		assert.Contains(tb, ids, eligible.ID, "a deleting workspace past its retry gate must be selected")
+		assert.NotContains(tb, ids, deferred.ID, "a deleting workspace inside its backoff must be deferred")
+		assert.NotContains(tb, ids, other.ID, "a fresh ready workspace is not past its drift interval")
 	}, workspaceTestOptions)
 }
