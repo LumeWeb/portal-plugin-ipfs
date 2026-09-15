@@ -44,6 +44,12 @@ type WorkspaceConfig struct {
 	RetryInitialDelay time.Duration `config:"retry_initial_delay"`
 	// RetryMaxDelay caps the exponential backoff delay for retries.
 	RetryMaxDelay time.Duration `config:"retry_max_delay"`
+	// RetryTotalLimit is the cross-pass retry budget: how many times a
+	// workspace's transient reconcile failure may reschedule itself (via
+	// next_retry_at) before the row stops being retried and strands in
+	// `failed` until an operator resets it. Counts across passes via the
+	// workspace's retry_count, which resets only on a successful reconcile.
+	RetryTotalLimit int `config:"retry_total_limit"`
 	// DriftCheckInterval is how often ready/suspended workspaces are verified
 	// against the provider (their persisted resource IDs are re-checked; a
 	// missing resource is drift and is never recreated automatically).
@@ -192,6 +198,7 @@ func (c WorkspaceConfig) Defaults() map[string]any {
 		"RetryMaxAttempts":   3,
 		"RetryInitialDelay":  30 * time.Second,
 		"RetryMaxDelay":      5 * time.Minute,
+		"RetryTotalLimit":    10,
 		"DriftCheckInterval": 24 * time.Hour,
 		"RequestTimeout":     30 * time.Second,
 		"ProvisionTimeout":   15 * time.Minute,
@@ -244,6 +251,9 @@ func (c WorkspaceConfig) Validate() error {
 	}
 	if c.RetryMaxDelay < 0 {
 		return errors.New("workspace: retry_max_delay must not be negative when enabled")
+	}
+	if c.RetryTotalLimit < 0 {
+		return errors.New("workspace: retry_total_limit must not be negative when enabled")
 	}
 	if c.DriftCheckInterval < 0 {
 		return errors.New("workspace: drift_check_interval must not be negative when enabled")

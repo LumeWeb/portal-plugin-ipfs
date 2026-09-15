@@ -190,6 +190,17 @@ func (s *WorkspaceService) maxRetryAttempts() int {
 	return 3
 }
 
+// maxTotalRetries returns the cross-pass retry budget: how many times a
+// transient reconcile failure may reschedule itself before the row strands in
+// `failed` for operator intervention. The count is per workspace (retry_count
+// grows across passes and resets only on a successful reconcile).
+func (s *WorkspaceService) maxTotalRetries() int {
+	if s.config != nil && s.config.RetryTotalLimit > 0 {
+		return s.config.RetryTotalLimit
+	}
+	return 10
+}
+
 // driftCheckInterval returns how often ready/suspended workspaces are checked.
 func (s *WorkspaceService) driftCheckInterval() time.Duration {
 	if s.config != nil && s.config.DriftCheckInterval > 0 {
@@ -490,10 +501,12 @@ func (s *WorkspaceService) persistReconcileOK(ctx context.Context, ws *pluginDb.
 // the reconciler into the provisioning pipeline and resurrect the workspace.
 // Provisioning workspaces and permanent/drift failures DO demote to failed (an
 // operator must intervene, or the provisioning pipeline needs a retry gate).
-// Transient failures get a backoff NextRetryAt; permanent and drift failures
-// are not auto-retried (operator must intervene) and clear NextRetryAt —
-// except on a deleting workspace, where NextRetryAt is always scheduled so the
-// bounded teardown retries keep converging.
+// Transient failures get a backoff NextRetryAt within the cross-pass budget
+// (RetryTotalLimit, counted across passes on retry_count); past the budget the
+// row strands in `failed` with no NextRetryAt until an operator resets it.
+// Permanent and drift failures are not auto-retried (operator must intervene)
+// and clear NextRetryAt — except on a deleting workspace, where NextRetryAt is
+// always scheduled so the bounded teardown retries keep converging.
 func (s *WorkspaceService) applyReconcileFailure(ctx context.Context, ws *pluginDb.Workspace, err error, cls classifyResult) {
 	newCount := ws.RetryCount + 1
 	var nextRetry *time.Time
@@ -501,8 +514,17 @@ func (s *WorkspaceService) applyReconcileFailure(ctx context.Context, ws *plugin
 	// at RetryMaxDelay) for EVERY failure class on a deleting workspace:
 	// a "permanent" teardown failure (e.g. 401 during a credential rotation)
 	// still self-heals if the cause resolves, instead of stranding the row in
-	// `deleting` with no retry scheduled.
-	if cls.category == catRetryable || ws.Status == pluginDb.WorkspaceStatusDeleting {
+	// `deleting` with no retry scheduled — and unlike a `failed` row, a
+	// `deleting` row with NULL next_retry_at stays selected every pass, so it
+	// must never be left unscheduled.
+	// The cross-pass budget (RetryTotalLimit) is the operator-intervention
+	// gate for `failed` rows: once the workspace's retry_count passes it, a
+	// transient failure no longer schedules next_retry_at, so the row strands
+	// in `failed` invisible to the batch query instead of re-provisioning
+	// forever and starving the bounded batch.
+	scheduleRetry := ws.Status == pluginDb.WorkspaceStatusDeleting ||
+		(cls.category == catRetryable && newCount <= s.maxTotalRetries())
+	if scheduleRetry {
 		t := time.Now().Add(s.retryDelay(newCount))
 		nextRetry = &t
 	}

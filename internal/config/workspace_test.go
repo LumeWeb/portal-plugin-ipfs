@@ -113,6 +113,10 @@ func TestWorkspaceConfig_Validate_OwnReconcileFields(t *testing.T) {
 	require.ErrorContains(t, c.Validate(), "retry_max_attempts")
 
 	c = enabledConfig()
+	c.RetryTotalLimit = -1
+	require.ErrorContains(t, c.Validate(), "retry_total_limit")
+
+	c = enabledConfig()
 	c.DriftCheckInterval = -time.Second
 	require.ErrorContains(t, c.Validate(), "drift_check_interval")
 }

@@ -393,9 +393,9 @@ func TestReconcileWithRetry_DeploymentFailureSchedulesRetry(t *testing.T) {
 		}}
 		apiKey := dashboardCore.NewMockAPIKeyService(tb)
 		apiKey.EXPECT().IssueAPIKey(mock.Anything, uint(1), mock.Anything, mock.Anything).
-			Return(&dashboardCore.IssuedAPIKey{ID: 77, Token: "jwt-token"}, nil).Maybe()
+			Return(&dashboardCore.IssuedAPIKey{ID: 77, Token: "test"}, nil).Maybe()
 		apiKey.EXPECT().ReissueAPIKey(mock.Anything, uint(1), mock.Anything, mock.Anything).
-			Return(&dashboardCore.IssuedAPIKey{ID: 77, Token: "jwt-token"}, nil).Maybe()
+			Return(&dashboardCore.IssuedAPIKey{ID: 77, Token: "test"}, nil).Maybe()
 
 		bc := &core.BaseComponent{}
 		bc.SetDB(db)
@@ -441,6 +441,49 @@ func TestReconcileWithRetry_DeploymentFailureSchedulesRetry(t *testing.T) {
 		require.NoError(tb, err)
 		require.Len(tb, batch, 1)
 		assert.Equal(tb, ws.ID, batch[0].ID)
+	}, workspaceTestOptions)
+}
+
+// TestReconcileWithRetry_RetryBudgetExhaustedStopsScheduling verifies the
+// cross-pass budget: a workspace whose retry_count already passed
+// RetryTotalLimit stops scheduling next_retry_at on a transient failure, so
+// the row strands in `failed` (invisible to the batch query) instead of
+// re-provisioning forever and starving the bounded batch.
+func TestReconcileWithRetry_RetryBudgetExhaustedStopsScheduling(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		db := ctx.DB()
+		insertWebsite(tb, db, 1, 1)
+		insertPlatformDomain(tb, db, 10, "build.example.com", "icann", true)
+		ws := &pluginDb.Workspace{
+			UserID:           1,
+			WebsiteID:        new(uint(1)),
+			PlatformDomainID: 10,
+			Label:            "ws-budget",
+			Status:           pluginDb.WorkspaceStatusProvisioning,
+			RetryCount:       10, // default budget (10) already consumed
+		}
+		require.NoError(tb, db.Create(ws).Error)
+
+		fake := &fakeWorkspaceProvider{}
+		svc := newReconcileService(tb, db, fake)
+		// reconcileProvision's first step (ReconcileDatabase) fails retryably.
+		fake.resolveErr = &coolify.Error{StatusCode: 503, Message: "db starting"}
+
+		err := svc.reconcileWithRetry(context.Background(), ws)
+		require.Error(tb, err)
+		assert.Equal(tb, catRetryable, classifyError(err).category,
+			"the failure itself is still a transient class")
+
+		var reloaded pluginDb.Workspace
+		require.NoError(tb, db.First(&reloaded, ws.ID).Error)
+		assert.Equal(tb, pluginDb.WorkspaceStatusFailed, reloaded.Status)
+		assert.Nil(tb, reloaded.NextRetryAt,
+			"past the cross-pass budget a transient failure must NOT schedule another retry")
+
+		batch, err := svc.selectReconcileBatch(context.Background())
+		require.NoError(tb, err)
+		assert.Empty(tb, batch,
+			"a budget-exhausted failed row must no longer occupy batch slots")
 	}, workspaceTestOptions)
 }
 
