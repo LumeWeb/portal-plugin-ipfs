@@ -938,6 +938,8 @@ github.com/syndtr/goleveldb v1.0.1-0.20220721030215-126854af5e6d h1:vfofYNRScrDd
 github.com/syndtr/goleveldb v1.0.1-0.20220721030215-126854af5e6d/go.mod h1:RRCYJbIwD5jmqPI9XoAFR0OcDxqUctll6zUj/+B4S48=
 github.com/tus/tusd/v2 v2.10.0 h1:2yOGmkrDl9RQmRIt/00DR2WvYWOoiEu3CoygILb+WRw=
 github.com/tus/tusd/v2 v2.10.0/go.mod h1:T/OuJHIAC2NHpkEUyQyyaoWyDNRDcQVpJzWl8tX5GY4=
+github.com/tus/tusd/v2 v2.10.1 h1:hO312j4rT0unhaF4Ga7izNaYGbPOKI2kVIXbKgtv1W8=
+github.com/tus/tusd/v2 v2.10.1/go.mod h1:33RsdwtbXdqb3esrge+95TT7XUHl45uSO1vvA96fNbc=
 github.com/twmb/murmur3 v1.1.8 h1:8Yt9taO/WN3l08xErzjeschgZU2QSrwm1kclYq+0aRg=
 github.com/twmb/murmur3 v1.1.8/go.mod h1:Qq/R7NUyOfr65zD+6Q5IHKsJLwP7exErjN6lyyq3OSQ=
 github.com/ugorji/go/codec v0.0.0-20181204163529-d75b2dcb6bc8/go.mod h1:VFNgLljTbGfSG7qAOspJ7OScBnGdDN/yBr0sguwnwf0=

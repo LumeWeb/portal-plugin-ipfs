@@ -42,7 +42,7 @@ require (
 	github.com/prometheus/client_golang v1.24.1
 	github.com/samber/lo v1.53.0
 	github.com/stretchr/testify v1.12.1
-	github.com/tus/tusd/v2 v2.10.0
+	github.com/tus/tusd/v2 v2.10.1
 	go.lumeweb.com/dane v0.0.3
 	go.lumeweb.com/httputil v0.5.8
 	go.lumeweb.com/icann-tlds v0.1.0
