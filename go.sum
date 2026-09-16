@@ -995,6 +995,8 @@ go.etcd.io/etcd/client/v3 v3.7.0 h1:5MHO37VbPB87VRPKUXEcicjeQWiTSjpPv3Ume8xPx20=
 go.etcd.io/etcd/client/v3 v3.7.0/go.mod h1:DJ382WuwjmbowjPDyaaQ0idWXy4dh91XRhe4FOrb9vM=
 go.lumeweb.com/configmanager v0.3.30 h1:4hCz8MOR5qFR2JK8NSmbdiZiLbE5k6a/6fx0VXB5p00=
 go.lumeweb.com/configmanager v0.3.30/go.mod h1:QBU+Qkk7ihnrn3Km6PkMt7zfVR5A2bAjt+jYXv9ZXKY=
+go.lumeweb.com/configmanager v0.3.32 h1:ALPB9Y5zUIWtWPQFo/VEYE1/TCgrBizdUnQRWlP7UiU=
+go.lumeweb.com/configmanager v0.3.32/go.mod h1:6m+stNE3rp1pKSC8r+ZMA23TayRsXEJ43c7kCwGT6jw=
 go.lumeweb.com/dane v0.0.3 h1:s2cgeJ7Di8fhaZA0W37VSKaaVcIkzfhgn+9scXYzD2U=
 go.lumeweb.com/dane v0.0.3/go.mod h1:Her3kB4OWIWvbepX4T2Mv3uozFgM++jNqS1+dROydTQ=
 go.lumeweb.com/event/v2 v2.1.0 h1:pVWRzrHAkjhXa+owzhDTtaxBHbnxrsIpDHFZwEUxKoY=
@@ -1015,6 +1017,8 @@ go.lumeweb.com/portal v0.5.2-0.20260905015449-23ea71e33def h1:q4J/wOlHt2DxUYP+d0
 go.lumeweb.com/portal v0.5.2-0.20260905015449-23ea71e33def/go.mod h1:kALuSt0uRXmx2shjXzhM7XOJepxBwqH2ZKQJJ52/h9U=
 go.lumeweb.com/portal v0.5.2-0.20260905132026-a1276986115d h1:I3GvCRrOBq7z+K4Tbtdg7DOf5cUUdydTyXjLlFhUInE=
 go.lumeweb.com/portal v0.5.2-0.20260905132026-a1276986115d/go.mod h1:gY+LVGQUBQzWT73S390ufawVZbVMM+A567vXa2JSLOA=
+go.lumeweb.com/portal v0.5.2-0.20260915090147-0a0cd257eed1 h1:kOHxdc+2BGOUk5OOr+BzOjNaEeBjhjABhgC3sJ+P0jA=
+go.lumeweb.com/portal v0.5.2-0.20260915090147-0a0cd257eed1/go.mod h1:LpiYcyjrWGJ52LwhfOOKM/f0fjW62nCXsHu11TZlbJk=
 go.lumeweb.com/portal-middleware v0.3.8 h1:wFY9JSkHLMr7IIYdLbkaBi0i9pKy+j/dwT8bRu8hirY=
 go.lumeweb.com/portal-middleware v0.3.8/go.mod h1:Yn9ZsFy5n3x2jUJ085M9B/aoZ+ANQV5QD/MAE0BpJXo=
 go.lumeweb.com/portal-plugin-core v0.1.0 h1:bHHJ7oZrBKmBvdUFutr3Dx6FdwvSg/ZeF33QaRM0DKU=
