@@ -54,7 +54,7 @@ require (
 	go.lumeweb.com/portal-plugin-quota v0.1.0
 	go.lumeweb.com/portal-router v0.7.7
 	go.lumeweb.com/queryutil v0.3.19
-	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260901072240-862a4f22dd15
+	go.lumeweb.com/web/go/portal-plugin-ipfs v0.0.0-20260921145210-452f6c7da66c
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.57.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -69,7 +69,6 @@ require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5 // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/dchest/uniuri v1.2.0 // indirect
-	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
 	github.com/go-test/deep v1.0.8 // indirect
 	github.com/h2non/filetype v1.1.3 // indirect
 	github.com/hyperledger-firefly/common v1.6.2 // indirect
@@ -178,7 +177,6 @@ require (
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/gopacket v1.1.19 // indirect
-	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 // indirect
 	github.com/gorilla/mux v1.8.2-0.20240619235004-db9d1d0073d2 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
@@ -321,9 +319,9 @@ require (
 	go.lumeweb.com/event/v2 v2.1.0 // indirect
 	go.lumeweb.com/gswagger v0.20.12
 	go.lumeweb.com/ipfs-sdk/dnsname v0.1.64
-	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20260904063331-5621276e9357 // indirect
-	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20260722190812-27c8d53607dd // indirect
-	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20260904063331-5621276e9357 // indirect
+	go.lumeweb.com/web/go/portal-dashboard v0.0.0-20260921145210-452f6c7da66c // indirect
+	go.lumeweb.com/web/go/portal-plugin-core v0.0.0-20260921145210-452f6c7da66c // indirect
+	go.lumeweb.com/web/go/portal-plugin-dashboard v0.0.0-20260921145210-452f6c7da66c // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/bridges/otelzap v0.20.1 // indirect
 	go.opentelemetry.io/otel v1.46.0
