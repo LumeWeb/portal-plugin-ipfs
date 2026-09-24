@@ -47,10 +47,10 @@ require (
 	go.lumeweb.com/httputil v0.5.8
 	go.lumeweb.com/icann-tlds v0.1.0
 	go.lumeweb.com/ipfs-content v0.1.18
-	go.lumeweb.com/portal v0.5.2-0.20260905132026-a1276986115d
+	go.lumeweb.com/portal v0.5.2-0.20260915085905-8a26fd55d740
 	go.lumeweb.com/portal-middleware v0.3.8
 	go.lumeweb.com/portal-plugin-core v0.1.0
-	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260911165854-4c8f9a587763
+	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260921153730-27f201f12a8d
 	go.lumeweb.com/portal-plugin-quota v0.1.0
 	go.lumeweb.com/portal-router v0.7.7
 	go.lumeweb.com/queryutil v0.3.19
@@ -315,7 +315,7 @@ require (
 	go.etcd.io/etcd/api/v3 v3.7.0 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.7.0 // indirect
 	go.etcd.io/etcd/client/v3 v3.7.0 // indirect
-	go.lumeweb.com/configmanager v0.3.30 // indirect
+	go.lumeweb.com/configmanager v0.3.32 // indirect
 	go.lumeweb.com/event/v2 v2.1.0 // indirect
 	go.lumeweb.com/gswagger v0.20.12
 	go.lumeweb.com/ipfs-sdk/dnsname v0.1.64
