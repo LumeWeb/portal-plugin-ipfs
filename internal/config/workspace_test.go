@@ -189,6 +189,32 @@ func TestWorkspaceRuntimeConfig_Validate_ResourceLimits(t *testing.T) {
 	require.ErrorContains(t, c.Validate(), "cpu_limit")
 }
 
+func TestWorkspaceRuntimeConfig_Defaults_SingleUserTier(t *testing.T) {
+	// The runtime defaults target a single-user, low-traffic WordPress
+	// container: 0.5 CPU / 512 MB limit with a 256 MB reservation. Each
+	// default must also pass the runtime's own limit-format validation.
+	d := WorkspaceRuntimeConfig{}.Defaults()
+
+	require.Equal(t, "512m", d["MemoryLimit"])
+	require.Equal(t, "256m", d["MemoryReservation"])
+	require.Equal(t, "0.5", d["CPULimit"])
+
+	c := WorkspaceRuntimeConfig{
+		Image:             "wordpress",
+		Tag:               "6.7",
+		Port:              80,
+		MemoryLimit:       d["MemoryLimit"].(string),
+		MemoryReservation: d["MemoryReservation"].(string),
+		CPULimit:          d["CPULimit"].(string),
+		HealthPath:        "/wp-admin/install.php",
+		DatabaseEnv: DatabaseEnvironmentKeys{
+			Host: "DB_HOST", Port: "DB_PORT", Name: "DB_NAME",
+			User: "DB_USER", Password: "DB_PASSWORD",
+		},
+	}
+	require.NoError(t, c.Validate())
+}
+
 func TestWorkspaceDatabaseConfig_Validate_SharedDatabase(t *testing.T) {
 	c := enabledConfig().Database
 	c.ResourceID = ""
