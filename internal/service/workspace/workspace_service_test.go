@@ -54,41 +54,30 @@ func enabledFakeResolver(id uint, domain, namespace string) *fakePlatformResolve
 }
 
 // TestDerivePortalAPIURL verifies PORTAL_API_URL is derived from the portal
-// core config (the dashboard API's account subdomain prefixed onto the core
-// domain, secure scheme, and active port) rather than from a duplicate
-// workspace config field.
+// core config's root domain (no subdomain prefix, secure scheme, and active
+// port) rather than from a duplicate workspace config field.
 func TestDerivePortalAPIURL(t *testing.T) {
 	t.Run("secure with external port", func(t *testing.T) {
-		got := derivePortalAPIURL(dashboardAPISubdomain, config.CoreConfig{
-			Domain:       "example.com",
+		got := derivePortalAPIURL(config.CoreConfig{
+			Domain:       "Example.COM",
 			Secure:       true,
 			Port:         8080,
 			ExternalPort: 443,
 		})
-		assert.Equal(t, "https://account.example.com:443", got)
+		assert.Equal(t, "https://example.com:443", got)
 	})
 
 	t.Run("insecure uses core port", func(t *testing.T) {
-		got := derivePortalAPIURL(dashboardAPISubdomain, config.CoreConfig{
+		got := derivePortalAPIURL(config.CoreConfig{
 			Domain: "example.com",
 			Port:   8080,
 		})
-		assert.Equal(t, "http://account.example.com:8080", got)
-	})
-
-	t.Run("empty subdomain falls back to root", func(t *testing.T) {
-		got := derivePortalAPIURL("", config.CoreConfig{Domain: "example.com", Port: 80})
-		assert.Equal(t, "http://example.com:80", got)
+		assert.Equal(t, "http://example.com:8080", got)
 	})
 
 	t.Run("empty domain yields empty url", func(t *testing.T) {
-		got := derivePortalAPIURL(dashboardAPISubdomain, config.CoreConfig{Port: 80})
+		got := derivePortalAPIURL(config.CoreConfig{Port: 80})
 		assert.Equal(t, "", got)
-	})
-
-	t.Run("whitespace and dots are trimmed from subdomain", func(t *testing.T) {
-		got := derivePortalAPIURL(" account. ", config.CoreConfig{Domain: "Example.COM", Secure: true, Port: 443})
-		assert.Equal(t, "https://account.example.com:443", got)
 	})
 }
 
@@ -100,20 +89,20 @@ func TestValidatePortalAPIURL(t *testing.T) {
 	t.Run("empty url is rejected at startup", func(t *testing.T) {
 		// Mirrors an empty core domain: derivePortalAPIURL returns "" and
 		// startupValidate must fail rather than allow an empty PORTAL_API_URL.
-		err := validatePortalAPIURL(derivePortalAPIURL(dashboardAPISubdomain, config.CoreConfig{Port: 80}))
+		err := validatePortalAPIURL(derivePortalAPIURL(config.CoreConfig{Port: 80}))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "portal api url is empty")
 	})
 
 	t.Run("secure url passes", func(t *testing.T) {
-		err := validatePortalAPIURL(derivePortalAPIURL(dashboardAPISubdomain, config.CoreConfig{
+		err := validatePortalAPIURL(derivePortalAPIURL(config.CoreConfig{
 			Domain: "example.com", Secure: true, Port: 443,
 		}))
 		require.NoError(t, err)
 	})
 
 	t.Run("insecure url passes", func(t *testing.T) {
-		err := validatePortalAPIURL(derivePortalAPIURL(dashboardAPISubdomain, config.CoreConfig{
+		err := validatePortalAPIURL(derivePortalAPIURL(config.CoreConfig{
 			Domain: "example.com", Port: 8080,
 		}))
 		require.NoError(t, err)

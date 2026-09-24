@@ -70,13 +70,6 @@ var (
 	ErrWorkspaceLabelExhausted = errors.New("workspace: failed to generate a unique label")
 )
 
-// dashboardAPISubdomain is the dashboard API's host subdomain that serves the
-// workspace-init key-exchange routes (POST /api/auth/key and GET /api/account)
-// behind the portal host router. The dashboard core package does not export
-// this value (the only dashboard surface IPFS may import), so it is pinned
-// here.
-const dashboardAPISubdomain = "account"
-
 // maxLabelAttempts bounds label-generation retries on duplicate-key collision.
 // Collisions are rare (opaque 8-char suffix), so a small budget is sufficient.
 const maxLabelAttempts = 100
@@ -272,11 +265,10 @@ func (s *WorkspaceService) startupValidate(ctx core.Context) error {
 
 	// Derive the portal API URL from the portal core config once, so the
 	// runtime's PORTAL_API_URL always matches portal HTTP routing with no
-	// duplicate configuration to drift. The dashboard API's host is used — not
-	// this plugin's subdomain — because workspace-init exchanges its one-time
-	// key via POST /api/auth/key and reads its account via GET /api/account,
-	// and both routes exist only behind the dashboard API's host router.
-	s.portalAPIURL = derivePortalAPIURL(dashboardAPISubdomain, ctx.Config().Config().Core)
+	// duplicate configuration to drift. The root core domain is used — no
+	// API subdomain is prefixed — because the workspace runtime's
+	// key-exchange and resolve routes are served on the portal root host.
+	s.portalAPIURL = derivePortalAPIURL(ctx.Config().Config().Core)
 	// Fail fast when the derivation produced no host (an empty/unconfigured
 	// core domain), so an empty PORTAL_API_URL can never be injected into a
 	// runtime. This must be validated here at startup, before any provisioning,
@@ -661,18 +653,13 @@ func (s *WorkspaceService) resolveEnabledPlatformDomain(ctx context.Context) (*p
 }
 
 // derivePortalAPIURL builds the portal API base URL from the portal core
-// config, mirroring the portal HTTP service's route resolution: the API
-// subdomain is prefixed onto the trimmed root core domain, the scheme follows
-// Core.Secure, and the active port is Core.ExternalPort when set else
+// config's trimmed root domain (no API subdomain is prefixed), the scheme
+// follows Core.Secure, and the active port is Core.ExternalPort when set else
 // Core.Port. An empty root domain yields "" (no host to derive).
-func derivePortalAPIURL(apiSubdomain string, core config.CoreConfig) string {
+func derivePortalAPIURL(core config.CoreConfig) string {
 	root := strings.Trim(strings.ToLower(core.Domain), ".")
 	if root == "" {
 		return ""
-	}
-	host := root
-	if apiSubdomain = strings.Trim(strings.ToLower(strings.TrimSpace(apiSubdomain)), "."); apiSubdomain != "" {
-		host = apiSubdomain + "." + root
 	}
 	scheme := "http"
 	if core.Secure {
@@ -682,7 +669,7 @@ func derivePortalAPIURL(apiSubdomain string, core config.CoreConfig) string {
 	if core.ExternalPort != 0 {
 		port = core.ExternalPort
 	}
-	return scheme + "://" + net.JoinHostPort(host, strconv.FormatUint(uint64(port), 10))
+	return scheme + "://" + net.JoinHostPort(root, strconv.FormatUint(uint64(port), 10))
 }
 
 // validatePortalAPIURL rejects an empty derived portal API URL. An empty URL

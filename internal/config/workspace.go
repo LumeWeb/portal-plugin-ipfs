@@ -99,6 +99,13 @@ type WorkspaceCoolifyConfig struct {
 }
 
 // WorkspaceRuntimeConfig holds settings for the Docker-image application.
+//
+// Resource limits default to a single-user, low-traffic runtime tier
+// (0.5 CPU / 512 MB limit, 256 MB reserved). Research consensus for a
+// per-user WordPress container puts real usage at ~80-400 MB with CPU
+// rarely as bottleneck; the shared database runs on its own resource, so
+// only the application's footprint is budgeted here. Operators can still
+// override each limit per installation.
 type WorkspaceRuntimeConfig struct {
 	Image             string `config:"image"`
 	Tag               string `config:"tag"`
@@ -149,6 +156,17 @@ type WorkspaceDatabaseConfig struct {
 	// is never passed into a workspace runtime and is never created/deleted by
 	// reconciliation.
 	ResourceID string `config:"resource_id"`
+}
+
+// Defaults returns the single-user runtime tier defaults for the application
+// container's resource limits. Only the limits are defaulted; image, tag,
+// port, storage, and database env key names stay required from configuration.
+func (c WorkspaceRuntimeConfig) Defaults() map[string]any {
+	return map[string]any{
+		"MemoryLimit":       "512m",
+		"MemoryReservation": "256m",
+		"CPULimit":          "0.5",
+	}
 }
 
 // WorkspaceStorageConfig describes one persistent volume mount for the
