@@ -28,7 +28,7 @@ require (
 	github.com/ipld/go-ipld-prime v0.24.0
 	github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260803031256-ab9fe751f33f
 	github.com/labstack/echo/v4 v4.15.4
-	github.com/libp2p/go-libp2p v0.49.0
+	github.com/libp2p/go-libp2p v0.50.0
 	github.com/libp2p/go-libp2p-kad-dht v0.42.2
 	github.com/libp2p/go-libp2p-pubsub v0.17.0
 	github.com/libp2p/go-libp2p-pubsub-router v0.6.0
