@@ -449,11 +449,14 @@ func (s *DelegatedDomainService) BindPlatformRootApex(ctx context.Context, websi
 		return nil, fmt.Errorf("unsupported namespace: %s", pd.Namespace)
 	}
 
-	zone, err := s.dnsSvc.GetZone(ctx, pd.ZoneID)
+	zone, err := s.dnsSvc.GetZoneByDomain(ctx, pd.Domain)
 	if err != nil {
 		return nil, fmt.Errorf("load platform root zone: %w", err)
 	}
-	if zone == nil || zone.UserID != userID {
+	if zone == nil || zone.ID != pd.ZoneID {
+		return nil, fmt.Errorf("platform root zone does not match the registered zone")
+	}
+	if zone.UserID != userID {
 		return nil, fmt.Errorf("platform root zone must belong to the operator")
 	}
 

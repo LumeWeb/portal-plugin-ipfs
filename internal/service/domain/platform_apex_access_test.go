@@ -60,6 +60,7 @@ func TestBindPlatformRootApex_RequiresZoneOwner(t *testing.T) {
 		err  error
 	}{
 		{"different_owner", &pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "pinned.site", UserID: 2}, nil},
+		{"different_zone", &pluginDb.DNSZone{Model: gorm.Model{ID: 8}, Domain: "pinned.site", UserID: 1}, nil},
 		{"missing_zone", nil, nil},
 		{"zone_lookup_error", nil, errors.New("zone unavailable")},
 	} {
@@ -68,7 +69,7 @@ func TestBindPlatformRootApex_RequiresZoneOwner(t *testing.T) {
 				website := createTestWebsite(tb, ctx.DB(), 1, "pinned.site")
 				pd := createPlatformRoot(tb, ctx, "pinned.site", pluginDb.DomainNamespaceICANN, 7, true)
 				dns := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
-				dns.EXPECT().GetZone(mock.Anything, uint(7)).Return(tc.zone, tc.err).Once()
+				dns.EXPECT().GetZoneByDomain(mock.Anything, "pinned.site").Return(tc.zone, tc.err).Once()
 
 				svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 				binding, err := svc.BindPlatformRootApex(context.Background(), website.ID, 1, pd.ID)

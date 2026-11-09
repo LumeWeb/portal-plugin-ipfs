@@ -748,11 +748,9 @@ func TestBindPlatformRootApex_WritesApexIntoOperatorZone(t *testing.T) {
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 		websiteMock := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
-		mockDNS.EXPECT().GetZone(mock.Anything, uint(7)).
-			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "pinned.site", UserID: 1}, nil).Once()
-		// Apex match resolves the operator's zone; records are written into it.
+		// Both ownership validation and binding resolve the operator's zone.
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinned.site").
-			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "pinned.site"}, nil).Once()
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 7}, Domain: "pinned.site", UserID: 1}, nil).Twice()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(7), "pinned.site", mock.Anything).Return(nil).Once()
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(7), "pinned.site", pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
 		websiteMock.EXPECT().ActivatePlatformSubdomainWebsite(mock.Anything, website.ID).Return(nil).Once()
@@ -801,16 +799,12 @@ func TestBindPlatformRootApex_MultipleRootsAsAdditionalDomains(t *testing.T) {
 
 		svc := core.GetService[*DelegatedDomainService](ctx, pluginCore.DELEGATED_DOMAIN_SERVICE)
 		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
-		mockDNS.EXPECT().GetZone(mock.Anything, uint(11)).
-			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 11}, Domain: "pinned.site", UserID: 1}, nil).Once()
-		mockDNS.EXPECT().GetZone(mock.Anything, uint(22)).
-			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 22}, Domain: "pinner.xyz", UserID: 1}, nil).Once()
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinned.site").
-			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 11}, Domain: "pinned.site"}, nil).Once()
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 11}, Domain: "pinned.site", UserID: 1}, nil).Twice()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(11), "pinned.site", mock.Anything).Return(nil).Once()
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(11), "pinned.site", pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
 		mockDNS.EXPECT().GetZoneByDomain(mock.Anything, "pinner.xyz").
-			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 22}, Domain: "pinner.xyz"}, nil).Once()
+			Return(&pluginDb.DNSZone{Model: gorm.Model{ID: 22}, Domain: "pinner.xyz", UserID: 1}, nil).Twice()
 		mockDNS.EXPECT().CreateDNSLinkRecord(mock.Anything, uint(22), "pinner.xyz", mock.Anything).Return(nil).Once()
 		mockDNS.EXPECT().CreateApexRecord(mock.Anything, uint(22), "pinner.xyz", pluginCore.RecordTypeALIAS, "gw.example.com").Return(nil).Once()
 		websiteMock := core.GetService[*mocks.MockWebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
