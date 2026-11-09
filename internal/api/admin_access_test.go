@@ -104,7 +104,7 @@ func TestAdminExtension_RequiresRouteAccess(t *testing.T) {
 				var err error
 				switch identity {
 				case "invalid":
-					token = "invalid"
+					token = helper.GenerateInvalidTestToken()
 				case "expired":
 					token, err = helper.CreateExpiredToken(1, jwt.PurposeLogin)
 				case "otp":
