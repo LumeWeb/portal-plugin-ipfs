@@ -8,18 +8,17 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.lumeweb.com/httputil"
 	"go.lumeweb.com/ipfs-content/paths"
+	"go.lumeweb.com/portal-middleware/auth/jwt"
+	mcontext "go.lumeweb.com/portal-middleware/context"
+	portalMw "go.lumeweb.com/portal-middleware/middleware"
+	dashboardCore "go.lumeweb.com/portal-plugin-dashboard/core"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/portal-router"
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
-	"go.lumeweb.com/portal-middleware/auth/jwt"
-	mcontext "go.lumeweb.com/portal-middleware/context"
-	portalMw "go.lumeweb.com/portal-middleware/middleware"
-	dashboardCore "go.lumeweb.com/portal-plugin-dashboard/core"
 	"go.lumeweb.com/queryutil"
 	queryutilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
@@ -77,15 +76,6 @@ func (e *AdminExtension) Configure(gRouter router.Router, accessSvc core.AccessS
 		return err
 	}
 
-	// Authenticate operator tokens end-to-end so platform-domain handlers can
-	// derive the operator's identity via GetUserID (same middleware as the main
-	// API). Scoped to the platform-domain routes; the other admin handlers do
-	// not require a per-request identity.
-	authMw := portalMw.AuthMiddleware(e.Context(),
-		portalMw.WithAuthPurpose(jwt.PurposeLogin, jwt.PurposeAPI),
-		dashboardCore.WithAPIKeyUsageLogging(e.Context()),
-	)
-
 	if err := e.registerWebsiteHandlers(ipfsRouter, accessSvc); err != nil {
 		return err
 	}
@@ -94,11 +84,21 @@ func (e *AdminExtension) Configure(gRouter router.Router, accessSvc core.AccessS
 		return err
 	}
 
-	if err := e.registerPlatformDomainHandlers(ipfsRouter, accessSvc, authMw); err != nil {
+	if err := e.registerPlatformDomainHandlers(ipfsRouter, accessSvc); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (e *AdminExtension) registerAdminRoutes(gRouter router.Router, accessSvc core.AccessService, routes []router.RouteDefinition) error {
+	authMw := portalMw.AuthMiddleware(e.Context(),
+		portalMw.WithAuthPurpose(jwt.PurposeLogin, jwt.PurposeAPI),
+		dashboardCore.WithAPIKeyUsageLogging(e.Context()),
+	)
+	return router.RegisterRoutes(gRouter, accessSvc, core.GetAPI(e.TargetAPI()).Subdomain(), routes,
+		router.WithMiddlewares(authMw, portalMw.AccessMiddleware(e.Context())),
+	)
 }
 
 // Config returns the config manager
@@ -150,7 +150,7 @@ func (e *AdminExtension) SetDB(db *gorm.DB) {
 func (e *AdminExtension) registerWebsiteHandlers(gRouter router.Router, accessSvc core.AccessService) error {
 	routes := router.DefineRoutes(
 		router.NewRoute(http.MethodPost, "/websites/:id/block", e.blockWebsite,
-			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithAccess(core.ACCESS_ADMIN_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Block website"),
 				router.WithDescription(`Blocks a website by setting status to 'blocked'.
@@ -166,7 +166,7 @@ See also: POST /websites/:id/unblock (unblock website)`),
 			),
 		),
 		router.NewRoute(http.MethodPost, "/websites/:id/unblock", e.unblockWebsite,
-			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithAccess(core.ACCESS_ADMIN_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Unblock website"),
 				router.WithDescription(`Unblocks a website by restoring status to 'active'.
@@ -183,12 +183,7 @@ See also: POST /websites/:id/block (block website)`),
 		),
 	)
 
-	apiGroup := internal.ProtocolName
-	if err := router.RegisterRoutes(gRouter, accessSvc, apiGroup, routes); err != nil {
-		return err
-	}
-
-	return nil
+	return e.registerAdminRoutes(gRouter, accessSvc, routes)
 }
 
 // parsePathID extracts and parses a uint ID from the path parameter
@@ -243,7 +238,7 @@ func (e *AdminExtension) unblockWebsite(c echo.Context) error {
 func (e *AdminExtension) registerIPNSHandlers(gRouter router.Router, accessSvc core.AccessService) error {
 	routes := router.DefineRoutes(
 		router.NewRoute(http.MethodPost, "/ipns/republish", e.republishIPNS,
-			router.WithAccess(core.ACCESS_USER_ROLE),
+			router.WithAccess(core.ACCESS_ADMIN_ROLE),
 			router.WithSwagger(
 				router.WithSummary("Trigger IPNS republish"),
 				router.WithDescription(`Triggers IPNS record republishing for all keys on the node.
@@ -257,12 +252,7 @@ Prerequisites: Admin access required`),
 		),
 	)
 
-	apiGroup := internal.ProtocolName
-	if err := router.RegisterRoutes(gRouter, accessSvc, apiGroup, routes); err != nil {
-		return err
-	}
-
-	return nil
+	return e.registerAdminRoutes(gRouter, accessSvc, routes)
 }
 
 func (e *AdminExtension) republishIPNS(c echo.Context) error {
@@ -318,7 +308,7 @@ func (e *AdminExtension) republishIPNS(c echo.Context) error {
 
 	return httputil.EncodeResponse(ctx, nil, &resp)
 }
-func (e *AdminExtension) registerPlatformDomainHandlers(gRouter router.Router, accessSvc core.AccessService, authMw echo.MiddlewareFunc) error {
+func (e *AdminExtension) registerPlatformDomainHandlers(gRouter router.Router, accessSvc core.AccessService) error {
 	routes := router.DefineRoutes(
 		router.NewRoute(http.MethodPost, "/platform-domains", e.createPlatformDomain,
 			router.WithAccess(core.ACCESS_ADMIN_ROLE),
@@ -378,13 +368,12 @@ See also: POST /platform-domains (register), PATCH /platform-domains/:id (enable
 				router.WithTags("Admin", "PlatformDomains"),
 				router.WithPathParam("id", "Platform domain ID", ""),
 				router.WithSuccessResponse(http.StatusNoContent, "Platform domain deleted"),
-			router.WithoutDefaultSuccessResponse(),
+				router.WithoutDefaultSuccessResponse(),
 			),
 		),
 	)
 
-	apiGroup := internal.ProtocolName
-	return router.RegisterRoutes(gRouter, accessSvc, apiGroup, routes, router.WithMiddlewares(authMw))
+	return e.registerAdminRoutes(gRouter, accessSvc, routes)
 }
 
 func (e *AdminExtension) createPlatformDomain(c echo.Context) error {

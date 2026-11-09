@@ -421,8 +421,14 @@ func (s *DelegatedDomainService) DeletePlatformDomain(ctx context.Context, id ui
 // records, delegation, SSL) via createPlatformBinding with the FQDN being the
 // root itself, and marks the binding with the PlatformDomain reference.
 func (s *DelegatedDomainService) BindPlatformRootApex(ctx context.Context, websiteID, userID, platformDomainID uint) (*pluginDb.WebsiteDomain, error) {
+	if userID == 0 {
+		return nil, fmt.Errorf("operator user ID is required")
+	}
 	if s.DB() == nil {
 		return nil, fmt.Errorf("database not available")
+	}
+	if s.dnsSvc == nil {
+		return nil, fmt.Errorf("DNS service not configured")
 	}
 
 	var pd pluginDb.PlatformDomain
@@ -441,6 +447,17 @@ func (s *DelegatedDomainService) BindPlatformRootApex(ctx context.Context, websi
 	provider := s.registry.Get(string(pd.Namespace))
 	if provider == nil {
 		return nil, fmt.Errorf("unsupported namespace: %s", pd.Namespace)
+	}
+
+	zone, err := s.dnsSvc.GetZoneByDomain(ctx, pd.Domain)
+	if err != nil {
+		return nil, fmt.Errorf("load platform root zone: %w", err)
+	}
+	if zone == nil || zone.ID != pd.ZoneID {
+		return nil, fmt.Errorf("platform root zone does not match the registered zone")
+	}
+	if zone.UserID != userID {
+		return nil, fmt.Errorf("platform root zone must belong to the operator")
 	}
 
 	return s.createPlatformBinding(ctx, websiteID, userID, &pd, provider, pd.Domain, false)
