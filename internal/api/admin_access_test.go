@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,12 +37,13 @@ var adminRouteAccessOptions = coreTesting.CombineOptions(
 	AdminTestOptions,
 	coreTesting.WithService(core.ACCESS_SERVICE, service.NewAccessService),
 	func(ctx coreTesting.TestContext) (coreTesting.TestContext, error) {
-		return coreTesting.WithAPI("admin", func() (core.API, []core.ContextBuilderOption, error) {
-			api := coreTesting.NewMockAPI(ctx.T(), "admin").
-				WithSubdomain("admin").
-				WithConfigure(func(router.Router, core.AccessService) error { return nil })
-			return api, nil, nil
-		})(ctx)
+		host := core.GetAPI("admin")
+		api, ok := host.(*coreTesting.MockAPI)
+		if !ok {
+			return ctx, fmt.Errorf("unexpected admin test host type %T", host)
+		}
+		api.WithConfigure(func(router.Router, core.AccessService) error { return nil })
+		return ctx, nil
 	},
 )
 
