@@ -44,7 +44,7 @@ func TestAdminExtension_BlockWebsite_Success(t *testing.T) {
 
 		websiteService.EXPECT().BlockWebsite(mock.Anything, websiteID).Return(nil)
 
-		req := ctx.NewAPIRequest(http.MethodPost, "/api/ipfs/websites/123/block", nil)
+		req := newAdminAPIRequest(ctx, http.MethodPost, "/api/ipfs/websites/123/block", nil)
 		rec := httptest.NewRecorder()
 
 		ctx.Router().ServeHTTP(rec, req)
@@ -55,7 +55,7 @@ func TestAdminExtension_BlockWebsite_Success(t *testing.T) {
 
 func TestAdminExtension_BlockWebsite_InvalidID(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		req := ctx.NewAPIRequest(http.MethodPost, "/api/ipfs/websites/invalid/block", nil)
+		req := newAdminAPIRequest(ctx, http.MethodPost, "/api/ipfs/websites/invalid/block", nil)
 		rec := httptest.NewRecorder()
 
 		ctx.Router().ServeHTTP(rec, req)
@@ -71,7 +71,7 @@ func TestAdminExtension_BlockWebsite_ServiceError(t *testing.T) {
 
 		websiteService.EXPECT().BlockWebsite(mock.Anything, websiteID).Return(assert.AnError)
 
-		req := ctx.NewAPIRequest(http.MethodPost, "/api/ipfs/websites/123/block", nil)
+		req := newAdminAPIRequest(ctx, http.MethodPost, "/api/ipfs/websites/123/block", nil)
 		rec := httptest.NewRecorder()
 
 		ctx.Router().ServeHTTP(rec, req)
@@ -87,7 +87,7 @@ func TestAdminExtension_UnblockWebsite_Success(t *testing.T) {
 
 		websiteService.EXPECT().UnblockWebsite(mock.Anything, websiteID).Return(nil)
 
-		req := ctx.NewAPIRequest(http.MethodPost, "/api/ipfs/websites/123/unblock", nil)
+		req := newAdminAPIRequest(ctx, http.MethodPost, "/api/ipfs/websites/123/unblock", nil)
 		rec := httptest.NewRecorder()
 
 		ctx.Router().ServeHTTP(rec, req)
@@ -98,7 +98,7 @@ func TestAdminExtension_UnblockWebsite_Success(t *testing.T) {
 
 func TestAdminExtension_UnblockWebsite_InvalidID(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
-		req := ctx.NewAPIRequest(http.MethodPost, "/api/ipfs/websites/invalid/unblock", nil)
+		req := newAdminAPIRequest(ctx, http.MethodPost, "/api/ipfs/websites/invalid/unblock", nil)
 		rec := httptest.NewRecorder()
 
 		ctx.Router().ServeHTTP(rec, req)
@@ -114,7 +114,7 @@ func TestAdminExtension_UnblockWebsite_ServiceError(t *testing.T) {
 
 		websiteService.EXPECT().UnblockWebsite(mock.Anything, websiteID).Return(assert.AnError)
 
-		req := ctx.NewAPIRequest(http.MethodPost, "/api/ipfs/websites/123/unblock", nil)
+		req := newAdminAPIRequest(ctx, http.MethodPost, "/api/ipfs/websites/123/unblock", nil)
 		rec := httptest.NewRecorder()
 
 		ctx.Router().ServeHTTP(rec, req)
@@ -138,7 +138,7 @@ func TestAdminExtension_RepublishIPNS(t *testing.T) {
 			mockIPNSKeyService.EXPECT().GetPrivateKeyByPeerID(mock.Anything, ipnsName.Peer().String()).Return(nil, uint(1), nil).Times(1)
 			mockIPNSKeyService.EXPECT().PublishWithKey(mock.Anything, nil, TestCID, mock.AnythingOfType("time.Duration")).Return(nil)
 
-			req := ctx.NewAPIRequest(http.MethodPost, "/api/ipfs/ipns/republish", nil)
+			req := newAdminAPIRequest(ctx, http.MethodPost, "/api/ipfs/ipns/republish", nil)
 			rec := httptest.NewRecorder()
 
 			ctx.Router().ServeHTTP(rec, req)
@@ -158,7 +158,7 @@ func TestAdminExtension_RepublishIPNS(t *testing.T) {
 
 			mockIPNSKeyService.EXPECT().ListPublished(mock.Anything).Return(nil, errors.New("republish failed"))
 
-			req := ctx.NewAPIRequest(http.MethodPost, "/api/ipfs/ipns/republish", nil)
+			req := newAdminAPIRequest(ctx, http.MethodPost, "/api/ipfs/ipns/republish", nil)
 			rec := httptest.NewRecorder()
 
 			ctx.Router().ServeHTTP(rec, req)
@@ -181,7 +181,7 @@ func TestAdminExtension_RepublishIPNS(t *testing.T) {
 			mockIPNSKeyService.EXPECT().GetPrivateKeyByPeerID(mock.Anything, ipnsName.Peer().String()).Return(nil, uint(1), nil).Times(1)
 			mockIPNSKeyService.EXPECT().PublishWithKey(mock.Anything, nil, TestCID, mock.AnythingOfType("time.Duration")).Return(nil)
 
-			req := ctx.NewAPIRequest(http.MethodPost, "/api/ipfs/ipns/republish", nil)
+			req := newAdminAPIRequest(ctx, http.MethodPost, "/api/ipfs/ipns/republish", nil)
 			rec := httptest.NewRecorder()
 
 			ctx.Router().ServeHTTP(rec, req)

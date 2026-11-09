@@ -295,6 +295,8 @@ func createTestUserAndLogin(ctx coreTesting.TestContext) (string, uint) {
 // createTestUser creates a test user and returns a JWT token without expecting LoginPassword to be called
 // This is for tests that make authenticated requests but don't call the login endpoint
 func createTestUser(ctx coreTesting.TestContext) (string, uint) {
+	coreTesting.GetMockUserService(ctx).EXPECT().AccountExists(mock.Anything, uint(1)).Return(true, nil, nil).Maybe()
+
 	// Generate test token using the jwt helper without expecting LoginPassword call
 	jwtHelper := coreTesting.NewJWTHelper(ctx)
 	token, err := jwtHelper.CreateLoginToken(1)
