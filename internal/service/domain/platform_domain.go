@@ -427,6 +427,9 @@ func (s *DelegatedDomainService) BindPlatformRootApex(ctx context.Context, websi
 	if s.DB() == nil {
 		return nil, fmt.Errorf("database not available")
 	}
+	if s.dnsSvc == nil {
+		return nil, fmt.Errorf("DNS service not configured")
+	}
 
 	var pd pluginDb.PlatformDomain
 	if err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
