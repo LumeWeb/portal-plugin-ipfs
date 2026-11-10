@@ -576,6 +576,10 @@ func (s *WebsiteServiceDefault) GetWebsiteByDomain(ctx context.Context, domain s
 func (s *WebsiteServiceDefault) ListWebsites(ctx context.Context, userID uint, filter []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.Website, int64, error) {
 	ctx, span := core.TraceMethod(ctx, "WebsiteServiceDefault.ListWebsites")
 	defer span.End()
+	filter, queryErr := dto.WebsiteListPolicy.Normalize(filter, sort)
+	if queryErr != nil {
+		return nil, 0, queryErr
+	}
 
 	var result struct {
 		websites []*pluginDb.Website
@@ -593,17 +597,8 @@ func (s *WebsiteServiceDefault) ListWebsites(ctx context.Context, userID uint, f
 				// Construct the query with user ID filter
 				query := tx.Model(&pluginDb.Website{}).Where("user_id = ?", userID)
 
-				// The `domain` filter no longer maps to a website column: a
-				// website's domain lives on its WebsiteDomain bindings, so match
-				// websites that have a (non-deleted) binding with that domain.
-				if domainVal, ok := filterValue(filter, "domain"); ok {
-					query = query.Where("EXISTS (SELECT 1 FROM website_domains wd WHERE wd.website_id = ipfs_websites.id AND wd.domain = ? AND wd.deleted_at IS NULL)", domainVal)
-					filter = removeFilter(filter, "domain")
-				}
-
-				query = queryutil.ApplyFilters(query, filter, nil)
+				query = queryutil.ApplyFiltersWithOptions(query, filter, nil, queryutil.WithFieldPredicate("domain", websiteDomainPredicate))
 				query = queryutil.ApplySort(query, sort)
-				query = queryutil.ApplyPagination(query, pagination)
 
 				// Get total count
 				if err := query.Count(&total).Error; err != nil {
@@ -612,6 +607,7 @@ func (s *WebsiteServiceDefault) ListWebsites(ctx context.Context, userID uint, f
 				}
 
 				// Get the records
+				query = queryutil.ApplyPagination(query, pagination)
 				if err := query.Find(&websites).Error; err != nil {
 					_ = tx.AddError(fmt.Errorf("failed to list websites: %w", err))
 					return tx
@@ -646,27 +642,11 @@ func (s *WebsiteServiceDefault) ListWebsites(ctx context.Context, userID uint, f
 	return result.websites, result.total, nil
 }
 
-// filterValue returns the value of the first filter matching the given field,
-// and a bool indicating presence. Used to special-case the `domain` filter in
-// ListWebsites, which no longer maps to a website column.
-func filterValue(filters []queryutil.CrudFilter, field string) (any, bool) {
-	for _, f := range filters {
-		if f.GetField() == field {
-			return f.GetValue(), true
-		}
+func websiteDomainPredicate(op filter.Operator, value any) (string, []any, error) {
+	if op != filter.OpEq {
+		return "", nil, filter.ErrInvalidQuery
 	}
-	return nil, false
-}
-
-// removeFilter returns the filters with all entries for the given field removed.
-func removeFilter(filters []queryutil.CrudFilter, field string) []queryutil.CrudFilter {
-	out := filters[:0]
-	for _, f := range filters {
-		if f.GetField() != field {
-			out = append(out, f)
-		}
-	}
-	return out
+	return "EXISTS (SELECT 1 FROM website_domains wd WHERE wd.website_id = ipfs_websites.id AND wd.domain = ? AND wd.deleted_at IS NULL)", []any{value}, nil
 }
 
 // UpdateWebsite updates an existing website

@@ -1755,6 +1755,98 @@ func (_c *MockDNSService_ListZones_Call) RunAndReturn(run func(ctx context.Conte
 	return _c
 }
 
+// ListZonesForUser provides a mock function for the type MockDNSService
+func (_mock *MockDNSService) ListZonesForUser(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*db.DNSZone, int64, error) {
+	ret := _mock.Called(ctx, userID, filters, sorts, pagination)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListZonesForUser")
+	}
+
+	var r0 []*db.DNSZone
+	var r1 int64
+	var r2 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, []queryutil.CrudFilter, []queryutil.Sort, queryutil.Pagination) ([]*db.DNSZone, int64, error)); ok {
+		return returnFunc(ctx, userID, filters, sorts, pagination)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint, []queryutil.CrudFilter, []queryutil.Sort, queryutil.Pagination) []*db.DNSZone); ok {
+		r0 = returnFunc(ctx, userID, filters, sorts, pagination)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*db.DNSZone)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uint, []queryutil.CrudFilter, []queryutil.Sort, queryutil.Pagination) int64); ok {
+		r1 = returnFunc(ctx, userID, filters, sorts, pagination)
+	} else {
+		r1 = ret.Get(1).(int64)
+	}
+	if returnFunc, ok := ret.Get(2).(func(context.Context, uint, []queryutil.CrudFilter, []queryutil.Sort, queryutil.Pagination) error); ok {
+		r2 = returnFunc(ctx, userID, filters, sorts, pagination)
+	} else {
+		r2 = ret.Error(2)
+	}
+	return r0, r1, r2
+}
+
+// MockDNSService_ListZonesForUser_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListZonesForUser'
+type MockDNSService_ListZonesForUser_Call struct {
+	*mock.Call
+}
+
+// ListZonesForUser is a helper method to define mock.On call
+//   - ctx context.Context
+//   - userID uint
+//   - filters []queryutil.CrudFilter
+//   - sorts []queryutil.Sort
+//   - pagination queryutil.Pagination
+func (_e *MockDNSService_Expecter) ListZonesForUser(ctx any, userID any, filters any, sorts any, pagination any) *MockDNSService_ListZonesForUser_Call {
+	return &MockDNSService_ListZonesForUser_Call{Call: _e.mock.On("ListZonesForUser", ctx, userID, filters, sorts, pagination)}
+}
+
+func (_c *MockDNSService_ListZonesForUser_Call) Run(run func(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination)) *MockDNSService_ListZonesForUser_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint
+		if args[1] != nil {
+			arg1 = args[1].(uint)
+		}
+		var arg2 []queryutil.CrudFilter
+		if args[2] != nil {
+			arg2 = args[2].([]queryutil.CrudFilter)
+		}
+		var arg3 []queryutil.Sort
+		if args[3] != nil {
+			arg3 = args[3].([]queryutil.Sort)
+		}
+		var arg4 queryutil.Pagination
+		if args[4] != nil {
+			arg4 = args[4].(queryutil.Pagination)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *MockDNSService_ListZonesForUser_Call) Return(dNSZones []*db.DNSZone, n int64, err error) *MockDNSService_ListZonesForUser_Call {
+	_c.Call.Return(dNSZones, n, err)
+	return _c
+}
+
+func (_c *MockDNSService_ListZonesForUser_Call) RunAndReturn(run func(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*db.DNSZone, int64, error)) *MockDNSService_ListZonesForUser_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Logger provides a mock function for the type MockDNSService
 func (_mock *MockDNSService) Logger() *core.Logger {
 	ret := _mock.Called()

@@ -22,6 +22,15 @@ import (
 func (s *DNSServiceDefault) GetZoneRecords(ctx context.Context, zoneID uint, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*apiDTO.DNSRecord, int64, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.GetZoneRecords")
 	defer span.End()
+	filters, queryErr := apiDTO.DNSRecordListPolicy.Normalize(filters, sorts)
+	if queryErr != nil {
+		return nil, 0, queryErr
+	}
+	for _, f := range filters {
+		if len(f.GetFilters()) != 0 {
+			return nil, 0, fmt.Errorf("%w: DNS record filters must be flat", queryutil.ErrInvalidQuery)
+		}
+	}
 
 	zone, pdnsZone, err := s.getZoneWithPowerDNS(ctx, zoneID)
 	if err != nil {
@@ -360,17 +369,13 @@ func applyInMemoryFilters(records []*apiDTO.DNSRecord, filters []queryutil.CrudF
 
 	result := lo.Filter(records, func(record *apiDTO.DNSRecord, _ int) bool {
 		for _, f := range filters {
-			field := f.GetField()
-			value := f.GetValue()
-			operator := f.GetOperator()
-
-			switch field {
-			case "type":
-				if !matchField(record.Type, value, operator) {
+			switch f.GetField() {
+			case "name":
+				if !matchField(record.Name, f.GetValue(), f.GetOperator()) {
 					return false
 				}
-			case "name":
-				if !matchField(record.Name, value, operator) {
+			case "type":
+				if !matchField(record.Type, f.GetValue(), f.GetOperator()) {
 					return false
 				}
 			}
@@ -428,7 +433,7 @@ func matchField(field, value any, operator filter.Operator) bool {
 	case filter.OpEndswith:
 		return strings.HasSuffix(strings.ToLower(fieldStr), strings.ToLower(valueStr))
 	default:
-		return fieldStr == valueStr
+		return false
 	}
 }
 

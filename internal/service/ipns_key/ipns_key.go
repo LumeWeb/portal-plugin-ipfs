@@ -12,27 +12,28 @@ import (
 	"io"
 	"time"
 
-	mh "github.com/multiformats/go-multihash"
 	"github.com/ipfs/boxo/ipns"
 	"github.com/ipfs/boxo/namesys"
 	"github.com/ipfs/boxo/path"
 	"github.com/ipfs/go-cid"
 	ic "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
+	mh "github.com/multiformats/go-multihash"
+	"github.com/samber/lo"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
-	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol/encoding"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
+	"go.lumeweb.com/queryutil"
+	"go.lumeweb.com/queryutil/filter"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/hkdf"
 	"gorm.io/gorm"
-	"go.lumeweb.com/queryutil"
-	"go.lumeweb.com/queryutil/filter"
-	"github.com/samber/lo"
 )
 
 // Key type constants from libp2p
@@ -46,11 +47,11 @@ const (
 // IPNSKeyServiceDefault implements the IPNS key management and publishing service
 type IPNSKeyServiceDefault struct {
 	*core.BaseComponent
-	protocol   protocol.ProtoNode
-	publisher  pluginCore.IPNSPublisher
+	protocol    protocol.ProtoNode
+	publisher   pluginCore.IPNSPublisher
 	republisher *Republisher
-	stopFunc   context.CancelFunc
-	dbKeystore *DBKeystore
+	stopFunc    context.CancelFunc
+	dbKeystore  *DBKeystore
 }
 
 // Ensure IPNSKeyServiceDefault implements the interface
@@ -282,20 +283,18 @@ func (s *IPNSKeyServiceDefault) ListKeys(ctx context.Context, userID uint) ([]pl
 func (s *IPNSKeyServiceDefault) ListKeysWithFilters(ctx context.Context, userID uint, filters []filter.CrudFilter, sort []filter.Sort, pagination filter.Pagination) ([]*pluginDb.IPFSIPNSKey, int64, error) {
 	ctx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.ListKeysWithFilters")
 	defer span.End()
+	filters, queryErr := dto.IPNSKeyListPolicy.Normalize(filters, sort)
+	if queryErr != nil {
+		return nil, 0, queryErr
+	}
 
 	var keys []*pluginDb.IPFSIPNSKey
 	var total int64
 
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		// Construct the query
-		query := tx.Model(&pluginDb.IPFSIPNSKey{})
-
-		// Add user_id filter for isolation and append to other filters
-		userFilter := filter.NewLogicalFilter("user_id", filter.OpEq, userID)
-		allFilters := append([]filter.CrudFilter{userFilter}, filters...)
-
-		// Apply filters
-		query = queryutil.ApplyFilters(query, allFilters, nil)
+		query := tx.Model(&pluginDb.IPFSIPNSKey{}).Where("user_id = ?", userID)
+		query = queryutil.ApplyFilters(query, filters, nil)
 		query = queryutil.ApplySort(query, sort)
 
 		// Get total count (before pagination)
@@ -388,8 +387,8 @@ func (s *IPNSKeyServiceDefault) DeleteKey(ctx context.Context, userID uint, keyI
 	var websiteCount int64
 	checkErr := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		return tx.Model(&pluginDb.Website{}).
-			Where("target_multihash = ? AND target_type = ? AND status = ?", 
-				 key.PeerIDMultihash, pluginDb.WebsiteTargetTypeIPNS, pluginDb.WebsiteStatusActive).
+			Where("target_multihash = ? AND target_type = ? AND status = ?",
+				key.PeerIDMultihash, pluginDb.WebsiteTargetTypeIPNS, pluginDb.WebsiteStatusActive).
 			Count(&websiteCount)
 	})
 	if checkErr != nil {

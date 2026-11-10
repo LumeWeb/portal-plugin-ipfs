@@ -20,6 +20,7 @@ import (
 
 	dashboardCore "go.lumeweb.com/portal-plugin-dashboard/core"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/coolify"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
@@ -541,6 +542,10 @@ func (s *WorkspaceService) Get(ctx context.Context, userID uint, workspaceID uin
 // List returns the workspaces owned by userID, filtered, sorted, and
 // paginated, along with the total count.
 func (s *WorkspaceService) List(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.Workspace, int64, error) {
+	filters, queryErr := dto.WorkspaceListPolicy.Normalize(filters, sort)
+	if queryErr != nil {
+		return nil, 0, queryErr
+	}
 	var workspaces []*pluginDb.Workspace
 	var total int64
 
@@ -550,12 +555,12 @@ func (s *WorkspaceService) List(ctx context.Context, userID uint, filters []quer
 		query := s.ownedWorkspaceQuery(tx, userID).Preload("PlatformDomain")
 		query = queryutil.ApplyFilters(query, filters, nil)
 		query = queryutil.ApplySort(query, sort)
-		query = queryutil.ApplyPagination(query, pagination)
 
 		if err := query.Count(&total).Error; err != nil {
 			_ = tx.AddError(fmt.Errorf("workspace: failed to count workspaces: %w", err))
 			return tx
 		}
+		query = queryutil.ApplyPagination(query, pagination)
 		if err := query.Find(&workspaces).Error; err != nil {
 			_ = tx.AddError(fmt.Errorf("workspace: failed to list workspaces: %w", err))
 			return tx

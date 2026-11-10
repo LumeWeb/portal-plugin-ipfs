@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/db"
@@ -305,6 +306,10 @@ func (s *DelegatedDomainService) CreatePlatformDomain(ctx context.Context, domai
 // ListPlatformDomains returns registered platform roots with filtering,
 // sorting, and pagination, plus the pre-pagination total.
 func (s *DelegatedDomainService) ListPlatformDomains(ctx context.Context, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.PlatformDomain, int64, error) {
+	filters, queryErr := dto.PlatformDomainListPolicy.Normalize(filters, sort)
+	if queryErr != nil {
+		return nil, 0, queryErr
+	}
 	if s.DB() == nil {
 		return nil, 0, nil
 	}

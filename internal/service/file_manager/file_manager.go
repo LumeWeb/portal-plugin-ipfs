@@ -7,6 +7,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
@@ -45,6 +46,10 @@ func (s *FileManagerServiceDefault) ID() string {
 func (s *FileManagerServiceDefault) ListFiles(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.FilePath, int64, error) {
 	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.ListFiles")
 	defer span.End()
+	filters, queryErr := dto.FileListPolicy.Normalize(filters, sort)
+	if queryErr != nil {
+		return nil, 0, queryErr
+	}
 
 	timer := prometheus.NewTimer(ListFilesDuration.WithLabelValues())
 	defer timer.ObserveDuration()
@@ -53,14 +58,11 @@ func (s *FileManagerServiceDefault) ListFiles(ctx context.Context, userID uint, 
 	var total int64
 
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		// Process filters to handle hierarchical parent_path filtering
-		processedFilters := s.processHierarchicalFilters(filters)
-
 		// Construct the query for file paths
 		query := tx.Model(&pluginDb.FilePath{}).Where("user_id = ?", userID)
 
 		// Apply filters using queryutil
-		query = queryutil.ApplyFilters(query, processedFilters, nil)
+		query = queryutil.ApplyFiltersWithOptions(query, filters, nil, queryutil.WithFieldPredicate("parent_path", fileParentPathPredicate(tx.Dialector.Name())))
 
 		// Apply sort
 		query = queryutil.ApplySort(query, sort)
@@ -357,46 +359,23 @@ func (s *FileManagerServiceDefault) GetOrphanedPaths(ctx context.Context) ([]*pl
 		})
 }
 
-// processHierarchicalFilters handles special parent_path filtering logic
-func (s *FileManagerServiceDefault) processHierarchicalFilters(filters []queryutil.CrudFilter) []queryutil.CrudFilter {
-	// Find parent_path filter if it exists
-	parentPathFilter := queryutil.DeepFindFilter(filters, "parent_path")
-	if parentPathFilter == nil {
-		return filters
-	}
-
-	// Get the parent path value
-	parentPathValue, ok := parentPathFilter.GetValue().(string)
-	if !ok {
-		return filters
-	}
-
-	// Create new hierarchical filter based on the parent path value
-	var hierarchicalFilter queryutil.CrudFilter
-	if parentPathValue == pluginDb.RootPath {
-		// For root path, match all direct children (parent_path = "/")
-		hierarchicalFilter = queryutil.Equal("parent_path", pluginDb.RootPath)
-	} else {
-		// For other paths, match exact path or subpaths
-		// Example: for "/documents", match:
-		// 1. Files with parent_path="/documents" (direct children)
-		// 2. Files with parent_path starting with "/documents/" (descendants)
-		hierarchicalFilter = queryutil.Or(
-			queryutil.Equal("parent_path", parentPathValue),
-			queryutil.NewLogicalFilter("parent_path", queryutil.OpStartswiths, parentPathValue),
-		)
-	}
-
-	// Remove the original parent_path filter and add the new hierarchical filter
-	var processedFilters []queryutil.CrudFilter
-	for _, f := range filters {
-		if f.GetField() != "parent_path" {
-			processedFilters = append(processedFilters, f)
+// fileParentPathPredicate matches the requested directory and its descendants.
+// Queryutil composes the predicate inside the caller's boolean groups.
+func fileParentPathPredicate(dialect string) queryutil.FieldPredicate {
+	return func(op filter.Operator, value any) (string, []any, error) {
+		if op != filter.OpEq {
+			return "", nil, filter.ErrInvalidQuery
 		}
+		path := value.(string)
+		if path == pluginDb.RootPath {
+			return "parent_path = ?", []any{path}, nil
+		}
+		prefix := strings.TrimSuffix(path, "/") + "/"
+		if dialect == "mysql" {
+			return "(parent_path = ? OR INSTR(BINARY parent_path, BINARY ?) = 1)", []any{path, prefix}, nil
+		}
+		return "(parent_path = ? OR INSTR(parent_path, ?) = 1)", []any{path, prefix}, nil
 	}
-	processedFilters = append(processedFilters, hierarchicalFilter)
-
-	return processedFilters
 }
 
 // HealthCheck implements core.HealthChecker interface
