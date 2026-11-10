@@ -20,7 +20,6 @@ import (
 	"go.lumeweb.com/portal/config"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/queryutil"
-	queryutilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -469,7 +468,8 @@ func (e *AdminExtension) listPlatformDomains(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	return queryutilHttp.ProcessListRequest[*pluginDb.PlatformDomain, dto.PlatformDomainResponse](
+	return processListRequest[*pluginDb.PlatformDomain, dto.PlatformDomainResponse](
+		dto.QueryPlatformDomains,
 		c.Response(),
 		c.Request(),
 		"platform-domains",

@@ -10,12 +10,12 @@ import (
 	"go.lumeweb.com/httputil"
 	mcontext "go.lumeweb.com/portal-middleware/context"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
+	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
-	"go.lumeweb.com/portal/core"
 	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
+	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db/types"
 	"go.lumeweb.com/queryutil"
 	queryUtilHttp "go.lumeweb.com/queryutil/http"
@@ -66,7 +66,12 @@ func (a *API) listPins(c echo.Context) error {
 		apiErr := NewError(ErrKeyFileProcessingFailed, err)
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
-	
+
+	filters, err = dto.NormalizeListQuery(dto.QueryPins, filters, sort, pagination)
+	if err != nil {
+		return ctx.Error(err, http.StatusBadRequest)
+	}
+
 	// Use ForUser variant to ensure user isolation
 	pins, total, err := a.pinService.ListPinsForUser(reqCtx, user, filters, sort, pagination)
 	if err != nil {

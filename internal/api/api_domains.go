@@ -16,7 +16,6 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	domsvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/domain"
 	"go.lumeweb.com/queryutil"
-	queryutilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -241,11 +240,16 @@ func (a *API) listDomains(c echo.Context) error {
 		return err
 	}
 
-	return queryutilHttp.ProcessListRequest[*pluginDb.WebsiteDomain, dto.DomainResponse](
+	return processListRequest[*pluginDb.WebsiteDomain, dto.DomainResponse](
+		dto.QueryWebsiteDomains,
 		c.Response(),
 		c.Request(),
 		"domains",
 		func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.WebsiteDomain, int64, error) {
+			filters, queryErr := dto.NormalizeListQuery(dto.QueryWebsiteDomains, filters, sorts, pagination)
+			if queryErr != nil {
+				return nil, 0, queryErr
+			}
 			query := a.DB().WithContext(reqCtx).Model(&pluginDb.WebsiteDomain{}).Where("website_id = ? AND user_id = ?", websiteID, user)
 
 			// Apply filters and sorts from query params
@@ -800,7 +804,8 @@ func (a *API) listPlatformDomains(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	return queryutilHttp.ProcessListRequest[*pluginDb.PlatformDomain, dto.PlatformDomainResponse](
+	return processListRequest[*pluginDb.PlatformDomain, dto.PlatformDomainResponse](
+		dto.QueryEnabledPlatformDomains,
 		c.Response(),
 		c.Request(),
 		"platform-domains",

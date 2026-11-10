@@ -22,6 +22,10 @@ import (
 func (s *DNSServiceDefault) GetZoneRecords(ctx context.Context, zoneID uint, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*apiDTO.DNSRecord, int64, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.GetZoneRecords")
 	defer span.End()
+	filters, queryErr := apiDTO.NormalizeListQuery(apiDTO.QueryDNSRecords, filters, sorts, pagination)
+	if queryErr != nil {
+		return nil, 0, queryErr
+	}
 
 	zone, pdnsZone, err := s.getZoneWithPowerDNS(ctx, zoneID)
 	if err != nil {
@@ -360,19 +364,8 @@ func applyInMemoryFilters(records []*apiDTO.DNSRecord, filters []queryutil.CrudF
 
 	result := lo.Filter(records, func(record *apiDTO.DNSRecord, _ int) bool {
 		for _, f := range filters {
-			field := f.GetField()
-			value := f.GetValue()
-			operator := f.GetOperator()
-
-			switch field {
-			case "type":
-				if !matchField(record.Type, value, operator) {
-					return false
-				}
-			case "name":
-				if !matchField(record.Name, value, operator) {
-					return false
-				}
+			if !matchRecordFilter(record, f) {
+				return false
 			}
 		}
 		return true
@@ -407,6 +400,33 @@ func applyInMemoryFilters(records []*apiDTO.DNSRecord, filters []queryutil.CrudF
 	return result
 }
 
+func matchRecordFilter(record *apiDTO.DNSRecord, node queryutil.CrudFilter) bool {
+	switch f := node.(type) {
+	case *filter.LogicalFilter:
+		switch f.Field() {
+		case "name":
+			return matchField(record.Name, f.Value(), f.Operator())
+		case "type":
+			return matchField(record.Type, f.Value(), f.Operator())
+		}
+	case *filter.ConditionalFilter:
+		if f.Operator == filter.LogicalNot {
+			return !matchRecordFilter(record, f.Filters[0])
+		}
+		for _, child := range f.Filters {
+			matched := matchRecordFilter(record, child)
+			if f.Operator == filter.LogicalOr && matched {
+				return true
+			}
+			if f.Operator == filter.LogicalAnd && !matched {
+				return false
+			}
+		}
+		return f.Operator == filter.LogicalAnd
+	}
+	return false
+}
+
 func matchField(field, value any, operator filter.Operator) bool {
 	fieldStr, ok := field.(string)
 	if !ok {
@@ -428,7 +448,7 @@ func matchField(field, value any, operator filter.Operator) bool {
 	case filter.OpEndswith:
 		return strings.HasSuffix(strings.ToLower(fieldStr), strings.ToLower(valueStr))
 	default:
-		return fieldStr == valueStr
+		return false
 	}
 }
 

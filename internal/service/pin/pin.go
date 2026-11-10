@@ -8,9 +8,10 @@ import (
 	"github.com/ipfs/go-cid"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
-	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/protocol"
+	pc "go.lumeweb.com/portal-plugin-ipfs/internal/protocol/context"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/quota"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
@@ -138,7 +139,15 @@ func (s *PinServiceDefault) GetPinByRequestID(ctx context.Context, requestID typ
 }
 
 // ListPins retrieves a paginated and filtered list of pin jobs.
-func (s *PinServiceDefault) ListPins(ctx context.Context, filter []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.IPFSPin, int64, error) {
+func (s *PinServiceDefault) ListPins(ctx context.Context, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.IPFSPin, int64, error) {
+	return s.listPins(ctx, nil, filters, sort, pagination)
+}
+
+func (s *PinServiceDefault) listPins(ctx context.Context, owner *uint, filter []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.IPFSPin, int64, error) {
+	filter, queryErr := dto.NormalizeListQuery(dto.QueryPins, filter, sort, pagination)
+	if queryErr != nil {
+		return nil, 0, queryErr
+	}
 	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.ListPins")
 	defer span.End()
 
@@ -157,9 +166,11 @@ func (s *PinServiceDefault) ListPins(ctx context.Context, filter []queryutil.Cru
 			err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 				// Construct the query
 				query := tx.Model(&pluginDb.IPFSPin{})
+				if owner != nil {
+					query = query.Where("user_id = ?", *owner)
+				}
 				query = queryutil.ApplyFilters(query, filter, nil)
 				query = queryutil.ApplySort(query, sort)
-				query = queryutil.ApplyPagination(query, pagination)
 
 				// Get total count
 				if err := query.Count(&total).Error; err != nil {
@@ -168,6 +179,7 @@ func (s *PinServiceDefault) ListPins(ctx context.Context, filter []queryutil.Cru
 				}
 
 				// Get the records
+				query = queryutil.ApplyPagination(query, pagination)
 				if err := query.Find(&pins).Error; err != nil {
 					_ = tx.AddError(fmt.Errorf("failed to list pins: %w", err))
 					return tx
@@ -609,11 +621,7 @@ func (s *PinServiceDefault) ListPinsForUser(ctx context.Context, userID uint, fi
 	ctx, span := core.TraceMethod(ctx, "PinServiceDefault.ListPinsForUser")
 	defer span.End()
 
-	// Add user_id filter to ensure user isolation
-	userFilter := filter.NewLogicalFilter("user_id", filter.OpEq, userID)
-	allFilters := append([]queryutil.CrudFilter{userFilter}, filters...)
-
-	return s.ListPins(ctx, allFilters, sort, pagination)
+	return s.listPins(ctx, &userID, filters, sort, pagination)
 }
 
 // GetPinByRequestIDForUser retrieves a single pin job by its RequestID for a specific user.
@@ -647,7 +655,7 @@ func (s *PinServiceDefault) DeletePinForUser(ctx context.Context, userID uint, r
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		return tx.Where("request_id = ? AND user_id = ?", requestID, userID).First(&pin)
 	})
-	
+
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return fmt.Errorf("pin not found for user")
@@ -669,7 +677,7 @@ func (s *PinServiceDefault) ReplacePinForUser(ctx context.Context, userID uint, 
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		return tx.Where("request_id = ? AND user_id = ?", oldRequestID, userID).First(&oldPin)
 	})
-	
+
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, fmt.Errorf("pin not found for user")

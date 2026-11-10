@@ -7,6 +7,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/portal/db"
@@ -45,6 +46,10 @@ func (s *FileManagerServiceDefault) ID() string {
 func (s *FileManagerServiceDefault) ListFiles(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.FilePath, int64, error) {
 	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.ListFiles")
 	defer span.End()
+	filters, queryErr := dto.NormalizeListQuery(dto.QueryFiles, filters, sort, pagination)
+	if queryErr != nil {
+		return nil, 0, queryErr
+	}
 
 	timer := prometheus.NewTimer(ListFilesDuration.WithLabelValues())
 	defer timer.ObserveDuration()
@@ -359,44 +364,22 @@ func (s *FileManagerServiceDefault) GetOrphanedPaths(ctx context.Context) ([]*pl
 
 // processHierarchicalFilters handles special parent_path filtering logic
 func (s *FileManagerServiceDefault) processHierarchicalFilters(filters []queryutil.CrudFilter) []queryutil.CrudFilter {
-	// Find parent_path filter if it exists
-	parentPathFilter := queryutil.DeepFindFilter(filters, "parent_path")
-	if parentPathFilter == nil {
-		return filters
-	}
-
-	// Get the parent path value
-	parentPathValue, ok := parentPathFilter.GetValue().(string)
-	if !ok {
-		return filters
-	}
-
-	// Create new hierarchical filter based on the parent path value
-	var hierarchicalFilter queryutil.CrudFilter
-	if parentPathValue == pluginDb.RootPath {
-		// For root path, match all direct children (parent_path = "/")
-		hierarchicalFilter = queryutil.Equal("parent_path", pluginDb.RootPath)
-	} else {
-		// For other paths, match exact path or subpaths
-		// Example: for "/documents", match:
-		// 1. Files with parent_path="/documents" (direct children)
-		// 2. Files with parent_path starting with "/documents/" (descendants)
-		hierarchicalFilter = queryutil.Or(
-			queryutil.Equal("parent_path", parentPathValue),
-			queryutil.NewLogicalFilter("parent_path", queryutil.OpStartswiths, parentPathValue),
-		)
-	}
-
-	// Remove the original parent_path filter and add the new hierarchical filter
-	var processedFilters []queryutil.CrudFilter
-	for _, f := range filters {
-		if f.GetField() != "parent_path" {
-			processedFilters = append(processedFilters, f)
+	result := make([]queryutil.CrudFilter, len(filters))
+	for i, node := range filters {
+		switch f := node.(type) {
+		case *filter.ConditionalFilter:
+			result[i] = &filter.ConditionalFilter{Operator: f.Operator, Filters: s.processHierarchicalFilters(f.Filters)}
+		case *filter.LogicalFilter:
+			result[i] = f
+			if f.Field() == "parent_path" {
+				path := f.Value().(string)
+				if path != pluginDb.RootPath {
+					result[i] = queryutil.Or(queryutil.Equal("parent_path", path), queryutil.NewLogicalFilter("parent_path", queryutil.OpStartswiths, strings.TrimSuffix(path, "/")+"/"))
+				}
+			}
 		}
 	}
-	processedFilters = append(processedFilters, hierarchicalFilter)
-
-	return processedFilters
+	return result
 }
 
 // HealthCheck implements core.HealthChecker interface

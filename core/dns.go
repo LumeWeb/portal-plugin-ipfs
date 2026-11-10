@@ -27,6 +27,7 @@ type DNSService interface {
 
 	// ListZones retrieves zones for a user with filtering, sorting, and pagination
 	ListZones(ctx context.Context, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.DNSZone, int64, error)
+	ListZonesForUser(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.DNSZone, int64, error)
 
 	// UpdateZone updates zone status
 	UpdateZone(ctx context.Context, zoneID uint, status pluginDb.DNSZoneStatus) error

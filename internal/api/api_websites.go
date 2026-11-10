@@ -22,7 +22,6 @@ import (
 	pluginservice "go.lumeweb.com/portal-plugin-ipfs/internal/service/website"
 	core "go.lumeweb.com/portal/core"
 	"go.lumeweb.com/queryutil"
-	queryUtilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -510,22 +509,13 @@ func (a *API) listWebsites(c echo.Context) error {
 		return err
 	}
 
-	return queryUtilHttp.ProcessListRequest[*dto.WebsiteItem, dto.WebsiteItem](
+	return processListRequest[*dto.WebsiteItem, dto.WebsiteItem](
+		dto.QueryWebsites,
 		c.Response(),
 		c.Request(),
 		"websites",
 		func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*dto.WebsiteItem, int64, error) {
-			// The website service always scopes queries to the authenticated
-			// user, so drop any client-supplied user_id filter to prevent
-			// conflicting access conditions.
-			scopedFilters := make([]queryutil.CrudFilter, 0, len(filters))
-			for _, f := range filters {
-				if f.GetField() != "user_id" {
-					scopedFilters = append(scopedFilters, f)
-				}
-			}
-
-			websites, total, err := a.websiteService.ListWebsites(reqCtx, user, scopedFilters, sorts, pagination)
+			websites, total, err := a.websiteService.ListWebsites(reqCtx, user, filters, sorts, pagination)
 			if err != nil {
 				return nil, 0, err
 			}

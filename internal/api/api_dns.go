@@ -16,8 +16,6 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	dnsservice "go.lumeweb.com/portal-plugin-ipfs/internal/service/dns"
 	"go.lumeweb.com/queryutil"
-	"go.lumeweb.com/queryutil/filter"
-	queryutilHttp "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
 )
 
@@ -60,16 +58,13 @@ func (a *API) listZones(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
 
-	// Create a service function that includes user filtering
+	// Keep the authenticated owner separate from client selectors.
 	listFunc := func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*db.DNSZone, int64, error) {
-		// Add user_id filter to ensure user only sees their own zones
-		userFilter := filter.NewLogicalFilter("user_id", filter.OpEq, user)
-		// Prepend user filter to a new slice to avoid mutating the original filters slice
-		allFilters := append([]queryutil.CrudFilter{userFilter}, filters...)
-		return a.dnsService.ListZones(reqCtx, allFilters, sorts, pagination)
+		return a.dnsService.ListZonesForUser(reqCtx, user, filters, sorts, pagination)
 	}
 
-	return queryutilHttp.ProcessListRequest[*db.DNSZone, dto.ZoneListResponse](
+	return processListRequest[*db.DNSZone, dto.ZoneListResponse](
+		dto.QueryDNSZones,
 		c.Response(),
 		c.Request(),
 		"dns-zones",
@@ -251,16 +246,13 @@ func (a *API) listRecords(c echo.Context) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
 
-	// Create a service function that includes zone_id filtering
+	// Fetch records only from the verified zone.
 	listFunc := func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*dto.DNSRecord, int64, error) {
-		// Add zone_id filter to ensure only records for this zone are returned
-		zoneFilter := filter.NewLogicalFilter("zone_id", filter.OpEq, zoneID)
-		// Prepend zone filter to a new slice to avoid mutating the original filters slice
-		allFilters := append([]queryutil.CrudFilter{zoneFilter}, filters...)
-		return a.dnsService.GetZoneRecords(reqCtx, zoneID, allFilters, sorts, pagination)
+		return a.dnsService.GetZoneRecords(reqCtx, zoneID, filters, sorts, pagination)
 	}
 
-	return queryutilHttp.ProcessListRequest[*dto.DNSRecord, dto.RecordResponse](
+	return processListRequest[*dto.DNSRecord, dto.RecordResponse](
+		dto.QueryDNSRecords,
 		c.Response(),
 		c.Request(),
 		"dns-records",

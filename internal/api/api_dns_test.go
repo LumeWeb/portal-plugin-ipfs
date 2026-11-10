@@ -13,13 +13,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	mocks "go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
-	"gorm.io/gorm"
-	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
-	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.lumeweb.com/portal/core"
+	coreTesting "go.lumeweb.com/portal/core/testing"
+	"gorm.io/gorm"
 )
 
 const (
@@ -37,12 +37,12 @@ const (
 func createMockDNSZone(id, userID uint, domain string, status pluginDb.DNSZoneStatus, powerDNSZoneID string) *pluginDb.DNSZone {
 	now := time.Now()
 	return &pluginDb.DNSZone{
-		Model:                  gorm.Model{ID: id, CreatedAt: now, UpdatedAt: now},
-		UserID:                 userID,
-		Domain:                 domain,
-		Status:                 string(status),
-		PowerDNSZoneID:         powerDNSZoneID,
-		NameserversVerifiedAt:  &now,
+		Model:                 gorm.Model{ID: id, CreatedAt: now, UpdatedAt: now},
+		UserID:                userID,
+		Domain:                domain,
+		Status:                string(status),
+		PowerDNSZoneID:        powerDNSZoneID,
+		NameserversVerifiedAt: &now,
 	}
 }
 
@@ -177,15 +177,15 @@ func TestAPI_ListZones(t *testing.T) {
 			mockZone1 := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 			mockZone2 := createMockDNSZone(TestZoneID2, userID, "test.com", pluginDb.DNSZoneStatusPendingNameserver, "pdns-456")
 
-			mockDNSService.EXPECT().ListZones(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.DNSZone{mockZone1, mockZone2}, int64(2), nil)
+			mockDNSService.EXPECT().ListZonesForUser(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.DNSZone{mockZone1, mockZone2}, int64(2), nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/dns/zones", token, nil)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
 
 			var response struct {
-				Data []dto.ZoneListResponse `json:"data"`
-				Total int64 `json:"total"`
+				Data  []dto.ZoneListResponse `json:"data"`
+				Total int64                  `json:"total"`
 			}
 			err := json.Unmarshal(rec.Body.Bytes(), &response)
 			require.NoError(t, err)
@@ -203,15 +203,15 @@ func TestAPI_ListZones(t *testing.T) {
 
 			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
-			mockDNSService.EXPECT().ListZones(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.DNSZone{mockZone}, int64(10), nil)
+			mockDNSService.EXPECT().ListZonesForUser(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.DNSZone{mockZone}, int64(10), nil)
 
-			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/dns/zones?page=1&limit=1", token, nil)
+			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/dns/zones?_start=0&_end=1", token, nil)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
 
 			var response struct {
-				Data []dto.ZoneListResponse `json:"data"`
-				Total int64 `json:"total"`
+				Data  []dto.ZoneListResponse `json:"data"`
+				Total int64                  `json:"total"`
 			}
 			err := json.Unmarshal(rec.Body.Bytes(), &response)
 			require.NoError(t, err)
@@ -227,15 +227,15 @@ func TestAPI_ListZones(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockDNSService.EXPECT().ListZones(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.DNSZone{}, int64(0), nil)
+			mockDNSService.EXPECT().ListZonesForUser(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.DNSZone{}, int64(0), nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/dns/zones", token, nil)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
 
 			var response struct {
-				Data []dto.ZoneListResponse `json:"data"`
-				Total int64 `json:"total"`
+				Data  []dto.ZoneListResponse `json:"data"`
+				Total int64                  `json:"total"`
 			}
 			err := json.Unmarshal(rec.Body.Bytes(), &response)
 			require.NoError(t, err)
@@ -261,7 +261,7 @@ func TestAPI_ListZones(t *testing.T) {
 
 			mockDNSService := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
 
-			mockDNSService.EXPECT().ListZones(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, int64(0), errors.New("list failed"))
+			mockDNSService.EXPECT().ListZonesForUser(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, int64(0), errors.New("list failed"))
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/dns/zones", token, nil)
 
@@ -278,7 +278,7 @@ func TestAPI_ListZones(t *testing.T) {
 
 			mockZone := createMockDNSZone(TestZoneID, userID, TestZoneDomain, pluginDb.DNSZoneStatusActive, "pdns-123")
 
-			mockDNSService.EXPECT().ListZones(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.DNSZone{mockZone}, int64(1), nil)
+			mockDNSService.EXPECT().ListZonesForUser(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return([]*pluginDb.DNSZone{mockZone}, int64(1), nil)
 
 			rec := helper.makeAuthenticatedRequest(http.MethodGet, "/api/dns/zones?filter[status]=active", token, nil)
 

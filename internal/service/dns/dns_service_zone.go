@@ -9,6 +9,7 @@ import (
 
 	"go.lumeweb.com/ipfs-sdk/dnsname"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/dns/powerdns"
 	"go.lumeweb.com/portal/core"
@@ -212,8 +213,21 @@ func (s *DNSServiceDefault) GetZoneByDomain(ctx context.Context, domain string) 
 	return &zone, nil
 }
 
-// ListZones retrieves zones for a user with filtering, sorting, and pagination
+// ListZones lists zones for internal callers without an ownership constraint.
 func (s *DNSServiceDefault) ListZones(ctx context.Context, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.DNSZone, int64, error) {
+	return s.listZones(ctx, nil, filters, sorts, pagination)
+}
+
+// ListZonesForUser scopes ownership independently of public query selectors.
+func (s *DNSServiceDefault) ListZonesForUser(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.DNSZone, int64, error) {
+	return s.listZones(ctx, &userID, filters, sorts, pagination)
+}
+
+func (s *DNSServiceDefault) listZones(ctx context.Context, owner *uint, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.DNSZone, int64, error) {
+	filters, queryErr := dto.NormalizeListQuery(dto.QueryDNSZones, filters, sorts, pagination)
+	if queryErr != nil {
+		return nil, 0, queryErr
+	}
 	ctx, span := core.TraceMethod(ctx, "DNSService.ListZones")
 	defer span.End()
 
@@ -222,11 +236,13 @@ func (s *DNSServiceDefault) ListZones(ctx context.Context, filters []queryutil.C
 
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
 		query := tx.Model(&pluginDb.DNSZone{})
+		if owner != nil {
+			query = query.Where("user_id = ?", *owner)
+		}
 
 		// Apply filters, sorting, and pagination using queryutil helpers
 		query = queryutil.ApplyFilters(query, filters, nil)
 		query = queryutil.ApplySort(query, sorts)
-		query = queryutil.ApplyPagination(query, pagination)
 
 		// Count total matching records after applying filters (before pagination)
 		countQuery := query.Session(&gorm.Session{})
@@ -235,7 +251,7 @@ func (s *DNSServiceDefault) ListZones(ctx context.Context, filters []queryutil.C
 			return tx
 		}
 
-		return query.Find(&zones)
+		return queryutil.ApplyPagination(query, pagination).Find(&zones)
 	})
 
 	if err != nil {
