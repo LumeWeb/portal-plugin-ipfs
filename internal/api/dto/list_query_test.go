@@ -79,6 +79,50 @@ func TestPinPolicyKeepsBinaryCIDsAndMetadataPaths(t *testing.T) {
 	}
 }
 
+func TestCIDPoliciesKeepTheirStorageRepresentations(t *testing.T) {
+	v0, err := (cid.Prefix{Version: 0, Codec: cid.DagProtobuf, MhType: 0x12, MhLength: -1}).Sum([]byte("CID policy representation"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v1 := cid.NewCidV1(cid.DagProtobuf, v0.Hash())
+	for _, op := range []filter.Operator{filter.OpEq, filter.OpNe, filter.OpIn, filter.OpNin} {
+		input := any(v0.String())
+		fileWant := any(v0.Bytes())
+		pinWant := any(v1.Bytes())
+		if op.RequiresArray() {
+			input = []any{input}
+			fileWant = []any{v0.Bytes()}
+			pinWant = []any{v1.Bytes()}
+		}
+		original := []queryutil.CrudFilter{queryutil.NewLogicalFilter("cid", op, input)}
+		files, err := FileListPolicy.Normalize(original, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(fileWant, files[0].GetValue()) {
+			t.Errorf("%s file CID changed: got %v want %v", op, files[0].GetValue(), fileWant)
+		}
+		files, err = FileListPolicy.Normalize(files, nil)
+		if err != nil || !reflect.DeepEqual(fileWant, files[0].GetValue()) {
+			t.Fatalf("%s file recheck: %v", op, err)
+		}
+		pins, err := PinListPolicy(original).Normalize(original, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(pinWant, pins[0].GetValue()) {
+			t.Errorf("%s pin CID not normalized", op)
+		}
+		pins, err = PinListPolicy(pins).Normalize(pins, nil)
+		if err != nil || !reflect.DeepEqual(pinWant, pins[0].GetValue()) {
+			t.Fatalf("%s pin recheck: %v", op, err)
+		}
+		if !reflect.DeepEqual(input, original[0].GetValue()) {
+			t.Fatalf("%s mutated input", op)
+		}
+	}
+}
+
 func TestPinPolicyRejectsMalformedTrees(t *testing.T) {
 	cycle := &filter.ConditionalFilter{Operator: filter.LogicalAnd}
 	cycle.Filters = []queryutil.CrudFilter{cycle}

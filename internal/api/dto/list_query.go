@@ -18,13 +18,15 @@ var (
 		filter.OpEndswith, filter.OpEndswiths, filter.OpNendswith, filter.OpNendswiths,
 	}}
 	booleanField = filter.FieldRule{Operators: []filter.Operator{filter.OpEq, filter.OpNe, filter.OpNull, filter.OpNnull}}
-	cidField     = filter.FieldRule{Operators: []filter.Operator{filter.OpEq, filter.OpNe, filter.OpIn, filter.OpNin}, Convert: convertCIDFilter}
-	pathField    = filter.FieldRule{Operators: []filter.Operator{filter.OpEq}, Convert: convertPathFilter}
+	pinCIDField  = filter.FieldRule{Operators: []filter.Operator{filter.OpEq, filter.OpNe, filter.OpIn, filter.OpNin}, Convert: func(op filter.Operator, value any) (any, error) {
+		return convertCIDFilter(op, value, true)
+	}}
+	pathField = filter.FieldRule{Operators: []filter.Operator{filter.OpEq}, Convert: convertPathFilter}
 
 	pinListPolicy = filter.QueryPolicy{
 		Fields: map[string]filter.FieldRule{
 			"id": comparisonField, "created_at": comparisonField, "updated_at": comparisonField,
-			"name": textField, "status": textField, "cid": cidField,
+			"name": textField, "status": textField, "cid": pinCIDField,
 		},
 		SortFields: []string{"id", "created_at", "updated_at", "name", "status"},
 	}
@@ -39,7 +41,11 @@ var (
 		Fields: map[string]filter.FieldRule{
 			"id": comparisonField, "type": comparisonField, "size": comparisonField, "depth": comparisonField,
 			"created_at": comparisonField, "updated_at": comparisonField,
-			"name": textField, "path": textField, "parent_path": pathField, "cid": cidField,
+			"name": textField, "path": textField, "parent_path": pathField,
+			// File-path storage preserves the original CID version.
+			"cid": {Operators: pinCIDField.Operators, Convert: func(op filter.Operator, value any) (any, error) {
+				return convertCIDFilter(op, value, false)
+			}},
 			"is_directory": booleanField, "is_orphan": booleanField,
 		},
 		SortFields: []string{"id", "name", "path", "parent_path", "type", "size", "depth", "is_directory", "is_orphan", "created_at", "updated_at"},
@@ -139,7 +145,7 @@ func convertPathFilter(_ filter.Operator, value any) (any, error) {
 	return ValidateFileManagerPath(path)
 }
 
-func convertCIDFilter(op filter.Operator, value any) (any, error) {
+func convertCIDFilter(op filter.Operator, value any, normalize bool) (any, error) {
 	if op == filter.OpIn || op == filter.OpNin {
 		values, ok := value.([]any)
 		if !ok {
@@ -148,17 +154,17 @@ func convertCIDFilter(op filter.Operator, value any) (any, error) {
 		result := make([]any, len(values))
 		for i, item := range values {
 			var err error
-			result[i], err = decodeFilterCID(item)
+			result[i], err = decodeFilterCID(item, normalize)
 			if err != nil {
 				return nil, err
 			}
 		}
 		return result, nil
 	}
-	return decodeFilterCID(value)
+	return decodeFilterCID(value, normalize)
 }
 
-func decodeFilterCID(value any) ([]byte, error) {
+func decodeFilterCID(value any, normalize bool) ([]byte, error) {
 	var c cid.Cid
 	var err error
 	switch v := value.(type) {
@@ -172,5 +178,8 @@ func decodeFilterCID(value any) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid CID")
 	}
-	return encoding.NormalizeCid(c).Bytes(), nil
+	if normalize {
+		c = encoding.NormalizeCid(c)
+	}
+	return c.Bytes(), nil
 }

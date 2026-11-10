@@ -2,8 +2,11 @@ package filemanager
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/require"
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
@@ -12,6 +15,43 @@ import (
 	"go.lumeweb.com/queryutil"
 	"go.lumeweb.com/queryutil/filter"
 )
+
+func TestListFilesMatchesStoredCIDVersions(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		svc := core.GetService[pluginCore.FileManagerService](ctx, pluginCore.FILE_MANAGER_SERVICE)
+		v0, err := (cid.Prefix{Version: 0, Codec: cid.DagProtobuf, MhType: mh.SHA2_256, MhLength: -1}).Sum([]byte("file CID representation"))
+		require.NoError(tb, err)
+		versions := []cid.Cid{v0, cid.NewCidV1(cid.DagProtobuf, v0.Hash())}
+		for _, c := range versions {
+			name := fmt.Sprintf("v%d", c.Version())
+			createTestFilePath(t, ctx, 1, c, "/"+name, name, false)
+			createTestFilePath(t, ctx, 2, c, "/other/"+name, name, false)
+		}
+		for _, c := range versions {
+			for _, value := range []any{c.String(), c.Bytes()} {
+				for _, op := range []filter.Operator{filter.OpEq, filter.OpNe, filter.OpIn, filter.OpNin} {
+					t.Run(fmt.Sprintf("v%d/%T/%s", c.Version(), value, op), func(t *testing.T) {
+						operand := value
+						if op.RequiresArray() {
+							operand = []any{value}
+						}
+						fs := []queryutil.CrudFilter{queryutil.NewLogicalFilter("cid", op, operand)}
+						rows, total, err := svc.ListFiles(context.Background(), 1, fs, nil, queryutil.Pagination{})
+						require.NoError(t, err)
+						require.EqualValues(t, 1, total)
+						require.Len(t, rows, 1)
+						require.Equal(t, uint(1), rows[0].UserID)
+						if op == filter.OpEq || op == filter.OpIn {
+							require.Equal(t, c.Bytes(), rows[0].CID)
+						} else {
+							require.NotEqual(t, c.Bytes(), rows[0].CID)
+						}
+					})
+				}
+			}
+		}
+	}, TestOptions)
+}
 
 func TestListFilesRejectsUncheckedQueriesAndKeepsOwnerScope(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
