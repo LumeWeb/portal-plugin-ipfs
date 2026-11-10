@@ -1,18 +1,25 @@
 package dns
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"go.lumeweb.com/queryutil"
 )
 
-func TestRecordListEvaluatesNestedGroups(t *testing.T) {
-	records := []*dto.DNSRecord{{Name: "one", Type: "A"}, {Name: "two", Type: "TXT"}, {Name: "three", Type: "AAAA"}}
-	fs := []queryutil.CrudFilter{queryutil.Or(queryutil.Equal("name", "one"), queryutil.And(queryutil.Equal("type", "TXT"), queryutil.Not(queryutil.Equal("name", "three"))))}
-	result := applyInMemoryFilters(records, fs, nil, queryutil.Pagination{})
-	require.Len(t, result, 2)
-	require.Equal(t, "one", result[0].Name)
-	require.Equal(t, "two", result[1].Name)
+func TestRecordListRejectsGroupsBeforeFetchingZone(t *testing.T) {
+	for _, node := range []queryutil.CrudFilter{
+		queryutil.Or(queryutil.Equal("name", "one")),
+		queryutil.And(queryutil.Equal("type", "TXT"), queryutil.Equal("name", "one")),
+		queryutil.Not(queryutil.Equal("name", "one")),
+	} {
+		svc := &DNSServiceDefault{}
+		require.NotPanics(t, func() {
+			rows, total, err := svc.GetZoneRecords(context.Background(), 1, []queryutil.CrudFilter{node}, nil, queryutil.Pagination{})
+			require.ErrorIs(t, err, queryutil.ErrInvalidQuery)
+			require.Empty(t, rows)
+			require.Zero(t, total)
+		})
+	}
 }

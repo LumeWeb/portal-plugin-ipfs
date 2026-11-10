@@ -22,6 +22,7 @@ import (
 	pluginservice "go.lumeweb.com/portal-plugin-ipfs/internal/service/website"
 	core "go.lumeweb.com/portal/core"
 	"go.lumeweb.com/queryutil"
+	queryHTTP "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -509,11 +510,11 @@ func (a *API) listWebsites(c echo.Context) error {
 		return err
 	}
 
-	return processListRequest[*dto.WebsiteItem, dto.WebsiteItem](
-		dto.QueryWebsites,
+	return queryHTTP.ProcessListRequestWithPolicy[*dto.WebsiteItem, dto.WebsiteItem](
 		c.Response(),
 		c.Request(),
 		"websites",
+		dto.WebsiteListPolicy,
 		func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*dto.WebsiteItem, int64, error) {
 			websites, total, err := a.websiteService.ListWebsites(reqCtx, user, filters, sorts, pagination)
 			if err != nil {
@@ -535,6 +536,7 @@ func (a *API) listWebsites(c echo.Context) error {
 		func(item *dto.WebsiteItem) dto.WebsiteItem {
 			return *item
 		},
+		queryutil.WithStringFields("domain", "target_type", "status"),
 	)
 }
 

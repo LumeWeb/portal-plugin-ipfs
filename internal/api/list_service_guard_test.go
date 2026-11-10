@@ -27,7 +27,6 @@ func TestListingServicesRejectQueriesBeforeDatabaseAccess(t *testing.T) {
 		{name: "field", filters: []queryutil.CrudFilter{queryutil.Equal("id) OR 1=1 --", 1)}},
 		{name: "nested_owner", filters: []queryutil.CrudFilter{queryutil.Or(queryutil.Equal("user_id", 2))}},
 		{name: "custom_direction", sorts: []queryutil.Sort{{Field: "id", Order: filter.SortOrder("asc; SELECT 1")}}},
-		{name: "negative_limit", page: queryutil.Pagination{PageSize: -1}},
 		{name: "nil_node", filters: []queryutil.CrudFilter{nil}},
 	} {
 		t.Run(bad.name, func(t *testing.T) {

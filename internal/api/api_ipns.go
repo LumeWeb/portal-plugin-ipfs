@@ -17,6 +17,7 @@ import (
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/queryutil"
+	queryHTTP "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -83,11 +84,11 @@ func (a *API) listIPNSKeys(c echo.Context) error {
 		return err
 	}
 
-	return processListRequest[*pluginDb.IPFSIPNSKey, dto.IPNSKeyListResponse](
-		dto.QueryIPNSKeys,
+	return queryHTTP.ProcessListRequestWithPolicy[*pluginDb.IPFSIPNSKey, dto.IPNSKeyListResponse](
 		c.Response(),
 		c.Request(),
 		"ipns-keys",
+		dto.IPNSKeyListPolicy,
 		func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.IPFSIPNSKey, int64, error) {
 			return a.ipnsKeyService.ListKeysWithFilters(reqCtx, user, filters, sorts, pagination)
 		},
@@ -96,6 +97,7 @@ func (a *API) listIPNSKeys(c echo.Context) error {
 			_ = resp.FromModel(key)
 			return resp
 		},
+		queryutil.WithStringFields("name", "last_published_cid"),
 	)
 }
 

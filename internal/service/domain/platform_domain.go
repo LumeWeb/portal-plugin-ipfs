@@ -306,7 +306,7 @@ func (s *DelegatedDomainService) CreatePlatformDomain(ctx context.Context, domai
 // ListPlatformDomains returns registered platform roots with filtering,
 // sorting, and pagination, plus the pre-pagination total.
 func (s *DelegatedDomainService) ListPlatformDomains(ctx context.Context, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.PlatformDomain, int64, error) {
-	filters, queryErr := dto.NormalizeListQuery(dto.QueryPlatformDomains, filters, sort, pagination)
+	filters, queryErr := dto.PlatformDomainListPolicy.Normalize(filters, sort)
 	if queryErr != nil {
 		return nil, 0, queryErr
 	}
@@ -340,9 +340,6 @@ func (s *DelegatedDomainService) ListPlatformDomains(ctx context.Context, filter
 // domain, with pagination. This is the user-facing view of supported platform
 // domains: only enabled roots are claimable, so disabled ones are filtered out.
 func (s *DelegatedDomainService) ListEnabledPlatformDomains(ctx context.Context, pagination queryutil.Pagination) ([]*pluginDb.PlatformDomain, int64, error) {
-	if _, err := dto.NormalizeListQuery(dto.QueryEnabledPlatformDomains, nil, nil, pagination); err != nil {
-		return nil, 0, err
-	}
 	if s.DB() == nil {
 		return nil, 0, nil
 	}

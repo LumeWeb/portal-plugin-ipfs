@@ -13,6 +13,7 @@ import (
 	workspacesvc "go.lumeweb.com/portal-plugin-ipfs/internal/service/workspace"
 	"go.lumeweb.com/portal/core"
 	"go.lumeweb.com/queryutil"
+	queryHTTP "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
 )
 
@@ -116,17 +117,18 @@ func (a *API) listWorkspaces(c echo.Context) error {
 		return a.workspaceService.List(reqCtx, user, filters, sorts, pagination)
 	}
 
-	return processListRequest[*pluginDb.Workspace, dto.WorkspaceResponse](
-		dto.QueryWorkspaces,
+	return queryHTTP.ProcessListRequestWithPolicy[*pluginDb.Workspace, dto.WorkspaceResponse](
 		c.Response(),
 		c.Request(),
 		"workspaces",
+		dto.WorkspaceListPolicy,
 		listFunc,
 		func(ws *pluginDb.Workspace) dto.WorkspaceResponse {
 			var resp dto.WorkspaceResponse
 			_ = resp.FromModel(ws)
 			return resp
 		},
+		queryutil.WithStringFields("label", "status"),
 	)
 }
 

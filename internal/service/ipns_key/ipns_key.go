@@ -283,7 +283,7 @@ func (s *IPNSKeyServiceDefault) ListKeys(ctx context.Context, userID uint) ([]pl
 func (s *IPNSKeyServiceDefault) ListKeysWithFilters(ctx context.Context, userID uint, filters []filter.CrudFilter, sort []filter.Sort, pagination filter.Pagination) ([]*pluginDb.IPFSIPNSKey, int64, error) {
 	ctx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.ListKeysWithFilters")
 	defer span.End()
-	filters, queryErr := dto.NormalizeListQuery(dto.QueryIPNSKeys, filters, sort, pagination)
+	filters, queryErr := dto.IPNSKeyListPolicy.Normalize(filters, sort)
 	if queryErr != nil {
 		return nil, 0, queryErr
 	}

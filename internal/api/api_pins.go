@@ -67,7 +67,7 @@ func (a *API) listPins(c echo.Context) error {
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	filters, err = dto.NormalizeListQuery(dto.QueryPins, filters, sort, pagination)
+	filters, err = dto.PinListPolicy(filters).Normalize(filters, sort)
 	if err != nil {
 		return ctx.Error(err, http.StatusBadRequest)
 	}

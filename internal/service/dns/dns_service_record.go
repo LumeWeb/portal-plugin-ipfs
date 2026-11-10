@@ -22,9 +22,14 @@ import (
 func (s *DNSServiceDefault) GetZoneRecords(ctx context.Context, zoneID uint, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*apiDTO.DNSRecord, int64, error) {
 	ctx, span := core.TraceMethod(ctx, "DNSService.GetZoneRecords")
 	defer span.End()
-	filters, queryErr := apiDTO.NormalizeListQuery(apiDTO.QueryDNSRecords, filters, sorts, pagination)
+	filters, queryErr := apiDTO.DNSRecordListPolicy.Normalize(filters, sorts)
 	if queryErr != nil {
 		return nil, 0, queryErr
+	}
+	for _, f := range filters {
+		if len(f.GetFilters()) != 0 {
+			return nil, 0, fmt.Errorf("%w: DNS record filters must be flat", queryutil.ErrInvalidQuery)
+		}
 	}
 
 	zone, pdnsZone, err := s.getZoneWithPowerDNS(ctx, zoneID)
@@ -364,8 +369,15 @@ func applyInMemoryFilters(records []*apiDTO.DNSRecord, filters []queryutil.CrudF
 
 	result := lo.Filter(records, func(record *apiDTO.DNSRecord, _ int) bool {
 		for _, f := range filters {
-			if !matchRecordFilter(record, f) {
-				return false
+			switch f.GetField() {
+			case "name":
+				if !matchField(record.Name, f.GetValue(), f.GetOperator()) {
+					return false
+				}
+			case "type":
+				if !matchField(record.Type, f.GetValue(), f.GetOperator()) {
+					return false
+				}
 			}
 		}
 		return true
@@ -398,33 +410,6 @@ func applyInMemoryFilters(records []*apiDTO.DNSRecord, filters []queryutil.CrudF
 	}
 
 	return result
-}
-
-func matchRecordFilter(record *apiDTO.DNSRecord, node queryutil.CrudFilter) bool {
-	switch f := node.(type) {
-	case *filter.LogicalFilter:
-		switch f.Field() {
-		case "name":
-			return matchField(record.Name, f.Value(), f.Operator())
-		case "type":
-			return matchField(record.Type, f.Value(), f.Operator())
-		}
-	case *filter.ConditionalFilter:
-		if f.Operator == filter.LogicalNot {
-			return !matchRecordFilter(record, f.Filters[0])
-		}
-		for _, child := range f.Filters {
-			matched := matchRecordFilter(record, child)
-			if f.Operator == filter.LogicalOr && matched {
-				return true
-			}
-			if f.Operator == filter.LogicalAnd && !matched {
-				return false
-			}
-		}
-		return f.Operator == filter.LogicalAnd
-	}
-	return false
 }
 
 func matchField(field, value any, operator filter.Operator) bool {

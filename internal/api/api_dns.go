@@ -16,6 +16,7 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	dnsservice "go.lumeweb.com/portal-plugin-ipfs/internal/service/dns"
 	"go.lumeweb.com/queryutil"
+	queryHTTP "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
 )
 
@@ -63,17 +64,18 @@ func (a *API) listZones(c echo.Context) error {
 		return a.dnsService.ListZonesForUser(reqCtx, user, filters, sorts, pagination)
 	}
 
-	return processListRequest[*db.DNSZone, dto.ZoneListResponse](
-		dto.QueryDNSZones,
+	return queryHTTP.ProcessListRequestWithPolicy[*db.DNSZone, dto.ZoneListResponse](
 		c.Response(),
 		c.Request(),
 		"dns-zones",
+		dto.DNSZoneListPolicy,
 		listFunc,
 		func(zone *db.DNSZone) dto.ZoneListResponse {
 			var resp dto.ZoneListResponse
 			_ = resp.FromModel(zone)
 			return resp
 		},
+		queryutil.WithStringFields("domain", "status"),
 	)
 }
 
@@ -251,17 +253,18 @@ func (a *API) listRecords(c echo.Context) error {
 		return a.dnsService.GetZoneRecords(reqCtx, zoneID, filters, sorts, pagination)
 	}
 
-	return processListRequest[*dto.DNSRecord, dto.RecordResponse](
-		dto.QueryDNSRecords,
+	return queryHTTP.ProcessListRequestWithPolicy[*dto.DNSRecord, dto.RecordResponse](
 		c.Response(),
 		c.Request(),
 		"dns-records",
+		dto.DNSRecordListPolicy,
 		listFunc,
 		func(record *dto.DNSRecord) dto.RecordResponse {
 			var resp dto.RecordResponse
 			_ = resp.FromModel(record)
 			return resp
 		},
+		queryutil.WithStringFields("name", "type"),
 	)
 }
 

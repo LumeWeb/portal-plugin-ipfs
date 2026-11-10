@@ -46,7 +46,7 @@ func (s *FileManagerServiceDefault) ID() string {
 func (s *FileManagerServiceDefault) ListFiles(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.FilePath, int64, error) {
 	ctx, span := core.TraceMethod(ctx, "FileManagerServiceDefault.ListFiles")
 	defer span.End()
-	filters, queryErr := dto.NormalizeListQuery(dto.QueryFiles, filters, sort, pagination)
+	filters, queryErr := dto.FileListPolicy.Normalize(filters, sort)
 	if queryErr != nil {
 		return nil, 0, queryErr
 	}
@@ -58,14 +58,11 @@ func (s *FileManagerServiceDefault) ListFiles(ctx context.Context, userID uint, 
 	var total int64
 
 	err := db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
-		// Process filters to handle hierarchical parent_path filtering
-		processedFilters := s.processHierarchicalFilters(filters)
-
 		// Construct the query for file paths
 		query := tx.Model(&pluginDb.FilePath{}).Where("user_id = ?", userID)
 
 		// Apply filters using queryutil
-		query = queryutil.ApplyFilters(query, processedFilters, nil)
+		query = queryutil.ApplyFiltersWithOptions(query, filters, nil, queryutil.WithFieldPredicate("parent_path", fileParentPathPredicate(tx.Dialector.Name())))
 
 		// Apply sort
 		query = queryutil.ApplySort(query, sort)
@@ -362,24 +359,23 @@ func (s *FileManagerServiceDefault) GetOrphanedPaths(ctx context.Context) ([]*pl
 		})
 }
 
-// processHierarchicalFilters handles special parent_path filtering logic
-func (s *FileManagerServiceDefault) processHierarchicalFilters(filters []queryutil.CrudFilter) []queryutil.CrudFilter {
-	result := make([]queryutil.CrudFilter, len(filters))
-	for i, node := range filters {
-		switch f := node.(type) {
-		case *filter.ConditionalFilter:
-			result[i] = &filter.ConditionalFilter{Operator: f.Operator, Filters: s.processHierarchicalFilters(f.Filters)}
-		case *filter.LogicalFilter:
-			result[i] = f
-			if f.Field() == "parent_path" {
-				path := f.Value().(string)
-				if path != pluginDb.RootPath {
-					result[i] = queryutil.Or(queryutil.Equal("parent_path", path), queryutil.NewLogicalFilter("parent_path", queryutil.OpStartswiths, strings.TrimSuffix(path, "/")+"/"))
-				}
-			}
+// fileParentPathPredicate matches the requested directory and its descendants.
+// Queryutil composes the predicate inside the caller's boolean groups.
+func fileParentPathPredicate(dialect string) queryutil.FieldPredicate {
+	return func(op filter.Operator, value any) (string, []any, error) {
+		if op != filter.OpEq {
+			return "", nil, filter.ErrInvalidQuery
 		}
+		path := value.(string)
+		if path == pluginDb.RootPath {
+			return "parent_path = ?", []any{path}, nil
+		}
+		prefix := strings.TrimSuffix(path, "/") + "/"
+		if dialect == "mysql" {
+			return "(parent_path = ? OR INSTR(BINARY parent_path, BINARY ?) = 1)", []any{path, prefix}, nil
+		}
+		return "(parent_path = ? OR INSTR(parent_path, ?) = 1)", []any{path, prefix}, nil
 	}
-	return result
 }
 
 // HealthCheck implements core.HealthChecker interface

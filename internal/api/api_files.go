@@ -12,22 +12,25 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/queryutil"
+	queryHTTP "go.lumeweb.com/queryutil/http"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 func (a *API) listFiles(c echo.Context) error {
-	return a.handleFileManagerRequest(c, dto.QueryFiles, "list files", func(ctx httputil.RequestContext, reqCtx context.Context, user uint) (queryutil.EntityFunc[*pluginDb.FilePath], error) {
+	return a.handleFileManagerRequest(c, dto.FileListPolicy, "list files", func(ctx httputil.RequestContext, reqCtx context.Context, user uint) (queryutil.EntityFunc[*pluginDb.FilePath], error) {
 		return func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.FilePath, int64, error) {
-
 			return a.fileManagerService.ListFiles(reqCtx, user, filters, sorts, pagination)
 		}, nil
-	})
+	}, queryutil.WithStringFields("name", "path", "parent_path", "cid"))
 }
 
 func (a *API) listDirectoryContents(c echo.Context) error {
-	return a.handleFileManagerRequest(c, dto.QueryDirectory, "list directory contents", func(ctx httputil.RequestContext, reqCtx context.Context, user uint) (queryutil.EntityFunc[*pluginDb.FilePath], error) {
+	return a.handleFileManagerRequest(c, dto.DirectoryListPolicy, "list directory contents", func(ctx httputil.RequestContext, reqCtx context.Context, user uint) (queryutil.EntityFunc[*pluginDb.FilePath], error) {
 		return func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.FilePath, int64, error) {
+			if len(filters) != 1 || filters[0].GetField() != "parent_path" {
+				return nil, 0, fmt.Errorf("%w: one parent_path equality is required", queryutil.ErrInvalidQuery)
+			}
 			parentPath := filters[0].GetValue().(string)
 
 			paths, err := a.fileManagerService.ListDirectoryContents(reqCtx, user, parentPath)
@@ -36,12 +39,15 @@ func (a *API) listDirectoryContents(c echo.Context) error {
 			}
 			return paths, int64(len(paths)), nil
 		}, nil
-	})
+	}, queryutil.WithStringFields("parent_path"))
 }
 
 func (a *API) getBreadcrumbs(c echo.Context) error {
-	return a.handleFileManagerRequest(c, dto.QueryBreadcrumbs, "get breadcrumbs", func(ctx httputil.RequestContext, reqCtx context.Context, user uint) (queryutil.EntityFunc[*pluginDb.FilePath], error) {
+	return a.handleFileManagerRequest(c, dto.BreadcrumbListPolicy, "get breadcrumbs", func(ctx httputil.RequestContext, reqCtx context.Context, user uint) (queryutil.EntityFunc[*pluginDb.FilePath], error) {
 		return func(filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.FilePath, int64, error) {
+			if len(filters) != 1 || filters[0].GetField() != "path" {
+				return nil, 0, fmt.Errorf("%w: one path equality is required", queryutil.ErrInvalidQuery)
+			}
 			path := filters[0].GetValue().(string)
 			breadcrumbs, err := a.fileManagerService.GetBreadcrumbs(reqCtx, user, path)
 			if err != nil {
@@ -49,7 +55,7 @@ func (a *API) getBreadcrumbs(c echo.Context) error {
 			}
 			return breadcrumbs, int64(len(breadcrumbs)), nil
 		}, nil
-	})
+	}, queryutil.WithStringFields("path"))
 }
 
 func (a *API) convertFilePathToManagerItem(path *pluginDb.FilePath, userID uint) dto.FileManagerItem {
@@ -99,9 +105,10 @@ func (a *API) convertFilePathToManagerItem(path *pluginDb.FilePath, userID uint)
 
 func (a *API) handleFileManagerRequest(
 	c echo.Context,
-	resource dto.ListQueryResource,
+	policy queryutil.QueryPolicy,
 	action string,
 	serviceFunc func(httputil.RequestContext, context.Context, uint) (queryutil.EntityFunc[*pluginDb.FilePath], error),
+	parserOptions ...queryutil.ParserOption,
 ) error {
 	ctx := httputil.Context(c)
 	reqCtx := ctx.Context.Request().Context()
@@ -123,14 +130,15 @@ func (a *API) handleFileManagerRequest(
 		return ctx.Error(apiErr, apiErr.HttpStatus())
 	}
 
-	return processListRequest[*pluginDb.FilePath, dto.FileManagerItem](
-		resource,
+	return queryHTTP.ProcessListRequestWithPolicy[*pluginDb.FilePath, dto.FileManagerItem](
 		c.Response(),
 		c.Request(),
 		"files",
+		policy,
 		svc,
 		func(path *pluginDb.FilePath) dto.FileManagerItem {
 			return a.convertFilePathToManagerItem(path, user)
 		},
+		parserOptions...,
 	)
 }

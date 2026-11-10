@@ -144,7 +144,7 @@ func (s *PinServiceDefault) ListPins(ctx context.Context, filters []queryutil.Cr
 }
 
 func (s *PinServiceDefault) listPins(ctx context.Context, owner *uint, filter []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.IPFSPin, int64, error) {
-	filter, queryErr := dto.NormalizeListQuery(dto.QueryPins, filter, sort, pagination)
+	filter, queryErr := dto.PinListPolicy(filter).Normalize(filter, sort)
 	if queryErr != nil {
 		return nil, 0, queryErr
 	}

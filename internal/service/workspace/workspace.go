@@ -542,7 +542,7 @@ func (s *WorkspaceService) Get(ctx context.Context, userID uint, workspaceID uin
 // List returns the workspaces owned by userID, filtered, sorted, and
 // paginated, along with the total count.
 func (s *WorkspaceService) List(ctx context.Context, userID uint, filters []queryutil.CrudFilter, sort []filter.Sort, pagination queryutil.Pagination) ([]*pluginDb.Workspace, int64, error) {
-	filters, queryErr := dto.NormalizeListQuery(dto.QueryWorkspaces, filters, sort, pagination)
+	filters, queryErr := dto.WorkspaceListPolicy.Normalize(filters, sort)
 	if queryErr != nil {
 		return nil, 0, queryErr
 	}

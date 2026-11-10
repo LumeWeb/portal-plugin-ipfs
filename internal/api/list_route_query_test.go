@@ -23,3 +23,18 @@ func TestAPIRejectsUnsupportedListQueries(t *testing.T) {
 		})
 	}
 }
+
+func TestFileNavigationRejectsMissingOrGroupedPaths(t *testing.T) {
+	for _, path := range []string{"/api/files/directory", "/api/files/breadcrumbs"} {
+		for _, query := range []string{"", "?filters[or][0][parent_path][eq]=/a", "?filters[or][0][path][eq]=/a"} {
+			t.Run(path+query, func(t *testing.T) {
+				coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+					helper := newMockHelper(t, ctx)
+					token, _ := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "navigation query"))
+					response := helper.makeAuthenticatedRequest(http.MethodGet, path+query, token, nil)
+					require.Equal(tb, http.StatusBadRequest, response.Code, response.Body.String())
+				}, TestOptions)
+			})
+		}
+	}
+}

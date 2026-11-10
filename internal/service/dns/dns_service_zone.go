@@ -224,7 +224,7 @@ func (s *DNSServiceDefault) ListZonesForUser(ctx context.Context, userID uint, f
 }
 
 func (s *DNSServiceDefault) listZones(ctx context.Context, owner *uint, filters []queryutil.CrudFilter, sorts []queryutil.Sort, pagination queryutil.Pagination) ([]*pluginDb.DNSZone, int64, error) {
-	filters, queryErr := dto.NormalizeListQuery(dto.QueryDNSZones, filters, sorts, pagination)
+	filters, queryErr := dto.DNSZoneListPolicy.Normalize(filters, sorts)
 	if queryErr != nil {
 		return nil, 0, queryErr
 	}
