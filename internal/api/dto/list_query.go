@@ -9,6 +9,9 @@ import (
 	"go.lumeweb.com/queryutil/filter"
 )
 
+// MaxListFilterNodes limits combined group and leaf nodes in list filters.
+const MaxListFilterNodes = 64
+
 var (
 	comparisonField = filter.FieldRule{Operators: append(filter.ComparableOperators(), filter.OpNull, filter.OpNnull)}
 	textField       = filter.FieldRule{Operators: []filter.Operator{
@@ -24,6 +27,7 @@ var (
 	pathField = filter.FieldRule{Operators: []filter.Operator{filter.OpEq}, Convert: convertPathFilter}
 
 	pinListPolicy = filter.QueryPolicy{
+		MaxFilterNodes: MaxListFilterNodes,
 		Fields: map[string]filter.FieldRule{
 			"id": comparisonField, "created_at": comparisonField, "updated_at": comparisonField,
 			"name": textField, "status": textField, "cid": pinCIDField,
@@ -31,6 +35,7 @@ var (
 		SortFields: []string{"id", "created_at", "updated_at", "name", "status"},
 	}
 	IPNSKeyListPolicy = filter.QueryPolicy{
+		MaxFilterNodes: MaxListFilterNodes,
 		Fields: map[string]filter.FieldRule{
 			"id": comparisonField, "created_at": comparisonField, "last_published_at": comparisonField,
 			"name": textField, "last_published_cid": textField,
@@ -38,6 +43,7 @@ var (
 		SortFields: []string{"id", "name", "created_at", "last_published_at", "last_published_cid"},
 	}
 	FileListPolicy = filter.QueryPolicy{
+		MaxFilterNodes: MaxListFilterNodes,
 		Fields: map[string]filter.FieldRule{
 			"id": comparisonField, "type": comparisonField, "size": comparisonField, "depth": comparisonField,
 			"created_at": comparisonField, "updated_at": comparisonField,
@@ -51,6 +57,7 @@ var (
 		SortFields: []string{"id", "name", "path", "parent_path", "type", "size", "depth", "is_directory", "is_orphan", "created_at", "updated_at"},
 	}
 	WebsiteListPolicy = filter.QueryPolicy{
+		MaxFilterNodes: MaxListFilterNodes,
 		Fields: map[string]filter.FieldRule{
 			"id": comparisonField, "created_at": comparisonField, "updated_at": comparisonField, "last_checked_at": comparisonField,
 			"target_type": textField, "status": textField,
@@ -59,6 +66,7 @@ var (
 		SortFields: []string{"id", "created_at", "updated_at", "last_checked_at", "target_type", "status"},
 	}
 	WebsiteDomainListPolicy = filter.QueryPolicy{
+		MaxFilterNodes: MaxListFilterNodes,
 		Fields: map[string]filter.FieldRule{
 			"id": comparisonField, "created_at": comparisonField, "updated_at": comparisonField,
 			"ssl_issued_at": comparisonField, "ssl_last_updated_at": comparisonField,
@@ -68,6 +76,7 @@ var (
 		SortFields: []string{"id", "domain", "namespace", "status", "ssl_status", "dns_hosting_enabled", "created_at", "updated_at", "ssl_issued_at", "ssl_last_updated_at"},
 	}
 	WorkspaceListPolicy = filter.QueryPolicy{
+		MaxFilterNodes: MaxListFilterNodes,
 		Fields: map[string]filter.FieldRule{
 			"id": comparisonField, "website_id": comparisonField, "platform_domain_id": comparisonField,
 			"created_at": comparisonField, "updated_at": comparisonField,
@@ -76,6 +85,7 @@ var (
 		SortFields: []string{"id", "website_id", "platform_domain_id", "label", "status", "created_at", "updated_at"},
 	}
 	DNSZoneListPolicy = filter.QueryPolicy{
+		MaxFilterNodes: MaxListFilterNodes,
 		Fields: map[string]filter.FieldRule{
 			"id": comparisonField, "created_at": comparisonField, "updated_at": comparisonField,
 			"last_nameserver_check_at": comparisonField, "nameservers_verified_at": comparisonField,
@@ -84,6 +94,7 @@ var (
 		SortFields: []string{"id", "domain", "status", "created_at", "updated_at", "last_nameserver_check_at", "nameservers_verified_at"},
 	}
 	DNSRecordListPolicy = filter.QueryPolicy{
+		MaxFilterNodes: MaxListFilterNodes,
 		Fields: map[string]filter.FieldRule{
 			"name": {Operators: []filter.Operator{filter.OpEq, filter.OpContains, filter.OpStartswith, filter.OpEndswith}},
 			"type": {Operators: []filter.Operator{filter.OpEq, filter.OpContains, filter.OpStartswith, filter.OpEndswith}},
@@ -91,14 +102,16 @@ var (
 		SortFields: []string{"name", "type", "content"},
 	}
 	PlatformDomainListPolicy = filter.QueryPolicy{
+		MaxFilterNodes: MaxListFilterNodes,
 		Fields: map[string]filter.FieldRule{
 			"id": comparisonField, "created_at": comparisonField, "updated_at": comparisonField,
 			"domain": textField, "namespace": textField, "enabled": booleanField,
 		},
 		SortFields: []string{"id", "domain", "namespace", "enabled", "created_at", "updated_at"},
 	}
-	EnabledPlatformDomainListPolicy = filter.QueryPolicy{}
+	EnabledPlatformDomainListPolicy = filter.QueryPolicy{MaxFilterNodes: MaxListFilterNodes}
 	DirectoryListPolicy             = filter.QueryPolicy{
+		MaxFilterNodes: MaxListFilterNodes,
 		Fields: map[string]filter.FieldRule{"parent_path": {Operators: []filter.Operator{filter.OpEq}, Convert: func(op filter.Operator, value any) (any, error) {
 			if value == "" {
 				value = "/"
@@ -106,15 +119,20 @@ var (
 			return convertPathFilter(op, value)
 		}}},
 	}
-	BreadcrumbListPolicy = filter.QueryPolicy{Fields: map[string]filter.FieldRule{"path": pathField}}
+	BreadcrumbListPolicy = filter.QueryPolicy{MaxFilterNodes: MaxListFilterNodes, Fields: map[string]filter.FieldRule{"path": pathField}}
 )
 
 // PinListPolicy includes only the metadata paths supplied by the pin query.
 // QueryPolicy remains responsible for validating the filter tree and operators.
 func PinListPolicy(filters []filter.CrudFilter) filter.QueryPolicy {
-	policy := filter.QueryPolicy{Fields: make(map[string]filter.FieldRule), SortFields: pinListPolicy.SortFields}
+	policy := filter.QueryPolicy{Fields: make(map[string]filter.FieldRule), SortFields: pinListPolicy.SortFields, MaxFilterNodes: pinListPolicy.MaxFilterNodes}
 	for name, rule := range pinListPolicy.Fields {
 		policy.Fields[name] = rule
+	}
+	// Reject oversized trees before creating a dynamic field map. Normalize
+	// reports the same invalid-query error at the service boundary.
+	if filter.ValidateFilterNodeLimit(filters, policy.MaxFilterNodes) != nil {
+		return policy
 	}
 	pending := append([]filter.CrudFilter(nil), filters...)
 	visited := make(map[*filter.ConditionalFilter]bool)

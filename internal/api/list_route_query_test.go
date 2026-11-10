@@ -1,11 +1,13 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/util"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 )
@@ -22,6 +24,20 @@ func TestAPIRejectsUnsupportedListQueries(t *testing.T) {
 			}, TestOptions)
 		})
 	}
+}
+
+func TestAPIRejectsOversizedListFilters(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+		token, _ := helper.SetupAuthenticatedTestWithCID(util.GenerateTestCID(t, "filter width"))
+		query := url.Values{}
+		for i := 0; i < dto.MaxListFilterNodes; i++ {
+			query.Set(fmt.Sprintf("filters[or][%d][name][eq]", i), "example")
+		}
+		response := helper.makeAuthenticatedRequest(http.MethodGet, "/api/files?"+query.Encode(), token, nil)
+		require.Equal(tb, http.StatusBadRequest, response.Code, response.Body.String())
+		require.Contains(tb, response.Body.String(), "too many filter nodes")
+	}, TestOptions)
 }
 
 func TestFileNavigationRejectsMissingOrGroupedPaths(t *testing.T) {
