@@ -27,7 +27,7 @@ require (
 	github.com/ipld/go-codec-dagpb v1.7.0
 	github.com/ipld/go-ipld-prime v0.24.0
 	github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260803031256-ab9fe751f33f
-	github.com/labstack/echo/v4 v4.15.4
+	github.com/labstack/echo/v4 v4.16.1
 	github.com/libp2p/go-libp2p v0.49.0
 	github.com/libp2p/go-libp2p-kad-dht v0.42.2
 	github.com/libp2p/go-libp2p-pubsub v0.17.0
@@ -47,7 +47,7 @@ require (
 	go.lumeweb.com/httputil v0.5.8
 	go.lumeweb.com/icann-tlds v0.1.0
 	go.lumeweb.com/ipfs-content v0.1.18
-	go.lumeweb.com/portal v0.5.2-0.20260905132026-a1276986115d
+	go.lumeweb.com/portal v0.5.2-0.20261110135326-aa167a442cbc
 	go.lumeweb.com/portal-middleware v0.3.8
 	go.lumeweb.com/portal-plugin-core v0.1.0
 	go.lumeweb.com/portal-plugin-dashboard v0.3.1-0.20260911165854-4c8f9a587763
@@ -84,7 +84,7 @@ require (
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pion/transport/v4 v4.0.2 // indirect
 	github.com/relvacode/iso8601 v1.8.0 // indirect
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/slok/go-http-metrics v0.13.0 // indirect
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2 // indirect
@@ -109,7 +109,7 @@ require (
 	github.com/adjust/rmq/v5 v5.2.0 // indirect
 	github.com/alicebob/miniredis/v2 v2.37.0 // indirect
 	github.com/andybalholm/brotli v1.2.3 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.46.0 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.47.8 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.20 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.33.3 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.3 // indirect
@@ -126,7 +126,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.37.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.42.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.49.0 // indirect
-	github.com/aws/smithy-go v1.28.1 // indirect
+	github.com/aws/smithy-go v1.28.8 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -158,9 +158,9 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/gammazero/chanqueue v1.1.2 // indirect
 	github.com/gammazero/deque v1.2.1 // indirect
-	github.com/getkin/kin-openapi v0.144.0 // indirect
+	github.com/getkin/kin-openapi v0.149.0 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
-	github.com/glebarez/go-sqlite v1.22.0 // indirect
+	github.com/glebarez/go-sqlite v1.22.0
 	github.com/glebarez/sqlite v1.11.0 // indirect
 	github.com/go-co-op/gocron/v2 v2.22.0 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
@@ -315,7 +315,7 @@ require (
 	go.etcd.io/etcd/api/v3 v3.7.0 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.7.0 // indirect
 	go.etcd.io/etcd/client/v3 v3.7.0 // indirect
-	go.lumeweb.com/configmanager v0.3.30 // indirect
+	go.lumeweb.com/configmanager v0.3.32 // indirect
 	go.lumeweb.com/event/v2 v2.1.0 // indirect
 	go.lumeweb.com/gswagger v0.20.12
 	go.lumeweb.com/ipfs-sdk/dnsname v0.1.64
@@ -347,7 +347,7 @@ require (
 	golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa // indirect
 	golang.org/x/image v0.34.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0 // indirect
