@@ -123,6 +123,62 @@ func TestCIDPoliciesKeepTheirStorageRepresentations(t *testing.T) {
 	}
 }
 
+func TestListPoliciesBoundFilterTrees(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		policy filter.QueryPolicy
+		field  string
+	}{
+		{"pins", PinListPolicy(nil), "name"},
+		{"files", FileListPolicy, "name"},
+		{"zones", DNSZoneListPolicy, "domain"},
+		{"websites", WebsiteListPolicy, "status"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.policy.MaxFilterNodes <= 0 {
+				t.Fatal("unbounded filter policy")
+			}
+			filters := make([]queryutil.CrudFilter, tc.policy.MaxFilterNodes)
+			for i := range filters {
+				filters[i] = queryutil.Equal(tc.field, "example")
+			}
+			if _, err := tc.policy.Normalize(filters, nil); err != nil {
+				t.Fatalf("limit should be allowed: %v", err)
+			}
+			filters = append(filters, queryutil.Equal(tc.field, "example"))
+			if _, err := tc.policy.Normalize(filters, nil); !errors.Is(err, filter.ErrInvalidQuery) {
+				t.Fatalf("over limit should fail: %v", err)
+			}
+			groups := []queryutil.CrudFilter{queryutil.Or(filters[:tc.policy.MaxFilterNodes]...)}
+			if _, err := tc.policy.Normalize(groups, nil); !errors.Is(err, filter.ErrInvalidQuery) {
+				t.Fatalf("group must count towards limit: %v", err)
+			}
+		})
+	}
+}
+
+func TestPinPolicyRejectsInvalidMetadataPathsAndBoundsDynamicFields(t *testing.T) {
+	for _, field := range []string{"meta.bad\x00key", "meta.bad\x7fkey", "meta.bad\x01key", "meta.\xff"} {
+		filters := []queryutil.CrudFilter{queryutil.Equal(field, "value")}
+		if _, err := PinListPolicy(filters).Normalize(filters, nil); !errors.Is(err, filter.ErrInvalidQuery) {
+			t.Errorf("accepted malformed metadata path %q: %v", field, err)
+		}
+	}
+	for _, field := range []string{"meta.", "meta.a..b", "meta.project-name"} {
+		filters := []queryutil.CrudFilter{queryutil.Equal(field, "value")}
+		if _, err := PinListPolicy(filters).Normalize(filters, nil); err != nil {
+			t.Errorf("rejected valid metadata path %q: %v", field, err)
+		}
+	}
+	filters := make([]queryutil.CrudFilter, pinListPolicy.MaxFilterNodes+1)
+	for i := range filters {
+		filters[i] = queryutil.Equal(fmt.Sprintf("meta.key%d", i), "value")
+	}
+	if _, err := PinListPolicy(filters).Normalize(filters, nil); !errors.Is(err, filter.ErrInvalidQuery) {
+		t.Fatalf("accepted oversized metadata filter: %v", err)
+	}
+}
+
 func TestPinPolicyRejectsMalformedTrees(t *testing.T) {
 	cycle := &filter.ConditionalFilter{Operator: filter.LogicalAnd}
 	cycle.Filters = []queryutil.CrudFilter{cycle}
