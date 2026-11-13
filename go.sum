@@ -252,8 +252,12 @@ github.com/gammazero/chanqueue v1.1.2 h1:dZEsxlyANZMyeTRemABqZF8QM9BnE4NBI43Oh3y
 github.com/gammazero/chanqueue v1.1.2/go.mod h1:XDN1X/jjAbmSceNFOQbtKToeSkxtdVdpKu90LiEdBEE=
 github.com/gammazero/deque v1.2.1 h1:9fnQVFCCZ9/NOc7ccTNqzoKd1tCWOqeI05/lPqFPMGQ=
 github.com/gammazero/deque v1.2.1/go.mod h1:5nSFkzVm+afG9+gy0VIowlqVAW4N8zNcMne+CMQVD2g=
+github.com/gammazero/deque v1.2.2 h1:zD+4g/JzU5MdHWiPzMeG7OeFW5plbhYKqHfSNDnQ3E8=
+github.com/gammazero/deque v1.2.2/go.mod h1:b0Hd32YGkBkCvq+lAX5i2bKhsBc9AJNZvv4vqNqsvJc=
 github.com/gammazero/workerpool v1.2.1 h1:MEDvUJsNYGuCvl1RwIXNKu2YtQtHqCSF9XWF04N7lqs=
 github.com/gammazero/workerpool v1.2.1/go.mod h1:E32GVRUanF4d6QtRmdss3AScgaDkIyrvPtgRQUWgmx4=
+github.com/gammazero/workerpool v1.3.0 h1:TD/xAtP7MXbBoFyBGV4lj3LlWBi6P0wOcyRFvWqIx0g=
+github.com/gammazero/workerpool v1.3.0/go.mod h1:nbtgxeEYc+vZWZdZjYpHOyVwqXlStlplhfOf1bQu27s=
 github.com/getkin/kin-openapi v0.144.0 h1:hIRcTH+KjLfkLpYU6bSSfdFpi0fZi1fp+hSPi4aQu9Y=
 github.com/getkin/kin-openapi v0.144.0/go.mod h1:3BH9M9XDe/y9M5DSvEocVYAYq1w0qrhJHjC/vZi0AaY=
 github.com/ghodss/yaml v1.0.0 h1:wQHKEahhL6wmXdzwWG11gIVCkOv05bNOh+Rxn0yngAk=

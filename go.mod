@@ -10,7 +10,7 @@ require (
 	github.com/bwesterb/go-zonefile v1.0.1
 	github.com/dnslink-std/go v0.6.0
 	github.com/docker/go-units v0.5.0
-	github.com/gammazero/workerpool v1.2.1
+	github.com/gammazero/workerpool v1.3.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/uuid v1.6.0
 	github.com/ipfs/boxo v0.42.2
@@ -157,7 +157,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/gammazero/chanqueue v1.1.2 // indirect
-	github.com/gammazero/deque v1.2.1 // indirect
+	github.com/gammazero/deque v1.2.2 // indirect
 	github.com/getkin/kin-openapi v0.144.0 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/glebarez/go-sqlite v1.22.0 // indirect
