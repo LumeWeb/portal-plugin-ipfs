@@ -28,7 +28,7 @@ require (
 	github.com/ipld/go-ipld-prime v0.24.0
 	github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20260803031256-ab9fe751f33f
 	github.com/labstack/echo/v4 v4.15.4
-	github.com/libp2p/go-libp2p v0.49.0
+	github.com/libp2p/go-libp2p v0.52.0
 	github.com/libp2p/go-libp2p-kad-dht v0.42.2
 	github.com/libp2p/go-libp2p-pubsub v0.17.0
 	github.com/libp2p/go-libp2p-pubsub-router v0.6.0
@@ -160,7 +160,7 @@ require (
 	github.com/gammazero/deque v1.2.1 // indirect
 	github.com/getkin/kin-openapi v0.144.0 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
-	github.com/glebarez/go-sqlite v1.22.0 // indirect
+	github.com/glebarez/go-sqlite v1.22.0
 	github.com/glebarez/sqlite v1.11.0 // indirect
 	github.com/go-co-op/gocron/v2 v2.22.0 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
