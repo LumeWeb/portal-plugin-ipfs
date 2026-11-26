@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ipfs/go-cid"
 	"github.com/ipfs/boxo/ipld/merkledag"
+	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -279,14 +279,19 @@ func TestUploadService_ProcessUpload_IdempotentQuotaEvents(t *testing.T) {
 // fakeReservation records Release calls so tests can assert that skipped
 // CIDs do not leak their quota reservations.
 type fakeReservation struct {
-	released int32
+	usageType quotaCore.UsageType
+	released  int32
 }
 
-func (f *fakeReservation) Release()              { atomic.AddInt32(&f.released, 1) }
-func (f *fakeReservation) UUID() string          { return "test-uuid" }
-func (f *fakeReservation) UserID() uint          { return 1 }
+func newFakeReservation(usageType quotaCore.UsageType) *fakeReservation {
+	return &fakeReservation{usageType: usageType}
+}
+
+func (f *fakeReservation) Release()     { atomic.AddInt32(&f.released, 1) }
+func (f *fakeReservation) UUID() string { return "test-uuid" }
+func (f *fakeReservation) UserID() uint { return 1 }
 func (f *fakeReservation) UsageType() quotaCore.UsageType {
-	return quotaCore.UsageTypeUpload
+	return f.usageType
 }
 func (f *fakeReservation) Bytes() int64 { return 100 }
 
@@ -362,19 +367,23 @@ func TestUploadService_ProcessUpload_SkippedCIDReleasesReservations(t *testing.T
 		uploadService := core.GetService[pluginCore.UploadService](ctx, pluginCore.UPLOAD_SERVICE)
 		require.NotNil(tb, uploadService)
 
-		upRes := &fakeReservation{}
-		storRes := &fakeReservation{}
+		upRes1 := newFakeReservation(quotaCore.UsageTypeUpload)
+		storRes1 := newFakeReservation(quotaCore.UsageTypeStorageAdd)
+		upRes2 := newFakeReservation(quotaCore.UsageTypeUpload)
+		storRes2 := newFakeReservation(quotaCore.UsageTypeStorageAdd)
 		reservations := map[cid.Cid]*quota.BlockReservations{
-			c1: {UploadReservation: &quotaCore.QuotaCheckResult{Reservation: upRes}, StorageReservation: &quotaCore.QuotaCheckResult{Reservation: storRes}},
-			c2: {UploadReservation: &quotaCore.QuotaCheckResult{Reservation: upRes}, StorageReservation: &quotaCore.QuotaCheckResult{Reservation: storRes}},
+			c1: {UploadReservation: &quotaCore.QuotaCheckResult{Reservation: upRes1}, StorageReservation: &quotaCore.QuotaCheckResult{Reservation: storRes1}},
+			c2: {UploadReservation: &quotaCore.QuotaCheckResult{Reservation: upRes2}, StorageReservation: &quotaCore.QuotaCheckResult{Reservation: storRes2}},
 		}
 
 		require.NoError(tb, uploadService.ProcessUpload(context.Background(), []cid.Cid{c1, c2}, userID, reservations))
 
 		assert.Equal(tb, baseUploadEvents, atomic.LoadInt32(&uploadEvents), "no new upload events for already-pinned CIDs")
 		assert.Equal(tb, baseStorageEvents, atomic.LoadInt32(&storageEvents), "no new storage events for already-pinned CIDs")
-		assert.Equal(t, int32(2), atomic.LoadInt32(&upRes.released), "upload reservation released once per skipped CID")
-		assert.Equal(t, int32(2), atomic.LoadInt32(&storRes.released), "storage reservation released once per skipped CID")
+		assert.Equal(t, int32(1), atomic.LoadInt32(&upRes1.released), "upload reservation released once for c1")
+		assert.Equal(t, int32(1), atomic.LoadInt32(&storRes1.released), "storage reservation released once for c1")
+		assert.Equal(t, int32(1), atomic.LoadInt32(&upRes2.released), "upload reservation released once for c2")
+		assert.Equal(t, int32(1), atomic.LoadInt32(&storRes2.released), "storage reservation released once for c2")
 	})
 }
 
