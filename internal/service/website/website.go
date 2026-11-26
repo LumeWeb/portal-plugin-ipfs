@@ -322,7 +322,10 @@ func (s *WebsiteServiceDefault) CreateWebsite(ctx context.Context, website *plug
 			// target is already a valid IPNS peer ID (Website.BeforeSave rejects
 			// a non-nil CIDVersion for IPNS targets).
 			if website.TargetType == string(pluginDb.WebsiteTargetTypeIPNS) && website.CIDVersion != nil && primaryDomain != "" {
-				publishCID := website.TargetHash()
+				publishCID, err := ipnsAutoConvertCID(website)
+				if err != nil {
+					return nil, fmt.Errorf("invalid target: %w", err)
+				}
 
 				ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, primaryDomain, publishCID, true)
 				if err != nil {
@@ -1352,7 +1355,10 @@ func (s *WebsiteServiceDefault) handleDNSEnabledTransition(ctx context.Context, 
 	// CIDVersion != nil so already-converted targets are skipped (idempotent
 	// for the UpdateWebsite path, which converts earlier).
 	if website.TargetType == string(pluginDb.WebsiteTargetTypeIPNS) && website.CIDVersion != nil {
-		publishCID := website.TargetHash()
+		publishCID, err := ipnsAutoConvertCID(&website)
+		if err != nil {
+			return fmt.Errorf("failed to auto-create IPNS key for managed DNS: %w", err)
+		}
 		ipnsKey, err := s.ensureIPNSKey(ctx, website.UserID, wd.Domain, publishCID, true)
 		if err != nil {
 			return fmt.Errorf("failed to auto-create IPNS key for managed DNS: %w", err)
@@ -2826,7 +2832,11 @@ func (s *WebsiteServiceDefault) ensureIPNSKey(ctx context.Context, userID uint, 
 
 	if s.ipnsKeySvc != nil && publishCID != "" {
 		if waitForPublish {
-			if err := s.ipnsKeySvc.PublishCID(ctx, ipnsKey.PeerID().String(), publishCID, 24*time.Hour); err != nil {
+			// Bound the synchronous publish so a slow publisher or DHT
+			// cannot pin the user-facing create/enable request open.
+			publishCtx, cancel := context.WithTimeout(ctx, ipnsPublishTimeout)
+			defer cancel()
+			if err := s.ipnsKeySvc.PublishCID(publishCtx, ipnsKey.PeerID().String(), publishCID, 24*time.Hour); err != nil {
 				return nil, fmt.Errorf("failed to publish CID to IPNS key: %w", err)
 			}
 		} else {
@@ -2951,6 +2961,27 @@ func (s *WebsiteServiceDefault) validateTarget(targetType string, targetHash str
 	return nil
 }
 
+// ipnsPublishTimeout bounds the synchronous IPNS publish performed during
+// website creation and DNS-hosting enablement.
+const ipnsPublishTimeout = 30 * time.Second
+
+// ipnsAutoConvertCID reconstructs the content CID from an IPNS-target website
+// that still carries a plain CID (CIDVersion set). TargetHash() reports the
+// peer ID for IPNS targets, so the CID must be rebuilt from the stored
+// multihash, version, and codec — the same value validateCreatePin approves.
+func ipnsAutoConvertCID(w *pluginDb.Website) (string, error) {
+	if w.CIDVersion == nil {
+		return "", fmt.Errorf("%w: IPNS auto-convert target missing CID version", ErrInvalidCID)
+	}
+	if *w.CIDVersion == 0 {
+		return cid.NewCidV0(w.TargetMultihash).String(), nil
+	}
+	if w.CIDType == nil {
+		return "", fmt.Errorf("%w: IPNS auto-convert CID missing codec", ErrInvalidCID)
+	}
+	return cid.NewCidV1(uint64(*w.CIDType), w.TargetMultihash).String(), nil
+}
+
 // validateCreatePin requires that a new website's CID target is already pinned
 // by its owner before the site can be created. It resolves the CID from the
 // website's target: a direct IPFS target carries it in TargetHash(); an IPNS
@@ -2964,13 +2995,10 @@ func (s *WebsiteServiceDefault) validateCreatePin(ctx context.Context, website *
 	case website.TargetType == string(pluginDb.WebsiteTargetTypeIPFS):
 		targetHash = website.TargetHash()
 	case website.TargetType == string(pluginDb.WebsiteTargetTypeIPNS) && website.CIDVersion != nil:
-		if *website.CIDVersion == 0 {
-			targetHash = cid.NewCidV0(website.TargetMultihash).String()
-		} else {
-			if website.CIDType == nil {
-				return fmt.Errorf("%w: IPNS auto-convert CID missing codec", ErrInvalidCID)
-			}
-			targetHash = cid.NewCidV1(uint64(*website.CIDType), website.TargetMultihash).String()
+		var err error
+		targetHash, err = ipnsAutoConvertCID(website)
+		if err != nil {
+			return err
 		}
 	case website.TargetType == string(pluginDb.WebsiteTargetTypeIPNS):
 		return s.validateIPNSPublishedPin(ctx, website.UserID, website.TargetHash())

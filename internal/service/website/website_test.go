@@ -683,6 +683,81 @@ func TestWebsiteService_CreateWebsite_IPNSTargetWithPlainCID_AutoConvert(t *test
 	}, TestOptions)
 }
 
+// TestWebsiteService_CreateWebsite_IPNSAutoConvertPublishesContentCID tests
+// that the auto-convert publish writes the reconstructed content CID — not
+// the peer ID TargetHash() reports for IPNS targets — as the IPNS record
+// value, so the published CID matches the pin the create check approved.
+func TestWebsiteService_CreateWebsite_IPNSAutoConvertPublishesContentCID(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, websiteService)
+
+		domain := "ipns-autoconvert-raw.com"
+
+		// A raw-codec CIDv1 (non dag-pb) exercises the codec reconstruction:
+		// for IPNS targets TargetHash() drops the codec and reports the peer
+		// ID, which must never be published as the record value.
+		sum, err := mh.Sum([]byte("ipns-autoconvert-raw-content"), mh.SHA2_256, -1)
+		require.NoError(tb, err)
+		rawCID := cid.NewCidV1(cid.Raw, sum)
+		version := uint8(1)
+		codec := uint8(cid.Raw)
+
+		website := &pluginDb.Website{
+			UserID:          testUserID1,
+			TargetType:      string(pluginDb.WebsiteTargetTypeIPNS),
+			TargetMultihash: rawCID.Hash(),
+			CIDVersion:      &version,
+			CIDType:         &codec,
+		}
+		website.ID = 9301
+		prebindPrimaryDomain(tb, ctx, website, domain, true)
+
+		// The content CID must be pinned before the auto-convert path will
+		// publish it.
+		stubPinnedCID(t, ctx, testUserID1, rawCID.String())
+
+		expectedKeyName := domain + "-auto"
+		testPeerIDStr := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
+		testPeerID, _ := parsePeerID(testPeerIDStr)
+		testIPNSKey := &pluginDb.IPFSIPNSKey{
+			ID:              3101,
+			UserID:          testUserID1,
+			Name:            expectedKeyName,
+			PeerIDMultihash: mh.Multihash(testPeerID),
+		}
+		mockIPNSKey.EXPECT().ListKeys(mock.Anything, testUserID1).Return([]pluginDb.IPFSIPNSKey{}, nil).Once()
+		mockIPNSKey.EXPECT().CreateKey(mock.Anything, testUserID1, expectedKeyName, 1).Return(testIPNSKey, nil).Once()
+		// The exact content CID must be published — the mock fails on any
+		// other value (e.g. the peer ID form).
+		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, rawCID.String(), mock.AnythingOfType("time.Duration")).Return(nil).Once()
+
+		mockDNS := core.GetService[*mocks.MockDNSService](ctx, pluginCore.DNS_SERVICE)
+		require.NotNil(tb, mockDNS)
+		zoneID := uint(9301)
+		mockDNS.EXPECT().CreateZone(mock.Anything, domain, testUserID1).Return(createMockDNSZone(zoneID, domain, testUserID1), nil).Once()
+		mockDNS.EXPECT().CreateWebsiteDNSRecords(
+			mock.Anything,
+			zoneID,
+			mock.Anything,
+			mock.Anything,
+			pluginDb.WebsiteTargetTypeIPNS,
+			mock.Anything,
+		).Return(nil).Once()
+
+		// Act
+		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
+
+		// Assert
+		require.NoError(tb, err)
+		require.NotNil(tb, createdWebsite)
+		assert.Equal(tb, string(pluginDb.WebsiteTargetTypeIPNS), createdWebsite.TargetType)
+		assert.NotNil(tb, createdWebsite.IPNSKeyID)
+	}, TestOptions)
+}
+
 func TestWebsiteService_CreateWebsite_InvalidTargetType(t *testing.T) {
 	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Arrange
