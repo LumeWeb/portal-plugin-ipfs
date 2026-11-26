@@ -6,10 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ipfs/go-cid"
+	"github.com/ipfs/boxo/ipld/merkledag"
+	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -24,7 +27,9 @@ import (
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/fixtures"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/testing/mocks"
 	"go.lumeweb.com/portal/core"
+	"go.lumeweb.com/portal/db/models"
 	"go.lumeweb.com/portal/db/types"
+	"go.lumeweb.com/portal/event"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 	"go.lumeweb.com/portal/service"
 )
@@ -182,5 +187,89 @@ func TestUploadService_CreateRootPin_Idempotent(t *testing.T) {
 		require.Equal(tb, pin1.RequestID, pin2.RequestID, "second call should return same pin")
 
 		mockPinSvc.AssertExpectations(tb)
+	})
+}
+
+// TestUploadService_ProcessUpload_IdempotentQuotaEvents verifies that calling
+// ProcessUpload twice for the same CIDs emits each quota event only once per
+// CID. The pin workflow processes child blocks in the retrieve operation and
+// the full CID list again in confirm; without the already-pinned skip, child
+// upload and storage usage would be recorded twice.
+func TestUploadService_ProcessUpload_IdempotentQuotaEvents(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		internal.RegisterHashes()
+		metaStore := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol).GetMetadataStore()
+
+		userID := uint(321)
+		data1 := []byte("process-upload-idempotent-1")
+		data2 := []byte("process-upload-idempotent-2")
+		hash1, err := multihash.Sum(data1, multihash.SHA2_256, -1)
+		require.NoError(tb, err)
+		hash2, err := multihash.Sum(data2, multihash.SHA2_256, -1)
+		require.NoError(tb, err)
+		c1 := cid.NewCidV1(cid.Raw, hash1)
+		c2 := cid.NewCidV1(cid.Raw, hash2)
+		require.NoError(tb, metaStore.Pin(ctx, pluginCore.PinnedBlock{Cid: c1, Size: 100, Node: merkledag.NewRawNode(data1)}))
+		require.NoError(tb, metaStore.Pin(ctx, pluginCore.PinnedBlock{Cid: c2, Size: 200, Node: merkledag.NewRawNode(data2)}))
+
+		var uploadEvents, storageEvents int32
+		core.Listen[event.UploadCompletedEvent](ctx, event.EVENT_UPLOAD_COMPLETED, func(e *core.CoreEvent[event.UploadCompletedEvent]) error {
+			atomic.AddInt32(&uploadEvents, 1)
+			return nil
+		})
+		core.Listen[event.StorageObjectPinnedEvent](ctx, event.EVENT_STORAGE_OBJECT_PINNED, func(e *core.CoreEvent[event.StorageObjectPinnedEvent]) error {
+			atomic.AddInt32(&storageEvents, 1)
+			return nil
+		})
+
+		uploadService := core.GetService[pluginCore.UploadService](ctx, pluginCore.UPLOAD_SERVICE)
+		require.NotNil(tb, uploadService)
+
+		// Both core services are mocked in this environment. The pin mock is
+		// backed by in-test state so pin rows persist across the two
+		// ProcessUpload calls and the second pass must skip them.
+		mockUploadSvc := coreTesting.GetMockUploadService(ctx)
+		require.NotNil(tb, mockUploadSvc)
+		uploadIDs := map[string]uint{} // find-or-create, like the real service
+		var nextUploadID uint
+		mockUploadSvc.EXPECT().SaveUpload(mock.Anything, mock.Anything).RunAndReturn(
+			func(_ context.Context, upload *models.Upload) error {
+				key := string(upload.Hash)
+				if id, ok := uploadIDs[key]; ok {
+					upload.ID = id
+					return nil
+				}
+				nextUploadID++
+				uploadIDs[key] = nextUploadID
+				upload.ID = nextUploadID
+				return nil
+			}).Maybe()
+
+		mockPinSvc := coreTesting.GetMockPinService(ctx)
+		require.NotNil(tb, mockPinSvc)
+		var createdPins []*models.Pin
+		mockPinSvc.EXPECT().GetPinsByUploadID(mock.Anything, mock.Anything).RunAndReturn(
+			func(_ context.Context, uploadID uint) ([]*models.Pin, error) {
+				var pins []*models.Pin
+				for _, p := range createdPins {
+					if p.UploadID == uploadID {
+						pins = append(pins, p)
+					}
+				}
+				return pins, nil
+			}).Maybe()
+		mockPinSvc.EXPECT().CreatePin(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(
+			func(_ context.Context, pin *models.Pin, _ any) (*models.Pin, error) {
+				pin.ID = uint(len(createdPins) + 1)
+				createdPins = append(createdPins, pin)
+				return pin, nil
+			}).Maybe()
+
+		cids := []cid.Cid{c1, c2}
+		require.NoError(tb, uploadService.ProcessUpload(context.Background(), cids, userID, nil))
+		require.NoError(tb, uploadService.ProcessUpload(context.Background(), cids, userID, nil))
+
+		assert.Equal(tb, int32(2), atomic.LoadInt32(&uploadEvents), "one upload event per CID across both passes")
+		assert.Equal(tb, int32(2), atomic.LoadInt32(&storageEvents), "one storage event per CID across both passes")
 	})
 }

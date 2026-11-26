@@ -167,6 +167,26 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 					return fmt.Errorf("failed to save upload record for CID %s: %w", c.String(), err)
 				}
 
+				// ProcessUpload runs from more than one workflow operation (e.g.
+				// retrieve and confirm in the pin workflow) and is retried on
+				// failure. A CID that already has a core pin for this user was
+				// recorded by an earlier pass — re-emitting its quota events
+				// would double-count upload and storage usage.
+				priorPins, err := s.corePin.GetPinsByUploadID(ctx, uploadMeta.ID)
+				if err != nil {
+					return fmt.Errorf("failed to check existing pins for CID %s: %w", c.String(), err)
+				}
+				alreadyPinned := false
+				for _, p := range priorPins {
+					if p.UserID == userId {
+						alreadyPinned = true
+						break
+					}
+				}
+				if alreadyPinned {
+					continue
+				}
+
 				pinMeta := &models.Pin{
 					UploadID: uploadMeta.ID,
 					UserID:   uploadMeta.UserID,
