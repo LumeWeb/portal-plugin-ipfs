@@ -19,6 +19,8 @@ import (
 	pluginCore "go.lumeweb.com/portal-plugin-ipfs/core"
 	"go.lumeweb.com/portal-plugin-ipfs/internal"
 	pluginConfig "go.lumeweb.com/portal-plugin-ipfs/internal/config"
+	quota "go.lumeweb.com/portal-plugin-ipfs/internal/quota"
+	quotaCore "go.lumeweb.com/portal-plugin-quota/core"
 	pluginDb "go.lumeweb.com/portal-plugin-ipfs/internal/db"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/upload"
 
@@ -272,4 +274,111 @@ func TestUploadService_ProcessUpload_IdempotentQuotaEvents(t *testing.T) {
 		assert.Equal(tb, int32(2), atomic.LoadInt32(&uploadEvents), "one upload event per CID across both passes")
 		assert.Equal(tb, int32(2), atomic.LoadInt32(&storageEvents), "one storage event per CID across both passes")
 	})
+}
+
+// fakeReservation records Release calls so tests can assert that skipped
+// CIDs do not leak their quota reservations.
+type fakeReservation struct {
+	released int32
+}
+
+func (f *fakeReservation) Release()              { atomic.AddInt32(&f.released, 1) }
+func (f *fakeReservation) UUID() string          { return "test-uuid" }
+func (f *fakeReservation) UserID() uint          { return 1 }
+func (f *fakeReservation) UsageType() quotaCore.UsageType {
+	return quotaCore.UsageTypeUpload
+}
+func (f *fakeReservation) Bytes() int64 { return 100 }
+
+// TestUploadService_ProcessUpload_SkippedCIDReleasesReservations verifies that
+// when a CID is skipped because a pin already exists, its per-block quota
+// reservations are released instead of being left held, and no quota events
+// are emitted for the skipped CID.
+func TestUploadService_ProcessUpload_SkippedCIDReleasesReservations(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		internal.RegisterHashes()
+		metaStore := core.GetProtocol(internal.ProtocolName).(*protocol.Protocol).GetMetadataStore()
+
+		userID := uint(654)
+		data1 := []byte("process-upload-release-1")
+		data2 := []byte("process-upload-release-2")
+		hash1, err := multihash.Sum(data1, multihash.SHA2_256, -1)
+		require.NoError(tb, err)
+		hash2, err := multihash.Sum(data2, multihash.SHA2_256, -1)
+		require.NoError(tb, err)
+		c1 := cid.NewCidV1(cid.Raw, hash1)
+		c2 := cid.NewCidV1(cid.Raw, hash2)
+		require.NoError(tb, metaStore.Pin(ctx, pluginCore.PinnedBlock{Cid: c1, Size: 100, Node: merkledag.NewRawNode(data1)}))
+		require.NoError(tb, metaStore.Pin(ctx, pluginCore.PinnedBlock{Cid: c2, Size: 200, Node: merkledag.NewRawNode(data2)}))
+
+		var uploadEvents, storageEvents int32
+		core.Listen[event.UploadCompletedEvent](ctx, event.EVENT_UPLOAD_COMPLETED, func(e *core.CoreEvent[event.UploadCompletedEvent]) error {
+			atomic.AddInt32(&uploadEvents, 1)
+			return nil
+		})
+		core.Listen[event.StorageObjectPinnedEvent](ctx, event.EVENT_STORAGE_OBJECT_PINNED, func(e *core.CoreEvent[event.StorageObjectPinnedEvent]) error {
+			atomic.AddInt32(&storageEvents, 1)
+			return nil
+		})
+
+		mockUploadSvc := coreTesting.GetMockUploadService(ctx)
+		require.NotNil(tb, mockUploadSvc)
+		uploadIDs := map[string]uint{} // find-or-create, like the real service
+		var nextUploadID uint
+		mockUploadSvc.EXPECT().SaveUpload(mock.Anything, mock.Anything).RunAndReturn(
+			func(_ context.Context, upload *models.Upload) error {
+				key := string(upload.Hash)
+				if id, ok := uploadIDs[key]; ok {
+					upload.ID = id
+					return nil
+				}
+				nextUploadID++
+				uploadIDs[key] = nextUploadID
+				upload.ID = nextUploadID
+				return nil
+			}).Maybe()
+
+		// Both CIDs already have pins, so every CID is skipped.
+		mockPinSvc := coreTesting.GetMockPinService(ctx)
+		require.NotNil(tb, mockPinSvc)
+		existingPins := map[uint][]*models.Pin{}
+		mockPinSvc.EXPECT().GetPinsByUploadID(mock.Anything, mock.Anything).RunAndReturn(
+			func(_ context.Context, uploadID uint) ([]*models.Pin, error) {
+				return existingPins[uploadID], nil
+			}).Maybe()
+		mockPinSvc.EXPECT().CreatePin(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(
+			func(_ context.Context, pin *models.Pin, _ any) (*models.Pin, error) {
+				pin.ID = uint(len(existingPins[pin.UploadID]) + 1)
+				existingPins[pin.UploadID] = append(existingPins[pin.UploadID], pin)
+				return pin, nil
+			}).Maybe()
+
+		// Pre-create the pins the skip check will find. This pass emits one
+		// event pair per CID; record the counts as the baseline.
+		require.NoError(tb, uploadServiceProcessForTest(ctx, []cid.Cid{c1, c2}, userID, nil))
+		baseUploadEvents := atomic.LoadInt32(&uploadEvents)
+		baseStorageEvents := atomic.LoadInt32(&storageEvents)
+
+		uploadService := core.GetService[pluginCore.UploadService](ctx, pluginCore.UPLOAD_SERVICE)
+		require.NotNil(tb, uploadService)
+
+		upRes := &fakeReservation{}
+		storRes := &fakeReservation{}
+		reservations := map[cid.Cid]*quota.BlockReservations{
+			c1: {UploadReservation: &quotaCore.QuotaCheckResult{Reservation: upRes}, StorageReservation: &quotaCore.QuotaCheckResult{Reservation: storRes}},
+			c2: {UploadReservation: &quotaCore.QuotaCheckResult{Reservation: upRes}, StorageReservation: &quotaCore.QuotaCheckResult{Reservation: storRes}},
+		}
+
+		require.NoError(tb, uploadService.ProcessUpload(context.Background(), []cid.Cid{c1, c2}, userID, reservations))
+
+		assert.Equal(tb, baseUploadEvents, atomic.LoadInt32(&uploadEvents), "no new upload events for already-pinned CIDs")
+		assert.Equal(tb, baseStorageEvents, atomic.LoadInt32(&storageEvents), "no new storage events for already-pinned CIDs")
+		assert.Equal(t, int32(2), atomic.LoadInt32(&upRes.released), "upload reservation released once per skipped CID")
+		assert.Equal(t, int32(2), atomic.LoadInt32(&storRes.released), "storage reservation released once per skipped CID")
+	})
+}
+
+func uploadServiceProcessForTest(ctx coreTesting.TestContext, cids []cid.Cid, userID uint, reservations map[cid.Cid]*quota.BlockReservations) error {
+	uploadService := core.GetService[pluginCore.UploadService](ctx, pluginCore.UPLOAD_SERVICE)
+	return uploadService.ProcessUpload(context.Background(), cids, userID, reservations)
 }

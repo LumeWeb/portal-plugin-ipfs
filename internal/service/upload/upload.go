@@ -184,6 +184,14 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 					}
 				}
 				if alreadyPinned {
+					// The caller reserved quota for this upload attempt; since no
+					// usage event will be emitted for the skipped CID, the
+					// reservations must be released rather than left held.
+					if reservations != nil {
+						if blockRes, exists := reservations[c]; exists && blockRes != nil {
+							blockRes.ReleaseAll()
+						}
+					}
 					continue
 				}
 
