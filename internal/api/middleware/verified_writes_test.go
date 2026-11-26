@@ -109,6 +109,18 @@ func TestVerifiedWrites_WriteLikeGetQueryRequiresVerification(t *testing.T) {
 	})
 }
 
+func TestVerifiedWrites_RotateFalseStaysRead(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// The handler only rotates on exactly "true"; other values keep read
+		// semantics. No IsAccountVerified expectation: a checker call would
+		// fail the test.
+
+		rec, called := executeVerifiedRequestQuery(t, ctx, http.MethodGet, "/workspaces/1/access", "rotate=false", true)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.True(t, called)
+	})
+}
+
 func TestVerifiedWrites_PlainGetWithQueryPassesUnverified(t *testing.T) {
 	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
 		// Unrelated query parameters do not turn a GET into a write; no

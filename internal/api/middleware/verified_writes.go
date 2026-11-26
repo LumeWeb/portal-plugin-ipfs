@@ -9,10 +9,12 @@ import (
 	"go.lumeweb.com/portal/core"
 )
 
-// writeLikeQueries lists query parameters that turn a GET into a mutating
-// request. GET /workspaces/:id/access?rotate=true rotates credentials, so it
-// is treated as a write despite the safe method.
-var writeLikeQueries = []string{"rotate"}
+// writeLikeQueries maps query parameters to the value that turns a GET into
+// a mutating request. GET /workspaces/:id/access?rotate=true rotates
+// credentials, so it is treated as a write despite the safe method. The
+// value must match the handler's own parsing (api_workspaces.go compares
+// against "true"), so other values keep read semantics.
+var writeLikeQueries = map[string]string{"rotate": "true"}
 
 // VerifiedWrites returns middleware that requires the authenticated account to
 // have a verified email for state-changing requests (any method except
@@ -35,8 +37,8 @@ func VerifiedWrites(ctx core.Context, exemptSuffixes ...string) echo.MiddlewareF
 			case http.MethodHead, http.MethodOptions:
 				return next(c)
 			case http.MethodGet:
-				for _, param := range writeLikeQueries {
-					if c.QueryParam(param) != "" {
+				for param, writeValue := range writeLikeQueries {
+					if c.QueryParam(param) == writeValue {
 						return verified(next)(c)
 					}
 				}
