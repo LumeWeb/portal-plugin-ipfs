@@ -378,12 +378,25 @@ func TestUploadService_ProcessUpload_SkippedCIDReleasesReservations(t *testing.T
 
 		require.NoError(tb, uploadService.ProcessUpload(context.Background(), []cid.Cid{c1, c2}, userID, reservations))
 
+		// Skipped CIDs must be removed from the map so a caller's deferred
+		// blanket release (e.g. the TUS op) does not release them again.
+		require.NotContains(tb, reservations, c1)
+		require.NotContains(tb, reservations, c2)
+
 		assert.Equal(tb, baseUploadEvents, atomic.LoadInt32(&uploadEvents), "no new upload events for already-pinned CIDs")
 		assert.Equal(tb, baseStorageEvents, atomic.LoadInt32(&storageEvents), "no new storage events for already-pinned CIDs")
 		assert.Equal(t, int32(1), atomic.LoadInt32(&upRes1.released), "upload reservation released once for c1")
 		assert.Equal(t, int32(1), atomic.LoadInt32(&storRes1.released), "storage reservation released once for c1")
 		assert.Equal(t, int32(1), atomic.LoadInt32(&upRes2.released), "upload reservation released once for c2")
 		assert.Equal(t, int32(1), atomic.LoadInt32(&storRes2.released), "storage reservation released once for c2")
+
+		// Simulate the caller's deferred blanket release over the same map;
+		// counters must not move.
+		quota.ReleaseBlockReservationsMap(reservations)
+		assert.Equal(t, int32(1), atomic.LoadInt32(&upRes1.released), "upload reservation not released again for c1")
+		assert.Equal(t, int32(1), atomic.LoadInt32(&storRes1.released), "storage reservation not released again for c1")
+		assert.Equal(t, int32(1), atomic.LoadInt32(&upRes2.released), "upload reservation not released again for c2")
+		assert.Equal(t, int32(1), atomic.LoadInt32(&storRes2.released), "storage reservation not released again for c2")
 	})
 }
 
