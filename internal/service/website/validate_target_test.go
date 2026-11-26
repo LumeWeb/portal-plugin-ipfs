@@ -3,6 +3,10 @@ package website
 import (
 	"testing"
 
+	"github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
+	"github.com/libp2p/go-libp2p/core/peer"
+
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal/core"
@@ -303,6 +307,158 @@ func TestValidateIPNSKeyResolution_KeyNotFound(t *testing.T) {
 		err := svc.validateIPNSKeyResolution(ctx, 1, peerIDStr)
 		require.Error(tb, err, "Non-existent IPNS key should fail validation")
 		require.ErrorIs(tb, err, ErrIPNSKeyNotFound)
+	}, TestOptions)
+}
+
+// makePublishedKey builds an IPNS key record for a peer-ID target with the
+// given owner and published CID.
+func makePublishedKey(userID uint, peerIDStr string, publishedCID string) *pluginDb.IPFSIPNSKey {
+	pid, err := peer.Decode(peerIDStr)
+	if err != nil {
+		panic(err)
+	}
+	return &pluginDb.IPFSIPNSKey{
+		ID:               3001,
+		UserID:           userID,
+		Name:             "published-key",
+		PeerIDMultihash:  mh.Multihash(pid),
+		LastPublishedCID: publishedCID,
+	}
+}
+
+func TestValidateIPNSPublishedPin_Success(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+		svc := websiteService.(*WebsiteServiceDefault)
+
+		mockIPNSKeySvc := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, mockIPNSKeySvc)
+
+		testCID := util.GenerateTestCID(t, "published-content")
+		mockIPNSKeySvc.EXPECT().GetKeyByPeerID(mock.Anything, TestPeerID1).
+			Return(makePublishedKey(1, TestPeerID1, testCID.String()), nil).Once()
+
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, cid.MustParse(testCID.String()), uint(1)).
+			Return(&pluginDb.IPFSPin{UserID: 1, CID: cid.MustParse(testCID.String()).Bytes(), Status: pluginDb.PinningStatusPinned}, nil).Once()
+
+		// Act & Assert — owned key with a pinned published CID should pass
+		err := svc.validateIPNSPublishedPin(ctx, 1, TestPeerID1)
+		require.NoError(tb, err, "Owned key with pinned published CID should pass validation")
+	}, TestOptions)
+}
+
+func TestValidateIPNSPublishedPin_KeyNotFound(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+		svc := websiteService.(*WebsiteServiceDefault)
+
+		mockIPNSKeySvc := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, mockIPNSKeySvc)
+
+		mockIPNSKeySvc.EXPECT().GetKeyByPeerID(mock.Anything, TestPeerID1).
+			Return(nil, gorm.ErrRecordNotFound).Once()
+
+		err := svc.validateIPNSPublishedPin(ctx, 1, TestPeerID1)
+		require.ErrorIs(tb, err, ErrIPNSKeyNotFound)
+	}, TestOptions)
+}
+
+func TestValidateIPNSPublishedPin_WrongOwner(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+		svc := websiteService.(*WebsiteServiceDefault)
+
+		mockIPNSKeySvc := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, mockIPNSKeySvc)
+
+		// Key exists but belongs to a different user
+		testCID := util.GenerateTestCID(t, "someone-elses-content")
+		mockIPNSKeySvc.EXPECT().GetKeyByPeerID(mock.Anything, TestPeerID1).
+			Return(makePublishedKey(2, TestPeerID1, testCID.String()), nil).Once()
+
+		err := svc.validateIPNSPublishedPin(ctx, 1, TestPeerID1)
+		require.ErrorIs(tb, err, ErrIPNSKeyNotFound)
+	}, TestOptions)
+}
+
+func TestValidateIPNSPublishedPin_NoPublishedCID(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+		svc := websiteService.(*WebsiteServiceDefault)
+
+		mockIPNSKeySvc := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, mockIPNSKeySvc)
+
+		// Key exists and is owned, but nothing was ever published to it
+		mockIPNSKeySvc.EXPECT().GetKeyByPeerID(mock.Anything, TestPeerID1).
+			Return(makePublishedKey(1, TestPeerID1, ""), nil).Once()
+
+		err := svc.validateIPNSPublishedPin(ctx, 1, TestPeerID1)
+		require.ErrorIs(tb, err, ErrCIDNotPinned)
+	}, TestOptions)
+}
+
+func TestValidateIPNSPublishedPin_PublishedCIDNotPinned(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+		svc := websiteService.(*WebsiteServiceDefault)
+
+		mockIPNSKeySvc := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, mockIPNSKeySvc)
+
+		// Key is owned and has a published CID, but the CID is not pinned by the owner
+		testCID := util.GenerateTestCID(t, "unpinned-content")
+		mockIPNSKeySvc.EXPECT().GetKeyByPeerID(mock.Anything, TestPeerID1).
+			Return(makePublishedKey(1, TestPeerID1, testCID.String()), nil).Once()
+
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, cid.MustParse(testCID.String()), uint(1)).
+			Return(nil, gorm.ErrRecordNotFound).Once()
+
+		err := svc.validateIPNSPublishedPin(ctx, 1, TestPeerID1)
+		require.ErrorIs(tb, err, ErrCIDNotPinned)
+	}, TestOptions)
+}
+
+func TestCheckStatus_IPNSEmptyPublishedCID_Broken(t *testing.T) {
+	coreTesting.RunTestCaseWithDB(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Arrange — an IPNS-keyed website whose key never published anything
+		websiteService := core.GetService[pluginCore.WebsiteService](ctx, pluginCore.WEBSITE_SERVICE)
+		require.NotNil(tb, websiteService)
+		svc := websiteService.(*WebsiteServiceDefault)
+
+		mockIPNSKeySvc := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, mockIPNSKeySvc)
+
+		testCID := util.GenerateTestCID(t, "published-content")
+		mockIPNSKeySvc.EXPECT().GetKeyByPeerID(mock.Anything, TestPeerID1).
+			Return(makePublishedKey(1, TestPeerID1, testCID.String()), nil).Once()
+
+		mockPinSvc := core.GetService[*mocks.MockIPFSPinService](ctx, pluginCore.PIN_SERVICE)
+		mockPinSvc.EXPECT().GetPinByCIDAndUser(mock.Anything, cid.MustParse(testCID.String()), uint(1)).
+			Return(&pluginDb.IPFSPin{UserID: 1, CID: cid.MustParse(testCID.String()).Bytes(), Status: pluginDb.PinningStatusPinned}, nil).Once()
+
+		website := createTestIPNSWebsite(1, "checkstatus.example.com", TestPeerID1)
+
+		// Act — key resolves to a pinned CID: site is active
+		status, err := svc.CheckStatus(ctx, website)
+		require.NoError(tb, err)
+		require.Equal(tb, pluginDb.WebsiteStatusActive, status)
+
+		// Act — key with no published CID: site must not be active
+		mockIPNSKeySvc.EXPECT().GetKeyByPeerID(mock.Anything, TestPeerID1).
+			Return(makePublishedKey(1, TestPeerID1, ""), nil).Once()
+
+		status, err = svc.CheckStatus(ctx, website)
+		require.Error(tb, err)
+		require.Equal(tb, pluginDb.WebsiteStatusBroken, status)
 	}, TestOptions)
 }
 
