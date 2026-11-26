@@ -90,7 +90,19 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 				_tus, err = service.CreateTusHandler(ctx, core.TUSHandlerConfig{
 					Protocol: proto,
 					BasePath: TUS_HTTP_ROUTE,
+					// Upload creation is a write and requires a verified email,
+					// matching the VerifiedWrites middleware. The TUS routes are
+					// registered outside the common middleware chain and any route
+					// middleware there runs ahead of auth, so the check runs here
+					// in the creation hook, after auth has resolved the uploader.
 					CreatedUploadHandler: service.TUSDefaultUploadCreatedHandler(ctx, func(hook handler.HookEvent, uploaderId uint) (core.StorageHash, error) {
+						verified, err := core.GetService[core.UserService](ctx, core.USER_SERVICE).IsAccountVerified(ctx, uploaderId)
+						if err != nil {
+							return nil, err
+						}
+						if !verified {
+							return nil, fmt.Errorf("email verification required")
+						}
 						return nil, nil
 					}, nil),
 					UploadProgressHandler:   service.TUSDefaultUploadProgressHandler(ctx),
@@ -209,6 +221,11 @@ func (a *API) Configure(r router.Router, accessSvc core.AccessService) error {
 	)
 
 	accessMw := portalMw.AccessMiddleware(a.Context())
+
+	// Require a verified email for state-changing requests. Registered in the
+	// common chain after auth so the user ID is available; read-only requests
+	// pass through. /block/meta/batch is a POST-based read and is exempt.
+	verifiedWritesMw := pluginMw.VerifiedWrites(a.Context(), "/block/meta/batch")
 
 	pinRoutes := router.DefineRoutes(
 		router.NewRoute(http.MethodGet, "/pins", a.listPins,
@@ -373,7 +390,7 @@ See also:.*`),
 	)
 
 	// Register pin routes at root level to match IPFS pinning service API specification
-	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), pinRoutes, router.WithMiddlewares(authMw, accessMw), router.WithCors()); err != nil {
+	if err := router.RegisterRoutes(r, accessSvc, a.Subdomain(), pinRoutes, router.WithMiddlewares(authMw, accessMw, verifiedWritesMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register pin routes: %w", err)
 	}
 
@@ -382,7 +399,7 @@ See also:.*`),
 		return fmt.Errorf("failed to create api group: %w", err)
 	}
 
-	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), fileManagerRoutes, router.WithMiddlewares(authMw, accessMw), router.WithCors()); err != nil {
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), fileManagerRoutes, router.WithMiddlewares(authMw, accessMw, verifiedWritesMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register file manager routes: %w", err)
 	}
 
@@ -465,7 +482,7 @@ See also: GET /block/meta/:cid (single block metadata)`),
 		),
 	)
 
-	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), ipfsRoutes, router.WithMiddlewares(authMw, accessMw), router.WithCors()); err != nil {
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), ipfsRoutes, router.WithMiddlewares(authMw, accessMw, verifiedWritesMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register ipfs routes: %w", err)
 	}
 
@@ -544,7 +561,7 @@ See also:.*`),
 		),
 	)
 
-	if err = router.RegisterRoutes(r, accessSvc, a.Subdomain(), ipfsContentRoutes, router.WithMiddlewares(authMw, accessMw), router.WithCors()); err != nil {
+	if err = router.RegisterRoutes(r, accessSvc, a.Subdomain(), ipfsContentRoutes, router.WithMiddlewares(authMw, accessMw, verifiedWritesMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register ipfs content routes: %w", err)
 	}
 
@@ -609,7 +626,7 @@ See also:.*`),
 		),
 	)
 
-	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), ipnsKeyRoutes, router.WithMiddlewares(authMw, accessMw), router.WithCors()); err != nil {
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), ipnsKeyRoutes, router.WithMiddlewares(authMw, accessMw, verifiedWritesMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register ipns key routes: %w", err)
 	}
 
@@ -659,7 +676,7 @@ Prerequisites: User must own the specified IPNS key.`),
 		),
 	)
 
-	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), ipnsOpRoutes, router.WithMiddlewares(authMw, accessMw), router.WithCors()); err != nil {
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), ipnsOpRoutes, router.WithMiddlewares(authMw, accessMw, verifiedWritesMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register ipns operation routes: %w", err)
 	}
 
@@ -900,7 +917,7 @@ See also:.*`),
 		),
 	)
 
-	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), websiteRoutes, router.WithMiddlewares(authMw, accessMw), router.WithCors()); err != nil {
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), websiteRoutes, router.WithMiddlewares(authMw, accessMw, verifiedWritesMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register website routes: %w", err)
 	}
 
@@ -1026,7 +1043,7 @@ See also:.*`),
 			),
 		),
 	)
-	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), workspaceRoutes, router.WithMiddlewares(authMw, accessMw), router.WithCors()); err != nil {
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), workspaceRoutes, router.WithMiddlewares(authMw, accessMw, verifiedWritesMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register workspace routes: %w", err)
 	}
 
@@ -1245,7 +1262,7 @@ See also:.*`),
 		),
 	)
 
-	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), dnsRoutes, router.WithMiddlewares(authMw, accessMw), router.WithCors()); err != nil {
+	if err := router.RegisterRoutes(apiGroup, accessSvc, a.Subdomain(), dnsRoutes, router.WithMiddlewares(authMw, accessMw, verifiedWritesMw), router.WithCors()); err != nil {
 		return fmt.Errorf("failed to register dns routes: %w", err)
 	}
 
