@@ -289,6 +289,9 @@ func createTestUserAndLogin(ctx coreTesting.TestContext) (string, uint) {
 		ctx.T().Fatalf("failed to create and login test user: %v", err)
 	}
 
+	// Write routes require a verified account; test users are verified.
+	coreTesting.GetMockUserService(ctx).EXPECT().IsAccountVerified(mock.Anything, user.ID).Return(true, nil).Maybe()
+
 	return token, user.ID
 }
 
@@ -296,6 +299,8 @@ func createTestUserAndLogin(ctx coreTesting.TestContext) (string, uint) {
 // This is for tests that make authenticated requests but don't call the login endpoint
 func createTestUser(ctx coreTesting.TestContext) (string, uint) {
 	coreTesting.GetMockUserService(ctx).EXPECT().AccountExists(mock.Anything, uint(1)).Return(true, nil, nil).Maybe()
+	// Write routes require a verified account; test users are verified.
+	coreTesting.GetMockUserService(ctx).EXPECT().IsAccountVerified(mock.Anything, uint(1)).Return(true, nil).Maybe()
 
 	// Generate test token using the jwt helper without expecting LoginPassword call
 	jwtHelper := coreTesting.NewJWTHelper(ctx)
