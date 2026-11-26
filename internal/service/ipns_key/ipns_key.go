@@ -722,7 +722,12 @@ func (s *IPNSKeyServiceDefault) PublishWithKey(ctx context.Context, privKey ic.P
 	)
 
 	now := new(time.Now())
-	err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+	// The record is already published — persist the bookkeeping on a detached
+	// context so a caller's deadline (e.g. the bounded publish during website
+	// creation) cannot cause a successful publish to lose last_published_cid,
+	// which would leave the key unrepublishable and its websites unverifiable.
+	bookkeepingCtx := core.DetachContext(ctx)
+	err = db.RetryableComponentTransaction(s, bookkeepingCtx, func(tx *gorm.DB) *gorm.DB {
 		var key pluginDb.IPFSIPNSKey
 		if findResult := tx.Where("peer_id_multihash = ?", mh.Multihash(peerID)).First(&key); findResult.Error != nil {
 			return findResult
