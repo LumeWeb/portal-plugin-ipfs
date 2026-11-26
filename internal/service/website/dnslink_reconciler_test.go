@@ -119,7 +119,8 @@ func TestWebsiteService_PlanDNSLinkReconciler_KeySwitch_WritesDNSLinkRecord(t *t
 		// Act: switch to a different IPNS peer ID (IPNS→IPNS).
 		testPeerID := "12D3KooWCqvCZqaG6LmG4mtoWZZwrvYB911DK8qqwE9gc25s4Hft"
 
-		stubIPNSPeerTargetWithCID(t, ctx, mockIPNSKey, testUserID1, testPeerID, testCID.String())
+		publishedCID := util.GenerateTestCID(t, "published-ipns-dnslink")
+		stubIPNSPeerTargetWithCID(t, ctx, mockIPNSKey, testUserID1, testPeerID, publishedCID.String())
 		mockIPNSKey.EXPECT().GetKeyByID(mock.Anything, testUserID1, *createdWebsite.IPNSKeyID).Return(testIPNSKey, nil).Once()
 		mockIPNSKey.EXPECT().PublishCID(mock.Anything, mock.Anything, mock.Anything, mock.AnythingOfType("time.Duration")).Return(nil).Once()
 
