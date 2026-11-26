@@ -675,6 +675,14 @@ func TestValidateDNS_IPNSTarget_ValidDNSLinkAndToken(t *testing.T) {
 
 		ipnsName := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
 		website := createTestIPNSWebsite(testUserID1, "ipns-validate.com", ipnsName)
+
+		// A direct peer-ID target must resolve to a published CID pinned by
+		// the owner before the website can be created.
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, mockIPNSKey)
+		targetCID := util.GenerateTestCID(t, "ipns-validate-content")
+		stubIPNSPeerTargetWithCID(t, ctx, mockIPNSKey, testUserID1, website.TargetHash(), targetCID.String())
+
 		created, err := ws.CreateWebsite(context.Background(), website)
 		require.NoError(tb, err)
 		_ = bindPrimaryDomain(tb, ctx, created.ID, "ipns-validate.com", false)

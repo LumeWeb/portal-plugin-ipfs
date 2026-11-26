@@ -93,6 +93,24 @@ func setupIPNSAutoCreationMocks(t *testing.T, mockIPNS *mocks.MockIPNSKeyService
 	return testIPNSKey
 }
 
+// stubIPNSPeerTargetWithCID mocks an IPNS key record resolved from a peer-ID
+// website target whose published CID is pinned by the user. Both the create
+// and update paths require a peer-ID target to resolve to a published CID
+// pinned by the same user.
+func stubIPNSPeerTargetWithCID(t *testing.T, ctx coreTesting.TestContext, mockIPNS *mocks.MockIPNSKeyService, userID uint, peerIDStr string, cidStr string) *pluginDb.IPFSIPNSKey {
+	testPeerID, _ := parsePeerID(peerIDStr)
+	key := &pluginDb.IPFSIPNSKey{
+		ID:               2001,
+		UserID:           userID,
+		Name:             "published-key",
+		PeerIDMultihash:  mh.Multihash(testPeerID),
+		LastPublishedCID: cidStr,
+	}
+	mockIPNS.EXPECT().GetKeyByPeerID(mock.Anything, peerIDStr).Return(key, nil).Maybe()
+	stubPinnedCID(t, ctx, userID, cidStr)
+	return key
+}
+
 // setupDNSZoneCreationMocks sets up mock expectations for DNS zone operations
 // when enabling DNS hosting on a website. This handles:
 // 1. Creating a DNS zone (if new)
@@ -503,6 +521,13 @@ func TestWebsiteService_CreateWebsite_IPNSTarget(t *testing.T) {
 		ipnsName := "k51qzi5uqu5dlts3p5vfpw8kneqp5ye1ttb2jlt8qkt5mq9f2gvgmet6sec29r"
 
 		website := createTestIPNSWebsite(testUserID1, "ipns-example.com", ipnsName)
+
+		// A direct peer-ID target must resolve to a published CID pinned by
+		// the owner before the website can be created.
+		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
+		require.NotNil(tb, mockIPNSKey)
+		targetCID := util.GenerateTestCID(t, "ipns-peer-target-content")
+		stubIPNSPeerTargetWithCID(t, ctx, mockIPNSKey, testUserID1, website.TargetHash(), targetCID.String())
 
 		// Act
 		createdWebsite, err := websiteService.CreateWebsite(context.Background(), website)
@@ -2449,10 +2474,10 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS(t *testing.T) {
 		// targetType will be auto-detected as IPNS
 		testPeerID := "12D3KooWCqvCZqaG6LmG4mtoWZZwrvYB911DK8qqwE9gc25s4Hft"
 
-		// Mock: IPNS key must exist and belong to the user
+		// Mock: IPNS key must exist, belong to the user, and resolve to a
+		// published CID pinned by them
 		mockIPNSKey := core.GetService[*mocks.MockIPNSKeyService](ctx, pluginCore.IPNS_KEY_SERVICE)
-		mockIPNSKey.EXPECT().GetPrivateKeyByPeerID(mock.Anything, testPeerID).
-			Return(nil, testUserID1, nil).Once()
+		stubIPNSPeerTargetWithCID(t, ctx, mockIPNSKey, testUserID1, testPeerID, testCID.String())
 
 		updates := map[string]interface{}{
 			"target_hash": testPeerID,
@@ -2887,9 +2912,9 @@ func TestWebsiteService_UpdateWebsite_IPNSToIPNS_KeySwitch_UpdatesDNSRecords(t *
 		// Act - Update to a new IPNS peer ID (staying as IPNS)
 		testPeerID := "12D3KooWCqvCZqaG6LmG4mtoWZZwrvYB911DK8qqwE9gc25s4Hft"
 
-		// Mock: IPNS key must exist and belong to the user
-		mockIPNSKey.EXPECT().GetPrivateKeyByPeerID(mock.Anything, testPeerID).
-			Return(nil, testUserID1, nil).Once()
+		// Mock: IPNS key must exist, belong to the user, and resolve to a
+		// published CID pinned by them
+		stubIPNSPeerTargetWithCID(t, ctx, mockIPNSKey, testUserID1, testPeerID, testCID.String())
 
 		updates := map[string]interface{}{
 			"target_hash": testPeerID,
@@ -2992,9 +3017,9 @@ func TestWebsiteService_UpdateWebsite_ConvertIPFSToIPNS_UpdatesDNSRecords(t *tes
 		// Act - Update from IPFS to IPNS
 		testPeerID := "12D3KooWCqvCZqaG6LmG4mtoWZZwrvYB911DK8qqwE9gc25s4Hft"
 
-		// Mock: IPNS key must exist and belong to the user
-		mockIPNSKey.EXPECT().GetPrivateKeyByPeerID(mock.Anything, testPeerID).
-			Return(nil, testUserID1, nil).Once()
+		// Mock: IPNS key must exist, belong to the user, and resolve to a
+		// published CID pinned by them
+		stubIPNSPeerTargetWithCID(t, ctx, mockIPNSKey, testUserID1, testPeerID, testCID.String())
 
 		ipnsUpdates := map[string]interface{}{
 			"target_hash": testPeerID,

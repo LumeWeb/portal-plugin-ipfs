@@ -757,9 +757,10 @@ func (s *WebsiteServiceDefault) UpdateWebsite(ctx context.Context, userID uint, 
 							return tx
 						}
 
-						// For IPNS targets, verify the key exists and belongs to the user
+						// For IPNS targets, verify the key exists and belongs to the
+						// user and its published CID is pinned by them
 						if targetType == string(pluginDb.WebsiteTargetTypeIPNS) {
-							if err := s.validateIPNSKeyResolution(ctx, userID, targetHashStr); err != nil {
+							if err := s.validateIPNSPublishedPin(ctx, userID, targetHashStr); err != nil {
 								_ = tx.AddError(fmt.Errorf("IPNS key validation failed: %w", err))
 								return tx
 							}
@@ -2717,8 +2718,9 @@ func (s *WebsiteServiceDefault) CheckStatus(ctx context.Context, website *plugin
 				newStatus = pluginDb.WebsiteStatusActive
 
 			case pluginDb.WebsiteTargetTypeIPNS:
-				// For IPNS targets, check if the key exists and belongs to the owner
-				if err := s.validateIPNSKeyResolution(ctx, website.UserID, website.TargetHash()); err != nil {
+				// For IPNS targets, check that the key exists, belongs to the
+				// owner, and resolves to a CID pinned by the owner
+				if err := s.validateIPNSPublishedPin(ctx, website.UserID, website.TargetHash()); err != nil {
 					s.Logger().Error("Failed to validate IPNS target",
 						zap.Error(err),
 						zap.String("target_hash", website.TargetHash()))
@@ -2942,8 +2944,8 @@ func (s *WebsiteServiceDefault) validateTarget(targetType string, targetHash str
 // website's target: a direct IPFS target carries it in TargetHash(); an IPNS
 // target with a plain CID (CIDVersion set) is the auto-convert input and is
 // reconstructed from the stored multihash/version/type because TargetHash()
-// already reports the peer ID for IPNS targets. IPNS peer-ID targets have no
-// pin to check and return nil.
+// already reports the peer ID for IPNS targets. A direct IPNS peer-ID target
+// must resolve to a published, pinned CID via validateIPNSPublishedPin.
 func (s *WebsiteServiceDefault) validateCreatePin(ctx context.Context, website *pluginDb.Website) error {
 	var targetHash string
 	switch {
@@ -2958,10 +2960,34 @@ func (s *WebsiteServiceDefault) validateCreatePin(ctx context.Context, website *
 			}
 			targetHash = cid.NewCidV1(uint64(*website.CIDType), website.TargetMultihash).String()
 		}
+	case website.TargetType == string(pluginDb.WebsiteTargetTypeIPNS):
+		return s.validateIPNSPublishedPin(ctx, website.UserID, website.TargetHash())
 	default:
 		return nil
 	}
 	return s.validateIPFSTarget(ctx, website.UserID, targetHash)
+}
+
+// validateIPNSPublishedPin validates that an IPNS peer-ID target is backed by
+// real content: the key must exist and belong to the given user, the key must
+// have a published CID, and that CID must be pinned by the same user. Key
+// ownership alone is not sufficient — it previously allowed websites (and
+// their DNS/TLS side effects) to go live with no content behind them.
+func (s *WebsiteServiceDefault) validateIPNSPublishedPin(ctx context.Context, userID uint, peerID string) error {
+	key, err := s.ipnsKeySvc.GetKeyByPeerID(ctx, peerID)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrIPNSKeyNotFound, err)
+	}
+
+	if key.UserID != userID {
+		return fmt.Errorf("%w: key belongs to user %d, not %d", ErrIPNSKeyNotFound, key.UserID, userID)
+	}
+
+	if key.LastPublishedCID == "" {
+		return fmt.Errorf("%w: IPNS key %s has no published CID", ErrCIDNotPinned, peerID)
+	}
+
+	return s.validateIPFSTarget(ctx, userID, key.LastPublishedCID)
 }
 
 // validateIPFSTarget checks if an IPFS CID is pinned and returns an error if not.

@@ -48,6 +48,7 @@ type IPNSKeyService interface {
 	GetKeyByName(ctx context.Context, userID uint, name string) (*pluginDb.IPFSIPNSKey, error)
 	GetKeyByID(ctx context.Context, userID uint, keyID uint) (*pluginDb.IPFSIPNSKey, error)
 	DeleteKey(ctx context.Context, userID uint, keyID uint) error
+	GetKeyByPeerID(ctx context.Context, peerID string) (*pluginDb.IPFSIPNSKey, error)
 	GetPrivateKey(ctx context.Context, userID uint, keyID uint) (crypto.PrivKey, error)
 	GetPrivateKeyByPeerID(ctx context.Context, peerID string) (crypto.PrivKey, uint, error)
 	PublishCID(ctx context.Context, keyID string, cidStr string, ttl time.Duration) error

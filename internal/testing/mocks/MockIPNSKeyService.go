@@ -546,6 +546,74 @@ func (_c *MockIPNSKeyService_GetKeyByName_Call) RunAndReturn(run func(ctx contex
 	return _c
 }
 
+// GetKeyByPeerID provides a mock function for the type MockIPNSKeyService
+func (_mock *MockIPNSKeyService) GetKeyByPeerID(ctx context.Context, peerID string) (*db.IPFSIPNSKey, error) {
+	ret := _mock.Called(ctx, peerID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetKeyByPeerID")
+	}
+
+	var r0 *db.IPFSIPNSKey
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*db.IPFSIPNSKey, error)); ok {
+		return returnFunc(ctx, peerID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) *db.IPFSIPNSKey); ok {
+		r0 = returnFunc(ctx, peerID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*db.IPFSIPNSKey)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = returnFunc(ctx, peerID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIPNSKeyService_GetKeyByPeerID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetKeyByPeerID'
+type MockIPNSKeyService_GetKeyByPeerID_Call struct {
+	*mock.Call
+}
+
+// GetKeyByPeerID is a helper method to define mock.On call
+//   - ctx context.Context
+//   - peerID string
+func (_e *MockIPNSKeyService_Expecter) GetKeyByPeerID(ctx any, peerID any) *MockIPNSKeyService_GetKeyByPeerID_Call {
+	return &MockIPNSKeyService_GetKeyByPeerID_Call{Call: _e.mock.On("GetKeyByPeerID", ctx, peerID)}
+}
+
+func (_c *MockIPNSKeyService_GetKeyByPeerID_Call) Run(run func(ctx context.Context, peerID string)) *MockIPNSKeyService_GetKeyByPeerID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIPNSKeyService_GetKeyByPeerID_Call) Return(iPFSIPNSKey *db.IPFSIPNSKey, err error) *MockIPNSKeyService_GetKeyByPeerID_Call {
+	_c.Call.Return(iPFSIPNSKey, err)
+	return _c
+}
+
+func (_c *MockIPNSKeyService_GetKeyByPeerID_Call) RunAndReturn(run func(ctx context.Context, peerID string) (*db.IPFSIPNSKey, error)) *MockIPNSKeyService_GetKeyByPeerID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetPrivateKey provides a mock function for the type MockIPNSKeyService
 func (_mock *MockIPNSKeyService) GetPrivateKey(ctx context.Context, userID uint, keyID uint) (crypto.PrivKey, error) {
 	ret := _mock.Called(ctx, userID, keyID)

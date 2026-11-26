@@ -517,6 +517,34 @@ func (s *IPNSKeyServiceDefault) syncKeyToBoxoKeystore(ctx context.Context, key *
 
 // SyncToBoxoKeystore syncs all active IPNS keys from the database to the boxo keystore
 // This should be called during plugin startup and after key creation/import
+// GetKeyByPeerID returns the IPNS key record for a given peer ID, without
+// decrypting the private key.
+func (s *IPNSKeyServiceDefault) GetKeyByPeerID(ctx context.Context, peerIDStr string) (*pluginDb.IPFSIPNSKey, error) {
+	ctx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.GetKeyByPeerID")
+	defer span.End()
+
+	// Parse peer ID string to multihash
+	pid, err := peer.Decode(peerIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid peer ID: %w", err)
+	}
+	peerIDMultihash := mh.Multihash(pid)
+
+	var key pluginDb.IPFSIPNSKey
+	err = db.RetryableComponentTransaction(s, ctx, func(tx *gorm.DB) *gorm.DB {
+		return tx.Where("peer_id_multihash = ?", peerIDMultihash).First(&key)
+	})
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("IPNS key not found")
+		}
+		s.Logger().Error("Failed to get IPNS key by peer ID", zap.Error(err), zap.String("peer_id", peerIDStr))
+		return nil, fmt.Errorf("failed to get IPNS key: %w", err)
+	}
+
+	return &key, nil
+}
+
 // GetPrivateKeyByPeerID decrypts and returns the private key for a given peer ID
 func (s *IPNSKeyServiceDefault) GetPrivateKeyByPeerID(ctx context.Context, peerIDStr string) (ic.PrivKey, uint, error) {
 	ctx, span := core.TraceMethod(ctx, "IPNSKeyServiceDefault.GetPrivateKeyByPeerID")
