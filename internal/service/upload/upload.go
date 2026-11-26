@@ -167,6 +167,37 @@ func (s *UploadServiceDefault) ProcessUpload(ctx context.Context, cids []cid.Cid
 					return fmt.Errorf("failed to save upload record for CID %s: %w", c.String(), err)
 				}
 
+				// ProcessUpload runs from more than one workflow operation (e.g.
+				// retrieve and confirm in the pin workflow) and is retried on
+				// failure. A CID that already has a core pin for this user was
+				// recorded by an earlier pass — re-emitting its quota events
+				// would double-count upload and storage usage.
+				priorPins, err := s.corePin.GetPinsByUploadID(ctx, uploadMeta.ID)
+				if err != nil {
+					return fmt.Errorf("failed to check existing pins for CID %s: %w", c.String(), err)
+				}
+				alreadyPinned := false
+				for _, p := range priorPins {
+					if p.UserID == userId {
+						alreadyPinned = true
+						break
+					}
+				}
+				if alreadyPinned {
+					// The caller reserved quota for this upload attempt; since no
+					// usage event will be emitted for the skipped CID, the
+					// reservations must be released rather than left held. Remove
+					// the entry so a caller's deferred blanket release (e.g. the
+					// TUS op) does not release the same reservation again.
+					if reservations != nil {
+						if blockRes, exists := reservations[c]; exists && blockRes != nil {
+							blockRes.ReleaseAll()
+							delete(reservations, c)
+						}
+					}
+					continue
+				}
+
 				pinMeta := &models.Pin{
 					UploadID: uploadMeta.ID,
 					UserID:   uploadMeta.UserID,
