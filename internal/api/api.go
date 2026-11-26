@@ -90,7 +90,19 @@ func NewAPI() (core.API, []core.ContextBuilderOption, error) {
 				_tus, err = service.CreateTusHandler(ctx, core.TUSHandlerConfig{
 					Protocol: proto,
 					BasePath: TUS_HTTP_ROUTE,
+					// Upload creation is a write and requires a verified email,
+					// matching the VerifiedWrites middleware. The TUS routes are
+					// registered outside the common middleware chain and any route
+					// middleware there runs ahead of auth, so the check runs here
+					// in the creation hook, after auth has resolved the uploader.
 					CreatedUploadHandler: service.TUSDefaultUploadCreatedHandler(ctx, func(hook handler.HookEvent, uploaderId uint) (core.StorageHash, error) {
+						verified, err := core.GetService[core.UserService](ctx, core.USER_SERVICE).IsAccountVerified(ctx, uploaderId)
+						if err != nil {
+							return nil, err
+						}
+						if !verified {
+							return nil, fmt.Errorf("email verification required")
+						}
 						return nil, nil
 					}, nil),
 					UploadProgressHandler:   service.TUSDefaultUploadProgressHandler(ctx),

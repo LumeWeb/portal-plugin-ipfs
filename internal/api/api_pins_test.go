@@ -8,8 +8,12 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ipfs/go-cid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"go.lumeweb.com/portal-plugin-ipfs/internal/api/dto"
+	"go.lumeweb.com/portal/db/types"
 	coreTesting "go.lumeweb.com/portal/core/testing"
 )
 
@@ -149,5 +153,35 @@ func TestAPI_pins_CORS_preflight(t *testing.T) {
 				assert.NotEmpty(t, rec.Header().Get("Access-Control-Allow-Headers"))
 			})
 		}
+	}, TestOptions)
+}
+
+// TestAPI_verifiedWrites_unverifiedUser pins the verified-writes wiring at the
+// API level: an authenticated but unverified account can read but is rejected
+// with 403 on a write route. Removing verifiedWritesMw from the common chain
+// would make the write here succeed and fail this test.
+func TestAPI_verifiedWrites_unverifiedUser(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		helper := newMockHelper(t, ctx)
+
+		// Same stubs as createTestUser, but the account is unverified.
+		coreTesting.GetMockUserService(ctx).EXPECT().AccountExists(mock.Anything, uint(1)).Return(true, nil, nil).Maybe()
+		coreTesting.GetMockUserService(ctx).EXPECT().IsAccountVerified(mock.Anything, uint(1)).Return(false, nil).Maybe()
+		jwtHelper := coreTesting.NewJWTHelper(ctx)
+		token, err := jwtHelper.CreateLoginToken(1)
+		require.NoError(t, err)
+
+		testCID := cid.MustParse(TestCID)
+		pinID := types.NewBinUUID()
+		helper.SetupAllCommonMocks(1, testCID, pinID)
+
+		// Reads pass through for the same account.
+		rec := helper.makeAuthenticatedRequest(http.MethodGet, "/pins", token, nil)
+		assert.Equal(t, http.StatusOK, rec.Code)
+
+		// Writes are rejected with 403 before reaching the handler.
+		reqBody := fmt.Sprintf(`{"cid":"%s","name":"test"}`, TestCID)
+		rec = helper.makeAuthenticatedRequest(http.MethodPost, "/pins", token, []byte(reqBody))
+		assert.Equal(t, http.StatusForbidden, rec.Code)
 	}, TestOptions)
 }

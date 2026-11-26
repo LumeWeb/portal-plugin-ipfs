@@ -13,6 +13,10 @@ import (
 )
 
 func executeVerifiedRequest(t *testing.T, ctx coreTesting.TestContext, method, path string, withUser bool) (*httptest.ResponseRecorder, bool) {
+	return executeVerifiedRequestQuery(t, ctx, method, path, "", withUser)
+}
+
+func executeVerifiedRequestQuery(t *testing.T, ctx coreTesting.TestContext, method, path, query string, withUser bool) (*httptest.ResponseRecorder, bool) {
 	t.Helper()
 
 	mw := VerifiedWrites(ctx, "/block/meta/batch")
@@ -22,7 +26,7 @@ func executeVerifiedRequest(t *testing.T, ctx coreTesting.TestContext, method, p
 		return c.String(http.StatusOK, "ok")
 	})
 
-	req := httptest.NewRequest(method, path, nil)
+	req := httptest.NewRequest(method, path+"?"+query, nil)
 	rec := httptest.NewRecorder()
 	e := echo.New()
 	c := e.NewContext(req, rec)
@@ -88,6 +92,29 @@ func TestVerifiedWrites_ExemptPathPassesUnverified(t *testing.T) {
 		// POST /block/meta/batch is a read; no IsAccountVerified expectation.
 
 		rec, called := executeVerifiedRequest(t, ctx, http.MethodPost, "/api/ipfs/block/meta/batch", false)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.True(t, called)
+	})
+}
+
+func TestVerifiedWrites_WriteLikeGetQueryRequiresVerification(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// GET /workspaces/:id/access?rotate=true rotates credentials, so it is
+		// treated as a write despite the safe method.
+		coreTesting.GetMockUserService(ctx).EXPECT().IsAccountVerified(mock.Anything, uint(1)).Return(false, nil).Maybe()
+
+		rec, called := executeVerifiedRequestQuery(t, ctx, http.MethodGet, "/workspaces/1/access", "rotate=true", true)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+		assert.False(t, called, "rotating credentials must not run for unverified accounts")
+	})
+}
+
+func TestVerifiedWrites_PlainGetWithQueryPassesUnverified(t *testing.T) {
+	coreTesting.RunTestCase(t, func(tb coreTesting.TB, ctx coreTesting.TestContext) {
+		// Unrelated query parameters do not turn a GET into a write; no
+		// IsAccountVerified expectation: a checker call would fail the test.
+
+		rec, called := executeVerifiedRequestQuery(t, ctx, http.MethodGet, "/pins", "limit=10", false)
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.True(t, called)
 	})
